@@ -13,7 +13,14 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log('Seeding database...');
 
-  // 1. Clear existing data
+  // 1. Clear existing data in reverse order of dependencies
+  await prisma.announcement.deleteMany({});
+  await prisma.notification.deleteMany({});
+  await prisma.shiftAssignment.deleteMany({});
+  await prisma.shift.deleteMany({});
+  await prisma.task.deleteMany({});
+  await prisma.expense.deleteMany({});
+  await prisma.leaveRequest.deleteMany({});
   await prisma.liveLocation.deleteMany({});
   await prisma.comment.deleteMany({});
   await prisma.attendance.deleteMany({});
@@ -197,6 +204,10 @@ async function main() {
       notes: 'On time, check-in via geofence',
       latitude: 19.0762,
       longitude: 72.8778,
+      isFingerprintCheckIn: false,
+      isFingerprintCheckOut: false,
+      isOnBreak: false,
+      totalBreakSeconds: 1800, // 30 mins break
     },
   });
 
@@ -281,6 +292,192 @@ async function main() {
         status: 'In Office',
         speed: '0 km/h',
         battery: '95%',
+      },
+    ],
+  });
+
+  // 8. Create Shifts and Shift Assignments
+  const standardShift = await prisma.shift.create({
+    data: {
+      name: 'Regular Morning Shift',
+      startTime: '09:00',
+      endTime: '18:00',
+      workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+      graceMinutes: 15,
+      breakMinutes: 60,
+      color: '#3BA38B',
+    },
+  });
+
+  await prisma.shiftAssignment.create({
+    data: {
+      employeeId: employee.id,
+      shiftId: standardShift.id,
+      effectiveFrom: new Date(new Date().setDate(yesterday.getDate() - 30)),
+    },
+  });
+
+  // 9. Create Leave Requests & Leave Balance defaults
+  const now = new Date();
+  await prisma.leaveRequest.createMany({
+    data: [
+      {
+        employeeId: employee.id,
+        type: 'CASUAL',
+        fromDate: new Date(new Date().setDate(now.getDate() - 30)),
+        toDate: new Date(new Date().setDate(now.getDate() - 29)),
+        reason: 'Personal work at home',
+        status: 'APPROVED',
+        appliedOn: new Date(new Date().setDate(now.getDate() - 35)),
+        reviewedBy: 'Priya Sharma',
+        reviewNote: 'Approved',
+      },
+      {
+        employeeId: employee.id,
+        type: 'SICK',
+        fromDate: new Date(new Date().setDate(now.getDate() - 60)),
+        toDate: new Date(new Date().setDate(now.getDate() - 60)),
+        reason: 'Fever and cold',
+        status: 'APPROVED',
+        appliedOn: new Date(new Date().setDate(now.getDate() - 61)),
+        reviewedBy: 'Priya Sharma',
+        reviewNote: 'Get well soon',
+      },
+      {
+        employeeId: employee.id,
+        type: 'EARNED',
+        fromDate: new Date(new Date().setDate(now.getDate() + 10)),
+        toDate: new Date(new Date().setDate(now.getDate() + 14)),
+        reason: 'Family vacation trip',
+        status: 'PENDING',
+        appliedOn: new Date(new Date().setDate(now.getDate() - 2)),
+      },
+      {
+        employeeId: employee.id,
+        type: 'CASUAL',
+        fromDate: new Date(new Date().setDate(now.getDate() - 10)),
+        toDate: new Date(new Date().setDate(now.getDate() - 10)),
+        reason: 'Bank work',
+        status: 'REJECTED',
+        appliedOn: new Date(new Date().setDate(now.getDate() - 12)),
+        reviewedBy: 'Priya Sharma',
+        reviewNote: 'Critical project deadline, please reschedule.',
+      },
+    ],
+  });
+
+  // 10. Create Expenses
+  await prisma.expense.createMany({
+    data: [
+      {
+        employeeId: employee.id,
+        category: 'TRAVEL',
+        amount: 1200.0,
+        description: 'Client office visit taxi fare',
+        date: new Date(new Date().setDate(now.getDate() - 5)),
+        status: 'APPROVED',
+        submittedOn: new Date(new Date().setDate(now.getDate() - 5)),
+        reviewedBy: 'Priya Sharma',
+        reviewNote: 'Reimbursement processed.',
+        hasReceipt: true,
+        receiptUrl: 'https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=500',
+      },
+      {
+        employeeId: employee.id,
+        category: 'FOOD',
+        amount: 450.0,
+        description: 'Dinner during late-night backend deployment',
+        date: new Date(new Date().setDate(now.getDate() - 2)),
+        status: 'PENDING',
+        submittedOn: new Date(new Date().setDate(now.getDate() - 2)),
+        hasReceipt: true,
+        receiptUrl: 'https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=500',
+      },
+    ],
+  });
+
+  // 11. Create Tasks
+  await prisma.task.createMany({
+    data: [
+      {
+        title: 'API Integration',
+        description: 'Integrate employee attendance and shift APIs with the mobile client.',
+        assignedToId: employee.id,
+        assignedById: superAdminUser.id,
+        projectName: 'Quickboom Mobile App',
+        dueDate: new Date(new Date().setDate(now.getDate() + 3)),
+        status: 'IN_PROGRESS',
+        priority: 'HIGH',
+      },
+      {
+        title: 'Code Review',
+        description: 'Review pull requests for the HR dashboard page.',
+        assignedToId: employee.id,
+        assignedById: superAdminUser.id,
+        projectName: 'HRM Web Dashboard',
+        dueDate: new Date(new Date().setDate(now.getDate() + 5)),
+        status: 'TODO',
+        priority: 'MEDIUM',
+      },
+      {
+        title: 'Bug Fixing',
+        description: 'Resolve date alignment issue on geofence check-in page.',
+        assignedToId: employee.id,
+        assignedById: superAdminUser.id,
+        projectName: 'Quickboom Mobile App',
+        dueDate: new Date(new Date().setDate(now.getDate() - 1)),
+        status: 'COMPLETED',
+        priority: 'HIGH',
+      },
+    ],
+  });
+
+  // 12. Create Notifications
+  await prisma.notification.createMany({
+    data: [
+      {
+        employeeId: employee.id,
+        title: 'Shift Assigned',
+        body: 'You have been assigned to Regular Morning Shift starting today.',
+        category: 'ATTENDANCE',
+        isRead: false,
+        createdAt: new Date(new Date().setHours(9, 0, 0)),
+      },
+      {
+        employeeId: employee.id,
+        title: 'Leave Approved',
+        body: 'Your casual leave request for next week has been approved by Priya Sharma.',
+        category: 'LEAVE',
+        isRead: true,
+        createdAt: new Date(new Date().setDate(now.getDate() - 3)),
+      },
+      {
+        employeeId: employee.id,
+        title: 'New Task Assigned',
+        body: 'Super Admin assigned you a new task: API Integration.',
+        category: 'TASK',
+        isRead: false,
+        createdAt: new Date(new Date().setHours(10, 15, 0)),
+      },
+    ],
+  });
+
+  // 13. Create Announcements
+  await prisma.announcement.createMany({
+    data: [
+      {
+        title: 'Annual Company Meet 2026',
+        content: 'We are excited to announce our Annual Meet will be held in Goa in September! Pack your bags!',
+        category: 'GENERAL',
+        publishedBy: 'Priya Sharma',
+        createdAt: new Date(new Date().setDate(now.getDate() - 1)),
+      },
+      {
+        title: 'New Health Insurance Policy',
+        content: 'Our health insurance provider has been updated. Please download the new card from the documents tab.',
+        category: 'BENEFITS',
+        publishedBy: 'Priya Sharma',
+        createdAt: new Date(new Date().setDate(now.getDate() - 4)),
       },
     ],
   });

@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import homeRoutes from './routes/homeRoutes';
 import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
+import employeeRoutes from './routes/employeeRoutes';
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/', homeRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/employee', employeeRoutes);
 
 app.listen(port, () => {
   console.log(`Server is running at http://localhost:${port}`);
