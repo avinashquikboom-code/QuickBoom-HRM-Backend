@@ -129,7 +129,7 @@ async function main() {
   const hrEmployee = await prisma.employee.create({
     data: {
       userId: hrUser.id,
-      employeeCode: 'EMP-HR-001',
+      employeeCode: 'HR001',
       firstName: 'Priya',
       lastName: 'Sharma',
       designation: 'HR Manager',
@@ -168,7 +168,7 @@ async function main() {
   const employee = await prisma.employee.create({
     data: {
       userId: employeeUser.id,
-      employeeCode: 'EMP-ENG-001',
+      employeeCode: 'QB001',
       firstName: 'Rahul',
       lastName: 'Verma',
       designation: 'Software Engineer',

@@ -16,18 +16,40 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
-    // 1. Fetch user along with profile and employee relationship
-    const user = await prisma.user.findUnique({
-      where: { email: email.trim().toLowerCase() },
-      include: {
-        profile: true,
-        employee: {
-          include: {
-            office: true,
+    // 1. Fetch user along with profile and employee relationship (support Email or Employee ID)
+    const identifier = email.trim();
+    let user;
+
+    if (identifier.includes('@')) {
+      user = await prisma.user.findUnique({
+        where: { email: identifier.toLowerCase() },
+        include: {
+          profile: true,
+          employee: {
+            include: {
+              office: true,
+            },
           },
         },
-      },
-    });
+      });
+    } else {
+      const employee = await prisma.employee.findUnique({
+        where: { employeeCode: identifier },
+        include: {
+          user: {
+            include: {
+              profile: true,
+              employee: {
+                include: {
+                  office: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      user = employee?.user;
+    }
 
     if (!user || !user.isActive) {
       res.status(401).json({
