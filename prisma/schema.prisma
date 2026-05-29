@@ -1,0 +1,137 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  HR
+  PLATFORM_ADMIN
+  EMPLOYEE
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  role      Role     @default(EMPLOYEE)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  profile   Profile?
+  employee  Employee?
+  comments  Comment[]
+}
+
+model Profile {
+  id                Int      @id @default(autoincrement())
+  userId            Int      @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email             String
+  fullName          String
+  phone             String   @default("")
+  avatarUrl         String?  @default("/favicon.svg")
+  timezone          String   @default("Asia/Kolkata")
+  timezoneLabel     String   @default("(GMT+5:30) Mumbai, New Delhi")
+  bio               String   @default("")
+  twoFactorEnabled  Boolean  @default(false)
+  twoFactorStatus   String   @default("disabled")
+  lastLoginAt       DateTime @default(now())
+  lastLoginLocation String   @default("Unknown")
+  clearanceLevel    Int      @default(1)
+  clearanceLabel    String   @default("Level 1 (General)")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Office {
+  id                   Int          @id @default(autoincrement())
+  name                 String
+  code                 String?      @unique
+  address              String
+  latitude             Float
+  longitude            Float
+  idealRadiusMeters    Float        @default(25.0)
+  maxPunchRadiusMeters Float        @default(50.0)
+  isActive             Boolean      @default(true)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  employees            Employee[]
+  attendances          Attendance[]
+}
+
+model Department {
+  id        Int        @id @default(autoincrement())
+  name      String
+  code      String?    @unique
+  employees Employee[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Employee {
+  id           Int          @id @default(autoincrement())
+  userId       Int?         @unique
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  employeeCode String       @unique
+  firstName    String
+  lastName     String
+  designation  String?
+  status       String       @default("active")
+  officeId     Int?
+  office       Office?      @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  departmentId Int?
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  attendances  Attendance[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Attendance {
+  id         Int       @id @default(autoincrement())
+  employeeId Int
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  officeId   Int?
+  office     Office?   @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  date       String // Format YYYY-MM-DD
+  checkIn    DateTime?
+  checkOut   DateTime?
+  status     String    @default("ABSENT") // PRESENT, ABSENT, LATE, HALF_DAY, LEAVE
+  notes      String?
+  latitude   Float?
+  longitude  Float?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model Comment {
+  id         Int      @id @default(autoincrement())
+  entityType String // OFFICE, EMPLOYEE, etc.
+  entityId   String // Reference ID
+  content    String
+  authorId   Int
+  author     User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model LiveLocation {
+  id         Int      @id @default(autoincrement())
+  employeeId Int      @unique
+  name       String
+  role       String
+  lat        Float
+  lng        Float
+  status     String
+  speed      String   @default("0 km/h")
+  battery    String   @default("100%")
+  updatedAt  DateTime @updatedAt
+}
