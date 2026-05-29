@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../utils/db';
 import { signToken } from '../utils/jwt';
-import { Role } from '../generated/prisma';
+import { Role } from '@prisma/client';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
