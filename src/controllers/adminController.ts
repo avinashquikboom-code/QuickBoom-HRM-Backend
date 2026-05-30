@@ -1156,7 +1156,7 @@ export const updateAdminProfile = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { fullName, phone, bio } = req.body;
+  const { fullName, phone, bio, email } = req.body;
 
   if (!fullName) {
     res.status(400).json({ success: false, message: 'Full Name is required.' });
@@ -1164,24 +1164,38 @@ export const updateAdminProfile = async (
   }
 
   try {
-    const user = await prisma.user.findUnique({
+    const existingUser = await prisma.user.findUnique({
       where: { id: req.user!.id },
       include: { profile: true },
     });
 
-    if (!user || !user.profile) {
+    if (!existingUser || !existingUser.profile) {
       res.status(404).json({ success: false, message: 'Profile not found.' });
       return;
     }
 
-    const updatedProfile = await prisma.profile.update({
-      where: { id: user.profile.id },
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user!.id },
       data: {
-        fullName: fullName.trim(),
-        phone: phone !== undefined ? phone.trim() : user.profile.phone,
-        bio: bio !== undefined ? bio.trim() : user.profile.bio,
+        email: email ? email.trim() : undefined,
+        profile: {
+          update: {
+            fullName: fullName.trim(),
+            phone: phone !== undefined ? phone.trim() : existingUser.profile.phone,
+            bio: bio !== undefined ? bio.trim() : existingUser.profile.bio,
+            email: email ? email.trim() : existingUser.profile.email,
+          },
+        },
       },
+      include: { profile: true },
     });
+
+    if (!updatedUser.profile) {
+      res.status(500).json({ success: false, message: 'Failed to update profile.' });
+      return;
+    }
+
+    const updatedProfile = updatedUser.profile;
 
     res.json({
       success: true,
