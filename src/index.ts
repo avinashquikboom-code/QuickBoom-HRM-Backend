@@ -7,6 +7,7 @@ import adminRoutes from './routes/adminRoutes';
 import employeeRoutes from './routes/employeeRoutes';
 import permissionRoutes from './routes/permissionRoutes';
 import settingsRoutes from './routes/settingsRoutes';
+import hrRoutes from './routes/hrRoutes';
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/employee', employeeRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/hr', hrRoutes);
 
 app.listen(port, () => {
   console.log(`Server is running at http://localhost:${port}`);
