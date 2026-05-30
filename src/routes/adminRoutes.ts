@@ -3,6 +3,7 @@ import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 import {
   fetchPlatformUsers,
+  updateUserStatus,
   fetchEmployees,
   fetchOffices,
   fetchOfficeById,
@@ -49,6 +50,7 @@ router.use(roleMiddleware(adminRoles));
 
 // Users
 router.get('/users', fetchPlatformUsers);
+router.put('/users/:id/status', updateUserStatus);
 
 // Employees
 router.get('/employees', fetchEmployees);

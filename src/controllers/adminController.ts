@@ -71,6 +71,46 @@ export const fetchPlatformUsers = async (
   }
 };
 
+export const updateUserStatus = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { isActive } = req.body;
+  
+  const userId = parseInt(id as string, 10);
+  if (isNaN(userId)) {
+    res.status(400).json({ success: false, message: 'Invalid user ID' });
+    return;
+  }
+
+  if (typeof isActive !== 'boolean') {
+    res.status(400).json({ success: false, message: 'isActive must be a boolean' });
+    return;
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { isActive },
+      select: {
+        id: true,
+        email: true,
+        isActive: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `User status updated to ${isActive ? 'Active' : 'Pending'}.`,
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error('Update user status error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update user status.' });
+  }
+};
+
 // ==========================================
 // 2. Employee Management
 // ==========================================
@@ -167,6 +207,9 @@ export const fetchOffices = async (
       idealRadiusMeters: off.idealRadiusMeters,
       maxPunchRadiusMeters: off.maxPunchRadiusMeters,
       isActive: off.isActive,
+      subscriptionPlan: off.subscriptionPlan,
+      billingCycle: off.billingCycle,
+      invoiceStatus: off.invoiceStatus,
       createdAt: off.createdAt.toISOString(),
       updatedAt: off.updatedAt.toISOString(),
       _count: {
@@ -222,6 +265,9 @@ export const fetchOfficeById = async (
       idealRadiusMeters: office.idealRadiusMeters,
       maxPunchRadiusMeters: office.maxPunchRadiusMeters,
       isActive: office.isActive,
+      subscriptionPlan: office.subscriptionPlan,
+      billingCycle: office.billingCycle,
+      invoiceStatus: office.invoiceStatus,
       createdAt: office.createdAt.toISOString(),
       updatedAt: office.updatedAt.toISOString(),
       _count: {
