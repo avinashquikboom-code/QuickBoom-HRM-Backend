@@ -47,8 +47,8 @@ export const fetchHRStats = async (
       ? Math.round((presentToday / totalEmployees) * 100)
       : 0;
 
-    const onboardingRate = totalUsers > 0 
-      ? ((activeUsers / totalUsers) * 100).toFixed(1) + '%' 
+    const onboardingRate = totalUsers > 0
+      ? ((activeUsers / totalUsers) * 100).toFixed(1) + '%'
       : '100%';
 
     // Compute last 5 months hiring growth dynamically

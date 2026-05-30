@@ -37,6 +37,12 @@ import {
   updateSubscription,
   fetchPricingPlans,
   updatePricingPlan,
+  fetchPayrollStats,
+  fetchPayrollRuns,
+  executePayrollDisbursement,
+  fetchAnalyticsOverview,
+  fetchAdminReports,
+  generateAdminReport,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -108,5 +114,17 @@ router.get('/tasks', fetchAdminTasks);
 router.post('/tasks', createAdminTask);
 router.put('/tasks/:id', updateAdminTask);
 router.delete('/tasks/:id', deleteAdminTask);
+
+// Payroll Operations
+router.get('/payroll/stats', fetchPayrollStats);
+router.get('/payroll/runs', fetchPayrollRuns);
+router.post('/payroll/disburse', executePayrollDisbursement);
+
+// Analytics Operations
+router.get('/analytics/overview', fetchAnalyticsOverview);
+
+// Reports Operations
+router.get('/reports', fetchAdminReports);
+router.post('/reports/generate', generateAdminReport);
 
 export default router;
