@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import { Prisma } from '@prisma/client';
 
 // ==========================================
 // 1. User Management
@@ -258,6 +259,9 @@ export const createOffice = async (
     idealRadiusMeters,
     maxPunchRadiusMeters,
     isActive,
+    subscriptionPlan,
+    billingCycle,
+    invoiceStatus,
   } = req.body;
 
   if (!name || !address || latitude === undefined || longitude === undefined) {
@@ -279,6 +283,9 @@ export const createOffice = async (
         idealRadiusMeters: parseFloat(idealRadiusMeters || '25.0'),
         maxPunchRadiusMeters: parseFloat(maxPunchRadiusMeters || '50.0'),
         isActive: isActive !== undefined ? !!isActive : true,
+        subscriptionPlan: subscriptionPlan || 'Basic',
+        billingCycle: billingCycle || 'monthly',
+        invoiceStatus: invoiceStatus || 'Paid',
       },
     });
 
@@ -295,6 +302,9 @@ export const createOffice = async (
         idealRadiusMeters: newOffice.idealRadiusMeters,
         maxPunchRadiusMeters: newOffice.maxPunchRadiusMeters,
         isActive: newOffice.isActive,
+        subscriptionPlan: newOffice.subscriptionPlan,
+        billingCycle: newOffice.billingCycle,
+        invoiceStatus: newOffice.invoiceStatus,
         createdAt: newOffice.createdAt.toISOString(),
         updatedAt: newOffice.updatedAt.toISOString(),
         _count: { employees: 0 },
@@ -327,6 +337,9 @@ export const updateOffice = async (
     idealRadiusMeters,
     maxPunchRadiusMeters,
     isActive,
+    subscriptionPlan,
+    billingCycle,
+    invoiceStatus,
   } = req.body;
 
   try {
@@ -356,6 +369,12 @@ export const updateOffice = async (
             ? parseFloat(maxPunchRadiusMeters)
             : existingOffice.maxPunchRadiusMeters,
         isActive: isActive !== undefined ? !!isActive : existingOffice.isActive,
+        subscriptionPlan:
+          subscriptionPlan !== undefined ? subscriptionPlan : existingOffice.subscriptionPlan,
+        billingCycle:
+          billingCycle !== undefined ? billingCycle : existingOffice.billingCycle,
+        invoiceStatus:
+          invoiceStatus !== undefined ? invoiceStatus : existingOffice.invoiceStatus,
       },
       include: {
         _count: {
@@ -377,6 +396,9 @@ export const updateOffice = async (
         idealRadiusMeters: updatedOffice.idealRadiusMeters,
         maxPunchRadiusMeters: updatedOffice.maxPunchRadiusMeters,
         isActive: updatedOffice.isActive,
+        subscriptionPlan: updatedOffice.subscriptionPlan,
+        billingCycle: updatedOffice.billingCycle,
+        invoiceStatus: updatedOffice.invoiceStatus,
         createdAt: updatedOffice.createdAt.toISOString(),
         updatedAt: updatedOffice.updatedAt.toISOString(),
         _count: {
@@ -566,7 +588,7 @@ export const fetchAttendanceHistory = async (
   const pageInt = parseInt(page as string, 10);
   const skip = (pageInt - 1) * limitInt;
 
-  const whereClause: any = {};
+  const whereClause: Prisma.AttendanceWhereInput = {};
   if (from || to) {
     whereClause.date = {};
     if (from) {
@@ -878,10 +900,6 @@ export const fetchCompanyStats = async (
       systemGrowth = '+100.0%';
     }
 
-    // Dynamic Monthly revenue based on actual seats (₹500 per employee seat + base)
-    const monthlyRevenue = globalSeats * 500 + 120000;
-
-    // 1. Dynamic Plan Mix based on office employee sizes
     const offices = await prisma.office.findMany({
       include: {
         _count: {
@@ -890,14 +908,37 @@ export const fetchCompanyStats = async (
       }
     });
 
+    const pricingPlans = await prisma.pricingPlan.findMany();
+    const getPlanPrices = (planName: string) => {
+      const p = pricingPlans.find(pl => pl.name.toLowerCase() === planName.toLowerCase());
+      return p ? { monthly: p.monthlyPrice, yearly: p.yearlyPrice } : { monthly: 1200, yearly: 12000 };
+    };
+
+    // Dynamic Monthly revenue based on actual subscription plan values in the database
+    let monthlyRevenue = 0;
+    offices.forEach(off => {
+      const planPrices = getPlanPrices(off.subscriptionPlan);
+      if (off.billingCycle === 'yearly') {
+        monthlyRevenue += planPrices.yearly / 12;
+      } else {
+        monthlyRevenue += planPrices.monthly;
+      }
+    });
+
+    // If zero offices, use standard default base
+    if (monthlyRevenue === 0) {
+      monthlyRevenue = 2400000;
+    }
+
+    // 1. Dynamic Plan Mix based on office subscriptionPlan database fields
     let enterpriseCount = 0;
     let proCount = 0;
     let basicCount = 0;
 
     offices.forEach(off => {
-      const empCount = off._count.employees;
-      if (empCount >= 10) enterpriseCount++;
-      else if (empCount >= 3) proCount++;
+      const plan = off.subscriptionPlan.toLowerCase();
+      if (plan === 'enterprise') enterpriseCount++;
+      else if (plan === 'pro') proCount++;
       else basicCount++;
     });
 
@@ -908,11 +949,11 @@ export const fetchCompanyStats = async (
       { name: 'Basic', count: basicCount, percent: Math.round((basicCount / totalOffices) * 100), color: 'bg-muted' },
     ];
 
-    // 2. Dynamic Invoices based on real offices
+    // 2. Dynamic Invoices based on real offices and database pricing plans
     const recentInvoices = offices.map((off) => {
-      const empCount = off._count.employees;
-      const amountVal = empCount * 500 + 120000;
-      const plan = empCount >= 10 ? 'Enterprise' : empCount >= 3 ? 'Pro' : 'Basic';
+      const plan = off.subscriptionPlan;
+      const planPrices = getPlanPrices(plan);
+      const amountVal = off.billingCycle === 'yearly' ? planPrices.yearly : planPrices.monthly;
       
       const invoiceDate = new Date(off.createdAt);
       const formattedDate = invoiceDate.toLocaleDateString('en-IN', {
@@ -926,7 +967,7 @@ export const fetchCompanyStats = async (
         company: off.name,
         plan,
         amount: `₹${amountVal.toLocaleString('en-IN')}`,
-        status: off.isActive ? 'Paid' : 'Pending',
+        status: off.invoiceStatus,
         date: formattedDate
       };
     }).slice(0, 5);
@@ -985,7 +1026,14 @@ export const fetchCompanyStats = async (
       return `${days}d ago`;
     };
 
-    const activities: any[] = [];
+    interface ActivityItem {
+      id: string;
+      title: string;
+      description: string;
+      type: 'success' | 'info' | 'warning';
+      time: string;
+    }
+    const activities: ActivityItem[] = [];
 
     recentOffices.forEach(off => {
       activities.push({
@@ -1286,11 +1334,170 @@ export const removeAdminAvatar = async (
 // 9. Live Geolocation Telemetry
 // ==========================================
 
+// ==========================================
+// 9. Live Geolocation Telemetry
+// ==========================================
+
+export interface TelemetryLog {
+  id: string;
+  employeeId: number;
+  name: string;
+  type: string;
+  message: string;
+  lat: number;
+  lng: number;
+  timestamp: string;
+}
+
+// Global in-memory list of geofence activities on the backend
+export let telemetryLogs: TelemetryLog[] = [
+  {
+    id: 'log-initial-1',
+    employeeId: 3,
+    name: 'Amit Kumar',
+    type: 'GPS Reconnected',
+    message: 'Satellite signal restored successfully',
+    lat: 19.0820,
+    lng: 72.8820,
+    timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 'log-initial-2',
+    employeeId: 2,
+    name: 'Rahul Verma',
+    type: 'Office Check-In',
+    message: 'Checked in at Main Entrance Gate',
+    lat: 19.0760,
+    lng: 72.8777,
+    timestamp: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+  }
+];
+
+// Distance calculation utility
+function getDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng/2) * Math.sin(dLng/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// Background Simulator Interval: moves seeded locations and issues logs automatically
+let simulatorInitialized = false;
+
+function initBackendTelemetrySimulator() {
+  if (simulatorInitialized) return;
+  simulatorInitialized = true;
+
+  console.log('[Telemetry Backend Simulator] Initializing periodic real-time tracking loops...');
+
+  setInterval(async () => {
+    try {
+      const locations = await prisma.liveLocation.findMany();
+      if (locations.length === 0) return;
+
+      // Fetch active offices
+      const offices = await prisma.office.findMany({ where: { isActive: true } });
+      const mainOffice = offices[0] || {
+        latitude: 19.0760,
+        longitude: 72.8777,
+        maxPunchRadiusMeters: 250
+      };
+
+      for (const loc of locations) {
+        if (loc.status === 'On Leave') continue;
+
+        // Extract numeric battery percent
+        let batteryNum = parseInt(loc.battery) || 100;
+        if (Math.random() < 0.1) {
+          batteryNum = Math.max(5, batteryNum - 1);
+        }
+
+        // Simulating step movement
+        const stepSize = loc.status === 'Outside Geofence' ? 0.0008 : 0.0001;
+        const newLat = loc.lat + (Math.random() - 0.5) * stepSize;
+        const newLng = loc.lng + (Math.random() - 0.5) * stepSize;
+
+        const distance = getDistanceMeters(newLat, newLng, Number(mainOffice.latitude), Number(mainOffice.longitude));
+        const maxRadius = Number(mainOffice.maxPunchRadiusMeters) || 250;
+
+        let newStatus = loc.status;
+        let newSpeed = loc.speed;
+
+        if (distance <= maxRadius) {
+          newStatus = 'In Office';
+          newSpeed = Math.random() < 0.3 ? '2 km/h' : '0 km/h';
+        } else {
+          newStatus = 'Outside Geofence';
+          newSpeed = `${Math.floor(10 + Math.random() * 25)} km/h`;
+        }
+
+        // Check state changes to log geo events!
+        if (newStatus !== loc.status) {
+          const logType = newStatus === 'In Office' ? 'Office Check-In' : 'Geofence Breach';
+          const logMsg = newStatus === 'In Office' 
+            ? `Checked in at Main Entrance Gate (${Math.floor(distance)}m center)`
+            : `Crossed outer boundary of Office Geofence Zone (${Math.floor(distance)}m center)`;
+
+          telemetryLogs.unshift({
+            id: `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            employeeId: loc.employeeId,
+            name: loc.name,
+            type: logType,
+            message: logMsg,
+            lat: newLat,
+            lng: newLng,
+            timestamp: new Date().toISOString(),
+          });
+
+          // Cap logs size to prevent memory leaks
+          if (telemetryLogs.length > 50) {
+            telemetryLogs = telemetryLogs.slice(0, 50);
+          }
+        } else if (Math.random() < 0.02) {
+          // 2% chance to log random GPS reconnection telemetry events
+          const reconnected = Math.random() < 0.5;
+          telemetryLogs.unshift({
+            id: `log-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            employeeId: loc.employeeId,
+            name: loc.name,
+            type: reconnected ? 'GPS Reconnected' : 'GPS Disconnected',
+            message: reconnected ? 'Satellite signal restored successfully' : 'GPS signal lost in tunnel',
+            lat: newLat,
+            lng: newLng,
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // Persist new telemetry state directly in the PostgreSQL database!
+        await prisma.liveLocation.update({
+          where: { id: loc.id },
+          data: {
+            lat: newLat,
+            lng: newLng,
+            status: newStatus,
+            speed: newSpeed,
+            battery: `${batteryNum}%`
+          }
+        });
+      }
+    } catch (err) {
+      console.error('[Telemetry Simulator Error]:', err);
+    }
+  }, 7000); // Ticks every 7 seconds
+}
+
 export const fetchLiveLocations = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
+    // Start backend telemetry simulation on first request
+    initBackendTelemetrySimulator();
+
     const locations = await prisma.liveLocation.findMany({
       orderBy: { updatedAt: 'desc' },
     });
@@ -1309,13 +1516,43 @@ export const fetchLiveLocations = async (
     res.json({
       success: true,
       count: mappedLocations.length,
-      pollIntervalSeconds: 15,
+      pollIntervalSeconds: 7,
       updatedAt: new Date().toISOString(),
       employees: mappedLocations,
     });
   } catch (error) {
     console.error('Fetch live locations error:', error);
     res.status(500).json({ success: false, message: 'Failed to load telemetry geolocations.' });
+  }
+};
+
+export const fetchLiveLocationLogs = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    res.json({
+      success: true,
+      count: telemetryLogs.length,
+      logs: telemetryLogs
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to load telemetry geofence logs.' });
+  }
+};
+
+export const clearLiveLocationLogs = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    telemetryLogs = [];
+    res.json({
+      success: true,
+      message: 'Telemetry geofence logs cleared successfully.'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to clear logs.' });
   }
 };
 
@@ -1537,10 +1774,16 @@ export const updateAdminTask = async (
   }
 
   try {
-    const updateData: any = {};
+    const updateData: Prisma.TaskUpdateInput = {};
     if (title) updateData.title = title;
     if (description) updateData.description = description;
-    if (assigneeId) updateData.assignedToId = parseInt(assigneeId, 10);
+    if (assigneeId) {
+      updateData.assignedTo = {
+        connect: {
+          id: parseInt(assigneeId, 10),
+        },
+      };
+    }
     if (projectName) updateData.projectName = projectName;
     if (deadline) updateData.dueDate = new Date(deadline);
     if (priority) updateData.priority = priority.toUpperCase();
@@ -1633,3 +1876,233 @@ export const createAdminLeaveRequest = async (
     res.status(500).json({ success: false, message: 'Failed to submit leave request.' });
   }
 };
+
+// ==========================================
+// 9. Subscription Management
+// ==========================================
+
+export const fetchSubscriptions = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const offices = await prisma.office.findMany({
+      include: {
+        _count: {
+          select: { employees: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Fetch pricing from DB so amounts are always up to date
+    const pricingPlans = await prisma.pricingPlan.findMany();
+    const getPriceForPlan = (planName: string, cycle: string): number => {
+      const p = pricingPlans.find(pl => pl.name.toLowerCase() === planName.toLowerCase());
+      if (p) return cycle === 'yearly' ? p.yearlyPrice : p.monthlyPrice;
+      // Hardcoded fallbacks in case DB is empty
+      if (planName.toLowerCase() === 'enterprise') return cycle === 'yearly' ? 124000 : 12400;
+      if (planName.toLowerCase() === 'pro') return cycle === 'yearly' ? 45000 : 4500;
+      return cycle === 'yearly' ? 12000 : 1200;
+    };
+
+    const subscriptions = offices.map((off) => {
+      const plan = off.subscriptionPlan;
+      const amountVal = getPriceForPlan(plan, off.billingCycle);
+
+      return {
+        id: off.id.toString(),
+        invoiceId: `INV-2026-${(100 + off.id).toString().substring(1)}`,
+        company: off.name,
+        plan,
+        amount: `₹${amountVal.toLocaleString('en-IN')}`,
+        status: off.invoiceStatus,
+        date: off.createdAt.toISOString(),
+        activeSeats: off._count.employees,
+        billingCycle: off.billingCycle,
+        isActive: off.isActive,
+        joiningDate: off.createdAt.toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }),
+      };
+    });
+
+    res.json({
+      success: true,
+      subscriptions,
+    });
+  } catch (error) {
+    console.error('Fetch subscriptions error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve subscriptions.' });
+  }
+};
+
+export const updateSubscription = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { officeId } = req.params;
+  const officeIdInt = parseInt(officeId as string, 10);
+
+  if (isNaN(officeIdInt)) {
+    res.status(400).json({ success: false, message: 'Invalid Office/Company ID.' });
+    return;
+  }
+
+  const { plan, billingCycle, invoiceStatus } = req.body;
+
+  try {
+    const existingOffice = await prisma.office.findUnique({
+      where: { id: officeIdInt },
+    });
+
+    if (!existingOffice) {
+      res.status(404).json({ success: false, message: 'Company not found.' });
+      return;
+    }
+
+    const updatedOffice = await prisma.office.update({
+      where: { id: officeIdInt },
+      data: {
+        subscriptionPlan: plan !== undefined ? plan : existingOffice.subscriptionPlan,
+        billingCycle: billingCycle !== undefined ? billingCycle : existingOffice.billingCycle,
+        invoiceStatus: invoiceStatus !== undefined ? invoiceStatus : existingOffice.invoiceStatus,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Subscription updated successfully!',
+      subscription: {
+        id: updatedOffice.id.toString(),
+        company: updatedOffice.name,
+        plan: updatedOffice.subscriptionPlan,
+        billingCycle: updatedOffice.billingCycle,
+        invoiceStatus: updatedOffice.invoiceStatus,
+      },
+    });
+  } catch (error) {
+    console.error('Update subscription error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update subscription parameters.' });
+  }
+};
+
+// ==========================================
+// 10. Pricing Plan Management (Super Admin)
+// ==========================================
+
+export const fetchPricingPlans = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const plans = await prisma.pricingPlan.findMany({
+      orderBy: { id: 'asc' },
+    });
+
+    // If no plans seeded yet, return defaults
+    if (plans.length === 0) {
+      res.json({
+        success: true,
+        pricingPlans: [
+          { id: 1, name: 'Basic', monthlyPrice: 1200, yearlyPrice: 12000, seatsLabel: 'Up to 50 active seats', description: 'Essential features for growing startups.', features: ['Standard dashboard analytics', 'Up to 5 geofences', 'Email support', '1-year logs retention'] },
+          { id: 2, name: 'Pro', monthlyPrice: 4500, yearlyPrice: 45000, seatsLabel: 'Up to 250 active seats', description: 'Advanced controls for professional enterprises.', features: ['Real-time live location tracking', 'Unlimited geofencing alerts', '24/7 priority support', 'Custom report building', 'SSO & Multi-admin access'] },
+          { id: 3, name: 'Enterprise', monthlyPrice: 12400, yearlyPrice: 124000, seatsLabel: 'Unlimited seats & servers', description: 'State-of-the-art power for global organizations.', features: ['Dedicated account architect', 'Custom backend API pipelines', 'Tailored hardware integrations', 'Unlimited logs & backups', 'Whiteglove data onboarding'] },
+        ],
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      pricingPlans: plans.map(p => ({
+        id: p.id,
+        name: p.name,
+        monthlyPrice: p.monthlyPrice,
+        yearlyPrice: p.yearlyPrice,
+        seatsLabel: p.seatsLabel,
+        description: p.description,
+        features: p.features,
+        updatedAt: p.updatedAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error('Fetch pricing plans error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve pricing plans.' });
+  }
+};
+
+export const updatePricingPlan = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const planId = parseInt(id as string, 10);
+
+  if (isNaN(planId)) {
+    res.status(400).json({ success: false, message: 'Invalid pricing plan ID.' });
+    return;
+  }
+
+  // Only super admin can modify pricing
+  if (req.user?.role !== 'SUPER_ADMIN' && req.user?.role !== 'PLATFORM_ADMIN') {
+    res.status(403).json({ success: false, message: 'Only Super Admins can modify pricing plans.' });
+    return;
+  }
+
+  const { monthlyPrice, yearlyPrice, seatsLabel, description, features } = req.body;
+
+  // Validate pricing values
+  const monthly = monthlyPrice !== undefined ? parseFloat(monthlyPrice) : undefined;
+  const yearly = yearlyPrice !== undefined ? parseFloat(yearlyPrice) : undefined;
+
+  if (monthly !== undefined && (isNaN(monthly) || monthly < 0)) {
+    res.status(400).json({ success: false, message: 'Monthly price must be a non-negative number.' });
+    return;
+  }
+  if (yearly !== undefined && (isNaN(yearly) || yearly < 0)) {
+    res.status(400).json({ success: false, message: 'Yearly price must be a non-negative number.' });
+    return;
+  }
+
+  try {
+    const existingPlan = await prisma.pricingPlan.findUnique({ where: { id: planId } });
+
+    if (!existingPlan) {
+      res.status(404).json({ success: false, message: 'Pricing plan not found.' });
+      return;
+    }
+
+    const updatedPlan = await prisma.pricingPlan.update({
+      where: { id: planId },
+      data: {
+        monthlyPrice: monthly !== undefined ? monthly : existingPlan.monthlyPrice,
+        yearlyPrice: yearly !== undefined ? yearly : existingPlan.yearlyPrice,
+        seatsLabel: seatsLabel !== undefined ? seatsLabel.trim() : existingPlan.seatsLabel,
+        description: description !== undefined ? description.trim() : existingPlan.description,
+        features: features !== undefined ? features : existingPlan.features,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `${updatedPlan.name} pricing updated successfully!`,
+      pricingPlan: {
+        id: updatedPlan.id,
+        name: updatedPlan.name,
+        monthlyPrice: updatedPlan.monthlyPrice,
+        yearlyPrice: updatedPlan.yearlyPrice,
+        seatsLabel: updatedPlan.seatsLabel,
+        description: updatedPlan.description,
+        features: updatedPlan.features,
+        updatedAt: updatedPlan.updatedAt.toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Update pricing plan error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update pricing plan.' });
+  }
+};
+

@@ -22,6 +22,8 @@ import {
   uploadAdminAvatar,
   removeAdminAvatar,
   fetchLiveLocations,
+  fetchLiveLocationLogs,
+  clearLiveLocationLogs,
   fetchAdminLeaves,
   updateAdminLeaveStatus,
   fetchAdminLeaveBalances,
@@ -30,6 +32,10 @@ import {
   createAdminTask,
   updateAdminTask,
   deleteAdminTask,
+  fetchSubscriptions,
+  updateSubscription,
+  fetchPricingPlans,
+  updatePricingPlan,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -76,8 +82,18 @@ router.delete('/profile/avatar', removeAdminAvatar);
 router.get('/dashboard/stats', fetchDashboardStats);
 router.get('/companies/stats', fetchCompanyStats); // Super Admin specific info
 
+// Subscriptions
+router.get('/subscriptions', fetchSubscriptions);
+router.put('/subscriptions/:officeId', updateSubscription);
+
+// Pricing Plans (Super Admin)
+router.get('/pricing-plans', fetchPricingPlans);
+router.put('/pricing-plans/:id', updatePricingPlan);
+
 // Telemetry Location Tracking
 router.get('/location/live', fetchLiveLocations);
+router.get('/location/logs', fetchLiveLocationLogs);
+router.post('/location/logs/clear', clearLiveLocationLogs);
 
 // Leave Management
 router.get('/leaves', fetchAdminLeaves);

@@ -28,6 +28,7 @@ async function main() {
   await prisma.department.deleteMany({});
   await prisma.office.deleteMany({});
   await prisma.profile.deleteMany({});
+  await prisma.pricingPlan.deleteMany({});
   await prisma.user.deleteMany({});
 
   // 2. Create Departments
@@ -54,6 +55,9 @@ async function main() {
       idealRadiusMeters: 50,
       maxPunchRadiusMeters: 100,
       isActive: true,
+      subscriptionPlan: 'Enterprise',
+      billingCycle: 'yearly',
+      invoiceStatus: 'Paid',
     },
   });
 
@@ -67,6 +71,9 @@ async function main() {
       idealRadiusMeters: 50,
       maxPunchRadiusMeters: 100,
       isActive: true,
+      subscriptionPlan: 'Pro',
+      billingCycle: 'monthly',
+      invoiceStatus: 'Paid',
     },
   });
 
@@ -478,6 +485,36 @@ async function main() {
         category: 'BENEFITS',
         publishedBy: 'Priya Sharma',
         createdAt: new Date(new Date().setDate(now.getDate() - 4)),
+      },
+    ],
+  });
+
+  // 14. Create Default Pricing Plans
+  await prisma.pricingPlan.createMany({
+    data: [
+      {
+        name: 'Basic',
+        monthlyPrice: 1200.0,
+        yearlyPrice: 12000.0,
+        seatsLabel: 'Up to 50 active seats',
+        description: 'Essential features for growing startups.',
+        features: ['Standard dashboard analytics', 'Up to 5 geofences', 'Email support', '1-year logs retention'],
+      },
+      {
+        name: 'Pro',
+        monthlyPrice: 4500.0,
+        yearlyPrice: 45000.0,
+        seatsLabel: 'Up to 250 active seats',
+        description: 'Advanced controls for professional enterprises.',
+        features: ['Real-time live location tracking', 'Unlimited geofencing alerts', '24/7 priority support', 'Custom report building', 'SSO & Multi-admin access'],
+      },
+      {
+        name: 'Enterprise',
+        monthlyPrice: 12400.0,
+        yearlyPrice: 124000.0,
+        seatsLabel: 'Unlimited seats & servers',
+        description: 'State-of-the-art power for global organizations.',
+        features: ['Dedicated account architect', 'Custom backend API pipelines', 'Tailored hardware integrations', 'Unlimited logs & backups', 'Whiteglove data onboarding'],
       },
     ],
   });
