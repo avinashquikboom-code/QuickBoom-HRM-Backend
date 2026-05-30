@@ -277,3 +277,18 @@ model UserPermission {
   permissions Json
   updatedAt   DateTime @updatedAt
 }
+
+model SystemSetting {
+  id                 Int      @id @default(1)
+  platformName       String   @default("Super HRM")
+  supportEmail       String   @default("admin@hrm.com")
+  currency           String   @default("INR")
+  locale             String   @default("en")
+  twoFactor          Boolean  @default(true)
+  sessionLock        Boolean  @default(true)
+  auditLogs          Boolean  @default(true)
+  ipRestriction      Boolean  @default(false)
+  notifications      Json?    // Store email/push notification preferences
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
