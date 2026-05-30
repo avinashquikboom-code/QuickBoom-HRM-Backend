@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import { prisma } from '../utils/db';
 import { signToken } from '../utils/jwt';
 import { Role } from '@prisma/client';
+import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
@@ -232,5 +233,36 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       success: false,
       message: 'Failed to register user.',
     });
+  }
+};
+
+// Register FCM device token for the current user
+export const registerFcmToken = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { token } = req.body;
+
+    if (!userId || !token) {
+      return res.status(400).json({ error: 'User ID and FCM token are required' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Add token if it doesn't already exist
+    const currentTokens = user.fcmTokens || [];
+    if (!currentTokens.includes(token)) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { fcmTokens: { push: token } }
+      });
+    }
+
+    res.json({ success: true, message: 'FCM Token registered successfully' });
+  } catch (error) {
+    console.error('Error registering FCM token:', error);
+    res.status(500).json({ error: 'Server error registering FCM token' });
   }
 };

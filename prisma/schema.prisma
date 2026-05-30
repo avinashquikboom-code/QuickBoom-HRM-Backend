@@ -29,6 +29,8 @@ model User {
   employee       Employee?
   comments       Comment[]
   assignedTasks  Task[]          @relation("AssignedByTasks")
+  userPermission UserPermission?
+  fcmTokens      String[]        @default([])
 }
 
 model Profile {
@@ -259,4 +261,19 @@ model PricingPlan {
   features     String[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model RolePermission {
+  id          Int      @id @default(autoincrement())
+  role        Role     @unique
+  permissions Json
+  updatedAt   DateTime @updatedAt
+}
+
+model UserPermission {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissions Json
+  updatedAt   DateTime @updatedAt
 }

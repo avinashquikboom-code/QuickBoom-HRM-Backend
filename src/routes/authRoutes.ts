@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, register } from '../controllers/authController';
+import { login, register, registerFcmToken } from '../controllers/authController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 
@@ -15,5 +15,7 @@ router.post(
   roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']),
   register
 );
+
+router.post('/fcm-token', authMiddleware, registerFcmToken);
 
 export default router;

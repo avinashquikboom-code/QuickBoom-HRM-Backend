@@ -975,24 +975,46 @@ export const fetchCompanyStats = async (
     // 3. Dynamic Growth History (grouping by cumulative last 6 months)
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const growthHistory = [];
+    const revenueHistory = [];
     
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
       
-      const companiesCount = await prisma.office.count({
+      const activeOffices = await prisma.office.findMany({
         where: { createdAt: { lte: endOfMonth } }
       });
+      const companiesCount = activeOffices.length;
       
       const seatsCount = await prisma.employee.count({
         where: { createdAt: { lte: endOfMonth } }
       });
 
-      // Add a fallback so the chart looks nice and fully populated
+      // Growth History
       growthHistory.push({
         name: monthNames[d.getMonth()],
-        companies: Math.max(companiesCount, 1) + (5 - i),
-        seats: Math.max(seatsCount, 2) * 200 + (6 - i) * 500
+        companies: companiesCount,
+        seats: seatsCount
+      });
+
+      // Generate dynamic revenue history based on exact pricing plans
+      let monthMRR = 0;
+      activeOffices.forEach(off => {
+        const planPrices = getPlanPrices(off.subscriptionPlan);
+        if (off.billingCycle === 'yearly') {
+          monthMRR += planPrices.yearly / 12;
+        } else {
+          monthMRR += planPrices.monthly;
+        }
+      });
+      
+      // Assume approx 5% natural churn or uncollected revenue variance
+      const churnVal = Math.round(monthMRR * 0.05);
+
+      revenueHistory.push({
+        name: monthNames[d.getMonth()],
+        value: monthMRR,
+        churn: churnVal
       });
     }
 
@@ -1090,6 +1112,7 @@ export const fetchCompanyStats = async (
       planMix,
       recentInvoices,
       growthHistory,
+      revenueHistory,
       recentActivity
     });
   } catch (error) {
@@ -1791,13 +1814,7 @@ export const updateAdminTask = async (
     const updateData: Prisma.TaskUpdateInput = {};
     if (title) updateData.title = title;
     if (description) updateData.description = description;
-    if (assigneeId) {
-      updateData.assignedTo = {
-        connect: {
-          id: parseInt(assigneeId, 10),
-        },
-      };
-    }
+    if (assigneeId) updateData.assignedTo = { connect: { id: parseInt(assigneeId, 10) } };
     if (projectName) updateData.projectName = projectName;
     if (deadline) updateData.dueDate = new Date(deadline);
     if (priority) updateData.priority = priority.toUpperCase();
