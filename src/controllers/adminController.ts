@@ -612,11 +612,32 @@ export const fetchTodayAttendance = async (
         : null,
     }));
 
+    // Compute status distribution for pie chart
+    const statusCounts: Record<string, number> = {};
+    mappedRecords.forEach((rec) => {
+      const s = rec.status || 'UNKNOWN';
+      statusCounts[s] = (statusCounts[s] || 0) + 1;
+    });
+    const statusColors: Record<string, string> = {
+      PRESENT: '#3BA38B',
+      LATE: '#F4B860',
+      ABSENT: '#EF4444',
+      HALF_DAY: '#8B5CF6',
+      REMOTE: '#3B82F6',
+      UNKNOWN: '#64748B',
+    };
+    const attendanceDistribution = Object.entries(statusCounts).map(([name, value]) => ({
+      name,
+      value,
+      color: statusColors[name] || '#64748B',
+    }));
+
     res.json({
       success: true,
       date: todayStr,
       count: mappedRecords.length,
       attendances: mappedRecords,
+      attendanceDistribution,
     });
   } catch (error) {
     console.error('Fetch today attendance error:', error);
