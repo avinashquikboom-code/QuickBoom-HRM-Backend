@@ -2452,4 +2452,181 @@ export const generateAdminReport = async (
   }
 };
 
+export const fetchPayrollReportDetails = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { month } = req.query;
+  const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+
+  try {
+    const employees = await prisma.employee.findMany({
+      include: { office: true, department: true },
+    });
+
+    const slips = employees.map((emp) => {
+      const isSenior = emp.designation?.toLowerCase().includes('senior') || 
+                       emp.designation?.toLowerCase().includes('lead') || 
+                       emp.designation?.toLowerCase().includes('manager');
+      const baseSalary = isSenior ? 85000 : 45000;
+      const allowance = Math.round(baseSalary * 0.15);
+      const deductions = Math.round(baseSalary * 0.10);
+      const netSalary = baseSalary + allowance - deductions;
+
+      return {
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        name: `${emp.firstName} ${emp.lastName}`,
+        designation: emp.designation || 'Associate',
+        department: emp.department?.name || 'Operations',
+        office: emp.office?.name || 'Headquarters',
+        baseSalary,
+        allowance,
+        deductions,
+        netSalary,
+        status: approvedSalarySlips.has(emp.id) ? 'Approved' : 'Pending Approval',
+      };
+    });
+
+    const totalEmployees = slips.length;
+    const totalGrossVolume = slips.reduce((sum, item) => sum + item.baseSalary + item.allowance, 0);
+    const totalDeductions = slips.reduce((sum, item) => sum + item.deductions, 0);
+    const totalNetVolume = slips.reduce((sum, item) => sum + item.netSalary, 0);
+
+    const deptSummaryMap: Record<string, { count: number; totalGross: number; totalNet: number }> = {};
+    slips.forEach((item) => {
+      const dept = item.department;
+      if (!deptSummaryMap[dept]) {
+        deptSummaryMap[dept] = { count: 0, totalGross: 0, totalNet: 0 };
+      }
+      deptSummaryMap[dept].count += 1;
+      deptSummaryMap[dept].totalGross += item.baseSalary + item.allowance;
+      deptSummaryMap[dept].totalNet += item.netSalary;
+    });
+
+    const departmentBreakdown = Object.entries(deptSummaryMap).map(([name, data]) => ({
+      name,
+      ...data,
+    }));
+
+    res.json({
+      success: true,
+      month: targetMonth,
+      summary: {
+        totalEmployees,
+        totalGrossVolume,
+        totalDeductions,
+        totalNetVolume,
+      },
+      departmentBreakdown,
+      details: slips,
+    });
+  } catch (error) {
+    console.error('Fetch payroll report details error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve payroll report details.' });
+  }
+};
+
+export const fetchAttendanceReportDetails = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { month } = req.query;
+  const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+
+  try {
+    const employees = await prisma.employee.findMany({
+      include: { office: true, department: true },
+    });
+
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        date: {
+          startsWith: targetMonth,
+        },
+      },
+    });
+
+    const attendanceByEmployee: Record<number, typeof attendances> = {};
+    attendances.forEach((att) => {
+      if (!attendanceByEmployee[att.employeeId]) {
+        attendanceByEmployee[att.employeeId] = [];
+      }
+      attendanceByEmployee[att.employeeId].push(att);
+    });
+
+    const details = employees.map((emp) => {
+      const empAtts = attendanceByEmployee[emp.id] || [];
+      const present = empAtts.filter((a) => a.status === 'PRESENT').length;
+      const late = empAtts.filter((a) => a.status === 'LATE').length;
+      const absent = empAtts.filter((a) => a.status === 'ABSENT').length;
+      const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+      const leave = empAtts.filter((a) => a.status === 'LEAVE').length;
+      const totalDays = empAtts.length;
+      const attendanceRate = totalDays > 0 
+        ? Math.round(((present + late + halfDay * 0.5) / totalDays) * 100)
+        : 100;
+
+      return {
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        name: `${emp.firstName} ${emp.lastName}`,
+        designation: emp.designation || 'Associate',
+        department: emp.department?.name || 'Operations',
+        office: emp.office?.name || 'Headquarters',
+        present,
+        late,
+        absent,
+        halfDay,
+        leave,
+        totalDays,
+        attendanceRate,
+      };
+    });
+
+    const dateCounts: Record<string, { present: number; late: number; absent: number }> = {};
+    attendances.forEach((att) => {
+      const dateStr = att.date;
+      if (!dateCounts[dateStr]) {
+        dateCounts[dateStr] = { present: 0, late: 0, absent: 0 };
+      }
+      if (att.status === 'PRESENT') dateCounts[dateStr].present += 1;
+      else if (att.status === 'LATE') dateCounts[dateStr].late += 1;
+      else if (att.status === 'ABSENT') dateCounts[dateStr].absent += 1;
+    });
+
+    const trend = Object.entries(dateCounts).map(([date, counts]) => ({
+      date,
+      day: new Date(date).toLocaleDateString('en-US', { day: '2-digit', month: 'short' }),
+      ...counts,
+    })).sort((a, b) => a.date.localeCompare(b.date));
+
+    const totalPresent = details.reduce((sum, item) => sum + item.present, 0);
+    const totalLate = details.reduce((sum, item) => sum + item.late, 0);
+    const totalAbsent = details.reduce((sum, item) => sum + item.absent, 0);
+    const totalLeave = details.reduce((sum, item) => sum + item.leave, 0);
+    const avgAttendanceRate = details.length > 0 
+      ? Math.round(details.reduce((sum, item) => sum + item.attendanceRate, 0) / details.length)
+      : 100;
+
+    res.json({
+      success: true,
+      month: targetMonth,
+      summary: {
+        totalPresent,
+        totalLate,
+        totalAbsent,
+        totalLeave,
+        avgAttendanceRate,
+      },
+      trend,
+      details,
+    });
+  } catch (error) {
+    console.error('Fetch attendance report details error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve attendance report details.' });
+  }
+};
+
+
 

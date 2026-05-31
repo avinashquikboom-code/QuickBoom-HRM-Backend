@@ -45,6 +45,8 @@ import {
   fetchAnalyticsOverview,
   fetchAdminReports,
   generateAdminReport,
+  fetchPayrollReportDetails,
+  fetchAttendanceReportDetails,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -130,5 +132,7 @@ router.get('/analytics/overview', fetchAnalyticsOverview);
 // Reports Operations
 router.get('/reports', fetchAdminReports);
 router.post('/reports/generate', generateAdminReport);
+router.get('/reports/payroll-details', fetchPayrollReportDetails);
+router.get('/reports/attendance-details', fetchAttendanceReportDetails);
 
 export default router;
