@@ -1,0 +1,38 @@
+# Render Blueprint for Quickboom Backend
+# 1. Push code to GitHub
+# 2. In Render Dashboard → Blueprints → New Blueprint Instance → Paste this file
+# 3. Render will create the web service + PostgreSQL database automatically
+
+services:
+  - type: web
+    name: quickboom-backend
+    runtime: docker
+    repo: https://github.com/YOUR_USERNAME/YOUR_REPO
+    branch: main
+    rootDir: ./quickboom-backend
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: quickboom-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+    healthCheckPath: /
+    autoDeploy: true
+
+databases:
+  - name: quickboom-db
+    databaseName: quickboom
+    user: quickboom
+    plan: starter
+    ipAllowList: []
+

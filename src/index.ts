@@ -12,7 +12,7 @@ import hrRoutes from './routes/hrRoutes';
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = parseInt(process.env.PORT || '3000', 10);
 
 app.use(cors());
 // Configure larger limit for base64 profile avatar images
@@ -28,6 +28,8 @@ app.use('/api/permissions', permissionRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hr', hrRoutes);
 
-app.listen(port, () => {
-  console.log(`Server is running at http://localhost:${port}`);
+const host = process.env.HOST || '0.0.0.0';
+
+app.listen(port, host, () => {
+  console.log(`Server is running at http://${host}:${port}`);
 });
