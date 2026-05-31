@@ -260,6 +260,8 @@ export const createAndAssignEmployee = async (
 ): Promise<void> => {
   const { userId, officeId } = req.body;
 
+  console.log('[createAndAssignEmployee] Received:', { userId, officeId, body: req.body });
+
   if (!userId) {
     res.status(400).json({ success: false, message: 'userId is required.' });
     return;
@@ -283,6 +285,8 @@ export const createAndAssignEmployee = async (
       include: { employee: true },
     });
 
+    console.log('[createAndAssignEmployee] User found:', user ? { id: user.id, email: user.email, hasEmployee: !!user.employee } : null);
+
     if (!user) {
       res.status(404).json({ success: false, message: 'User not found.' });
       return;
@@ -305,6 +309,8 @@ export const createAndAssignEmployee = async (
       const emailName = user.email.split('@')[0];
       const fallbackName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
 
+      console.log('[createAndAssignEmployee] Creating employee with code:', employeeCode);
+
       resultEmployee = await prisma.employee.create({
         data: {
           userId: user.id,
@@ -318,6 +324,7 @@ export const createAndAssignEmployee = async (
         include: { office: true, user: true },
       });
     } else {
+      console.log('[createAndAssignEmployee] Updating existing employee:', user.employee.id);
       // Update existing employee's office assignment
       resultEmployee = await prisma.employee.update({
         where: { id: user.employee.id },
