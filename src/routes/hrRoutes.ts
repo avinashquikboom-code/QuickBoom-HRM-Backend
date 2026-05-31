@@ -16,6 +16,8 @@ import {
   rejectLeave,
   fetchHRTasks,
   createHRTask,
+  fetchHRPayrollStats,
+  fetchHRPayrollRuns,
 } from '../controllers/hrController';
 
 const router = express.Router();
@@ -43,5 +45,9 @@ router.post('/leaves/:id/reject', rejectLeave);
 // Task Management
 router.get('/tasks', fetchHRTasks);
 router.post('/tasks', createHRTask);
+
+// Payroll Management
+router.get('/payroll/stats', fetchHRPayrollStats);
+router.get('/payroll/runs', fetchHRPayrollRuns);
 
 export default router;
