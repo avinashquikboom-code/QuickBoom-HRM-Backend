@@ -2853,5 +2853,3 @@ export const fetchAttendanceReportDetails = async (
   }
 };
 
-
-
