@@ -217,6 +217,26 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       },
     });
 
+    // Create Employee record for EMPLOYEE and HR roles so they appear in employee directory
+    if (dbRole === Role.EMPLOYEE || dbRole === Role.HR || dbRole === Role.PLATFORM_ADMIN) {
+      try {
+        const employeeCode = `EMP${String(newUser.id).padStart(4, '0')}`;
+        await prisma.employee.create({
+          data: {
+            userId: newUser.id,
+            employeeCode,
+            firstName: fallbackName,
+            lastName: '',
+            designation: dbRole === Role.EMPLOYEE ? 'Employee' : 'HR Administrator',
+            status: 'active',
+          },
+        });
+      } catch (empError) {
+        console.error('Failed to create employee record for new user:', empError);
+        // Non-fatal: user is still registered even if employee creation fails
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: 'User registered successfully!',

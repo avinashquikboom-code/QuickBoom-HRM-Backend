@@ -179,6 +179,80 @@ export const fetchEmployees = async (
   }
 };
 
+// Create employee record for an existing user
+export const createEmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { userId, firstName, lastName, designation, status, officeId, departmentId } = req.body;
+
+  if (!userId || !firstName) {
+    res.status(400).json({ success: false, message: 'userId and firstName are required.' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({ where: { id: parseInt(userId, 10) } });
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    const existingEmployee = await prisma.employee.findUnique({
+      where: { userId: parseInt(userId, 10) },
+    });
+    if (existingEmployee) {
+      res.status(400).json({ success: false, message: 'Employee record already exists for this user.' });
+      return;
+    }
+
+    const employeeCode = `EMP${String(user.id).padStart(4, '0')}`;
+    const newEmployee = await prisma.employee.create({
+      data: {
+        userId: user.id,
+        employeeCode,
+        firstName: firstName.trim(),
+        lastName: (lastName || '').trim(),
+        designation: designation || 'Employee',
+        status: status || 'active',
+        officeId: officeId ? parseInt(officeId, 10) : null,
+        departmentId: departmentId ? parseInt(departmentId, 10) : null,
+      },
+      include: {
+        office: true,
+        user: true,
+        department: true,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Employee record created successfully.',
+      employee: {
+        id: newEmployee.id.toString(),
+        employeeCode: newEmployee.employeeCode,
+        firstName: newEmployee.firstName,
+        lastName: newEmployee.lastName,
+        designation: newEmployee.designation,
+        status: newEmployee.status,
+        officeId: newEmployee.officeId?.toString() || null,
+        office: newEmployee.office
+          ? { id: newEmployee.office.id.toString(), name: newEmployee.office.name }
+          : null,
+        user: newEmployee.user
+          ? { id: newEmployee.user.id, email: newEmployee.user.email, role: newEmployee.user.role, isActive: newEmployee.user.isActive }
+          : null,
+        department: newEmployee.department
+          ? { id: newEmployee.department.id.toString(), name: newEmployee.department.name, code: newEmployee.department.code }
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error('Create employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create employee record.' });
+  }
+};
+
 // ==========================================
 // 3. Office Management CRUD
 // ==========================================

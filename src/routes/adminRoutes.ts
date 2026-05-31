@@ -5,6 +5,7 @@ import {
   fetchPlatformUsers,
   updateUserStatus,
   fetchEmployees,
+  createEmployee,
   fetchOffices,
   fetchOfficeById,
   createOffice,
