@@ -6,6 +6,7 @@ import {
   updateUserStatus,
   fetchEmployees,
   createEmployee,
+  createAndAssignEmployee,
   fetchOffices,
   fetchOfficeById,
   createOffice,
@@ -76,6 +77,7 @@ router.delete('/offices/:id', deleteOffice);
 
 // Employee Geofence Assignment
 router.put('/offices/assign-employee/:employeeId', assignEmployeeToOffice);
+router.post('/employees/assign', createAndAssignEmployee);
 
 // Attendance
 router.get('/attendance/today', fetchTodayAttendance);

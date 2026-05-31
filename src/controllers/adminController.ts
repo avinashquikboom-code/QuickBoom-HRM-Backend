@@ -253,6 +253,104 @@ export const createEmployee = async (
   }
 };
 
+// Create employee record (if missing) and assign to office in one call
+export const createAndAssignEmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { userId, officeId } = req.body;
+
+  if (!userId) {
+    res.status(400).json({ success: false, message: 'userId is required.' });
+    return;
+  }
+
+  const userIdInt = parseInt(userId, 10);
+  if (isNaN(userIdInt)) {
+    res.status(400).json({ success: false, message: 'Invalid userId.' });
+    return;
+  }
+
+  const offIdInt = officeId ? parseInt(officeId, 10) : null;
+  if (officeId && isNaN(offIdInt as number)) {
+    res.status(400).json({ success: false, message: 'Invalid officeId.' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userIdInt },
+      include: { employee: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    if (offIdInt !== null) {
+      const office = await prisma.office.findUnique({
+        where: { id: offIdInt },
+      });
+      if (!office) {
+        res.status(404).json({ success: false, message: 'Specified office not found.' });
+        return;
+      }
+    }
+
+    // Auto-create employee record if user doesn't have one
+    let resultEmployee;
+    if (!user.employee) {
+      const employeeCode = `EMP${String(user.id).padStart(4, '0')}`;
+      const emailName = user.email.split('@')[0];
+      const fallbackName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
+
+      resultEmployee = await prisma.employee.create({
+        data: {
+          userId: user.id,
+          employeeCode,
+          firstName: fallbackName,
+          lastName: '',
+          designation: user.role === 'EMPLOYEE' ? 'Employee' : 'HR Administrator',
+          status: 'active',
+          officeId: offIdInt,
+        },
+        include: { office: true, user: true },
+      });
+    } else {
+      // Update existing employee's office assignment
+      resultEmployee = await prisma.employee.update({
+        where: { id: user.employee.id },
+        data: { officeId: offIdInt },
+        include: { office: true, user: true },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: offIdInt
+        ? 'Employee assigned to office successfully.'
+        : 'Employee unassigned from office successfully.',
+      employee: {
+        id: resultEmployee.id.toString(),
+        employeeCode: resultEmployee.employeeCode,
+        firstName: resultEmployee.firstName,
+        lastName: resultEmployee.lastName,
+        officeId: resultEmployee.officeId?.toString() || null,
+        office: resultEmployee.office
+          ? { id: resultEmployee.office.id.toString(), name: resultEmployee.office.name }
+          : null,
+        user: resultEmployee.user
+          ? { id: resultEmployee.user.id, email: resultEmployee.user.email, role: resultEmployee.user.role, isActive: resultEmployee.user.isActive }
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error('Create and assign employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to assign employee to office.' });
+  }
+};
+
 // ==========================================
 // 3. Office Management CRUD
 // ==========================================
