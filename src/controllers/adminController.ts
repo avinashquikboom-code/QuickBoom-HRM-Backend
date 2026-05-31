@@ -1002,9 +1002,13 @@ export const fetchDashboardStats = async (
       const plan = off.subscriptionPlan || 'Basic';
       planCounts[plan] = (planCounts[plan] || 0) + 1;
     });
-    const planColors: Record<string, string> = {};
+    const planColors: Record<string, string> = {
+      Enterprise: '#6366F1',
+      Pro: '#F59E0B',
+      Basic: '#10B981',
+    };
     pricingPlans.forEach((p) => {
-      planColors[p.name] = p.color || '#3BA38B';
+      if (!planColors[p.name]) planColors[p.name] = '#3BA38B';
     });
     const subscriptionDistribution = Object.entries(planCounts).map(
       ([name, value]) => ({

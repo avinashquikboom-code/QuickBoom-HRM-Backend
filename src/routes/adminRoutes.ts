@@ -65,6 +65,7 @@ router.put('/users/:id/status', updateUserStatus);
 
 // Employees
 router.get('/employees', fetchEmployees);
+router.post('/employees', createEmployee);
 
 // Offices CRUD
 router.get('/offices', fetchOffices);
