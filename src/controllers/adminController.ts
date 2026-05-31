@@ -899,6 +899,26 @@ export const fetchDashboardStats = async (
       },
     });
 
+    // Subscription plan distribution
+    const offices = await prisma.office.findMany();
+    const pricingPlans = await prisma.pricingPlan.findMany();
+    const planCounts: Record<string, number> = {};
+    offices.forEach((off) => {
+      const plan = off.subscriptionPlan || 'Basic';
+      planCounts[plan] = (planCounts[plan] || 0) + 1;
+    });
+    const planColors: Record<string, string> = {};
+    pricingPlans.forEach((p) => {
+      planColors[p.name] = p.color || '#3BA38B';
+    });
+    const subscriptionDistribution = Object.entries(planCounts).map(
+      ([name, value]) => ({
+        name,
+        value,
+        color: planColors[name] || '#64748B',
+      })
+    );
+
     res.json({
       success: true,
       data: {
@@ -906,6 +926,7 @@ export const fetchDashboardStats = async (
         presentToday,
         onLeave,
         newHires,
+        subscriptionDistribution,
       },
     });
   } catch (error) {
