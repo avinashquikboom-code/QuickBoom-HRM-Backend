@@ -412,3 +412,230 @@ export const fetchHRActivity = async (
     res.status(500).json({ success: false, message: 'Failed to load HR activity.' });
   }
 };
+
+// ==========================================
+// HR Expense Review
+// ==========================================
+
+export const fetchHRExpenses = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const expenses = await prisma.expense.findMany({
+      orderBy: { submittedOn: 'desc' },
+      include: {
+        employee: {
+          select: {
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            department: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    const mapped = expenses.map((e) => ({
+      id: e.id,
+      employeeId: e.employee.employeeCode,
+      employeeName: `${e.employee.firstName} ${e.employee.lastName}`,
+      department: e.employee.department?.name || 'General',
+      category: e.category,
+      amount: e.amount,
+      description: e.description,
+      date: e.date.toISOString(),
+      status: e.status,
+      submittedOn: e.submittedOn.toISOString(),
+      reviewedBy: e.reviewedBy,
+      reviewNote: e.reviewNote,
+      hasReceipt: e.hasReceipt,
+    }));
+
+    res.json({ success: true, expenses: mapped });
+  } catch (error) {
+    console.error('Fetch HR expenses error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load expenses.' });
+  }
+};
+
+export const approveExpense = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { reviewerName, reviewNote } = req.body;
+
+  try {
+    const expense = await prisma.expense.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'APPROVED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewNote: reviewNote || 'Approved',
+      },
+    });
+
+    res.json({ success: true, message: 'Expense approved.', expense });
+  } catch (error) {
+    console.error('Approve expense error:', error);
+    res.status(500).json({ success: false, message: 'Failed to approve expense.' });
+  }
+};
+
+export const rejectExpense = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { reviewerName, reviewNote } = req.body;
+
+  try {
+    const expense = await prisma.expense.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'REJECTED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewNote: reviewNote || 'Rejected',
+      },
+    });
+
+    res.json({ success: true, message: 'Expense rejected.', expense });
+  } catch (error) {
+    console.error('Reject expense error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reject expense.' });
+  }
+};
+
+// ==========================================
+// HR Leave Review
+// ==========================================
+
+export const approveLeave = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { reviewerName, reviewNote } = req.body;
+
+  try {
+    const leave = await prisma.leaveRequest.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'APPROVED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewNote: reviewNote || 'Approved',
+      },
+    });
+
+    res.json({ success: true, message: 'Leave approved.', leave });
+  } catch (error) {
+    console.error('Approve leave error:', error);
+    res.status(500).json({ success: false, message: 'Failed to approve leave.' });
+  }
+};
+
+export const rejectLeave = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { reviewerName, reviewNote } = req.body;
+
+  try {
+    const leave = await prisma.leaveRequest.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'REJECTED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewNote: reviewNote || 'Rejected',
+      },
+    });
+
+    res.json({ success: true, message: 'Leave rejected.', leave });
+  } catch (error) {
+    console.error('Reject leave error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reject leave.' });
+  }
+};
+
+// ==========================================
+// HR Task Management
+// ==========================================
+
+export const fetchHRTasks = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const tasks = await prisma.task.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        assignedTo: { select: { firstName: true, lastName: true, id: true } },
+        assignedBy: { select: { email: true } },
+      },
+    });
+
+    const mapped = tasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      assignedToId: t.assignedToId.toString(),
+      assignedToName: `${t.assignedTo.firstName} ${t.assignedTo.lastName}`,
+      assignedById: t.assignedById.toString(),
+      assignedByName: t.assignedBy.email,
+      projectName: t.projectName,
+      dueDate: t.dueDate.toISOString(),
+      createdAt: t.createdAt.toISOString(),
+      status: t.status,
+      priority: t.priority,
+    }));
+
+    res.json({ success: true, tasks: mapped });
+  } catch (error) {
+    console.error('Fetch HR tasks error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load tasks.' });
+  }
+};
+
+export const createHRTask = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const {
+    title,
+    description,
+    assignedToId,
+    assignedToName,
+    assignedById,
+    assignedByName,
+    projectName,
+    dueDate,
+    priority,
+  } = req.body;
+
+  if (!title || !assignedToId || !dueDate) {
+    res.status(400).json({ success: false, message: 'Title, assignedToId, and dueDate are required.' });
+    return;
+  }
+
+  try {
+    const task = await prisma.task.create({
+      data: {
+        title,
+        description: description || '',
+        assignedToId: parseInt(assignedToId, 10),
+        assignedById: req.user?.id ?? parseInt(assignedById, 10),
+        projectName: projectName || 'General',
+        dueDate: new Date(dueDate),
+        priority: (priority || 'MEDIUM').toUpperCase(),
+        status: 'TODO',
+      },
+    });
+
+    res.json({ success: true, message: 'Task created.', task });
+  } catch (error) {
+    console.error('Create HR task error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create task.' });
+  }
+};

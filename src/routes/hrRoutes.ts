@@ -9,6 +9,13 @@ import {
   fetchHREmployees,
   fetchAttendanceTrend,
   fetchHRActivity,
+  fetchHRExpenses,
+  approveExpense,
+  rejectExpense,
+  approveLeave,
+  rejectLeave,
+  fetchHRTasks,
+  createHRTask,
 } from '../controllers/hrController';
 
 const router = express.Router();
@@ -23,5 +30,18 @@ router.get('/leaves', fetchLeaveOverview);
 router.get('/employees', fetchHREmployees);
 router.get('/attendance-trend', fetchAttendanceTrend);
 router.get('/activity', fetchHRActivity);
+
+// Expense Review
+router.get('/expenses', fetchHRExpenses);
+router.post('/expenses/:id/approve', approveExpense);
+router.post('/expenses/:id/reject', rejectExpense);
+
+// Leave Review
+router.post('/leaves/:id/approve', approveLeave);
+router.post('/leaves/:id/reject', rejectLeave);
+
+// Task Management
+router.get('/tasks', fetchHRTasks);
+router.post('/tasks', createHRTask);
 
 export default router;

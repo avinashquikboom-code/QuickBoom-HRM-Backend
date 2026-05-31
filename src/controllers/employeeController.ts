@@ -55,6 +55,10 @@ export const fetchEmployeeProfile = async (
         clearanceLevel: profile.clearanceLevel,
         clearanceLabel: profile.clearanceLabel,
       },
+      user: {
+        role: employee.user?.role || 'EMPLOYEE',
+        isActive: employee.user?.isActive ?? true,
+      },
     });
   } catch (error) {
     console.error('Fetch employee profile error:', error);
