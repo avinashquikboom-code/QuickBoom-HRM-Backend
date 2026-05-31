@@ -1,7 +1,8 @@
 # Render Blueprint for Quickboom Backend
 # 1. Push code to GitHub
-# 2. In Render Dashboard → Blueprints → New Blueprint Instance → Paste this file
-# 3. Render will create the web service + PostgreSQL database automatically
+# 2. Update YOUR_USERNAME/YOUR_REPO below
+# 3. In Render Dashboard → Blueprints → New Blueprint Instance → select repo
+# 4. Set secret env vars (DATABASE_URL, JWT_SECRET, GOOGLE_MAPS_API_KEY) in dashboard
 
 services:
   - type: web
@@ -19,20 +20,13 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: DATABASE_URL
-        fromDatabase:
-          name: quickboom-db
-          property: connectionString
+        sync: false  # Set in Render dashboard: your Supabase PostgreSQL URL
       - key: JWT_SECRET
-        generateValue: true
+        sync: false  # Set in Render dashboard: openssl rand -base64 32
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false  # Set in Render dashboard: your Google Maps API key
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
-        sync: false
+        sync: false  # Optional: paste Firebase service account JSON
     healthCheckPath: /
     autoDeploy: true
-
-databases:
-  - name: quickboom-db
-    databaseName: quickboom
-    user: quickboom
-    plan: starter
-    ipAllowList: []
 
