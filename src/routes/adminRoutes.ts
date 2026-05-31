@@ -40,6 +40,8 @@ import {
   fetchPayrollStats,
   fetchPayrollRuns,
   executePayrollDisbursement,
+  fetchSalarySlips,
+  approveSalarySlip,
   fetchAnalyticsOverview,
   fetchAdminReports,
   generateAdminReport,
@@ -119,6 +121,8 @@ router.delete('/tasks/:id', deleteAdminTask);
 router.get('/payroll/stats', fetchPayrollStats);
 router.get('/payroll/runs', fetchPayrollRuns);
 router.post('/payroll/disburse', executePayrollDisbursement);
+router.get('/payroll/slips', fetchSalarySlips);
+router.post('/payroll/slips/approve', approveSalarySlip);
 
 // Analytics Operations
 router.get('/analytics/overview', fetchAnalyticsOverview);

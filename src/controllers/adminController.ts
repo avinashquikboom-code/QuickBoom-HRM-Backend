@@ -2278,6 +2278,77 @@ export const executePayrollDisbursement = async (
   }
 };
 
+// Memory store for approved salary slips
+const approvedSalarySlips = new Set<number>();
+
+export const fetchSalarySlips = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employees = await prisma.employee.findMany({
+      include: { office: true, department: true },
+    });
+
+    const slips = employees.map((emp) => {
+      const isSenior = emp.designation?.toLowerCase().includes('senior') || 
+                       emp.designation?.toLowerCase().includes('lead') || 
+                       emp.designation?.toLowerCase().includes('manager');
+      const baseSalary = isSenior ? 85000 : 45000;
+      const allowance = Math.round(baseSalary * 0.15);
+      const deductions = Math.round(baseSalary * 0.10);
+      const netSalary = baseSalary + allowance - deductions;
+
+      return {
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        firstName: emp.firstName,
+        lastName: emp.lastName,
+        name: `${emp.firstName} ${emp.lastName}`,
+        designation: emp.designation || 'Associate',
+        department: emp.department?.name || 'Operations',
+        office: emp.office?.name || 'Headquarters',
+        baseSalary,
+        allowance,
+        deductions,
+        netSalary,
+        status: approvedSalarySlips.has(emp.id) ? 'Approved' : 'Pending Approval',
+      };
+    });
+
+    res.json({
+      success: true,
+      slips,
+    });
+  } catch (error) {
+    console.error('Fetch salary slips error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve salary slips.' });
+  }
+};
+
+export const approveSalarySlip = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { employeeId } = req.body;
+    if (!employeeId) {
+      res.status(400).json({ success: false, message: 'Employee ID is required.' });
+      return;
+    }
+
+    approvedSalarySlips.add(Number(employeeId));
+
+    res.json({
+      success: true,
+      message: 'Salary slip approved and generated successfully.',
+    });
+  } catch (error) {
+    console.error('Approve salary slip error:', error);
+    res.status(500).json({ success: false, message: 'Failed to approve salary slip.' });
+  }
+};
+
 export const fetchAnalyticsOverview = async (
   req: AuthenticatedRequest,
   res: Response
