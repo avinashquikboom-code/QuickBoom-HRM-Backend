@@ -31,11 +31,7 @@ import {
   updateAdminLeaveStatus,
   fetchAdminLeaveBalances,
   createAdminLeaveRequest,
-  fetchAdminTasks,
-  createAdminTask,
-  updateAdminTask,
-  deleteAdminTask,
-  fetchSubscriptions,
+    fetchSubscriptions,
   updateSubscription,
   fetchPricingPlans,
   updatePricingPlan,
@@ -122,11 +118,6 @@ router.get('/leaves/balances', fetchAdminLeaveBalances);
 router.post('/leaves', createAdminLeaveRequest);
 router.put('/leaves/:id', updateAdminLeaveStatus);
 
-// Task Management
-router.get('/tasks', fetchAdminTasks);
-router.post('/tasks', createAdminTask);
-router.put('/tasks/:id', updateAdminTask);
-router.delete('/tasks/:id', deleteAdminTask);
 
 // Payroll Operations
 router.get('/payroll/stats', fetchPayrollStats);
