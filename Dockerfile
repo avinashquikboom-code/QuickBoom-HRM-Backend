@@ -3,16 +3,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies first (for layer caching)
-# We need all deps (including dev) because Prisma CLI is used at build & runtime
-COPY package*.json ./
-RUN npm ci
-
-# Copy prisma schema for generate + migrate
+# Copy prisma schema FIRST (postinstall in package.json runs prisma generate)
 COPY prisma ./prisma/
 
-# Generate Prisma client
-RUN npx prisma generate
+# Install dependencies (postinstall will auto-run prisma generate now)
+COPY package*.json ./
+RUN npm ci
 
 # Copy source and build
 COPY . .
