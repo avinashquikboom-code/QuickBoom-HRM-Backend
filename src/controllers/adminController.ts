@@ -2879,8 +2879,8 @@ export const fetchAdminNotifications = async (
     const mapped = notifications.map((n) => ({
       id: n.id.toString(),
       title: n.title,
-      message: n.message,
-      type: n.type,
+      message: n.body,
+      type: n.category,
       isRead: n.isRead,
       createdAt: n.createdAt.toISOString(),
       employee: n.employee ? {
