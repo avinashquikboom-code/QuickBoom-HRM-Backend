@@ -77,13 +77,13 @@ Change your frontend `.env` or API config to point to your Render URL:
 
 ```bash
 # HRM-Admin-Pannel/.env.local
-NEXT_PUBLIC_API_URL=https://quickboom-backend.onrender.com
+NEXT_PUBLIC_API_URL=https://quickboom-hrm-backend-gjch.onrender.com
 ```
 
 Also update `next.config.ts` if you hardcoded the fallback URL anywhere.
 
 ### Health Check
-Visit `https://quickboom-backend.onrender.com/` — should return the home route response.
+Visit `https://quickboom-hrm-backend-gjch.onrender.com/` — should return the home route response.
 
 ---
 
