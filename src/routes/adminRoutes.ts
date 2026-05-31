@@ -49,6 +49,11 @@ import {
   generateAdminReport,
   fetchPayrollReportDetails,
   fetchAttendanceReportDetails,
+  fetchAdminNotifications,
+  markAdminNotificationRead,
+  markAllAdminNotificationsRead,
+  fetchAdminSettings,
+  updateAdminSettings,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -138,5 +143,14 @@ router.get('/reports', fetchAdminReports);
 router.post('/reports/generate', generateAdminReport);
 router.get('/reports/payroll-details', fetchPayrollReportDetails);
 router.get('/reports/attendance-details', fetchAttendanceReportDetails);
+
+// Notifications Management
+router.get('/notifications', fetchAdminNotifications);
+router.put('/notifications/:id/read', markAdminNotificationRead);
+router.put('/notifications/read-all', markAllAdminNotificationsRead);
+
+// Settings Management
+router.get('/settings', fetchAdminSettings);
+router.put('/settings', updateAdminSettings);
 
 export default router;

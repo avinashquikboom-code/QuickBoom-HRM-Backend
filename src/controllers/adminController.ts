@@ -2853,3 +2853,160 @@ export const fetchAttendanceReportDetails = async (
   }
 };
 
+// ==========================================
+// 8. Admin Notifications Management
+// ==========================================
+
+export const fetchAdminNotifications = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const notifications = await prisma.notification.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            employeeCode: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    const mapped = notifications.map((n) => ({
+      id: n.id.toString(),
+      title: n.title,
+      message: n.message,
+      type: n.type,
+      isRead: n.isRead,
+      createdAt: n.createdAt.toISOString(),
+      employee: n.employee ? {
+        id: n.employee.id.toString(),
+        employeeCode: n.employee.employeeCode,
+        name: `${n.employee.firstName} ${n.employee.lastName}`,
+      } : null,
+    }));
+
+    res.json({ success: true, notifications: mapped });
+  } catch (error) {
+    console.error('Fetch admin notifications error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load notifications.' });
+  }
+};
+
+export const markAdminNotificationRead = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+
+  try {
+    const notification = await prisma.notification.update({
+      where: { id: parseInt(id as string, 10) },
+      data: { isRead: true },
+    });
+
+    res.json({ success: true, message: 'Notification marked as read.', notification });
+  } catch (error) {
+    console.error('Mark admin notification read error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark notification as read.' });
+  }
+};
+
+export const markAllAdminNotificationsRead = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    await prisma.notification.updateMany({
+      where: { isRead: false },
+      data: { isRead: true },
+    });
+
+    res.json({ success: true, message: 'All notifications marked as read.' });
+  } catch (error) {
+    console.error('Mark all admin notifications read error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark all notifications as read.' });
+  }
+};
+
+// ==========================================
+// 9. Admin Settings Management
+// ==========================================
+
+export const fetchAdminSettings = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    // For now, return default settings. In a real app, this would be from a settings table
+    const settings = {
+      company: {
+        name: 'QuickBoom HRM',
+        logo: '',
+        timezone: 'Asia/Kolkata',
+        workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        workingHours: { start: '09:00', end: '18:00' },
+      },
+      attendance: {
+        lateThreshold: 10, // minutes
+        halfDayThreshold: 180, // minutes
+        autoMarkAbsent: true,
+        absentThreshold: 240, // minutes
+      },
+      leave: {
+        casualLeavePerYear: 12,
+        sickLeavePerYear: 10,
+        earnedLeavePerYear: 15,
+        requireApproval: true,
+        maxConsecutiveDays: 5,
+      },
+      notifications: {
+        emailEnabled: true,
+        smsEnabled: false,
+        pushEnabled: true,
+        dailyReports: true,
+        weeklyReports: true,
+      },
+      payroll: {
+        processingDay: 25, // day of month
+        currency: 'INR',
+        includeTax: true,
+        includeProvidentFund: true,
+      },
+    };
+
+    res.json({ success: true, settings });
+  } catch (error) {
+    console.error('Fetch admin settings error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load settings.' });
+  }
+};
+
+export const updateAdminSettings = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { category, settings: updatedSettings } = req.body;
+
+  if (!category || !updatedSettings) {
+    res.status(400).json({ success: false, message: 'Category and settings are required.' });
+    return;
+  }
+
+  try {
+    // For now, just return success. In a real app, this would update a settings table
+    res.json({ 
+      success: true, 
+      message: `${category} settings updated successfully.`,
+      settings: updatedSettings 
+    });
+  } catch (error) {
+    console.error('Update admin settings error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update settings.' });
+  }
+};
+
