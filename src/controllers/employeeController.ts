@@ -22,49 +22,92 @@ export const fetchEmployeeProfile = async (
   try {
     const employee = await getEmployeeFromRequest(req);
 
-    if (!employee || !employee.user || !employee.user.profile) {
-      res.status(404).json({ success: false, message: 'Employee profile not found.' });
+    if (employee && employee.user && employee.user.profile) {
+      const { profile } = employee.user;
+      res.json({
+        success: true,
+        employee: {
+          id: employee.id.toString(),
+          employeeCode: employee.employeeCode,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          name: `${employee.firstName} ${employee.lastName}`,
+          designation: employee.designation,
+          status: employee.status,
+          department: employee.department?.name || 'Unassigned',
+          office: employee.office?.name || 'Unassigned',
+          joinDate: employee.createdAt.toISOString(),
+        },
+        profile: {
+          id: profile.id,
+          email: profile.email,
+          fullName: profile.fullName,
+          phone: profile.phone,
+          avatarUrl: profile.avatarUrl,
+          bio: profile.bio,
+          timezone: profile.timezone,
+          timezoneLabel: profile.timezoneLabel,
+          clearanceLevel: profile.clearanceLevel,
+          clearanceLabel: profile.clearanceLabel,
+        },
+        user: {
+          role: employee.user?.role || 'EMPLOYEE',
+          isActive: employee.user?.isActive ?? true,
+        },
+      });
       return;
     }
 
-    const { profile } = employee.user;
+    // Fallback: If no employee record exists (e.g. for SUPER_ADMIN or ADMIN), fetch user and profile directly
+    if (req.user) {
+      const user = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        include: { profile: true },
+      });
 
-    res.json({
-      success: true,
-      employee: {
-        id: employee.id.toString(),
-        employeeCode: employee.employeeCode,
-        firstName: employee.firstName,
-        lastName: employee.lastName,
-        name: `${employee.firstName} ${employee.lastName}`,
-        designation: employee.designation,
-        status: employee.status,
-        department: employee.department?.name || 'Unassigned',
-        office: employee.office?.name || 'Unassigned',
-        joinDate: employee.createdAt.toISOString(),
-      },
-      profile: {
-        id: profile.id,
-        email: profile.email,
-        fullName: profile.fullName,
-        phone: profile.phone,
-        avatarUrl: profile.avatarUrl,
-        bio: profile.bio,
-        timezone: profile.timezone,
-        timezoneLabel: profile.timezoneLabel,
-        clearanceLevel: profile.clearanceLevel,
-        clearanceLabel: profile.clearanceLabel,
-      },
-      user: {
-        role: employee.user?.role || 'EMPLOYEE',
-        isActive: employee.user?.isActive ?? true,
-      },
-    });
+      if (user && user.profile) {
+        res.json({
+          success: true,
+          employee: {
+            id: user.id.toString(),
+            employeeCode: user.role === 'SUPER_ADMIN' ? 'SA001' : 'AD001',
+            firstName: user.profile.fullName.split(' ')[0] || 'Admin',
+            lastName: user.profile.fullName.split(' ').slice(1).join(' ') || '',
+            name: user.profile.fullName,
+            designation: user.role === 'SUPER_ADMIN' ? 'Super Admin' : 'Administrator',
+            status: 'active',
+            department: 'Management',
+            office: 'Headquarters',
+            joinDate: user.createdAt.toISOString(),
+          },
+          profile: {
+            id: user.profile.id,
+            email: user.profile.email,
+            fullName: user.profile.fullName,
+            phone: user.profile.phone,
+            avatarUrl: user.profile.avatarUrl,
+            bio: user.profile.bio,
+            timezone: user.profile.timezone,
+            timezoneLabel: user.profile.timezoneLabel,
+            clearanceLevel: user.profile.clearanceLevel,
+            clearanceLabel: user.profile.clearanceLabel,
+          },
+          user: {
+            role: user.role,
+            isActive: user.isActive,
+          },
+        });
+        return;
+      }
+    }
+
+    res.status(404).json({ success: false, message: 'Employee profile not found.' });
   } catch (error) {
     console.error('Fetch employee profile error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch profile.' });
   }
 };
+
 
 export const updateEmployeeProfile = async (
   req: AuthenticatedRequest,
