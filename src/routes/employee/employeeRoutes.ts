@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
+import { prisma } from '../../utils/db';
 import {
   fetchEmployeeProfile,
   updateEmployeeProfile,
@@ -227,6 +228,89 @@ router.post('/attendance/check-in', employeeCheckIn);
 router.post('/attendance/check-out', employeeCheckOut);
 router.post('/attendance/break/start', startEmployeeBreak);
 router.post('/attendance/break/end', endEmployeeBreak);
+
+/**
+ * @swagger
+ * /api/employee/attendance/debug:
+ *   post:
+ *     summary: Debug endpoint for check-in issues
+ *     tags: [Employee - Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               latitude:
+ *                 type: number
+ *               longitude:
+ *                 type: number
+ *               viaFingerprint:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Debug information
+ *       401:
+ *         description: Unauthorized
+ */
+router.post('/attendance/debug', async (req, res) => {
+  try {
+    const { latitude, longitude, viaFingerprint = false } = req.body;
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    console.log('=== DEBUG CHECK-IN REQUEST ===');
+    console.log('Request body:', req.body);
+    console.log('Today date:', todayStr);
+    console.log('User from request:', (req as any).user);
+    
+    const employee = await prisma.employee.findFirst({
+      where: { userId: (req as any).user?.id }
+    });
+    
+    console.log('Employee found:', employee);
+    
+    if (!employee) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Employee not found.',
+        debug: {
+          userId: (req as any).user?.id,
+          todayStr,
+          requestBody: req.body
+        }
+      });
+    }
+    
+    const existing = await prisma.attendance.findFirst({
+      where: { employeeId: employee.id, date: todayStr },
+    });
+    
+    console.log('Existing attendance:', existing);
+    
+    res.json({
+      success: true,
+      message: 'Debug information',
+      debug: {
+        employeeId: employee.id,
+        todayStr,
+        existingAttendance: existing,
+        hasCheckIn: !!existing?.checkIn,
+        requestBody: req.body,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Debug error',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 // Leaves Management
 router.get('/leaves', fetchLeavesAndBalances);
