@@ -1,17 +1,28 @@
-# Render Docker Deployment for Quickboom Backend
+# Render Docker Deployment for QuickBoom Backend
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy prisma schema FIRST (postinstall in package.json runs prisma generate)
+# Install build dependencies
+RUN apk add --no-cache git python3 make g++
+
+# Copy package files first for better caching
+COPY package*.json ./
+
+# Clean npm cache and install dependencies
+RUN npm cache clean --force
+RUN npm ci --legacy-peer-deps --ignore-scripts
+
+# Copy prisma schema
 COPY prisma ./prisma/
 
-# Install dependencies (postinstall will auto-run prisma generate now)
-COPY package*.json ./
-RUN npm ci
+# Generate Prisma client
+RUN npx prisma generate
 
-# Copy source and build
+# Copy source code
 COPY . .
+
+# Build the application
 RUN npm run build
 
 # Expose port (Render sets PORT env var automatically)

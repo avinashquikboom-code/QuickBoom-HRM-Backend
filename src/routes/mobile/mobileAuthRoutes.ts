@@ -12,7 +12,7 @@ const router = Router();
  * @swagger
  * /api/mobile/auth/login:
  *   post:
- *     summary: Mobile user login with enhanced features
+ *     summary: Mobile user login - simplified (email & password only)
  *     tags: [Mobile - Authentication]
  *     requestBody:
  *       required: true
@@ -26,24 +26,16 @@ const router = Router();
  *             properties:
  *               email:
  *                 type: string
- *                 description: User email or employee code
+ *                 format: email
+ *                 description: User email address
+ *                 example: "employee@hrm.com"
  *               password:
  *                 type: string
  *                 description: User password
- *               deviceInfo:
- *                 type: object
- *                 properties:
- *                   deviceType:
- *                     type: string
- *                   deviceId:
- *                     type: string
- *                   platform:
- *                     type: string
- *               appVersion:
- *                 type: string
+ *                 example: "employee123"
  *               fcmToken:
  *                 type: string
- *                 description: Firebase Cloud Messaging token
+ *                 description: Firebase Cloud Messaging token (optional)
  *     responses:
  *       200:
  *         description: Login successful
@@ -54,8 +46,10 @@ const router = Router();
  *               properties:
  *                 success:
  *                   type: boolean
+ *                   example: true
  *                 token:
  *                   type: string
+ *                   description: JWT authentication token
  *                 user:
  *                   type: object
  *                   properties:
@@ -65,16 +59,37 @@ const router = Router();
  *                       type: string
  *                     role:
  *                       type: string
+ *                       enum: [EMPLOYEE, HR, ADMIN, SUPER_ADMIN]
  *                     profile:
  *                       type: object
  *                     employee:
  *                       type: object
- *                 deviceInfo:
+ *                 fcmToken:
+ *                   type: string
+ *                   description: FCM token returned for client use
+ *                   nullable: true
+ *                 loginInfo:
  *                   type: object
+ *                   properties:
+ *                     loginTime:
+ *                       type: string
+ *                       format: date-time
+ *                     loginLocation:
+ *                       type: string
+ *                       example: "Mobile App"
  *                 permissions:
  *                   type: object
+ *                   properties:
+ *                     canCheckIn:
+ *                       type: boolean
+ *                     canApproveLeaves:
+ *                       type: boolean
+ *                     canManageEmployees:
+ *                       type: boolean
+ *                     canViewReports:
+ *                       type: boolean
  *       400:
- *         description: Bad request (missing credentials)
+ *         description: Bad request (missing email or password)
  *       401:
  *         description: Invalid credentials
  *       403:

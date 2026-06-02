@@ -5,9 +5,9 @@ import { signToken } from '../../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 
-// Mobile-specific login with enhanced error handling and mobile device info
+// Mobile-specific login - simplified to email and password only
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
-  const { email, password, deviceInfo, appVersion } = req.body;
+  const { email, password } = req.body;
 
   if (!email || !password) {
     res.status(400).json({
@@ -19,43 +19,19 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
   }
 
   try {
-    // 1. Fetch user with enhanced includes for mobile
-    const identifier = email.trim();
-    let user;
-
-    if (identifier.includes('@')) {
-      user = await prisma.user.findUnique({
-        where: { email: identifier.toLowerCase() },
-        include: {
-          profile: true,
-          employee: {
-            include: {
-              office: true,
-              department: true,
-            },
+    // 1. Fetch user by email only (simplified for mobile)
+    const user = await prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+      include: {
+        profile: true,
+        employee: {
+          include: {
+            office: true,
+            department: true,
           },
         },
-      });
-    } else {
-      // Support employee code login for mobile
-      const employee = await prisma.employee.findUnique({
-        where: { employeeCode: identifier },
-        include: {
-          user: {
-            include: {
-              profile: true,
-              employee: {
-                include: {
-                  office: true,
-                  department: true,
-                },
-              },
-            },
-          },
-        },
-      });
-      user = employee?.user;
-    }
+      },
+    });
 
     if (!user || !user.isActive) {
       res.status(401).json({
@@ -95,10 +71,9 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       role: user.role,
     });
 
-    // 5. Update last login metadata and device info
+    // 5. Update last login metadata
     let updatedProfile = user.profile;
     const loginLocation = 'Mobile App';
-    const loginDevice = deviceInfo?.deviceType || 'Unknown';
     
     if (user.profile) {
       updatedProfile = await prisma.profile.update({
@@ -110,7 +85,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       });
     }
 
-    // 6. Store FCM token if provided
+    // 6. Store FCM token if provided (optional)
     if (req.body.fcmToken) {
       await prisma.user.update({
         where: { id: user.id },
@@ -158,10 +133,10 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       success: true,
       token,
       user: mobileUserResponse,
-      deviceInfo: {
+      fcmToken: req.body.fcmToken || null,
+      loginInfo: {
         loginTime: new Date().toISOString(),
-        deviceType: loginDevice,
-        appVersion: appVersion || 'Unknown',
+        loginLocation: 'Mobile App',
       },
       permissions: {
         canCheckIn: user.role === Role.EMPLOYEE || user.role === Role.HR,

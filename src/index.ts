@@ -16,6 +16,8 @@ import hrRoutes from './routes/hr/hrRoutes';
 import healthRoutes from './routes/healthRoutes';
 import mobileAuthRoutes from './routes/mobile/mobileAuthRoutes';
 import mobileAttendanceRoutes from './routes/mobile/mobileAttendanceRoutes';
+import firebaseNotificationRoutes from './routes/mobile/firebaseNotificationRoutes';
+import { initializeFirebase } from './config/firebase';
 
 dotenv.config();
 
@@ -29,6 +31,14 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Apply metrics middleware to track all requests
 app.use(metricsMiddleware);
+
+// Initialize Firebase
+try {
+  initializeFirebase();
+  console.log('✅ Firebase initialized successfully');
+} catch (error) {
+  console.error('❌ Firebase initialization failed:', error);
+}
 
 // Raw OpenAPI JSON endpoint (must be before UI)
 app.get('/api-docs/swagger.json', (req, res) => {
@@ -91,6 +101,7 @@ app.use('/api/hr', hrRoutes);
 // Mobile API Routes
 app.use('/api/mobile/auth', mobileAuthRoutes);
 app.use('/api/mobile/attendance', mobileAttendanceRoutes);
+app.use('/api/mobile/firebase', firebaseNotificationRoutes);
 
 const host = process.env.HOST || '0.0.0.0';
 
