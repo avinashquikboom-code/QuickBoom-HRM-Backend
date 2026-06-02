@@ -339,12 +339,18 @@ export const employeeCheckIn = async (
       return;
     }
 
+    console.log(`Check-in attempt: Employee ID ${employee.id}, Date: ${todayStr}`);
+
     // Check if check-in already exists for today
     const existing = await prisma.attendance.findFirst({
       where: { employeeId: employee.id, date: todayStr },
     });
 
+    console.log('Existing attendance record:', existing);
+
+    // Only block check-in if there's a valid check-in time
     if (existing && existing.checkIn) {
+      console.log('Already checked in today with time:', existing.checkIn);
       res.status(400).json({ success: false, message: 'Already checked in for today.' });
       return;
     }
@@ -356,6 +362,7 @@ export const employeeCheckIn = async (
     let record;
     if (existing) {
       // If record was created (e.g. pre-marked ABSENT/WEEKEND), update it
+      console.log('Updating existing attendance record:', existing.id);
       record = await prisma.attendance.update({
         where: { id: existing.id },
         data: {
@@ -368,6 +375,7 @@ export const employeeCheckIn = async (
         },
       });
     } else {
+      console.log('Creating new attendance record');
       record = await prisma.attendance.create({
         data: {
           employeeId: employee.id,

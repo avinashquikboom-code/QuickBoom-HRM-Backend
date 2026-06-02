@@ -158,6 +158,35 @@ router.get('/attendance/today', fetchEmployeeTodayAttendance);
 
 /**
  * @swagger
+ * /api/employee/attendance/history:
+ *   get:
+ *     summary: Fetch attendance history for employee
+ *     tags: [Employee - Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Attendance history retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Attendance'
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+router.get('/attendance/history', fetchEmployeeAttendanceHistory);
+
+/**
+ * @swagger
  * /api/employee/attendance/check-in:
  *   post:
  *     summary: Check in for work
