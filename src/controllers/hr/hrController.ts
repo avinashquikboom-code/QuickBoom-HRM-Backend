@@ -1,6 +1,6 @@
 import { Response } from 'express';
-import { AuthenticatedRequest } from '../middlewares/authMiddleware';
-import { prisma } from '../utils/db';
+import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+import { prisma } from '../../utils/db';
 
 // ==========================================
 // HR Dashboard Stats

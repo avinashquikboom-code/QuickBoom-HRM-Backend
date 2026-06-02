@@ -70,7 +70,7 @@ app.use('/mobile-docs', apiReference({
     .scalar-header h1 {
       color: white;
     }
-  `,
+  },
   metaData: {
     title: 'QuickBoom Mobile API Documentation',
     description: 'Mobile-specific API endpoints for QuickBoom HRM mobile applications',
@@ -95,5 +95,5 @@ app.use('/api/mobile/attendance', mobileAttendanceRoutes);
 const host = process.env.HOST || '0.0.0.0';
 
 app.listen(port, host, () => {
-  console.log('Server is running at http://' + host + ':' + port);
+  console.log(`Server is running at http://${host}:${port}`);
 });

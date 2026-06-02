@@ -1,6 +1,6 @@
 import { Response } from 'express';
-import { AuthenticatedRequest } from '../middlewares/authMiddleware';
-import { prisma } from '../utils/db';
+import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+import { prisma } from '../../utils/db';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {

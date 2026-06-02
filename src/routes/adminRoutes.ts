@@ -61,17 +61,186 @@ router.use(authMiddleware);
 const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'];
 router.use(roleMiddleware(adminRoles));
 
+/**
+ * @swagger
+ * /api/admin/users:
+ *   get:
+ *     summary: Fetch all platform users (Super Admin only)
+ *     tags: [Admin - Users]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Users retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ *       500:
+ *         description: Server error
+ */
 // Users
 router.get('/users', fetchPlatformUsers);
 router.put('/users/:id/status', updateUserStatus);
 
-// Employees
+/**
+ * @swagger
+ * /api/admin/employees:
+ *   get:
+ *     summary: Fetch all employees
+ *     tags: [Admin - Employees]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Employees retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Employee'
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
 router.get('/employees', fetchEmployees);
+
+/**
+ * @swagger
+ * /api/admin/employees:
+ *   post:
+ *     summary: Create a new employee
+ *     tags: [Admin - Employees]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateEmployeeRequest'
+ *     responses:
+ *       201:
+ *         description: Employee created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiResponse'
+ *       400:
+ *         description: Bad request
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
 router.post('/employees', createEmployee);
 
-// Offices CRUD
+/**
+ * @swagger
+ * /api/admin/offices:
+ *   get:
+ *     summary: Fetch all offices
+ *     tags: [Admin - Offices]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Offices retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Office'
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
 router.get('/offices', fetchOffices);
+
+/**
+ * @swagger
+ * /api/admin/offices/{id}:
+ *   get:
+ *     summary: Fetch office by ID
+ *     tags: [Admin - Offices]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Office retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Office'
+ *       404:
+ *         description: Office not found
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
 router.get('/offices/:id', fetchOfficeById);
+
+/**
+ * @swagger
+ * /api/admin/offices:
+ *   post:
+ *     summary: Create a new office
+ *     tags: [Admin - Offices]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateOfficeRequest'
+ *     responses:
+ *       201:
+ *         description: Office created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiResponse'
+ *       400:
+ *         description: Bad request
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
 router.post('/offices', createOffice);
 router.put('/offices/:id', updateOffice);
 router.delete('/offices/:id', deleteOffice);
