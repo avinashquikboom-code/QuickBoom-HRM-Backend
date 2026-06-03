@@ -27,7 +27,17 @@ function isWithinGeofence(userLat: number, userLon: number, officeLat: number, o
 // Mobile Punch In
 export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, notes, photo } = req.body;
+    const { latitude, longitude, notes, photo, clientTimestamp, timezone } = req.body;
+    
+    // Enhanced logging for debugging
+    console.log('🕒 MOBILE PUNCH IN REQUEST:', {
+      timestamp: new Date().toISOString(),
+      clientTimestamp,
+      timezone,
+      latitude,
+      longitude,
+      userId: req.user?.id
+    });
     
     if (!latitude || !longitude) {
       res.status(400).json({
@@ -116,13 +126,42 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
+    // Determine the punch-in time with timezone handling
+    let punchInTime: Date;
+    
+    if (clientTimestamp) {
+      // Use client timestamp if provided, but validate it
+      const clientDate = new Date(clientTimestamp);
+      const serverDate = new Date();
+      const timeDiff = Math.abs(clientDate.getTime() - serverDate.getTime());
+      
+      console.log('⏰ TIME ANALYSIS:', {
+        clientTimestamp: clientDate.toISOString(),
+        serverTimestamp: serverDate.toISOString(),
+        timeDifferenceMinutes: Math.round(timeDiff / (1000 * 60)),
+        timezone: timezone || 'not provided'
+      });
+      
+      // If client time is within reasonable range (±30 minutes), use it
+      if (timeDiff <= 30 * 60 * 1000) { // 30 minutes in milliseconds
+        punchInTime = clientDate;
+        console.log('✅ Using client timestamp for punch-in');
+      } else {
+        punchInTime = serverDate;
+        console.log('⚠️ Time difference too large, using server timestamp');
+      }
+    } else {
+      punchInTime = new Date();
+      console.log('📅 No client timestamp provided, using server timestamp');
+    }
+    
     // Create attendance record
     const attendance = await prisma.attendance.create({
       data: {
         employeeId: employee.id,
         officeId: employee.office.id,
         date: today,
-        checkIn: new Date(),
+        checkIn: punchInTime,
         status: 'PRESENT',
         notes: notes || '',
         latitude,
@@ -141,6 +180,13 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       }
     });
 
+    console.log('✅ PUNCH IN SUCCESSFUL:', {
+      attendanceId: attendance.id,
+      checkInTime: attendance.checkIn?.toISOString() || 'not set',
+      timezone: timezone || 'not provided',
+      clientTimestampUsed: clientTimestamp ? 'yes' : 'no'
+    });
+    
     res.json({
       success: true,
       message: 'Punched in successfully.',
@@ -156,7 +202,9 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
           address: attendance.office?.address
         },
         status: attendance.status,
-        notes: attendance.notes
+        notes: attendance.notes,
+        timezone: timezone || 'UTC',
+        timestampSource: clientTimestamp && attendance.checkIn && Math.abs(new Date(clientTimestamp).getTime() - attendance.checkIn.getTime()) <= 30 * 60 * 1000 ? 'client' : 'server'
       }
     });
   } catch (error) {
@@ -172,7 +220,17 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
 // Mobile Punch Out
 export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, notes } = req.body;
+    const { latitude, longitude, notes, clientTimestamp, timezone } = req.body;
+    
+    // Enhanced logging for debugging
+    console.log('🕒 MOBILE PUNCH OUT REQUEST:', {
+      timestamp: new Date().toISOString(),
+      clientTimestamp,
+      timezone,
+      latitude,
+      longitude,
+      userId: req.user?.id
+    });
 
     // Get employee information
     const employee = await prisma.employee.findFirst({
@@ -218,11 +276,41 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       return;
     }
 
+    // Determine the punch-out time with timezone handling
+    let punchOutTime: Date;
+    
+    if (clientTimestamp) {
+      // Use client timestamp if provided, but validate it
+      const clientDate = new Date(clientTimestamp);
+      const serverDate = new Date();
+      const timeDiff = Math.abs(clientDate.getTime() - serverDate.getTime());
+      
+      console.log('⏰ PUNCH OUT TIME ANALYSIS:', {
+        clientTimestamp: clientDate.toISOString(),
+        serverTimestamp: serverDate.toISOString(),
+        timeDifferenceMinutes: Math.round(timeDiff / (1000 * 60)),
+        timezone: timezone || 'not provided',
+        checkInTime: attendance.checkIn?.toISOString()
+      });
+      
+      // If client time is within reasonable range (±30 minutes), use it
+      if (timeDiff <= 30 * 60 * 1000) { // 30 minutes in milliseconds
+        punchOutTime = clientDate;
+        console.log('✅ Using client timestamp for punch-out');
+      } else {
+        punchOutTime = serverDate;
+        console.log('⚠️ Time difference too large, using server timestamp');
+      }
+    } else {
+      punchOutTime = new Date();
+      console.log('📅 No client timestamp provided, using server timestamp');
+    }
+
     // Update attendance with punch out
     const updatedAttendance = await prisma.attendance.update({
       where: { id: attendance.id },
       data: {
-        checkOut: new Date(),
+        checkOut: punchOutTime,
         latitude: latitude || attendance.latitude,
         longitude: longitude || attendance.longitude,
         notes: notes || attendance.notes,
@@ -248,6 +336,15 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     const workHours = Math.floor(workDuration / (1000 * 60 * 60));
     const workMinutes = Math.floor((workDuration % (1000 * 60 * 60)) / (1000 * 60));
 
+    console.log('✅ PUNCH OUT SUCCESSFUL:', {
+      attendanceId: updatedAttendance.id,
+      checkInTime: updatedAttendance.checkIn?.toISOString(),
+      checkOutTime: updatedAttendance.checkOut?.toISOString(),
+      workDurationMinutes: Math.floor(workDuration / (1000 * 60)),
+      timezone: timezone || 'not provided',
+      clientTimestampUsed: clientTimestamp ? 'yes' : 'no'
+    });
+
     res.json({
       success: true,
       message: 'Punched out successfully.',
@@ -264,7 +361,10 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
           latitude: updatedAttendance.latitude,
           longitude: updatedAttendance.longitude
         },
-        status: updatedAttendance.status
+        status: updatedAttendance.status,
+        timezone: timezone || 'UTC',
+        timestampSource: clientTimestamp && updatedAttendance.checkOut && updatedAttendance.checkIn && 
+          Math.abs(new Date(clientTimestamp).getTime() - updatedAttendance.checkOut.getTime()) <= 30 * 60 * 1000 ? 'client' : 'server'
       }
     });
   } catch (error) {

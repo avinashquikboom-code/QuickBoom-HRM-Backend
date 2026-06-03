@@ -107,4 +107,23 @@ const host = process.env.HOST || '0.0.0.0';
 
 app.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);
+  
+  // Print HR credentials to console for easy access
+  console.log('\n🔐 HR MOBILE LOGIN CREDENTIALS:');
+  console.log('═══════════════════════════════════════');
+  console.log('📧 HR Email: hr@hrm.com');
+  console.log('🔑 HR Password: 123456');
+  console.log('👤 HR Name: Priya Sharma');
+  console.log('═══════════════════════════════════════');
+  console.log('📧 Employee Email: employee@hrm.com');
+  console.log('🔑 Employee Password: employee123');
+  console.log('👤 Employee Name: Rahul Verma');
+  console.log('═══════════════════════════════════════');
+  console.log('📧 Admin Email: admin@hr.com');
+  console.log('🔑 Admin Password: 123456');
+  console.log('👤 Admin Name: Super Admin');
+  console.log('═══════════════════════════════════════');
+  console.log('📱 Mobile App URL: http://localhost:3000');
+  console.log('📚 API Docs: http://localhost:3000/docs');
+  console.log('═══════════════════════════════════════\n');
 });
