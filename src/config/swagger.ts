@@ -14,12 +14,12 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
-        url: 'http://localhost:5003',
-        description: 'Development server',
+        url: 'https://quickboom-hrm-backend-gjch.onrender.com',
+        description: 'Production server',
       },
       {
-        url: 'https://quickboom-backend.onrender.com',
-        description: 'Production server',
+        url: 'http://localhost:5003',
+        description: 'Development server',
       },
     ],
     components: {
