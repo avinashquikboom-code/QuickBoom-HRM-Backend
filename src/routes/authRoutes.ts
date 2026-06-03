@@ -1,47 +1,25 @@
 import { Router } from 'express';
-import { login, register, registerFcmToken } from '../controllers/authController';
+import {
+  login,
+  register,
+  registerFcmToken,
+  employeeLogin,
+  hrLogin,
+  superAdminLogin
+} from '../controllers/authController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 
 const router = Router();
 
-/**
- * @swagger
- * /api/auth/login:
- *   post:
- *     summary: Authenticate user and return JWT token
- *     tags: [Authentication]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/LoginRequest'
- *     responses:
- *       200:
- *         description: Login successful
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 message:
- *                   type: string
- *                 token:
- *                   type: string
- *                 user:
- *                   $ref: '#/components/schemas/User'
- *       401:
- *         description: Invalid credentials or inactive account
- *       403:
- *         description: Office or branch not allotted for employee
- *       500:
- *         description: Server error
- */
-// Public login route
+// Unified login route (for backward compatibility)
 router.post('/login', login);
+
+// Role-specific login routes
+router.post('/employee/login', employeeLogin);
+router.post('/hr/login', hrLogin);
+router.post('/super-admin/login', superAdminLogin);
+
 
 /**
  * @swagger

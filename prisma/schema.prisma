@@ -1,20 +1,9 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-}
-
-enum Role {
-  SUPER_ADMIN
-  ADMIN
-  HR
-  PLATFORM_ADMIN
-  EMPLOYEE
 }
 
 model User {
@@ -25,18 +14,17 @@ model User {
   isActive       Boolean         @default(true)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
-  profile        Profile?
-  employee       Employee?
+  fcmTokens      String[]        @default([])
   comments       Comment[]
+  employee       Employee?
+  profile        Profile?
   assignedTasks  Task[]          @relation("AssignedByTasks")
   userPermission UserPermission?
-  fcmTokens      String[]        @default([])
 }
 
 model Profile {
   id                Int      @id @default(autoincrement())
   userId            Int      @unique
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   email             String
   fullName          String
   phone             String   @default("")
@@ -52,6 +40,7 @@ model Profile {
   clearanceLabel    String   @default("Level 1 (General)")
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Office {
@@ -69,52 +58,50 @@ model Office {
   invoiceStatus        String       @default("Paid")
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
-  employees            Employee[]
   attendances          Attendance[]
+  employees            Employee[]
 }
 
 model Department {
   id        Int        @id @default(autoincrement())
   name      String
   code      String?    @unique
-  employees Employee[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  employees Employee[]
 }
 
 model Employee {
-  id               Int                @id @default(autoincrement())
-  userId           Int?               @unique
-  user             User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  employeeCode     String             @unique
+  id               Int               @id @default(autoincrement())
+  userId           Int?              @unique
+  employeeCode     String            @unique
   firstName        String
   lastName         String
   designation      String?
-  status           String             @default("active")
+  status           String            @default("active")
   officeId         Int?
-  office           Office?            @relation(fields: [officeId], references: [id], onDelete: SetNull)
   departmentId     Int?
-  department       Department?        @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
   attendances      Attendance[]
-  leaveRequests    LeaveRequest[]
+  department       Department?       @relation(fields: [departmentId], references: [id])
+  office           Office?           @relation(fields: [officeId], references: [id])
+  user             User?             @relation(fields: [userId], references: [id])
   expenses         Expense[]
-  assignedTasks    Task[]             @relation("AssignedTasks")
-  shiftAssignments ShiftAssignment[]
+  leaveRequests    LeaveRequest[]
   notifications    Notification[]
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  shiftAssignments ShiftAssignment[]
+  assignedTasks    Task[]            @relation("AssignedTasks")
 }
 
 model Attendance {
   id                    Int       @id @default(autoincrement())
   employeeId            Int
-  employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   officeId              Int?
-  office                Office?   @relation(fields: [officeId], references: [id], onDelete: SetNull)
-  date                  String // Format YYYY-MM-DD
+  date                  String
   checkIn               DateTime?
   checkOut              DateTime?
-  status                String    @default("ABSENT") // PRESENT, ABSENT, LATE, HALF_DAY, LEAVE, WEEKEND, HOLIDAY
+  status                String    @default("ABSENT")
   notes                 String?
   latitude              Float?
   longitude             Float?
@@ -125,17 +112,19 @@ model Attendance {
   totalBreakSeconds     Int       @default(0)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
+  employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  office                Office?   @relation(fields: [officeId], references: [id])
 }
 
 model Comment {
   id         Int      @id @default(autoincrement())
-  entityType String // OFFICE, EMPLOYEE, etc.
-  entityId   String // Reference ID
+  entityType String
+  entityId   String
   content    String
   authorId   Int
-  author     User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  author     User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
 }
 
 model LiveLocation {
@@ -154,28 +143,27 @@ model LiveLocation {
 model LeaveRequest {
   id         Int      @id @default(autoincrement())
   employeeId Int
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  type       String // CASUAL, SICK, EARNED, MATERNITY, PATERNITY, UNPAID
+  type       String
   fromDate   DateTime
   toDate     DateTime
   reason     String
-  status     String   @default("PENDING") // PENDING, APPROVED, REJECTED, CANCELLED
+  status     String   @default("PENDING")
   appliedOn  DateTime @default(now())
   reviewedBy String?
   reviewNote String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Expense {
   id          Int      @id @default(autoincrement())
   employeeId  Int
-  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  category    String // TRAVEL, FOOD, ACCOMMODATION, STATIONERY, MEDICAL, OTHER
+  category    String
   amount      Float
   description String
   date        DateTime
-  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED, REIMBURSED
+  status      String   @default("PENDING")
   submittedOn DateTime @default(now())
   reviewedBy  String?
   reviewNote  String?
@@ -183,6 +171,7 @@ model Expense {
   receiptUrl  String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Task {
@@ -190,23 +179,23 @@ model Task {
   title        String
   description  String
   assignedToId Int
-  assignedTo   Employee @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: Cascade)
   assignedById Int
-  assignedBy   User     @relation("AssignedByTasks", fields: [assignedById], references: [id], onDelete: Cascade)
   projectName  String
   dueDate      DateTime
-  status       String   @default("TODO") // TODO, IN_PROGRESS, COMPLETED, OVERDUE
-  priority     String   @default("MEDIUM") // LOW, MEDIUM, HIGH
+  status       String   @default("TODO")
+  priority     String   @default("MEDIUM")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  assignedBy   User     @relation("AssignedByTasks", fields: [assignedById], references: [id], onDelete: Cascade)
+  assignedTo   Employee @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: Cascade)
 }
 
 model Shift {
   id           Int               @id @default(autoincrement())
   name         String
-  startTime    String // "09:00"
-  endTime      String // "18:00"
-  workingDays  String[] // ["Mon", "Tue", "Wed", "Thu", "Fri"]
+  startTime    String
+  endTime      String
+  workingDays  String[]
   graceMinutes Int               @default(15)
   breakMinutes Int               @default(60)
   color        String            @default("#3BA38B")
@@ -218,27 +207,27 @@ model Shift {
 model ShiftAssignment {
   id            Int       @id @default(autoincrement())
   employeeId    Int
-  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   shiftId       Int
-  shift         Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
   effectiveFrom DateTime
   effectiveTo   DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shift         Shift     @relation(fields: [shiftId], references: [id], onDelete: Cascade)
 }
 
 model Notification {
   id         Int      @id @default(autoincrement())
   employeeId Int
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   title      String
   body       String
-  category   String   @default("GENERAL") // ATTENDANCE, LEAVE, TASK, EXPENSE, ANNOUNCEMENT, PAYROLL, GENERAL
+  category   String   @default("GENERAL")
   isRead     Boolean  @default(false)
   actionId   String?
   actionType String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Announcement {
@@ -253,7 +242,7 @@ model Announcement {
 
 model PricingPlan {
   id           Int      @id @default(autoincrement())
-  name         String   @unique // "Basic", "Pro", "Enterprise"
+  name         String   @unique
   monthlyPrice Float
   yearlyPrice  Float
   seatsLabel   String   @default("")
@@ -273,22 +262,30 @@ model RolePermission {
 model UserPermission {
   id          Int      @id @default(autoincrement())
   userId      Int      @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   permissions Json
   updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model SystemSetting {
-  id                 Int      @id @default(1)
-  platformName       String   @default("Super HRM")
-  supportEmail       String   @default("admin@hrm.com")
-  currency           String   @default("INR")
-  locale             String   @default("en")
-  twoFactor          Boolean  @default(true)
-  sessionLock        Boolean  @default(true)
-  auditLogs          Boolean  @default(true)
-  ipRestriction      Boolean  @default(false)
-  notifications      Json?    // Store email/push notification preferences
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id            Int      @id @default(1)
+  platformName  String   @default("Super HRM")
+  supportEmail  String   @default("admin@hrm.com")
+  currency      String   @default("INR")
+  locale        String   @default("en")
+  twoFactor     Boolean  @default(true)
+  sessionLock   Boolean  @default(true)
+  auditLogs     Boolean  @default(true)
+  ipRestriction Boolean  @default(false)
+  notifications Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  HR
+  PLATFORM_ADMIN
+  EMPLOYEE
 }

@@ -298,3 +298,169 @@ export const registerFcmToken = async (req: AuthenticatedRequest, res: Response)
     res.status(500).json({ error: 'Server error registering FCM token' });
   }
 };
+
+// Helper function for role-specific login
+const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: Role[]): Promise<void> => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    res.status(400).json({
+      success: false,
+      message: 'Email and password are required.',
+    });
+    return;
+  }
+
+  try {
+    const identifier = email.trim();
+    let user;
+
+    if (identifier.includes('@')) {
+      user = await prisma.user.findUnique({
+        where: { email: identifier.toLowerCase() },
+        include: {
+          profile: true,
+          employee: {
+            include: {
+              office: true,
+            },
+          },
+        },
+      });
+    } else {
+      const employee = await prisma.employee.findUnique({
+        where: { employeeCode: identifier },
+        include: {
+          user: {
+            include: {
+              profile: true,
+              employee: {
+                include: {
+                  office: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      user = employee?.user;
+    }
+
+    if (!user || !user.isActive) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid credentials or inactive account.',
+      });
+      return;
+    }
+
+    // Role validation
+    if (!allowedRoles.includes(user.role)) {
+      res.status(403).json({
+        success: false,
+        message: `Access denied. This login portal is restricted for your role.`,
+        errorCode: 'ROLE_MISMATCH'
+      });
+      return;
+    }
+
+    // Verify password
+    const isPasswordMatch = await bcrypt.compare(password, user.password);
+    if (!isPasswordMatch) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid email or password.',
+      });
+      return;
+    }
+
+    // Check office/branch allotment for employees
+    if (user.role === Role.EMPLOYEE) {
+      if (!user.employee || !user.employee.officeId) {
+        res.status(403).json({
+          success: false,
+          message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
+          errorCode: 'OFFICE_NOT_ALLOTTED'
+        });
+        return;
+      }
+    }
+
+    // Generate token
+    const token = signToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    // Update last login metadata in user profile if exists
+    let updatedProfile = user.profile;
+    const loginLocation = 'Local Office'; // Mocked or fetched from request IP
+    if (user.profile) {
+      updatedProfile = await prisma.profile.update({
+        where: { id: user.profile.id },
+        data: {
+          lastLoginAt: new Date(),
+          lastLoginLocation: loginLocation,
+        },
+      });
+    }
+
+    // Structure security field for frontend mapper compatibility
+    const profileResponse = updatedProfile
+      ? {
+          id: updatedProfile.id,
+          userId: updatedProfile.userId,
+          email: updatedProfile.email,
+          fullName: updatedProfile.fullName,
+          phone: updatedProfile.phone,
+          avatarUrl: updatedProfile.avatarUrl,
+          timezone: updatedProfile.timezone,
+          timezoneLabel: updatedProfile.timezoneLabel,
+          bio: updatedProfile.bio,
+          createdAt: updatedProfile.createdAt.toISOString(),
+          updatedAt: updatedProfile.updatedAt.toISOString(),
+          security: {
+            twoFactorEnabled: updatedProfile.twoFactorEnabled,
+            twoFactorStatus: updatedProfile.twoFactorStatus,
+            lastLoginAt: updatedProfile.lastLoginAt.toISOString(),
+            lastLoginLocation: updatedProfile.lastLoginLocation,
+            clearanceLevel: updatedProfile.clearanceLevel,
+            clearanceLabel: updatedProfile.clearanceLabel,
+          },
+        }
+      : null;
+
+    res.json({
+      success: true,
+      token,
+      currentLoginLocation: loginLocation,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        profile: profileResponse,
+      },
+    });
+  } catch (error) {
+    console.error('Role-specific login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during login.',
+    });
+  }
+};
+
+// Role-specific login endpoints
+export const employeeLogin = async (req: Request, res: Response): Promise<void> => {
+  await authenticateRoleLogin(req, res, [Role.EMPLOYEE]);
+};
+
+export const hrLogin = async (req: Request, res: Response): Promise<void> => {
+  await authenticateRoleLogin(req, res, [Role.HR, Role.ADMIN]);
+};
+
+export const superAdminLogin = async (req: Request, res: Response): Promise<void> => {
+  await authenticateRoleLogin(req, res, [Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]);
+};
+
