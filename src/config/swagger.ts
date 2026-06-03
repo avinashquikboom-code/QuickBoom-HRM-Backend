@@ -38,9 +38,9 @@ const options: swaggerJsdoc.Options = {
             id: { type: 'string', format: 'uuid' },
             email: { type: 'string', format: 'email' },
             name: { type: 'string' },
-            role: { 
-              type: 'string', 
-              enum: ['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE', 'PLATFORM_ADMIN'] 
+            role: {
+              type: 'string',
+              enum: ['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE', 'PLATFORM_ADMIN']
             },
             status: { type: 'string', enum: ['ACTIVE', 'INACTIVE', 'SUSPENDED'] },
             createdAt: { type: 'string', format: 'date-time' },
@@ -92,9 +92,9 @@ const options: swaggerJsdoc.Options = {
             breakStart: { type: 'string', format: 'date-time' },
             breakEnd: { type: 'string', format: 'date-time' },
             totalHours: { type: 'number' },
-            status: { 
-              type: 'string', 
-              enum: ['PRESENT', 'ABSENT', 'LATE', 'HALF_DAY', 'ON_LEAVE'] 
+            status: {
+              type: 'string',
+              enum: ['PRESENT', 'ABSENT', 'LATE', 'HALF_DAY', 'ON_LEAVE']
             },
             location: {
               type: 'object',
@@ -110,9 +110,9 @@ const options: swaggerJsdoc.Options = {
           properties: {
             id: { type: 'string', format: 'uuid' },
             employeeId: { type: 'string', format: 'uuid' },
-            type: { 
-              type: 'string', 
-              enum: ['SICK', 'CASUAL', 'ANNUAL', 'MATERNITY', 'PATERNITY', 'UNPAID'] 
+            type: {
+              type: 'string',
+              enum: ['SICK', 'CASUAL', 'ANNUAL', 'MATERNITY', 'PATERNITY', 'UNPAID']
             },
             startDate: { type: 'string', format: 'date' },
             endDate: { type: 'string', format: 'date' },
@@ -144,9 +144,9 @@ const options: swaggerJsdoc.Options = {
             userId: { type: 'string', format: 'uuid' },
             title: { type: 'string' },
             message: { type: 'string' },
-            type: { 
-              type: 'string', 
-              enum: ['INFO', 'WARNING', 'ERROR', 'SUCCESS', 'LEAVE', 'PAYROLL', 'ATTENDANCE'] 
+            type: {
+              type: 'string',
+              enum: ['INFO', 'WARNING', 'ERROR', 'SUCCESS', 'LEAVE', 'PAYROLL', 'ATTENDANCE']
             },
             isRead: { type: 'boolean' },
             createdAt: { type: 'string', format: 'date-time' },
@@ -160,9 +160,9 @@ const options: swaggerJsdoc.Options = {
             title: { type: 'string' },
             description: { type: 'string' },
             amount: { type: 'number' },
-            category: { 
-              type: 'string', 
-              enum: ['TRAVEL', 'MEAL', 'ACCOMMODATION', 'OFFICE', 'MEDICAL', 'OTHER'] 
+            category: {
+              type: 'string',
+              enum: ['TRAVEL', 'MEAL', 'ACCOMMODATION', 'OFFICE', 'MEDICAL', 'OTHER']
             },
             status: { type: 'string', enum: ['PENDING', 'APPROVED', 'REJECTED'] },
             receiptUrl: { type: 'string' },
@@ -260,9 +260,9 @@ const options: swaggerJsdoc.Options = {
             email: { type: 'string', format: 'email' },
             password: { type: 'string', minLength: 6 },
             name: { type: 'string' },
-            role: { 
-              type: 'string', 
-              enum: ['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE', 'PLATFORM_ADMIN'] 
+            role: {
+              type: 'string',
+              enum: ['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE', 'PLATFORM_ADMIN']
             },
             officeId: { type: 'string', format: 'uuid' },
           },
@@ -303,9 +303,9 @@ const options: swaggerJsdoc.Options = {
           type: 'object',
           required: ['type', 'startDate', 'endDate', 'reason'],
           properties: {
-            type: { 
-              type: 'string', 
-              enum: ['SICK', 'CASUAL', 'ANNUAL', 'MATERNITY', 'PATERNITY', 'UNPAID'] 
+            type: {
+              type: 'string',
+              enum: ['SICK', 'CASUAL', 'ANNUAL', 'MATERNITY', 'PATERNITY', 'UNPAID']
             },
             startDate: { type: 'string', format: 'date' },
             endDate: { type: 'string', format: 'date' },
@@ -319,9 +319,9 @@ const options: swaggerJsdoc.Options = {
             title: { type: 'string' },
             description: { type: 'string' },
             amount: { type: 'number' },
-            category: { 
-              type: 'string', 
-              enum: ['TRAVEL', 'MEAL', 'ACCOMMODATION', 'OFFICE', 'MEDICAL', 'OTHER'] 
+            category: {
+              type: 'string',
+              enum: ['TRAVEL', 'MEAL', 'ACCOMMODATION', 'OFFICE', 'MEDICAL', 'OTHER']
             },
             receiptUrl: { type: 'string' },
           },

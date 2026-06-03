@@ -48,7 +48,7 @@ function getLocalDateString(timezone: string = 'Asia/Kolkata'): string {
 // Mobile Punch In
 export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, notes, photo, clientTimestamp, timezone } = req.body;
+    const { latitude, longitude, notes, photo, clientTimestamp, timezone, isFingerprint = false } = req.body;
     
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH IN REQUEST:', {
@@ -57,6 +57,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       timezone,
       latitude,
       longitude,
+      isFingerprint,
       userId: req.user?.id
     });
     
@@ -188,7 +189,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         notes: notes || '',
         latitude,
         longitude,
-        isFingerprintCheckIn: false,
+        isFingerprintCheckIn: isFingerprint,
       },
       include: {
         employee: {
@@ -242,7 +243,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
 // Mobile Punch Out
 export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, notes, clientTimestamp, timezone } = req.body;
+    const { latitude, longitude, notes, clientTimestamp, timezone, isFingerprint = false } = req.body;
     
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH OUT REQUEST:', {
@@ -251,6 +252,7 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       timezone,
       latitude,
       longitude,
+      isFingerprint,
       userId: req.user?.id
     });
 
@@ -342,7 +344,8 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
         latitude: latitude || attendance.latitude,
         longitude: longitude || attendance.longitude,
         notes: notes || attendance.notes,
-        status: 'PRESENT'
+        status: 'PRESENT',
+        isFingerprintCheckOut: isFingerprint
       },
       include: {
         employee: {

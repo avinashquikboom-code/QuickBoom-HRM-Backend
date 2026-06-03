@@ -64,6 +64,7 @@ app.use('/scalar-docs', apiReference({
 // Routes
 app.use('/', homeRoutes);
 app.use('/health', healthRoutes);
+app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);

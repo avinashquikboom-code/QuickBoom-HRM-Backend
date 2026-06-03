@@ -173,6 +173,15 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  // Enforce that only HR and EMPLOYEE accounts can be created/registered
+  if (dbRole !== Role.HR && dbRole !== Role.EMPLOYEE) {
+    res.status(400).json({
+      success: false,
+      message: 'Only HR and EMPLOYEE roles can be created via this endpoint.',
+    });
+    return;
+  }
+
   try {
     // 1. Check if email already registered
     const existingUser = await prisma.user.findUnique({
@@ -197,10 +206,11 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // Map clearance default values based on role
     let clearanceLevel = 1;
     let clearanceLabel = 'Level 1 (General)';
-    if (dbRole === Role.SUPER_ADMIN || dbRole === Role.ADMIN) {
+    const checkRole = dbRole as Role;
+    if (checkRole === Role.SUPER_ADMIN || checkRole === Role.ADMIN) {
       clearanceLevel = 4;
       clearanceLabel = 'Level 4 (Super Admin)';
-    } else if (dbRole === Role.HR || dbRole === Role.PLATFORM_ADMIN) {
+    } else if (checkRole === Role.HR || checkRole === Role.PLATFORM_ADMIN) {
       clearanceLevel = 3;
       clearanceLabel = 'Level 3 (HR Lead)';
     }

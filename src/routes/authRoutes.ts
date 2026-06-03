@@ -168,7 +168,7 @@ router.post('/super-admin/login', superAdminLogin);
  * @swagger
  * /api/auth/register:
  *   post:
- *     summary: Register a new user (Admin only)
+ *     summary: Register a new user (HR and Employee only)
  *     tags: [Authentication]
  *     security:
  *       - bearerAuth: []
@@ -187,6 +187,10 @@ router.post('/super-admin/login', superAdminLogin);
  *               $ref: '#/components/schemas/ApiResponse'
  *       400:
  *         description: Bad request
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiResponse'
  *       401:
  *         description: Unauthorized
  *       403:
@@ -194,11 +198,11 @@ router.post('/super-admin/login', superAdminLogin);
  *       500:
  *         description: Server error
  */
-// Admin-only registration route
+// Registration route restricted to HR and EMPLOYEE roles only
 router.post(
   '/register',
   authMiddleware,
-  roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']),
+  roleMiddleware(['HR', 'EMPLOYEE']),
   register
 );
 
