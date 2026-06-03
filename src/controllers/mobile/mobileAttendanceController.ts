@@ -24,6 +24,27 @@ function isWithinGeofence(userLat: number, userLon: number, officeLat: number, o
   return distance <= maxRadius;
 }
 
+// Helper function to get local date string in YYYY-MM-DD format based on timezone
+function getLocalDateString(timezone: string = 'Asia/Kolkata'): string {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    const parts = formatter.formatToParts(new Date());
+    const year = parts.find(p => p.type === 'year')?.value;
+    const month = parts.find(p => p.type === 'month')?.value;
+    const day = parts.find(p => p.type === 'day')?.value;
+    return `${year}-${month}-${day}`;
+  } catch (e) {
+    console.error('Error formatting local date string:', e);
+    return new Date().toISOString().split('T')[0];
+  }
+}
+
+
 // Mobile Punch In
 export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -78,7 +99,8 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     }
 
     // Check if already punched in today
-    const today = new Date().toISOString().split('T')[0];
+    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const today = getLocalDateString(userTimezone);
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -234,7 +256,12 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
 
     // Get employee information
     const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id }
+      where: { userId: req.user?.id },
+      include: {
+        user: {
+          include: { profile: true }
+        }
+      }
     });
 
     if (!employee) {
@@ -247,7 +274,8 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     }
 
     // Get today's attendance record
-    const today = new Date().toISOString().split('T')[0];
+    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const today = getLocalDateString(userTimezone);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -381,7 +409,12 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
 export const startBreak = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id }
+      where: { userId: req.user?.id },
+      include: {
+        user: {
+          include: { profile: true }
+        }
+      }
     });
 
     if (!employee) {
@@ -394,7 +427,8 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
     }
 
     // Get today's attendance record
-    const today = new Date().toISOString().split('T')[0];
+    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const today = getLocalDateString(userTimezone);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -453,7 +487,12 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
 export const endBreak = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id }
+      where: { userId: req.user?.id },
+      include: {
+        user: {
+          include: { profile: true }
+        }
+      }
     });
 
     if (!employee) {
@@ -466,7 +505,8 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
     }
 
     // Get today's attendance record
-    const today = new Date().toISOString().split('T')[0];
+    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const today = getLocalDateString(userTimezone);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -546,7 +586,8 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const today = getLocalDateString(userTimezone);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
