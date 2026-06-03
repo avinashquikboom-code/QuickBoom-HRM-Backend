@@ -34,7 +34,9 @@ const router = Router();
  *                 user:
  *                   $ref: '#/components/schemas/User'
  *       401:
- *         description: Invalid credentials
+ *         description: Invalid credentials or inactive account
+ *       403:
+ *         description: Office or branch not allotted for employee
  *       500:
  *         description: Server error
  */

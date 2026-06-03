@@ -70,6 +70,18 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // 2.5. Check office/branch allotment for employees
+    if (user.role === Role.EMPLOYEE) {
+      if (!user.employee || !user.employee.officeId) {
+        res.status(403).json({
+          success: false,
+          message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
+          errorCode: 'OFFICE_NOT_ALLOTTED'
+        });
+        return;
+      }
+    }
+
     // 3. Generate token
     const token = signToken({
       id: user.id,

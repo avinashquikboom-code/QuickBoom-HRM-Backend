@@ -91,9 +91,9 @@ const router = Router();
  *       400:
  *         description: Bad request (missing email or password)
  *       401:
- *         description: Invalid credentials
+ *         description: Invalid credentials or inactive account
  *       403:
- *         description: Mobile access denied
+ *         description: Mobile access denied (role mismatch) or Office/branch not allotted
  *       500:
  *         description: Server error
  */

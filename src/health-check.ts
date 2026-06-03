@@ -1,7 +1,7 @@
 import http from 'http';
 
 const options = {
-  host: 'localhost',
+  host: '127.0.0.1',
   port: process.env.PORT || 10000,
   path: '/health',
   timeout: 2000

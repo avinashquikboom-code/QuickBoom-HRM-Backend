@@ -55,25 +55,9 @@ app.use('/scalar-docs', apiReference({
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     }
   `,
-}));
-
-// Mobile-specific Scalar documentation
-app.use('/mobile-docs', apiReference({
-  spec: {
-    content: specs,
-  },
-  theme: 'default',
-  customCss: `
-    .scalar-header {
-      background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-    }
-    .scalar-header h1 {
-      color: white;
-    }
-  `,
   metaData: {
-    title: 'QuickBoom Mobile API Documentation',
-    description: 'Mobile-specific API endpoints for QuickBoom HRM mobile applications',
+    title: 'QuickBoom HRM API Documentation',
+    description: 'Comprehensive API endpoints for QuickBoom HRM applications (including Web, Admin, and Mobile)',
   }
 }));
 
