@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { apiReference } from '@scalar/express-api-reference';
-import swaggerUi from 'swagger-ui-express';
 import { specs } from './config/swagger';
 import { metricsMiddleware } from './controllers/healthController';
 import homeRoutes from './routes/homeRoutes';
@@ -45,15 +44,6 @@ app.get('/api-docs/swagger.json', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(specs);
 });
-
-// API Documentation Routes
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
-  customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: 'QuickBoom HRM API Documentation',
-  swaggerOptions: {
-    persistAuthorization: true,
-  },
-}));
 
 app.use('/scalar-docs', apiReference({
   spec: {
@@ -123,7 +113,6 @@ app.listen(port, host, () => {
   console.log('🔑 Admin Password: 123456');
   console.log('👤 Admin Name: Super Admin');
   console.log('═══════════════════════════════════════');
-  console.log('📱 Mobile App URL: http://localhost:3000');
-  console.log('📚 API Docs: http://localhost:3000/docs');
+  console.log('📚 Scalar Docs: http://' + (host === '0.0.0.0' ? 'localhost' : host) + ':' + port + '/scalar-docs');
   console.log('═══════════════════════════════════════\n');
 });
