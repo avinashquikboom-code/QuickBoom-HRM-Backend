@@ -15,22 +15,34 @@ export const initializeFirebase = (): admin.app.App => {
     const serviceAccountPath = join(process.cwd(), 'firebase-service-account.json');
     
     let serviceAccount;
+    let useMock = false;
     
     try {
       // Try to read service account file
       serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
     } catch (error) {
-      console.warn('Firebase service account file not found, using environment variables');
-      
-      // Fallback to environment variables or mock config for testing
-      serviceAccount = {
-        project_id: process.env.FIREBASE_PROJECT_ID || 'quickboom-test-project',
-        private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n') || '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKBw\n-----END PRIVATE KEY-----\n',
-        client_email: process.env.FIREBASE_CLIENT_EMAIL || 'firebase-adminsdk-quickboom@test.iam.gserviceaccount.com',
-        client_id: process.env.FIREBASE_CLIENT_ID || '123456789012345678901',
-        auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-        token_uri: 'https://oauth2.googleapis.com/token',
-      };
+      // Check if environment variables are fully present
+      if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+        console.log('Firebase service account file not found, using environment variables');
+        serviceAccount = {
+          project_id: process.env.FIREBASE_PROJECT_ID,
+          private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+          client_email: process.env.FIREBASE_CLIENT_EMAIL,
+          client_id: process.env.FIREBASE_CLIENT_ID || '',
+          auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+          token_uri: 'https://oauth2.googleapis.com/token',
+        };
+      } else {
+        useMock = true;
+      }
+    }
+
+    if (useMock) {
+      console.warn('⚠️ Firebase credentials not fully configured. Using mock Firebase for development.');
+      firebaseApp = admin.initializeApp({
+        projectId: 'quickboom-mock',
+      }, 'mock-app');
+      return firebaseApp;
     }
 
     // Initialize Firebase Admin SDK

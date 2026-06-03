@@ -4,3 +4,7 @@ dist/
 .DS_Store
 
 /src/generated/prisma
+
+# Firebase keys
+firebase-service-account.json
+quickboom-*-firebase-adminsdk-*.json
