@@ -2535,19 +2535,70 @@ export const executePayrollDisbursement = async (
   }
 };
 
-// Memory store for approved salary slips
-const approvedSalarySlips = new Set<number>();
+const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+function numToWords(n: number): string {
+  if (n === 0) return 'Zero';
+  if (n < 0) return 'Minus ' + numToWords(-n);
+  if (n < 20) return ones[n];
+  if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+  if (n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + numToWords(n % 100) : '');
+  if (n < 100000) return numToWords(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + numToWords(n % 1000) : '');
+  if (n < 10000000) return numToWords(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + numToWords(n % 100000) : '');
+  return numToWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + numToWords(n % 10000000) : '');
+}
 
 export const fetchSalarySlips = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
+    const { month } = req.query; // format: "YYYY-MM"
+    let targetYear = new Date().getFullYear();
+    let targetMonth = new Date().getMonth() + 1; // 1-12
+
+    if (month && typeof month === 'string' && month.includes('-')) {
+      const parts = month.split('-');
+      targetYear = parseInt(parts[0], 10);
+      targetMonth = parseInt(parts[1], 10);
+    }
+
     const employees = await prisma.employee.findMany({
       include: { office: true, department: true },
     });
 
+    const existingPayslips = await prisma.payslip.findMany({
+      where: {
+        month: targetMonth,
+        year: targetYear,
+      },
+    });
+
+    const payslipMap = new Map(existingPayslips.map((p) => [p.employeeId, p]));
+
     const slips = employees.map((emp) => {
+      const dbPayslip = payslipMap.get(emp.id);
+
+      if (dbPayslip) {
+        return {
+          id: emp.id,
+          payslipId: dbPayslip.id,
+          employeeCode: emp.employeeCode,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          name: `${emp.firstName} ${emp.lastName}`,
+          designation: dbPayslip.designation,
+          department: dbPayslip.department,
+          office: dbPayslip.officeName,
+          baseSalary: dbPayslip.baseSalary,
+          allowance: dbPayslip.allowance,
+          deductions: dbPayslip.deductions,
+          netSalary: dbPayslip.netSalary,
+          status: 'Approved',
+        };
+      }
+
       const isSenior = emp.designation?.toLowerCase().includes('senior') || 
                        emp.designation?.toLowerCase().includes('lead') || 
                        emp.designation?.toLowerCase().includes('manager');
@@ -2569,7 +2620,7 @@ export const fetchSalarySlips = async (
         allowance,
         deductions,
         netSalary,
-        status: approvedSalarySlips.has(emp.id) ? 'Approved' : 'Pending Approval',
+        status: 'Pending Approval',
       };
     });
 
@@ -2588,17 +2639,87 @@ export const approveSalarySlip = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { employeeId } = req.body;
+    const { employeeId, month, year } = req.body;
     if (!employeeId) {
       res.status(400).json({ success: false, message: 'Employee ID is required.' });
       return;
     }
 
-    approvedSalarySlips.add(Number(employeeId));
+    const empIdInt = parseInt(employeeId, 10);
+    if (isNaN(empIdInt)) {
+      res.status(400).json({ success: false, message: 'Invalid employee ID.' });
+      return;
+    }
+
+    const now = new Date();
+    const targetMonth = month ? parseInt(month, 10) : (now.getMonth() + 1);
+    const targetYear = year ? parseInt(year, 10) : now.getFullYear();
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: empIdInt },
+      include: { office: true, department: true },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    const isSenior = employee.designation?.toLowerCase().includes('senior') || 
+                     employee.designation?.toLowerCase().includes('lead') || 
+                     employee.designation?.toLowerCase().includes('manager');
+    const baseSalary = isSenior ? 85000 : 45000;
+    const allowance = Math.round(baseSalary * 0.15);
+    const deductions = Math.round(baseSalary * 0.10);
+    const netSalary = baseSalary + allowance - deductions;
+    const netInWords = numToWords(netSalary) + ' Rupees Only';
+
+    const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
+    const designation = employee.designation || 'Associate';
+    const department = employee.department?.name || 'Operations';
+    const officeName = employee.office?.name || 'Headquarters';
+
+    const payslip = await prisma.payslip.upsert({
+      where: {
+        employeeId_month_year: {
+          employeeId: empIdInt,
+          month: targetMonth,
+          year: targetYear,
+        },
+      },
+      update: {
+        baseSalary,
+        allowance,
+        deductions,
+        netSalary,
+        netInWords,
+        employeeCode: employee.employeeCode,
+        employeeName,
+        designation,
+        department,
+        officeName,
+      },
+      create: {
+        employeeId: empIdInt,
+        month: targetMonth,
+        year: targetYear,
+        baseSalary,
+        allowance,
+        deductions,
+        netSalary,
+        netInWords,
+        employeeCode: employee.employeeCode,
+        employeeName,
+        designation,
+        department,
+        officeName,
+      },
+    });
 
     res.json({
       success: true,
       message: 'Salary slip approved and generated successfully.',
+      payslip,
     });
   } catch (error) {
     console.error('Approve salary slip error:', error);
@@ -2714,12 +2835,30 @@ export const fetchPayrollReportDetails = async (
   res: Response
 ): Promise<void> => {
   const { month } = req.query;
-  const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+  const targetMonthStr = (month as string) || new Date().toISOString().slice(0, 7);
 
   try {
+    let targetYear = new Date().getFullYear();
+    let targetMonthVal = new Date().getMonth() + 1; // 1-12
+
+    if (targetMonthStr && targetMonthStr.includes('-')) {
+      const parts = targetMonthStr.split('-');
+      targetYear = parseInt(parts[0], 10);
+      targetMonthVal = parseInt(parts[1], 10);
+    }
+
     const employees = await prisma.employee.findMany({
       include: { office: true, department: true },
     });
+
+    const existingPayslips = await prisma.payslip.findMany({
+      where: {
+        month: targetMonthVal,
+        year: targetYear,
+      },
+    });
+
+    const payslipSet = new Set(existingPayslips.map((p) => p.employeeId));
 
     const slips = employees.map((emp) => {
       const isSenior = emp.designation?.toLowerCase().includes('senior') || 
@@ -2741,7 +2880,7 @@ export const fetchPayrollReportDetails = async (
         allowance,
         deductions,
         netSalary,
-        status: approvedSalarySlips.has(emp.id) ? 'Approved' : 'Pending Approval',
+        status: payslipSet.has(emp.id) ? 'Approved' : 'Pending Approval',
       };
     });
 
@@ -2768,7 +2907,7 @@ export const fetchPayrollReportDetails = async (
 
     res.json({
       success: true,
-      month: targetMonth,
+      month: targetMonthStr,
       summary: {
         totalEmployees,
         totalGrossVolume,

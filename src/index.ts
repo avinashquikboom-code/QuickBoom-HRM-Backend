@@ -16,6 +16,7 @@ import healthRoutes from './routes/healthRoutes';
 import mobileAuthRoutes from './routes/mobile/mobileAuthRoutes';
 import mobileAttendanceRoutes from './routes/mobile/mobileAttendanceRoutes';
 import firebaseNotificationRoutes from './routes/mobile/firebaseNotificationRoutes';
+import mobilePayrollRoutes from './routes/mobile/mobilePayrollRoutes';
 import { initializeFirebase } from './config/firebase';
 
 dotenv.config();
@@ -77,6 +78,7 @@ app.use('/api/hr', hrRoutes);
 app.use('/api/mobile/auth', mobileAuthRoutes);
 app.use('/api/mobile/attendance', mobileAttendanceRoutes);
 app.use('/api/mobile/firebase', firebaseNotificationRoutes);
+app.use('/api/mobile/payroll', mobilePayrollRoutes);
 
 const host = process.env.HOST || '0.0.0.0';
 

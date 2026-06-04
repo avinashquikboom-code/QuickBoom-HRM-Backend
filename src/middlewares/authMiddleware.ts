@@ -13,16 +13,18 @@ export const authMiddleware = async (
   next: NextFunction
 ): Promise<void> => {
   const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let token = '';
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.query.token && typeof req.query.token === 'string') {
+    token = req.query.token;
+  } else {
     res.status(401).json({
       success: false,
       message: 'Authorization token required. Please sign in.',
     });
     return;
   }
-
-  const token = authHeader.split(' ')[1];
 
   // Secure local dev token mapping
   if (token === 'dev-local-auth-token') {

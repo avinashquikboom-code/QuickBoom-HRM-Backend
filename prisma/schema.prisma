@@ -93,6 +93,7 @@ model Employee {
   notifications    Notification[]
   shiftAssignments ShiftAssignment[]
   assignedTasks    Task[]            @relation("AssignedTasks")
+  payslips         Payslip[]
 }
 
 model Attendance {
@@ -291,4 +292,27 @@ enum Role {
   HR
   PLATFORM_ADMIN
   EMPLOYEE
+}
+
+model Payslip {
+  id                Int      @id @default(autoincrement())
+  employeeId        Int
+  month             Int
+  year              Int
+  baseSalary        Float
+  allowance         Float
+  deductions        Float
+  netSalary         Float
+  status            String   @default("Approved")
+  employeeCode      String
+  employeeName      String
+  designation       String
+  department        String
+  officeName        String
+  netInWords        String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, month, year])
 }
