@@ -757,7 +757,33 @@ export const fetchTodayAttendance = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const { clientTimestamp, timezone } = req.query;
+  const userTimezone = (timezone as string) || 'Asia/Kolkata';
+
+  let dateInput = new Date();
+  if (clientTimestamp) {
+    dateInput = new Date(clientTimestamp as string);
+  }
+
+  const getLocalDateString = (tz: string, dateIn: Date): string => {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const parts = formatter.formatToParts(dateIn);
+      const year = parts.find(p => p.type === 'year')?.value;
+      const month = parts.find(p => p.type === 'month')?.value;
+      const day = parts.find(p => p.type === 'day')?.value;
+      return `${year}-${month}-${day}`;
+    } catch (e) {
+      return dateIn.toISOString().split('T')[0];
+    }
+  };
+
+  const todayStr = getLocalDateString(userTimezone, dateInput);
 
   try {
     const attendances = await prisma.attendance.findMany({
@@ -789,6 +815,9 @@ export const fetchTodayAttendance = async (
             name: att.office.name,
           }
         : null,
+      isOnBreak: att.isOnBreak,
+      breakStartTime: att.breakStartTime ? att.breakStartTime.toISOString() : null,
+      totalBreakSeconds: att.totalBreakSeconds,
     }));
 
     // Compute status distribution for pie chart
@@ -879,6 +908,9 @@ export const fetchAttendanceHistory = async (
             name: att.office.name,
           }
         : null,
+      isOnBreak: att.isOnBreak,
+      breakStartTime: att.breakStartTime ? att.breakStartTime.toISOString() : null,
+      totalBreakSeconds: att.totalBreakSeconds,
     }));
 
     res.json({

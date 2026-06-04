@@ -25,7 +25,7 @@ function isWithinGeofence(userLat: number, userLon: number, officeLat: number, o
 }
 
 // Helper function to get local date string in YYYY-MM-DD format based on timezone
-function getLocalDateString(timezone: string = 'Asia/Kolkata'): string {
+function getLocalDateString(timezone: string = 'Asia/Kolkata', dateInput: Date = new Date()): string {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: timezone,
@@ -33,14 +33,14 @@ function getLocalDateString(timezone: string = 'Asia/Kolkata'): string {
       month: '2-digit',
       day: '2-digit'
     });
-    const parts = formatter.formatToParts(new Date());
+    const parts = formatter.formatToParts(dateInput);
     const year = parts.find(p => p.type === 'year')?.value;
     const month = parts.find(p => p.type === 'month')?.value;
     const day = parts.find(p => p.type === 'day')?.value;
     return `${year}-${month}-${day}`;
   } catch (e) {
     console.error('Error formatting local date string:', e);
-    return new Date().toISOString().split('T')[0];
+    return dateInput.toISOString().split('T')[0];
   }
 }
 
@@ -99,9 +99,19 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
+    // Determine the punch-in time with timezone handling
+    let punchInTime: Date;
+    if (clientTimestamp) {
+      punchInTime = new Date(clientTimestamp);
+      console.log('✅ Using client timestamp for punch-in:', punchInTime.toISOString());
+    } else {
+      punchInTime = new Date();
+      console.log('📅 No client timestamp provided, using server timestamp');
+    }
+
     // Check if already punched in today
     const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
-    const today = getLocalDateString(userTimezone);
+    const today = getLocalDateString(userTimezone, punchInTime);
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -152,35 +162,6 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         return;
       }
     }
-
-    // Determine the punch-in time with timezone handling
-    let punchInTime: Date;
-    
-    if (clientTimestamp) {
-      // Use client timestamp if provided, but validate it
-      const clientDate = new Date(clientTimestamp);
-      const serverDate = new Date();
-      const timeDiff = Math.abs(clientDate.getTime() - serverDate.getTime());
-      
-      console.log('⏰ TIME ANALYSIS:', {
-        clientTimestamp: clientDate.toISOString(),
-        serverTimestamp: serverDate.toISOString(),
-        timeDifferenceMinutes: Math.round(timeDiff / (1000 * 60)),
-        timezone: timezone || 'not provided'
-      });
-      
-      // If client time is within reasonable range (±30 minutes), use it
-      if (timeDiff <= 30 * 60 * 1000) { // 30 minutes in milliseconds
-        punchInTime = clientDate;
-        console.log('✅ Using client timestamp for punch-in');
-      } else {
-        punchInTime = serverDate;
-        console.log('⚠️ Time difference too large, using server timestamp');
-      }
-    } else {
-      punchInTime = new Date();
-      console.log('📅 No client timestamp provided, using server timestamp');
-    }
     
     // Create attendance record
     const attendance = await prisma.attendance.create({
@@ -219,7 +200,13 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       message: 'Punched in successfully.',
       data: {
         id: attendance.id,
+        employeeId: attendance.employeeId,
+        checkIn: attendance.checkIn,
         checkInTime: attendance.checkIn,
+        checkOut: null,
+        isOnBreak: attendance.isOnBreak,
+        breakStartTime: attendance.breakStartTime,
+        totalBreakSeconds: attendance.totalBreakSeconds,
         location: {
           latitude: attendance.latitude,
           longitude: attendance.longitude
@@ -279,9 +266,19 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       return;
     }
 
+    // Determine the punch-out time with timezone handling
+    let punchOutTime: Date;
+    if (clientTimestamp) {
+      punchOutTime = new Date(clientTimestamp);
+      console.log('✅ Using client timestamp for punch-out:', punchOutTime.toISOString());
+    } else {
+      punchOutTime = new Date();
+      console.log('📅 No client timestamp provided, using server timestamp');
+    }
+
     // Get today's attendance record
     const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
-    const today = getLocalDateString(userTimezone);
+    const today = getLocalDateString(userTimezone, punchOutTime);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -308,36 +305,6 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
         errorCode: 'STILL_ON_BREAK'
       });
       return;
-    }
-
-    // Determine the punch-out time with timezone handling
-    let punchOutTime: Date;
-    
-    if (clientTimestamp) {
-      // Use client timestamp if provided, but validate it
-      const clientDate = new Date(clientTimestamp);
-      const serverDate = new Date();
-      const timeDiff = Math.abs(clientDate.getTime() - serverDate.getTime());
-      
-      console.log('⏰ PUNCH OUT TIME ANALYSIS:', {
-        clientTimestamp: clientDate.toISOString(),
-        serverTimestamp: serverDate.toISOString(),
-        timeDifferenceMinutes: Math.round(timeDiff / (1000 * 60)),
-        timezone: timezone || 'not provided',
-        checkInTime: attendance.checkIn?.toISOString()
-      });
-      
-      // If client time is within reasonable range (±30 minutes), use it
-      if (timeDiff <= 30 * 60 * 1000) { // 30 minutes in milliseconds
-        punchOutTime = clientDate;
-        console.log('✅ Using client timestamp for punch-out');
-      } else {
-        punchOutTime = serverDate;
-        console.log('⚠️ Time difference too large, using server timestamp');
-      }
-    } else {
-      punchOutTime = new Date();
-      console.log('📅 No client timestamp provided, using server timestamp');
     }
 
     // Update attendance with punch out
@@ -385,8 +352,14 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       message: 'Punched out successfully.',
       data: {
         id: updatedAttendance.id,
+        employeeId: updatedAttendance.employeeId,
+        checkIn: updatedAttendance.checkIn,
         checkInTime: updatedAttendance.checkIn,
+        checkOut: updatedAttendance.checkOut,
         checkOutTime: updatedAttendance.checkOut,
+        isOnBreak: updatedAttendance.isOnBreak,
+        breakStartTime: updatedAttendance.breakStartTime,
+        totalBreakSeconds: updatedAttendance.totalBreakSeconds,
         workDuration: {
           hours: workHours,
           minutes: workMinutes,
@@ -418,6 +391,7 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: {
+        office: true,
         user: {
           include: { profile: true }
         }
@@ -433,9 +407,68 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
+    if (!employee.office) {
+      res.status(400).json({
+        success: false,
+        message: 'No office assigned to employee.',
+        errorCode: 'NO_OFFICE_ASSIGNED'
+      });
+      return;
+    }
+
+    const { latitude, longitude, clientTimestamp } = req.body;
+
+    if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
+      res.status(400).json({
+        success: false,
+        message: 'Latitude and longitude are required.',
+        errorCode: 'MISSING_LOCATION'
+      });
+      return;
+    }
+
+    // Check geofence (allow 0.0 for simulator testing in non-production environments)
+    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
+      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing.');
+    } else {
+      const isWithinRadius = isWithinGeofence(
+        latitude, 
+        longitude, 
+        employee.office.latitude, 
+        employee.office.longitude, 
+        employee.office.maxPunchRadiusMeters
+      );
+
+      if (!isWithinRadius) {
+        res.status(400).json({
+          success: false,
+          message: 'Location is outside the allowed geofence.',
+          errorCode: 'OUTSIDE_GEOFENCE',
+          data: {
+            distance: calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude),
+            maxRadius: employee.office.maxPunchRadiusMeters,
+            officeLocation: {
+              latitude: employee.office.latitude,
+              longitude: employee.office.longitude
+            }
+          }
+        });
+        return;
+      }
+    }
+
+    let breakStartTime: Date;
+    if (clientTimestamp) {
+      breakStartTime = new Date(clientTimestamp);
+      console.log('✅ Using client timestamp for break start:', breakStartTime.toISOString());
+    } else {
+      breakStartTime = new Date();
+      console.log('📅 No client timestamp provided for break start, using server timestamp');
+    }
+
     // Get today's attendance record
     const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
-    const today = getLocalDateString(userTimezone);
+    const today = getLocalDateString(userTimezone, breakStartTime);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -468,7 +501,7 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
       where: { id: attendance.id },
       data: {
         isOnBreak: true,
-        breakStartTime: new Date()
+        breakStartTime: breakStartTime
       }
     });
 
@@ -496,6 +529,7 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: {
+        office: true,
         user: {
           include: { profile: true }
         }
@@ -511,9 +545,68 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
       return;
     }
 
+    if (!employee.office) {
+      res.status(400).json({
+        success: false,
+        message: 'No office assigned to employee.',
+        errorCode: 'NO_OFFICE_ASSIGNED'
+      });
+      return;
+    }
+
+    const { latitude, longitude, clientTimestamp } = req.body;
+
+    if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
+      res.status(400).json({
+        success: false,
+        message: 'Latitude and longitude are required.',
+        errorCode: 'MISSING_LOCATION'
+      });
+      return;
+    }
+
+    // Check geofence (allow 0.0 for simulator testing in non-production environments)
+    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
+      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing.');
+    } else {
+      const isWithinRadius = isWithinGeofence(
+        latitude, 
+        longitude, 
+        employee.office.latitude, 
+        employee.office.longitude, 
+        employee.office.maxPunchRadiusMeters
+      );
+
+      if (!isWithinRadius) {
+        res.status(400).json({
+          success: false,
+          message: 'Location is outside the allowed geofence.',
+          errorCode: 'OUTSIDE_GEOFENCE',
+          data: {
+            distance: calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude),
+            maxRadius: employee.office.maxPunchRadiusMeters,
+            officeLocation: {
+              latitude: employee.office.latitude,
+              longitude: employee.office.longitude
+            }
+          }
+        });
+        return;
+      }
+    }
+
+    let breakEndTime: Date;
+    if (clientTimestamp) {
+      breakEndTime = new Date(clientTimestamp);
+      console.log('✅ Using client timestamp for break end:', breakEndTime.toISOString());
+    } else {
+      breakEndTime = new Date();
+      console.log('📅 No client timestamp provided for break end, using server timestamp');
+    }
+
     // Get today's attendance record
     const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
-    const today = getLocalDateString(userTimezone);
+    const today = getLocalDateString(userTimezone, breakEndTime);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -532,9 +625,9 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
     }
 
     // Calculate break duration and update attendance
-    const breakEndTime = new Date();
+    const breakEndTimeVar = breakEndTime;
     const breakDuration = attendance.breakStartTime 
-      ? breakEndTime.getTime() - attendance.breakStartTime.getTime()
+      ? breakEndTimeVar.getTime() - attendance.breakStartTime.getTime()
       : 0;
 
     const updatedAttendance = await prisma.attendance.update({
@@ -593,8 +686,15 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
-    const today = getLocalDateString(userTimezone);
+    const { clientTimestamp, timezone } = req.query;
+    const userTimezone = (timezone as string) || employee.user?.profile?.timezone || 'Asia/Kolkata';
+    
+    let dateInput = new Date();
+    if (clientTimestamp) {
+      dateInput = new Date(clientTimestamp as string);
+    }
+    const today = getLocalDateString(userTimezone, dateInput);
+    
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -606,6 +706,8 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
     });
 
     const response = {
+      id: attendance?.id,
+      employeeId: employee.id,
       date: today,
       status: attendance?.status || 'ABSENT',
       checkIn: attendance?.checkIn,
@@ -711,6 +813,7 @@ export const getAttendanceHistory = async (req: AuthenticatedRequest, res: Respo
 
       return {
         id: att.id,
+        employeeId: att.employeeId,
         date: att.date,
         status: att.status,
         checkIn: att.checkIn,
