@@ -32,7 +32,7 @@ export const getMyPayslips = async (
       return;
     }
 
-    const payslips = await prisma.payslip.findMany({
+    const payslips = await (prisma as any).payslip.findMany({
       where: { employeeId: employee.id },
       orderBy: [
         { year: 'desc' },
@@ -70,7 +70,7 @@ export const downloadPayslip = async (
       return;
     }
 
-    const payslip = await prisma.payslip.findUnique({
+    const payslip = await (prisma as any).payslip.findUnique({
       where: { id: payslipId },
       include: { employee: true }
     });

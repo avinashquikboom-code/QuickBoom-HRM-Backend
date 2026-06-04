@@ -2568,14 +2568,14 @@ export const fetchSalarySlips = async (
       include: { office: true, department: true },
     });
 
-    const existingPayslips = await prisma.payslip.findMany({
+    const existingPayslips = await (prisma as any).payslip.findMany({
       where: {
         month: targetMonth,
         year: targetYear,
       },
-    });
+    }) as any[];
 
-    const payslipMap = new Map(existingPayslips.map((p) => [p.employeeId, p]));
+    const payslipMap = new Map(existingPayslips.map((p: any) => [p.employeeId, p]));
 
     const slips = employees.map((emp) => {
       const dbPayslip = payslipMap.get(emp.id);
@@ -2679,7 +2679,7 @@ export const approveSalarySlip = async (
     const department = employee.department?.name || 'Operations';
     const officeName = employee.office?.name || 'Headquarters';
 
-    const payslip = await prisma.payslip.upsert({
+    const payslip = await (prisma as any).payslip.upsert({
       where: {
         employeeId_month_year: {
           employeeId: empIdInt,
@@ -2851,14 +2851,14 @@ export const fetchPayrollReportDetails = async (
       include: { office: true, department: true },
     });
 
-    const existingPayslips = await prisma.payslip.findMany({
+    const existingPayslips = await (prisma as any).payslip.findMany({
       where: {
         month: targetMonthVal,
         year: targetYear,
       },
-    });
+    }) as any[];
 
-    const payslipSet = new Set(existingPayslips.map((p) => p.employeeId));
+    const payslipSet = new Set(existingPayslips.map((p: any) => p.employeeId));
 
     const slips = employees.map((emp) => {
       const isSenior = emp.designation?.toLowerCase().includes('senior') || 
