@@ -19,6 +19,10 @@ import {
   fetchHRPayrollStats,
   fetchHRPayrollRuns,
 } from '../../controllers/hr/hrController';
+import {
+  sendNotification,
+  broadcastAnnouncement,
+} from '../../controllers/hr/hrNotificationController';
 
 const router = express.Router();
 
@@ -219,5 +223,9 @@ router.post('/tasks', createHRTask);
 // Payroll Management
 router.get('/payroll/stats', fetchHRPayrollStats);
 router.get('/payroll/runs', fetchHRPayrollRuns);
+
+// Notifications & Announcements
+router.post('/notifications/send', sendNotification);
+router.post('/announcements/broadcast', broadcastAnnouncement);
 
 export default router;

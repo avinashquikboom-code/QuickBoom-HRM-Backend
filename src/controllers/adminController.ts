@@ -2862,8 +2862,16 @@ export const fetchAdminNotifications = async (
   res: Response
 ): Promise<void> => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
     const notifications = await prisma.notification.findMany({
+      where: { userId },
       orderBy: { createdAt: 'desc' },
+      take: 50,
       include: {
         employee: {
           select: {
@@ -2882,6 +2890,8 @@ export const fetchAdminNotifications = async (
       message: n.body,
       type: n.category,
       isRead: n.isRead,
+      actionId: n.actionId,
+      actionType: n.actionType,
       createdAt: n.createdAt.toISOString(),
       employee: n.employee ? {
         id: n.employee.id.toString(),
@@ -2904,6 +2914,21 @@ export const markAdminNotificationRead = async (
   const { id } = req.params;
 
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const notif = await prisma.notification.findUnique({
+      where: { id: parseInt(id as string, 10) },
+    });
+
+    if (!notif || notif.userId !== userId) {
+      res.status(404).json({ success: false, message: 'Notification not found or unauthorized.' });
+      return;
+    }
+
     const notification = await prisma.notification.update({
       where: { id: parseInt(id as string, 10) },
       data: { isRead: true },
@@ -2921,8 +2946,14 @@ export const markAllAdminNotificationsRead = async (
   res: Response
 ): Promise<void> => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
     await prisma.notification.updateMany({
-      where: { isRead: false },
+      where: { userId, isRead: false },
       data: { isRead: true },
     });
 

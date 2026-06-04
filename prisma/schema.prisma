@@ -20,6 +20,7 @@ model User {
   profile        Profile?
   assignedTasks  Task[]          @relation("AssignedByTasks")
   userPermission UserPermission?
+  notifications  Notification[]
 }
 
 model Profile {
@@ -217,17 +218,19 @@ model ShiftAssignment {
 }
 
 model Notification {
-  id         Int      @id @default(autoincrement())
-  employeeId Int
+  id         Int       @id @default(autoincrement())
+  employeeId Int?
+  userId     Int?
   title      String
   body       String
-  category   String   @default("GENERAL")
-  isRead     Boolean  @default(false)
+  category   String    @default("GENERAL")
+  isRead     Boolean   @default(false)
   actionId   String?
   actionType String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Announcement {
