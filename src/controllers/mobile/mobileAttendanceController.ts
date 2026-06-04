@@ -61,7 +61,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       userId: req.user?.id
     });
     
-    if (!latitude || !longitude) {
+    if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
       res.status(400).json({
         success: false,
         message: 'Latitude and longitude are required.',
@@ -123,30 +123,34 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Check geofence
-    const isWithinRadius = isWithinGeofence(
-      latitude, 
-      longitude, 
-      employee.office.latitude, 
-      employee.office.longitude, 
-      employee.office.maxPunchRadiusMeters
-    );
+    // Check geofence (allow 0.0 for simulator testing in non-production environments)
+    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
+      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing.');
+    } else {
+      const isWithinRadius = isWithinGeofence(
+        latitude, 
+        longitude, 
+        employee.office.latitude, 
+        employee.office.longitude, 
+        employee.office.maxPunchRadiusMeters
+      );
 
-    if (!isWithinRadius) {
-      res.status(400).json({
-        success: false,
-        message: 'Location is outside the allowed geofence.',
-        errorCode: 'OUTSIDE_GEOFENCE',
-        data: {
-          distance: calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude),
-          maxRadius: employee.office.maxPunchRadiusMeters,
-          officeLocation: {
-            latitude: employee.office.latitude,
-            longitude: employee.office.longitude
+      if (!isWithinRadius) {
+        res.status(400).json({
+          success: false,
+          message: 'Location is outside the allowed geofence.',
+          errorCode: 'OUTSIDE_GEOFENCE',
+          data: {
+            distance: calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude),
+            maxRadius: employee.office.maxPunchRadiusMeters,
+            officeLocation: {
+              latitude: employee.office.latitude,
+              longitude: employee.office.longitude
+            }
           }
-        }
-      });
-      return;
+        });
+        return;
+      }
     }
 
     // Determine the punch-in time with timezone handling
