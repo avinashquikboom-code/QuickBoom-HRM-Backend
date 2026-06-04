@@ -24,11 +24,39 @@ function isWithinGeofence(userLat: number, userLon: number, officeLat: number, o
   return distance <= maxRadius;
 }
 
+// Helper function to resolve/normalize timezone abbreviations to standard IANA timezone identifiers
+function resolveTimezone(tz: string | undefined | null, fallback: string = 'Asia/Kolkata'): string {
+  if (!tz) return fallback;
+  const normalized = tz.trim().toUpperCase();
+  const mapping: { [key: string]: string } = {
+    'IST': 'Asia/Kolkata',
+    'UTC': 'UTC',
+    'GMT': 'UTC',
+    'EST': 'America/New_York',
+    'EDT': 'America/New_York',
+    'CST': 'America/Chicago',
+    'CDT': 'America/Chicago',
+    'MST': 'America/Denver',
+    'MDT': 'America/Denver',
+    'PST': 'America/Los_Angeles',
+    'PDT': 'America/Los_Angeles',
+  };
+  const mapped = mapping[normalized] || tz;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: mapped });
+    return mapped;
+  } catch (e) {
+    console.warn(`⚠️ Invalid timezone [${tz}] or mapped [${mapped}], falling back to ${fallback}`);
+    return fallback;
+  }
+}
+
 // Helper function to get local date string in YYYY-MM-DD format based on timezone
 function getLocalDateString(timezone: string = 'Asia/Kolkata', dateInput: Date = new Date()): string {
+  const resolved = resolveTimezone(timezone);
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
+      timeZone: resolved,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -110,7 +138,8 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     }
 
     // Check if already punched in today
-    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const userTimezone = resolveTimezone(timezone as string, profileTimezone);
     const today = getLocalDateString(userTimezone, punchInTime);
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
@@ -134,8 +163,12 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     }
 
     // Check geofence (allow 0.0 for simulator testing in non-production environments)
+    let punchLat = latitude;
+    let punchLon = longitude;
     if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
-      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing.');
+      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing and mocking with office location.');
+      punchLat = employee.office.latitude;
+      punchLon = employee.office.longitude;
     } else {
       const isWithinRadius = isWithinGeofence(
         latitude, 
@@ -172,8 +205,8 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         checkIn: punchInTime,
         status: 'PRESENT',
         notes: notes || '',
-        latitude,
-        longitude,
+        latitude: punchLat,
+        longitude: punchLon,
         isFingerprintCheckIn: isFingerprint,
       },
       include: {
@@ -277,7 +310,8 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     }
 
     // Get today's attendance record
-    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const userTimezone = resolveTimezone(timezone as string, profileTimezone);
     const today = getLocalDateString(userTimezone, punchOutTime);
     const attendance = await prisma.attendance.findFirst({
       where: {
@@ -308,12 +342,23 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     }
 
     // Update attendance with punch out
+    let punchLat = latitude;
+    let punchLon = longitude;
+    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
+      console.log('⚠️ Simulator location (0.0) detected for punch out.');
+      punchLat = attendance.latitude || 0;
+      punchLon = attendance.longitude || 0;
+    } else {
+      if (latitude === undefined || latitude === null) punchLat = attendance.latitude || 0;
+      if (longitude === undefined || longitude === null) punchLon = attendance.longitude || 0;
+    }
+
     const updatedAttendance = await prisma.attendance.update({
       where: { id: attendance.id },
       data: {
         checkOut: punchOutTime,
-        latitude: latitude || attendance.latitude,
-        longitude: longitude || attendance.longitude,
+        latitude: punchLat,
+        longitude: punchLon,
         notes: notes || attendance.notes,
         status: 'PRESENT',
         isFingerprintCheckOut: isFingerprint
@@ -687,7 +732,8 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
     }
 
     const { clientTimestamp, timezone } = req.query;
-    const userTimezone = (timezone as string) || employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const userTimezone = resolveTimezone(timezone as string, profileTimezone);
     
     let dateInput = new Date();
     if (clientTimestamp) {
