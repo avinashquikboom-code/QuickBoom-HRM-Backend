@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
-const PdfPrinter = require('pdfmake');
+const PdfPrinter = require('pdfmake/js/printer').default;
 
 const fonts = {
   Roboto: {
