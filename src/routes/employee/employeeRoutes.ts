@@ -25,6 +25,7 @@ import {
   markAllEmployeeNotificationsRead,
   fetchEmployeeDashboardStats,
   fetchEmployeeHolidays,
+  fetchEmployeeDocuments,
 } from '../../controllers/employee/employeeController';
 
 const router = Router();
@@ -319,6 +320,9 @@ router.post('/leaves', applyEmployeeLeave);
 
 // Holidays
 router.get('/holidays', fetchEmployeeHolidays);
+
+// Documents
+router.get('/documents', fetchEmployeeDocuments);
 
 // Shift Timings
 router.get('/shifts', fetchEmployeeShift);

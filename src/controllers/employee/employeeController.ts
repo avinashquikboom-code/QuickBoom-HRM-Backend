@@ -1220,3 +1220,72 @@ export const fetchEmployeeHolidays = async (
     res.status(500).json({ success: false, message: 'Failed to fetch holidays.' });
   }
 };
+
+// ==========================================
+// 8. Document Management
+// ==========================================
+
+export const fetchEmployeeDocuments = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await getEmployeeFromRequest(req);
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // Fetch payslips (documents) for the employee
+    const payslips = await prisma.payslip.findMany({
+      where: { employeeId: employee.id },
+      orderBy: { year: 'desc', month: 'desc' },
+    });
+
+    // Fetch public documents
+    const publicDocuments = await prisma.document.findMany({
+      where: { isPublic: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Format payslips as documents
+    const payslipDocuments = payslips.map(payslip => {
+      const monthNames = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+      const monthIndex = (payslip.month >= 1 && payslip.month <= 12) ? payslip.month - 1 : 0;
+      const monthName = monthNames[monthIndex];
+
+      return {
+        id: payslip.id.toString(),
+        title: `${monthName} ${payslip.year} Payslip`,
+        type: 'payslip',
+        date: new Date(payslip.year, payslip.month, 1).toISOString().split('T')[0],
+        fileSize: '1.2 MB',
+        isDownloadable: true,
+      };
+    });
+
+    // Format public documents
+    const formattedPublicDocs = publicDocuments.map(doc => ({
+      id: doc.id.toString(),
+      title: doc.title,
+      type: doc.type,
+      date: doc.date.toISOString().split('T')[0],
+      fileSize: doc.fileSize,
+      isDownloadable: true,
+    }));
+
+    // Combine all documents
+    const allDocuments = [...payslipDocuments, ...formattedPublicDocs];
+
+    res.json({
+      success: true,
+      documents: allDocuments,
+    });
+  } catch (error) {
+    console.error('Fetch documents error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch documents.' });
+  }
+};
