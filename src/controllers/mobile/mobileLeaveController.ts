@@ -385,3 +385,254 @@ export const downloadLeaveReport = async (
     res.status(500).json({ success: false, message: 'Failed to generate leave report' });
   }
 };
+
+// Fetch leave requests for HR approval
+export const fetchHRLeaveRequests = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    // Verify user has HR role
+    if (req.user?.role !== 'HR' && req.user?.role !== 'SUPER_ADMIN' && req.user?.role !== 'PLATFORM_ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
+    const { status, employeeId } = req.query;
+    
+    let whereClause: any = {};
+    
+    if (status && status !== 'All') {
+      whereClause.status = status;
+    }
+    
+    if (employeeId) {
+      whereClause.employeeId = parseInt(employeeId as string);
+    }
+
+    const leaveRequests = await prisma.leaveRequest.findMany({
+      where: whereClause,
+      include: {
+        employee: {
+          include: {
+            user: true,
+            office: true,
+            department: true
+          }
+        }
+      },
+      orderBy: { appliedOn: 'desc' }
+    });
+
+    const formattedRequests = leaveRequests.map(lr => ({
+      id: lr.id.toString(),
+      type: lr.type,
+      typeLabel: lr.type === 'CASUAL' ? 'Casual Leave' : lr.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',
+      fromDate: lr.fromDate.toISOString().split('T')[0],
+      toDate: lr.toDate.toISOString().split('T')[0],
+      reason: lr.reason,
+      status: lr.status,
+      statusLabel: lr.status.charAt(0) + lr.status.slice(1).toLowerCase(),
+      appliedOn: lr.appliedOn.toISOString().split('T')[0],
+      reviewedBy: lr.reviewedBy,
+      reviewNote: lr.reviewNote,
+      days: Math.ceil((lr.toDate.getTime() - lr.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1,
+      employee: {
+        id: lr.employee.id.toString(),
+        employeeCode: lr.employee.employeeCode,
+        name: `${lr.employee.firstName} ${lr.employee.lastName}`,
+        firstName: lr.employee.firstName,
+        lastName: lr.employee.lastName,
+        designation: lr.employee.designation,
+        email: lr.employee.user?.email || '',
+        office: lr.employee.office?.name || 'N/A',
+        department: lr.employee.department?.name || 'N/A'
+      }
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        leaveRequests: formattedRequests,
+        summary: {
+          total: formattedRequests.length,
+          pending: formattedRequests.filter(lr => lr.status === 'PENDING').length,
+          approved: formattedRequests.filter(lr => lr.status === 'APPROVED').length,
+          rejected: formattedRequests.filter(lr => lr.status === 'REJECTED').length
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Fetch HR leave requests error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch leave requests' });
+  }
+};
+
+// Approve leave request (mobile HR)
+export const approveLeaveRequest = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { reviewerName, reviewNote } = req.body;
+
+    // Verify user has HR role
+    if (req.user?.role !== 'HR' && req.user?.role !== 'SUPER_ADMIN' && req.user?.role !== 'PLATFORM_ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
+    // Get leave request details before updating
+    const existingLeave = await prisma.leaveRequest.findUnique({
+      where: { id: parseInt(id as string, 10) },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    if (!existingLeave) {
+      res.status(404).json({ success: false, message: 'Leave request not found' });
+      return;
+    }
+
+    // Update leave request status
+    const leave = await prisma.leaveRequest.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'APPROVED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewNote: reviewNote || 'Approved via mobile',
+      },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    // Send notification to employee
+    await prisma.notification.create({
+      data: {
+        employeeId: leave.employee.id,
+        userId: leave.employee.userId,
+        title: 'Leave Request Approved',
+        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
+        category: 'LEAVE',
+        actionId: leave.id.toString(),
+        actionType: 'LEAVE_APPROVED',
+        isRead: false,
+      },
+    });
+
+    console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
+
+    res.json({
+      success: true,
+      message: 'Leave request approved successfully',
+      data: {
+        id: leave.id.toString(),
+        status: leave.status,
+        reviewedBy: leave.reviewedBy,
+        reviewNote: leave.reviewNote,
+        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`
+      }
+    });
+  } catch (error) {
+    console.error('Mobile approve leave error:', error);
+    res.status(500).json({ success: false, message: 'Failed to approve leave request' });
+  }
+};
+
+// Reject leave request (mobile HR)
+export const rejectLeaveRequest = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { reviewerName, reviewNote } = req.body;
+
+    // Verify user has HR role
+    if (req.user?.role !== 'HR' && req.user?.role !== 'SUPER_ADMIN' && req.user?.role !== 'PLATFORM_ADMIN') {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
+    if (!reviewNote || reviewNote.trim() === '') {
+      res.status(400).json({ success: false, message: 'Review note is required for rejection' });
+      return;
+    }
+
+    // Get leave request details before updating
+    const existingLeave = await prisma.leaveRequest.findUnique({
+      where: { id: parseInt(id as string, 10) },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    if (!existingLeave) {
+      res.status(404).json({ success: false, message: 'Leave request not found' });
+      return;
+    }
+
+    // Update leave request status
+    const leave = await prisma.leaveRequest.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'REJECTED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewNote: reviewNote.trim(),
+      },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    // Send notification to employee
+    await prisma.notification.create({
+      data: {
+        employeeId: leave.employee.id,
+        userId: leave.employee.userId,
+        title: 'Leave Request Rejected',
+        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. Reason: ${reviewNote}`,
+        category: 'LEAVE',
+        actionId: leave.id.toString(),
+        actionType: 'LEAVE_REJECTED',
+        isRead: false,
+      },
+    });
+
+    console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
+
+    res.json({
+      success: true,
+      message: 'Leave request rejected successfully',
+      data: {
+        id: leave.id.toString(),
+        status: leave.status,
+        reviewedBy: leave.reviewedBy,
+        reviewNote: leave.reviewNote,
+        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`
+      }
+    });
+  } catch (error) {
+    console.error('Mobile reject leave error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reject leave request' });
+  }
+};

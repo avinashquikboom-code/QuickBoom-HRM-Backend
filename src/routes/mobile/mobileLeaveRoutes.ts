@@ -1,10 +1,15 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
+import { roleMiddleware } from '../../middlewares/roleMiddleware';
+import { Role } from '@prisma/client';
 import {
   fetchMyLeaves,
   applyLeave,
   downloadMyLeaveReport,
   downloadLeaveReport,
+  fetchHRLeaveRequests,
+  approveLeaveRequest,
+  rejectLeaveRequest,
 } from '../../controllers/mobile/mobileLeaveController';
 
 const router = Router();
@@ -88,5 +93,10 @@ router.get('/my-report/download', downloadMyLeaveReport);
  *         description: Failed to generate leave report
  */
 router.get('/report/download', downloadLeaveReport);
+
+// HR Leave Management Routes (require HR role)
+router.get('/hr/requests', roleMiddleware([Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), fetchHRLeaveRequests);
+router.post('/hr/:id/approve', roleMiddleware([Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), approveLeaveRequest);
+router.post('/hr/:id/reject', roleMiddleware([Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), rejectLeaveRequest);
 
 export default router;

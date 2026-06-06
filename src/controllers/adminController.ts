@@ -1950,6 +1950,23 @@ export const updateAdminLeaveStatus = async (
   }
 
   try {
+    // Get leave request details before updating
+    const existingLeave = await prisma.leaveRequest.findUnique({
+      where: { id: leaveIdInt },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    if (!existingLeave) {
+      res.status(404).json({ success: false, message: 'Leave request not found.' });
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
       include: { profile: true },
@@ -1963,7 +1980,35 @@ export const updateAdminLeaveStatus = async (
         reviewedBy: reviewerName,
         reviewNote: reviewNote || 'Processed by Administrator',
       },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
     });
+
+    // Send notification to employee
+    const notificationTitle = status.toUpperCase() === 'APPROVED' ? 'Leave Request Approved' : 'Leave Request Rejected';
+    const notificationBody = status.toUpperCase() === 'APPROVED' 
+      ? `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been approved by ${reviewerName}.`
+      : `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been rejected. Reason: ${reviewNote || 'No reason provided'}`;
+
+    await prisma.notification.create({
+      data: {
+        employeeId: existingLeave.employeeId,
+        userId: existingLeave.employee.userId,
+        title: notificationTitle,
+        body: notificationBody,
+        category: 'LEAVE',
+        actionId: existingLeave.id.toString(),
+        actionType: status.toUpperCase() === 'APPROVED' ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
+        isRead: false,
+      },
+    });
+
+    console.log(`✅ Admin Panel: Leave request ${existingLeave.id} ${status.toLowerCase()} and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     res.json({
       success: true,
