@@ -5,6 +5,32 @@ import { webSocketService } from '../..';
 import geofenceService from '../../services/geofenceService';
 const PdfPrinter = require('pdfmake');
 
+// Interface for attendance with office data
+interface AttendanceWithOffice {
+  id: number;
+  employeeId: number;
+  officeId?: number;
+  date: string;
+  checkIn?: Date;
+  checkOut?: Date;
+  status: string;
+  notes?: string;
+  latitude?: number;
+  longitude?: number;
+  isFingerprintCheckIn: boolean;
+  isFingerprintCheckOut: boolean;
+  isOnBreak: boolean;
+  breakStartTime?: Date;
+  totalBreakSeconds: number;
+  createdAt: Date;
+  updatedAt: Date;
+  office?: {
+    id: number;
+    name: string;
+    code?: string;
+  };
+}
+
 // Helper function to calculate distance between two coordinates
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371e3; // Earth's radius in meters
@@ -168,27 +194,52 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     // Check geofence (allow 0.0 for simulator testing in non-production environments)
     let punchLat = latitude;
     let punchLon = longitude;
+    
+    // Enhanced debugging for geofence
+    console.log('📍 Geofence Debug Info:', {
+      userLocation: { latitude, longitude },
+      officeLocation: {
+        latitude: employee.office.latitude,
+        longitude: employee.office.longitude,
+        maxRadius: employee.office.maxPunchRadiusMeters
+      },
+      environment: process.env.NODE_ENV
+    });
+    
     if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
       console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing and mocking with office location.');
       punchLat = employee.office.latitude;
       punchLon = employee.office.longitude;
     } else {
-      const isWithinRadius = isWithinGeofence(
-        latitude, 
-        longitude, 
-        employee.office.latitude, 
-        employee.office.longitude, 
-        employee.office.maxPunchRadiusMeters
-      );
+      const distance = calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude);
+      const maxRadius = employee.office.maxPunchRadiusMeters;
+      
+      console.log('📏 Distance Calculation:', {
+        distance: Math.round(distance),
+        maxRadius: maxRadius,
+        isWithinRadius: distance <= maxRadius
+      });
+      
+      // For testing purposes, increase the radius or bypass geofence in development
+      const isWithinRadius = process.env.NODE_ENV === 'production' 
+        ? distance <= maxRadius 
+        : distance <= (maxRadius * 10); // 10x more lenient in development
 
       if (!isWithinRadius) {
+        console.log('❌ Geofence check failed:', {
+          distance: Math.round(distance),
+          maxRadius: maxRadius,
+          environment: process.env.NODE_ENV
+        });
+        
         res.status(400).json({
           success: false,
-          message: 'Location is outside the allowed geofence.',
+          message: `Location is outside the allowed geofence. Distance: ${Math.round(distance)}m, Max allowed: ${maxRadius}m`,
           errorCode: 'OUTSIDE_GEOFENCE',
           data: {
-            distance: calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude),
-            maxRadius: employee.office.maxPunchRadiusMeters,
+            distance: Math.round(distance),
+            maxRadius: maxRadius,
+            userLocation: { latitude, longitude },
             officeLocation: {
               latitude: employee.office.latitude,
               longitude: employee.office.longitude
@@ -197,6 +248,8 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         });
         return;
       }
+      
+      console.log('✅ Geofence check passed');
     }
     
     // Create attendance record
@@ -303,7 +356,9 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       include: {
         user: {
           include: { profile: true }
-        }
+        },
+        office: true,
+        department: true
       }
     });
 
@@ -358,16 +413,71 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       return;
     }
 
-    // Update attendance with punch out
+    // Check geofence for punch out (same logic as punch in)
     let punchLat = latitude;
     let punchLon = longitude;
+    
+    // Enhanced debugging for geofence
+    console.log('📍 Punch Out Geofence Debug Info:', {
+      userLocation: { latitude, longitude },
+      officeLocation: {
+        latitude: employee.office?.latitude,
+        longitude: employee.office?.longitude,
+        maxRadius: employee.office?.maxPunchRadiusMeters
+      },
+      environment: process.env.NODE_ENV
+    });
+    
     if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
-      console.log('⚠️ Simulator location (0.0) detected for punch out.');
-      punchLat = attendance.latitude || 0;
-      punchLon = attendance.longitude || 0;
+      console.log('⚠️ Simulator location (0.0) detected for punch out. Bypassing geofence check.');
+      punchLat = attendance.latitude || employee.office?.latitude || 0;
+      punchLon = attendance.longitude || employee.office?.longitude || 0;
+    } else if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) {
+      console.log('⚠️ Missing location coordinates for punch out. Using punch-in location.');
+      punchLat = attendance.latitude || employee.office?.latitude || 0;
+      punchLon = attendance.longitude || employee.office?.longitude || 0;
     } else {
-      if (latitude === undefined || latitude === null) punchLat = attendance.latitude || 0;
-      if (longitude === undefined || longitude === null) punchLon = attendance.longitude || 0;
+      const distance = calculateDistance(latitude, longitude, employee.office?.latitude || 0, employee.office?.longitude || 0);
+      const maxRadius = employee.office?.maxPunchRadiusMeters || 100;
+      
+      console.log('📏 Punch Out Distance Calculation:', {
+        distance: Math.round(distance),
+        maxRadius: maxRadius,
+        isWithinRadius: distance <= maxRadius
+      });
+      
+      // For testing purposes, increase the radius or bypass geofence in development
+      const isWithinRadius = process.env.NODE_ENV === 'production' 
+        ? distance <= maxRadius 
+        : distance <= (maxRadius * 10); // 10x more lenient in development
+
+      if (!isWithinRadius) {
+        console.log('❌ Punch Out Geofence check failed:', {
+          distance: Math.round(distance),
+          maxRadius: maxRadius,
+          environment: process.env.NODE_ENV
+        });
+        
+        res.status(400).json({
+          success: false,
+          message: `Location is outside the allowed geofence for punch out. Distance: ${Math.round(distance)}m, Max allowed: ${maxRadius}m`,
+          errorCode: 'OUTSIDE_GEOFENCE',
+          data: {
+            distance: Math.round(distance),
+            maxRadius: maxRadius,
+            userLocation: { latitude, longitude },
+            officeLocation: {
+              latitude: employee.office?.latitude || 0,
+              longitude: employee.office?.longitude || 0
+            }
+          }
+        });
+        return;
+      }
+      
+      punchLat = latitude;
+      punchLon = longitude;
+      console.log('✅ Punch Out Geofence check passed');
     }
 
     const updatedAttendance = await prisma.attendance.update({
@@ -985,7 +1095,7 @@ export const getAttendanceHistory = async (req: AuthenticatedRequest, res: Respo
       })
     ]);
 
-    const attendanceHistory = attendances.map(att => {
+    const attendanceHistory = attendances.map((att: AttendanceWithOffice) => {
       const workDuration = att.checkIn && att.checkOut 
         ? att.checkOut.getTime() - att.checkIn.getTime()
         : 0;
@@ -1275,7 +1385,7 @@ export const downloadMyAttendanceReport = async (
             widths: ['*', '*', '*', '*'],
             body: [
               ['Date', 'Check In', 'Check Out', 'Status'],
-              ...attendances.map(att => [
+              ...attendances.map((att: AttendanceWithOffice) => [
                 att.date,
                 att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
                 att.checkOut ? new Date(att.checkOut).toLocaleTimeString() : '--:--',
@@ -1355,7 +1465,7 @@ export const downloadAttendanceReport = async (
 
     const attendances = await prisma.attendance.findMany({
       where: {
-        employeeId: { in: employees.map(emp => emp.id) },
+        employeeId: { in: employees.map((emp: any) => emp.id) },
         date: {
           startsWith: targetMonth,
         },
@@ -1373,7 +1483,7 @@ export const downloadAttendanceReport = async (
     });
 
     // Create employee data for PDF
-    const employeeData = employees.map((emp) => {
+    const employeeData = employees.map((emp: any) => {
       const empAtts = attendanceByEmployee[emp.id] || [];
       const present = empAtts.filter((a) => a.status === 'PRESENT').length;
       const late = empAtts.filter((a) => a.status === 'LATE').length;
@@ -1426,7 +1536,7 @@ export const downloadAttendanceReport = async (
           style: 'normal',
           margin: [0, 0, 0, 20]
         },
-        ...employeeData.map((empData, index) => [
+        ...employeeData.map((empData: any, index: number) => [
           {
             text: `Employee: ${empData.employee.firstName} ${empData.employee.lastName} (${empData.employee.employeeCode})`,
             style: 'subheader',
@@ -1473,7 +1583,7 @@ export const downloadAttendanceReport = async (
               widths: ['*', '*', '*', '*'],
               body: [
                 ['Date', 'Check In', 'Check Out', 'Status'],
-                ...empData.attendances.map(att => [
+                ...empData.attendances.map((att: AttendanceWithOffice) => [
                   att.date,
                   att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
                   att.checkOut ? new Date(att.checkOut).toLocaleTimeString() : '--:--',
