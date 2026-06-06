@@ -21,6 +21,11 @@ import {
   fetchAttendanceCorrections,
   approveAttendanceCorrection,
   rejectAttendanceCorrection,
+  createHREmployee,
+  updateHREmployee,
+  deleteHREmployee,
+  fetchHROffices,
+  fetchHRDepartments,
 } from '../../controllers/hr/hrController';
 import {
   sendNotification,
@@ -104,6 +109,11 @@ router.get('/leaves', fetchLeaveOverview);
  *         description: Server error
  */
 router.get('/employees', fetchHREmployees);
+router.post('/employees', createHREmployee);
+router.put('/employees/:id', updateHREmployee);
+router.delete('/employees/:id', deleteHREmployee);
+router.get('/offices', fetchHROffices);
+router.get('/departments', fetchHRDepartments);
 router.get('/attendance-trend', fetchAttendanceTrend);
 router.get('/activity', fetchHRActivity);
 

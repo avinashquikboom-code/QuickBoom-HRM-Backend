@@ -1030,3 +1030,288 @@ export const rejectAttendanceCorrection = async (
     res.status(500).json({ success: false, message: 'Failed to reject attendance correction.' });
   }
 };
+
+// ==========================================
+// HR Employee Management
+// ==========================================
+
+export const createHREmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { 
+    email, 
+    firstName, 
+    lastName, 
+    designation, 
+    status = 'active', 
+    officeId, 
+    departmentId,
+    phone = ''
+  } = req.body;
+
+  if (!email || !firstName) {
+    res.status(400).json({ success: false, message: 'Email and first name are required.' });
+    return;
+  }
+
+  try {
+    // Check if user already exists
+    let user = await prisma.user.findUnique({ where: { email } });
+    
+    if (!user) {
+      // Create new user
+      const defaultPassword = 'Temp123!@#'; // You might want to generate a random password
+      user = await prisma.user.create({
+        data: {
+          email,
+          password: defaultPassword, // In production, hash this password
+          role: 'EMPLOYEE',
+          isActive: true,
+        },
+      });
+    }
+
+    // Check if employee record already exists
+    const existingEmployee = await prisma.employee.findUnique({
+      where: { userId: user.id },
+    });
+    
+    if (existingEmployee) {
+      res.status(400).json({ success: false, message: 'Employee record already exists for this user.' });
+      return;
+    }
+
+    // Generate employee code
+    const employeeCode = `EMP${String(user.id).padStart(4, '0')}`;
+
+    // Create employee record
+    const newEmployee = await prisma.employee.create({
+      data: {
+        userId: user.id,
+        employeeCode,
+        firstName: firstName.trim(),
+        lastName: (lastName || '').trim(),
+        designation: designation || 'Employee',
+        status,
+        officeId: officeId ? parseInt(officeId, 10) : null,
+        departmentId: departmentId ? parseInt(departmentId, 10) : null,
+      },
+      include: {
+        office: true,
+        user: {
+          select: { email: true, isActive: true }
+        },
+        department: {
+          select: { name: true }
+        },
+      },
+    });
+
+    // Create profile for the employee
+    await prisma.profile.create({
+      data: {
+        userId: user.id,
+        email,
+        fullName: `${firstName} ${lastName || ''}`.trim(),
+        phone,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Employee created successfully.',
+      employee: {
+        id: newEmployee.id,
+        employeeCode: newEmployee.employeeCode,
+        firstName: newEmployee.firstName,
+        lastName: newEmployee.lastName,
+        fullName: `${newEmployee.firstName} ${newEmployee.lastName || ''}`.trim(),
+        designation: newEmployee.designation,
+        status: newEmployee.status,
+        email: newEmployee.user?.email || '',
+        phone,
+        department: newEmployee.department?.name || 'Unassigned',
+        office: newEmployee.office?.name || 'Remote',
+        createdAt: newEmployee.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error('Create HR employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create employee.' });
+  }
+};
+
+export const updateHREmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { 
+    firstName, 
+    lastName, 
+    designation, 
+    status, 
+    officeId, 
+    departmentId,
+    phone
+  } = req.body;
+
+  if (!id) {
+    res.status(400).json({ success: false, message: 'Employee ID is required.' });
+    return;
+  }
+
+  try {
+    const employeeId = parseInt(id as string, 10);
+    
+    const updatedEmployee = await prisma.employee.update({
+      where: { id: employeeId },
+      data: {
+        firstName: firstName?.trim(),
+        lastName: lastName?.trim(),
+        designation,
+        status,
+        officeId: officeId ? parseInt(officeId, 10) : null,
+        departmentId: departmentId ? parseInt(departmentId, 10) : null,
+      },
+      include: {
+        office: true,
+        user: {
+          select: { email: true, isActive: true }
+        },
+        department: {
+          select: { name: true }
+        },
+      },
+    });
+
+    // Update profile if phone is provided
+    if (phone !== undefined && updatedEmployee.userId) {
+      await prisma.profile.update({
+        where: { userId: updatedEmployee.userId },
+        data: {
+          fullName: `${firstName || updatedEmployee.firstName} ${lastName || updatedEmployee.lastName || ''}`.trim(),
+          phone,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Employee updated successfully.',
+      employee: {
+        id: updatedEmployee.id,
+        employeeCode: updatedEmployee.employeeCode,
+        firstName: updatedEmployee.firstName,
+        lastName: updatedEmployee.lastName,
+        fullName: `${updatedEmployee.firstName} ${updatedEmployee.lastName || ''}`.trim(),
+        designation: updatedEmployee.designation,
+        status: updatedEmployee.status,
+        email: updatedEmployee.user?.email || '',
+        department: updatedEmployee.department?.name || 'Unassigned',
+        office: updatedEmployee.office?.name || 'Remote',
+        updatedAt: updatedEmployee.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Update HR employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update employee.' });
+  }
+};
+
+export const deleteHREmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+
+  if (!id) {
+    res.status(400).json({ success: false, message: 'Employee ID is required.' });
+    return;
+  }
+
+  try {
+    const employeeId = parseInt(id as string, 10);
+    
+    // Check if employee exists
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      include: { user: true },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // Delete employee (this will cascade delete related records)
+    await prisma.employee.delete({
+      where: { id: employeeId },
+    });
+
+    // Optionally, you might want to deactivate the user instead of deleting
+    // await prisma.user.update({
+    //   where: { id: employee.userId },
+    //   data: { isActive: false },
+    // });
+
+    res.json({
+      success: true,
+      message: 'Employee deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete HR employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete employee.' });
+  }
+};
+
+export const fetchHROffices = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const offices = await prisma.office.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        address: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json({
+      success: true,
+      offices,
+    });
+  } catch (error) {
+    console.error('Fetch HR offices error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch offices.' });
+  }
+};
+
+export const fetchHRDepartments = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const departments = await prisma.department.findMany({
+      select: {
+        id: true,
+        name: true,
+        code: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json({
+      success: true,
+      departments,
+    });
+  } catch (error) {
+    console.error('Fetch HR departments error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch departments.' });
+  }
+};
