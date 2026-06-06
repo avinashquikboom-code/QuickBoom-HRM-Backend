@@ -46,6 +46,7 @@ import {
   generateAdminReport,
   fetchPayrollReportDetails,
   fetchAttendanceReportDetails,
+  downloadAttendanceReport,
   fetchAdminNotifications,
   markAdminNotificationRead,
   markAllAdminNotificationsRead,
@@ -350,6 +351,7 @@ router.get('/reports', fetchAdminReports);
 router.post('/reports/generate', generateAdminReport);
 router.get('/reports/payroll-details', fetchPayrollReportDetails);
 router.get('/reports/attendance-details', fetchAttendanceReportDetails);
+router.get('/reports/attendance/download', downloadAttendanceReport);
 
 // Notifications Management
 router.get('/notifications', fetchAdminNotifications);

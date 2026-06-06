@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+const PdfPrinter = require('pdfmake');
 
 // Helper function to calculate distance between two coordinates
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -1018,6 +1019,366 @@ export const getAttendanceStats = async (req: AuthenticatedRequest, res: Respons
       success: false,
       message: 'Error fetching attendance statistics.',
       errorCode: 'GET_ATTENDANCE_STATS_ERROR'
+    });
+  }
+};
+
+// Generate attendance report PDF for download (Employee - own attendance)
+export const downloadMyAttendanceReport = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+      include: { office: true, department: true },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    const { month } = req.query;
+    const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        employeeId: employee.id,
+        date: {
+          startsWith: targetMonth,
+        },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    // Calculate attendance statistics
+    const present = attendances.filter((a) => a.status === 'PRESENT').length;
+    const late = attendances.filter((a) => a.status === 'LATE').length;
+    const absent = attendances.filter((a) => a.status === 'ABSENT').length;
+    const halfDay = attendances.filter((a) => a.status === 'HALF_DAY').length;
+    const leave = attendances.filter((a) => a.status === 'LEAVE').length;
+    const totalDays = attendances.length;
+    const attendanceRate = totalDays > 0 
+      ? Math.round(((present + late + halfDay * 0.5) / totalDays) * 100)
+      : 100;
+
+    // PDF document definition
+    const printer = new PdfPrinter({
+      Roboto: {
+        normal: 'Helvetica',
+        bold: 'Helvetica-Bold',
+        italics: 'Helvetica-Oblique',
+        bolditalics: 'Helvetica-BoldOblique'
+      }
+    });
+
+    const docDefinition = {
+      content: [
+        {
+          text: 'Attendance Report',
+          style: 'header',
+          alignment: 'center',
+          margin: [0, 0, 0, 20]
+        },
+        {
+          columns: [
+            {
+              text: `Employee: ${employee.firstName} ${employee.lastName}`,
+              style: 'subheader'
+            },
+            {
+              text: `Employee Code: ${employee.employeeCode}`,
+              style: 'subheader'
+            }
+          ],
+          margin: [0, 0, 0, 10]
+        },
+        {
+          columns: [
+            {
+              text: `Department: ${employee.department?.name || 'N/A'}`,
+              style: 'normal'
+            },
+            {
+              text: `Office: ${employee.office?.name || 'N/A'}`,
+              style: 'normal'
+            }
+          ],
+          margin: [0, 0, 0, 10]
+        },
+        {
+          text: `Month: ${targetMonth}`,
+          style: 'normal',
+          margin: [0, 0, 0, 20]
+        },
+        {
+          text: 'Attendance Summary',
+          style: 'subheader',
+          margin: [0, 0, 0, 10]
+        },
+        {
+          ul: [
+            `Present: ${present} days`,
+            `Late: ${late} days`,
+            `Absent: ${absent} days`,
+            `Half Day: ${halfDay} days`,
+            `Leave: ${leave} days`,
+            `Attendance Rate: ${attendanceRate}%`
+          ],
+          margin: [0, 0, 0, 20]
+        },
+        {
+          text: 'Daily Attendance Details',
+          style: 'subheader',
+          margin: [0, 0, 0, 10]
+        },
+        {
+          table: {
+            headerRows: 1,
+            widths: ['*', '*', '*', '*'],
+            body: [
+              ['Date', 'Check In', 'Check Out', 'Status'],
+              ...attendances.map(att => [
+                att.date,
+                att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
+                att.checkOut ? new Date(att.checkOut).toLocaleTimeString() : '--:--',
+                att.status
+              ])
+            ]
+          }
+        }
+      ],
+      styles: {
+        header: {
+          fontSize: 18,
+          bold: true,
+          margin: [0, 0, 0, 10]
+        },
+        subheader: {
+          fontSize: 14,
+          bold: true,
+          margin: [0, 0, 0, 5]
+        },
+        normal: {
+          fontSize: 12
+        }
+      }
+    };
+
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-report-${employee.employeeCode}-${new Date().toISOString().split('T')[0]}.pdf"`);
+    
+    pdfDoc.pipe(res);
+    pdfDoc.end();
+  } catch (error) {
+    console.error('Download my attendance report error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to download attendance report.',
+      errorCode: 'DOWNLOAD_MY_ATTENDANCE_REPORT_ERROR'
+    });
+  }
+};
+
+// Generate attendance report PDF for HR (all employees or specific employee)
+export const downloadAttendanceReport = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { month, employeeId } = req.query;
+    const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+
+    // Check if user is HR or Admin
+    const user = await prisma.user.findUnique({
+      where: { id: req.user?.id },
+      include: { employee: true }
+    });
+
+    if (!user || (user.role !== 'HR' && user.role !== 'ADMIN')) {
+      res.status(403).json({ success: false, message: 'Access denied. HR or Admin role required.' });
+      return;
+    }
+
+    let employees;
+    if (employeeId) {
+      // Specific employee report
+      employees = await prisma.employee.findMany({
+        where: { id: parseInt(employeeId as string) },
+        include: { office: true, department: true },
+      });
+    } else {
+      // All employees report
+      employees = await prisma.employee.findMany({
+        include: { office: true, department: true },
+      });
+    }
+
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        employeeId: { in: employees.map(emp => emp.id) },
+        date: {
+          startsWith: targetMonth,
+        },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    // Group attendances by employee
+    const attendanceByEmployee: Record<number, typeof attendances> = {};
+    attendances.forEach((att) => {
+      if (!attendanceByEmployee[att.employeeId]) {
+        attendanceByEmployee[att.employeeId] = [];
+      }
+      attendanceByEmployee[att.employeeId].push(att);
+    });
+
+    // Create employee data for PDF
+    const employeeData = employees.map((emp) => {
+      const empAtts = attendanceByEmployee[emp.id] || [];
+      const present = empAtts.filter((a) => a.status === 'PRESENT').length;
+      const late = empAtts.filter((a) => a.status === 'LATE').length;
+      const absent = empAtts.filter((a) => a.status === 'ABSENT').length;
+      const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+      const leave = empAtts.filter((a) => a.status === 'LEAVE').length;
+      const totalDays = empAtts.length;
+      const attendanceRate = totalDays > 0 
+        ? Math.round(((present + late + halfDay * 0.5) / totalDays) * 100)
+        : 100;
+
+      return {
+        employee: emp,
+        attendances: empAtts,
+        present,
+        late,
+        absent,
+        halfDay,
+        leave,
+        totalDays,
+        attendanceRate
+      };
+    });
+
+    // PDF document definition
+    const printer = new PdfPrinter({
+      Roboto: {
+        normal: 'Helvetica',
+        bold: 'Helvetica-Bold',
+        italics: 'Helvetica-Oblique',
+        bolditalics: 'Helvetica-BoldOblique'
+      }
+    });
+
+    const docDefinition = {
+      content: [
+        {
+          text: 'HR Attendance Report',
+          style: 'header',
+          alignment: 'center',
+          margin: [0, 0, 0, 20]
+        },
+        {
+          text: `Month: ${targetMonth}`,
+          style: 'subheader',
+          margin: [0, 0, 0, 20]
+        },
+        {
+          text: `Generated by: ${user.employee?.firstName || user.email} (${user.role})`,
+          style: 'normal',
+          margin: [0, 0, 0, 20]
+        },
+        ...employeeData.map((empData, index) => [
+          {
+            text: `Employee: ${empData.employee.firstName} ${empData.employee.lastName} (${empData.employee.employeeCode})`,
+            style: 'subheader',
+            margin: [0, 20, 0, 10],
+            pageBreak: index > 0 ? 'before' : undefined
+          },
+          {
+            columns: [
+              {
+                text: `Department: ${empData.employee.department?.name || 'N/A'}`,
+                style: 'normal'
+              },
+              {
+                text: `Office: ${empData.employee.office?.name || 'N/A'}`,
+                style: 'normal'
+              }
+            ],
+            margin: [0, 0, 0, 10]
+          },
+          {
+            text: 'Attendance Summary',
+            style: 'subheader',
+            margin: [0, 0, 0, 10]
+          },
+          {
+            ul: [
+              `Present: ${empData.present} days`,
+              `Late: ${empData.late} days`,
+              `Absent: ${empData.absent} days`,
+              `Half Day: ${empData.halfDay} days`,
+              `Leave: ${empData.leave} days`,
+              `Attendance Rate: ${empData.attendanceRate}%`
+            ],
+            margin: [0, 0, 0, 20]
+          },
+          {
+            text: 'Daily Attendance Details',
+            style: 'subheader',
+            margin: [0, 0, 0, 10]
+          },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['*', '*', '*', '*'],
+              body: [
+                ['Date', 'Check In', 'Check Out', 'Status'],
+                ...empData.attendances.map(att => [
+                  att.date,
+                  att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
+                  att.checkOut ? new Date(att.checkOut).toLocaleTimeString() : '--:--',
+                  att.status
+                ])
+              ]
+            },
+            margin: [0, 0, 0, 30]
+          }
+        ])
+      ],
+      styles: {
+        header: {
+          fontSize: 18,
+          bold: true,
+          margin: [0, 0, 0, 10]
+        },
+        subheader: {
+          fontSize: 14,
+          bold: true,
+          margin: [0, 0, 0, 5]
+        },
+        normal: {
+          fontSize: 12
+        }
+      }
+    };
+
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="hr-attendance-report-${new Date().toISOString().split('T')[0]}.pdf"`);
+    
+    pdfDoc.pipe(res);
+    pdfDoc.end();
+  } catch (error) {
+    console.error('Download attendance report error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to download attendance report.',
+      errorCode: 'DOWNLOAD_ATTENDANCE_REPORT_ERROR'
     });
   }
 };

@@ -8,7 +8,9 @@ import {
   endBreak,
   getTodayAttendance,
   getAttendanceHistory,
-  getAttendanceStats
+  getAttendanceStats,
+  downloadMyAttendanceReport,
+  downloadAttendanceReport
 } from '../../controllers/mobile/mobileAttendanceController';
 
 const router = Router();
@@ -525,5 +527,77 @@ router.get('/history', getAttendanceHistory);
  *         description: Server error
  */
 router.get('/stats', getAttendanceStats);
+
+/**
+ * @swagger
+ * /api/mobile/attendance/my-report/download:
+ *   get:
+ *     summary: Download the logged-in employee's own attendance report as PDF (Mobile)
+ *     tags: [Mobile - Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: month
+ *         schema:
+ *           type: string
+ *           format: YYYY-MM
+ *           example: "2024-01"
+ *         description: Target month for the report (defaults to current month)
+ *     responses:
+ *       200:
+ *         description: PDF file stream of the employee's attendance report
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Employee not found
+ *       500:
+ *         description: Server error
+ */
+router.get('/my-report/download', downloadMyAttendanceReport);
+
+/**
+ * @swagger
+ * /api/mobile/attendance/report/download:
+ *   get:
+ *     summary: Download an attendance report as PDF for HR/Admin (all employees or specific employee)
+ *     tags: [Mobile - Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: month
+ *         schema:
+ *           type: string
+ *           format: YYYY-MM
+ *           example: "2024-01"
+ *         description: Target month for the report (defaults to current month)
+ *       - in: query
+ *         name: employeeId
+ *         schema:
+ *           type: integer
+ *           example: 1
+ *         description: Optional: Specific employee ID for individual report (HR/Admin only)
+ *     responses:
+ *       200:
+ *         description: PDF file stream of the attendance report
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Access denied. HR or Admin role required.
+ *       500:
+ *         description: Server error
+ */
+router.get('/report/download', downloadAttendanceReport);
 
 export default router;
