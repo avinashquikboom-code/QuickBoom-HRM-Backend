@@ -544,6 +544,7 @@ export const approveLeave = async (
         status: 'APPROVED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
         reviewNote: reviewNote || 'Approved',
+        reviewedAt: new Date(),
       },
       include: {
         employee: {
@@ -560,27 +561,53 @@ export const approveLeave = async (
         employeeId: leave.employee.id,
         userId: leave.employee.userId,
         title: 'Leave Request Approved',
-        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved.`,
+        body: `Your ${leave.type.toLowerCase()} leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
         category: 'LEAVE',
         actionId: leave.id.toString(),
         actionType: 'LEAVE_APPROVED',
+        isRead: false,
       },
     });
 
     console.log(`✅ Leave request ${leave.id} approved and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
     
-    // Broadcast real-time leave update
+    // Broadcast real-time leave update to employee
     try {
-      await webSocketService.broadcastLeaveUpdate(leave.employee.id, {
+      const webSocketService = require('../services/websocketService').default;
+      await webSocketService.broadcastToUser(leave.employee.userId!, {
         type: 'leave_approved',
-        employeeId: leave.employee.id,
-        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`,
-        leaveId: leave.id,
-        fromDate: leave.fromDate,
-        toDate: leave.toDate,
-        status: 'APPROVED',
-        reviewNote: reviewNote || 'Approved'
+        leaveRequest: {
+          id: leave.id.toString(),
+          type: leave.type,
+          typeLabel: leave.type === 'CASUAL' ? 'Casual Leave' : leave.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',
+          fromDate: leave.fromDate.toISOString().split('T')[0],
+          toDate: leave.toDate.toISOString().split('T')[0],
+          status: 'APPROVED',
+          reviewedBy: reviewerName || req.user?.email || 'HR',
+          reviewNote: reviewNote || 'Approved',
+          days: Math.ceil((leave.toDate.getTime() - leave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1,
+        },
+        timestamp: new Date().toISOString()
       });
+      
+      // Also broadcast to all HR users that this leave has been processed
+      await webSocketService.broadcastToRole('HR', {
+        type: 'leave_request_processed',
+        leaveRequest: {
+          id: leave.id.toString(),
+          employee: {
+            id: leave.employee.id.toString(),
+            name: `${leave.employee.firstName} ${leave.employee.lastName}`,
+            employeeCode: leave.employee.employeeCode,
+          },
+          type: leave.type,
+          status: 'APPROVED',
+          reviewedBy: reviewerName || req.user?.email || 'HR',
+          processedAt: new Date().toISOString()
+        }
+      });
+      
+      console.log(`✅ Real-time notifications sent for approved leave ${leave.id}`);
     } catch (wsError) {
       console.error('❌ Failed to broadcast leave update:', wsError);
     }
@@ -624,6 +651,7 @@ export const rejectLeave = async (
         status: 'REJECTED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
         reviewNote: reviewNote || 'Rejected',
+        reviewedAt: new Date(),
       },
       include: {
         employee: {
@@ -640,27 +668,53 @@ export const rejectLeave = async (
         employeeId: leave.employee.id,
         userId: leave.employee.userId,
         title: 'Leave Request Rejected',
-        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. ${reviewNote ? `Reason: ${reviewNote}` : ''}`,
+        body: `Your ${leave.type.toLowerCase()} leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected by ${reviewerName || 'HR'}. ${reviewNote ? `Reason: ${reviewNote}` : ''}`,
         category: 'LEAVE',
         actionId: leave.id.toString(),
         actionType: 'LEAVE_REJECTED',
+        isRead: false,
       },
     });
 
     console.log(`❌ Leave request ${leave.id} rejected and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
     
-    // Broadcast real-time leave update
+    // Broadcast real-time leave update to employee
     try {
-      await webSocketService.broadcastLeaveUpdate(leave.employee.id, {
+      const webSocketService = require('../services/websocketService').default;
+      await webSocketService.broadcastToUser(leave.employee.userId!, {
         type: 'leave_rejected',
-        employeeId: leave.employee.id,
-        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`,
-        leaveId: leave.id,
-        fromDate: leave.fromDate,
-        toDate: leave.toDate,
-        status: 'REJECTED',
-        reviewNote: reviewNote || 'Rejected'
+        leaveRequest: {
+          id: leave.id.toString(),
+          type: leave.type,
+          typeLabel: leave.type === 'CASUAL' ? 'Casual Leave' : leave.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',
+          fromDate: leave.fromDate.toISOString().split('T')[0],
+          toDate: leave.toDate.toISOString().split('T')[0],
+          status: 'REJECTED',
+          reviewedBy: reviewerName || req.user?.email || 'HR',
+          reviewNote: reviewNote || 'Rejected',
+          days: Math.ceil((leave.toDate.getTime() - leave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1,
+        },
+        timestamp: new Date().toISOString()
       });
+      
+      // Also broadcast to all HR users that this leave has been processed
+      await webSocketService.broadcastToRole('HR', {
+        type: 'leave_request_processed',
+        leaveRequest: {
+          id: leave.id.toString(),
+          employee: {
+            id: leave.employee.id.toString(),
+            name: `${leave.employee.firstName} ${leave.employee.lastName}`,
+            employeeCode: leave.employee.employeeCode,
+          },
+          type: leave.type,
+          status: 'REJECTED',
+          reviewedBy: reviewerName || req.user?.email || 'HR',
+          processedAt: new Date().toISOString()
+        }
+      });
+      
+      console.log(`✅ Real-time notifications sent for rejected leave ${leave.id}`);
     } catch (wsError) {
       console.error('❌ Failed to broadcast leave update:', wsError);
     }

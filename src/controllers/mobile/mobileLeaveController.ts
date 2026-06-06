@@ -158,6 +158,69 @@ export const applyLeave = async (
       },
     });
 
+    // Send real-time notifications to all HR users
+    try {
+      // Get all HR users
+      const hrUsers = await prisma.user.findMany({
+        where: {
+          role: { in: ['HR', 'SUPER_ADMIN', 'PLATFORM_ADMIN'] },
+          isActive: true
+        },
+        include: {
+          employee: true
+        }
+      });
+
+      // Create notifications for all HR users
+      const notificationPromises = hrUsers.map(hrUser => 
+        prisma.notification.create({
+          data: {
+            userId: hrUser.id,
+            title: 'New Leave Application',
+            body: `${employee.firstName} ${employee.lastName} has applied for ${type.toLowerCase()} leave from ${fromDate} to ${toDate}`,
+            category: 'LEAVE',
+            actionId: leaveRequest.id.toString(),
+            actionType: 'LEAVE_APPLICATION',
+            isRead: false,
+          }
+        })
+      );
+
+      await Promise.all(notificationPromises);
+
+      // Broadcast real-time WebSocket event to HR users
+      const webSocketService = require('../services/websocketService').default;
+      try {
+        await webSocketService.broadcastToRole('HR', {
+          type: 'new_leave_application',
+          leaveRequest: {
+            id: leaveRequest.id.toString(),
+            employee: {
+              id: employee.id.toString(),
+              name: `${employee.firstName} ${employee.lastName}`,
+              employeeCode: employee.employeeCode,
+              designation: employee.designation
+            },
+            type: leaveRequest.type,
+            typeLabel: leaveRequest.type === 'CASUAL' ? 'Casual Leave' : leaveRequest.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',
+            fromDate: leaveRequest.fromDate.toISOString().split('T')[0],
+            toDate: leaveRequest.toDate.toISOString().split('T')[0],
+            reason: leaveRequest.reason,
+            status: leaveRequest.status,
+            appliedOn: leaveRequest.appliedOn.toISOString(),
+            days: Math.ceil((leaveRequest.toDate.getTime() - leaveRequest.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1,
+          },
+          timestamp: new Date().toISOString()
+        });
+        console.log(`✅ Real-time notification sent to HR users for leave application by ${employee.firstName} ${employee.lastName}`);
+      } catch (wsError) {
+        console.error('❌ Failed to broadcast WebSocket event:', wsError);
+      }
+    } catch (notificationError) {
+      console.error('❌ Failed to send HR notifications:', notificationError);
+      // Don't fail the request if notifications fail
+    }
+
     res.status(201).json({
       success: true,
       message: 'Leave request submitted successfully',
@@ -507,6 +570,7 @@ export const approveLeaveRequest = async (
         status: 'APPROVED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
         reviewNote: reviewNote || 'Approved via mobile',
+        reviewedAt: new Date(),
       },
       include: {
         employee: {
@@ -520,8 +584,8 @@ export const approveLeaveRequest = async (
     // Send notification to employee
     await prisma.notification.create({
       data: {
-        employeeId: leave.employee.id,
-        userId: leave.employee.userId,
+        employeeId: existingLeave.employee.id,
+        userId: existingLeave.employee.userId,
         title: 'Leave Request Approved',
         body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
         category: 'LEAVE',
@@ -531,7 +595,7 @@ export const approveLeaveRequest = async (
       },
     });
 
-    console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
+    console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     res.json({
       success: true,
@@ -541,7 +605,7 @@ export const approveLeaveRequest = async (
         status: leave.status,
         reviewedBy: leave.reviewedBy,
         reviewNote: leave.reviewNote,
-        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`
+        employeeName: `${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`
       }
     });
   } catch (error) {
@@ -594,6 +658,7 @@ export const rejectLeaveRequest = async (
         status: 'REJECTED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
         reviewNote: reviewNote.trim(),
+        reviewedAt: new Date(),
       },
       include: {
         employee: {
@@ -607,8 +672,8 @@ export const rejectLeaveRequest = async (
     // Send notification to employee
     await prisma.notification.create({
       data: {
-        employeeId: leave.employee.id,
-        userId: leave.employee.userId,
+        employeeId: existingLeave.employee.id,
+        userId: existingLeave.employee.userId,
         title: 'Leave Request Rejected',
         body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. Reason: ${reviewNote}`,
         category: 'LEAVE',
@@ -618,7 +683,7 @@ export const rejectLeaveRequest = async (
       },
     });
 
-    console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
+    console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     res.json({
       success: true,
@@ -628,7 +693,7 @@ export const rejectLeaveRequest = async (
         status: leave.status,
         reviewedBy: leave.reviewedBy,
         reviewNote: leave.reviewNote,
-        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`
+        employeeName: `${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`
       }
     });
   } catch (error) {

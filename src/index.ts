@@ -23,6 +23,7 @@ import mobileTrackingRoutes from './routes/mobile/mobileTrackingRoutes';
 import mobileGeofenceRoutes from './routes/mobile/mobileGeofenceRoutes';
 import mobileLeaveBalanceRoutes from './routes/mobile/mobileLeaveBalanceRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
+import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 
@@ -81,6 +82,7 @@ app.use('/api/permissions', permissionRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hr', hrRoutes);
 app.use('/api/leave-balance', leaveBalanceRoutes);
+app.use('/api/realtime/leave', realtimeLeaveRoutes);
 
 // Mobile API Routes
 app.use('/api/mobile/auth', mobileAuthRoutes);
