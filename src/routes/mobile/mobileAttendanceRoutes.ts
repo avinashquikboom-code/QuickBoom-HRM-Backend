@@ -583,7 +583,7 @@ router.get('/my-report/download', downloadMyAttendanceReport);
  *         schema:
  *           type: integer
  *           example: 1
- *         description: Optional: Specific employee ID for individual report (HR/Admin only)
+ *         description: 'Optional: Specific employee ID for individual report (HR/Admin only)'
  *     responses:
  *       200:
  *         description: PDF file stream of the attendance report
