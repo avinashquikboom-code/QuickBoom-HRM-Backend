@@ -217,7 +217,12 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       environment: process.env.NODE_ENV
     });
     
-    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
+    // Handle null/undefined location values
+    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+      console.log('⚠️ Location coordinates are null or undefined. Using office location as fallback.');
+      punchLat = employee.office.latitude;
+      punchLon = employee.office.longitude;
+    } else if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
       console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing and mocking with office location.');
       punchLat = employee.office.latitude;
       punchLon = employee.office.longitude;
@@ -439,12 +444,13 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       environment: process.env.NODE_ENV
     });
     
-    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
-      console.log('⚠️ Simulator location (0.0) detected for punch out. Bypassing geofence check.');
+    // Handle null/undefined location values for punch out
+    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+      console.log('⚠️ Location coordinates are null or undefined for punch out. Using punch-in location as fallback.');
       punchLat = attendance.latitude || employee.office?.latitude || 0;
       punchLon = attendance.longitude || employee.office?.longitude || 0;
-    } else if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) {
-      console.log('⚠️ Missing location coordinates for punch out. Using punch-in location.');
+    } else if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
+      console.log('⚠️ Simulator location (0.0) detected for punch out. Bypassing geofence check.');
       punchLat = attendance.latitude || employee.office?.latitude || 0;
       punchLon = attendance.longitude || employee.office?.longitude || 0;
     } else {
