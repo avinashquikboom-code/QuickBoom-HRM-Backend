@@ -21,7 +21,6 @@ model User {
   userPermission UserPermission?
   notifications  Notification[]
   fcmTokens      FCMToken[]
-  attendanceHistoryApprovals AttendanceHistory[] @relation("AttendanceHistoryApprovals")
 }
 
 model Profile {
@@ -62,7 +61,6 @@ model Office {
   updatedAt            DateTime     @updatedAt
   attendances          Attendance[]
   employees            Employee[]
-  attendanceHistory    AttendanceHistory[]
 }
 
 model Department {
@@ -99,7 +97,6 @@ model Employee {
   payslips         Payslip[]
   documents        Document[]
   attendanceCorrections AttendanceCorrection[]
-  attendanceHistory   AttendanceHistory[]
 }
 
 model Attendance {
@@ -228,7 +225,6 @@ model Shift {
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   assignments  ShiftAssignment[]
-  attendanceHistory AttendanceHistory[]
 }
 
 model ShiftAssignment {
@@ -401,40 +397,3 @@ model FCMToken {
   @@unique([userId, token])
 }
 
-model AttendanceHistory {
-  id                Int       @id @default(autoincrement())
-  employeeId        Int
-  officeId          Int?
-  date              String    // Format: YYYY-MM-DD
-  checkIn           DateTime?
-  checkOut          DateTime?
-  status            String    @default("ABSENT") // PRESENT, ABSENT, LATE, HALF_DAY, REMOTE, LEAVE
-  latitude          Float?
-  longitude         Float?
-  isFingerprintCheckIn Boolean @default(false)
-  isFingerprintCheckOut Boolean @default(false)
-  isOnBreak         Boolean   @default(false)
-  breakStartTime    DateTime?
-  totalBreakSeconds Int       @default(0)
-  workingHours      Int       @default(0) // Total working minutes
-  overtimeMinutes   Int       @default(0) // Overtime minutes
-  notes             String?
-  shiftId           Int?
-  isApproved        Boolean   @default(false)
-  approvedBy        Int?
-  approvedAt        DateTime?
-  approvalNotes     String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-
-  employee          Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  office            Office?   @relation(fields: [officeId], references: [id], onDelete: SetNull)
-  shift             Shift?    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
-  approvedByUser    User?     @relation("AttendanceHistoryApprovals", fields: [approvedBy], references: [id], onDelete: SetNull)
-
-  @@unique([employeeId, date])
-  @@index([employeeId])
-  @@index([date])
-  @@index([status])
-  @@index([officeId])
-}

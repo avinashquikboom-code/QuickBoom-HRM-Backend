@@ -17,6 +17,15 @@ async function seedAttendanceHistory() {
   console.log('🌱 [ATTENDANCE HISTORY] Starting attendance history seed...');
 
   try {
+    // Get a valid HR user for approvals
+    const hrUser = await prisma.user.findFirst({
+      where: { role: { in: ['HR', 'SUPER_ADMIN', 'ADMIN'] } },
+      select: { id: true },
+    });
+
+    const approvedById = hrUser?.id || 1; // Fallback to ID 1 if no HR user found
+    console.log(`👤 Using approvedBy ID: ${approvedById}`);
+
     // Get all active employees
     const employees = await prisma.employee.findMany({
       where: { status: 'active' },
@@ -124,7 +133,7 @@ async function seedAttendanceHistory() {
           overtimeMinutes,
           notes,
           isApproved: true,
-          approvedBy: 2, // HR user
+          approvedBy: approvedById, // HR user
           approvedAt: new Date(),
           approvalNotes: 'Auto-approved',
         });
