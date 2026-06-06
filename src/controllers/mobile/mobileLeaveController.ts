@@ -207,7 +207,7 @@ export const downloadMyLeaveReport = async (
         bolditalics: 'Helvetica-BoldOblique'
       }
     };
-    const printer = new pdfmake(fonts);
+    const printer = new pdfmake.constructor(fonts);
 
     const leaveData = employee.leaveRequests.map(lr => ({
       type: lr.type,
@@ -334,7 +334,7 @@ export const downloadLeaveReport = async (
         bolditalics: 'Helvetica-BoldOblique'
       }
     };
-    const printer = new pdfmake(fonts);
+    const printer = new pdfmake.constructor(fonts);
 
     const docDefinition = {
       content: [

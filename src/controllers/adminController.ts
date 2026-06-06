@@ -2235,7 +2235,7 @@ export const downloadLeaveReport = async (
         bolditalics: 'Helvetica-BoldOblique'
       }
     };
-    const printer = new pdfmake(fonts);
+    const printer = new pdfmake.constructor(fonts);
 
     const docDefinition = {
       content: [

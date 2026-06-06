@@ -12,7 +12,7 @@ const fonts = {
   }
 };
 
-const printer = new pdfmake(fonts);
+const printer = new pdfmake.constructor(fonts);
 
 // Fetch all payslips for the logged-in employee
 export const getMyPayslips = async (
