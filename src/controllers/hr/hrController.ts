@@ -519,6 +519,24 @@ export const approveLeave = async (
   const { reviewerName, reviewNote } = req.body;
 
   try {
+    // Get leave request details before updating
+    const existingLeave = await prisma.leaveRequest.findUnique({
+      where: { id: parseInt(id as string, 10) },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    if (!existingLeave) {
+      res.status(404).json({ success: false, message: 'Leave request not found.' });
+      return;
+    }
+
+    // Update leave request status
     const leave = await prisma.leaveRequest.update({
       where: { id: parseInt(id as string, 10) },
       data: {
@@ -526,7 +544,29 @@ export const approveLeave = async (
         reviewedBy: reviewerName || req.user?.email || 'HR',
         reviewNote: reviewNote || 'Approved',
       },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
     });
+
+    // Send notification to employee
+    await prisma.notification.create({
+      data: {
+        employeeId: leave.employee.id,
+        userId: leave.employee.userId,
+        title: 'Leave Request Approved',
+        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved.`,
+        category: 'LEAVE',
+        actionId: leave.id.toString(),
+        actionType: 'LEAVE_APPROVED',
+      },
+    });
+
+    console.log(`✅ Leave request ${leave.id} approved and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
 
     res.json({ success: true, message: 'Leave approved.', leave });
   } catch (error) {
@@ -543,6 +583,24 @@ export const rejectLeave = async (
   const { reviewerName, reviewNote } = req.body;
 
   try {
+    // Get leave request details before updating
+    const existingLeave = await prisma.leaveRequest.findUnique({
+      where: { id: parseInt(id as string, 10) },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
+
+    if (!existingLeave) {
+      res.status(404).json({ success: false, message: 'Leave request not found.' });
+      return;
+    }
+
+    // Update leave request status
     const leave = await prisma.leaveRequest.update({
       where: { id: parseInt(id as string, 10) },
       data: {
@@ -550,7 +608,29 @@ export const rejectLeave = async (
         reviewedBy: reviewerName || req.user?.email || 'HR',
         reviewNote: reviewNote || 'Rejected',
       },
+      include: {
+        employee: {
+          include: {
+            user: true
+          }
+        }
+      }
     });
+
+    // Send notification to employee
+    await prisma.notification.create({
+      data: {
+        employeeId: leave.employee.id,
+        userId: leave.employee.userId,
+        title: 'Leave Request Rejected',
+        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. ${reviewNote ? `Reason: ${reviewNote}` : ''}`,
+        category: 'LEAVE',
+        actionId: leave.id.toString(),
+        actionType: 'LEAVE_REJECTED',
+      },
+    });
+
+    console.log(`❌ Leave request ${leave.id} rejected and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
 
     res.json({ success: true, message: 'Leave rejected.', leave });
   } catch (error) {
