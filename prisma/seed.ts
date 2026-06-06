@@ -84,7 +84,7 @@ async function main() {
   // 4. Create Users, Profiles, and Employees
   const adminPasswordHash = await bcrypt.hash('123456', 10);
   const hrPasswordHash = await bcrypt.hash('123456', 10);
-  const employeePasswordHash = await bcrypt.hash('employee123', 10);
+  const employeePasswordHash = await bcrypt.hash('123456', 10);
 
   // A. Super Admin User
   const superAdminUser = await prisma.user.create({
