@@ -31,6 +31,7 @@ import {
   updateAdminLeaveStatus,
   fetchAdminLeaveBalances,
   createAdminLeaveRequest,
+  downloadLeaveReport,
     fetchSubscriptions,
   updateSubscription,
   fetchPricingPlans,
@@ -286,6 +287,7 @@ router.get('/leaves', fetchAdminLeaves);
 router.get('/leaves/balances', fetchAdminLeaveBalances);
 router.post('/leaves', createAdminLeaveRequest);
 router.put('/leaves/:id', updateAdminLeaveStatus);
+router.get('/leaves/report/download', downloadLeaveReport);
 
 
 // Payroll Operations

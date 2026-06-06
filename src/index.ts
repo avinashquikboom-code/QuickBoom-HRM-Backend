@@ -15,6 +15,7 @@ import hrRoutes from './routes/hr/hrRoutes';
 import healthRoutes from './routes/healthRoutes';
 import mobileAuthRoutes from './routes/mobile/mobileAuthRoutes';
 import mobileAttendanceRoutes from './routes/mobile/mobileAttendanceRoutes';
+import mobileLeaveRoutes from './routes/mobile/mobileLeaveRoutes';
 import firebaseNotificationRoutes from './routes/mobile/firebaseNotificationRoutes';
 import mobilePayrollRoutes from './routes/mobile/mobilePayrollRoutes';
 import { initializeFirebase } from './config/firebase';
@@ -77,6 +78,7 @@ app.use('/api/hr', hrRoutes);
 // Mobile API Routes
 app.use('/api/mobile/auth', mobileAuthRoutes);
 app.use('/api/mobile/attendance', mobileAttendanceRoutes);
+app.use('/api/mobile/leave', mobileLeaveRoutes);
 app.use('/api/mobile/firebase', firebaseNotificationRoutes);
 app.use('/api/mobile/payroll', mobilePayrollRoutes);
 
