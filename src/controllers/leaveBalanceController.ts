@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import leaveBalanceService from '../services/leaveBalanceService';
 import { prisma } from '../utils/db';
+import { webSocketService } from '..';
 
 // ==========================================
 // Leave Balance Management Controller
@@ -34,6 +35,20 @@ export const createEmployeeLeaveBalance = async (
       earnedTotal: earnedTotal ? parseInt(earnedTotal) : undefined,
       createdBy
     });
+
+    // Broadcast real-time leave balance update
+    try {
+      await webSocketService.broadcastLeaveBalanceUpdate(parseInt(employeeId), {
+        type: 'LEAVE_BALANCE_UPDATED',
+        employeeId: parseInt(employeeId),
+        fiscalYear,
+        leaveBalance,
+        updatedBy: createdBy,
+        timestamp: new Date().toISOString()
+      });
+    } catch (wsError) {
+      console.error('Failed to broadcast leave balance update:', wsError);
+    }
 
     res.status(201).json({
       success: true,
@@ -253,6 +268,24 @@ export const updateUsedLeave = async (
       leaveType,
       parseInt(days)
     );
+
+    // Get updated leave balance for broadcasting
+    const updatedBalance = await leaveBalanceService.getEmployeeLeaveBalance(parseInt(employeeId));
+
+    // Broadcast real-time leave balance update
+    try {
+      await webSocketService.broadcastLeaveBalanceUpdate(parseInt(employeeId), {
+        type: 'LEAVE_BALANCE_UPDATED',
+        employeeId: parseInt(employeeId),
+        leaveType,
+        daysUsed: parseInt(days),
+        leaveBalance: updatedBalance,
+        updatedBy: req.user?.email || 'Admin',
+        timestamp: new Date().toISOString()
+      });
+    } catch (wsError) {
+      console.error('Failed to broadcast leave balance update:', wsError);
+    }
 
     res.json({
       success: true,

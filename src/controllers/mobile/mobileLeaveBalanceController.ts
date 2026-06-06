@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import leaveBalanceService from '../../services/leaveBalanceService';
+import { webSocketService } from '../..';
 
 // ==========================================
 // Mobile Leave Balance Controller
@@ -111,6 +112,20 @@ export const updateEmployeeLeaveBalance = async (
       earnedTotal: earnedTotal ? parseInt(earnedTotal) : undefined,
       createdBy: req.user?.email || 'HR Mobile'
     });
+
+    // Broadcast real-time leave balance update
+    try {
+      await webSocketService.broadcastLeaveBalanceUpdate(parseInt(employeeId), {
+        type: 'LEAVE_BALANCE_UPDATED',
+        employeeId: parseInt(employeeId),
+        fiscalYear,
+        leaveBalance: updatedBalance,
+        updatedBy: req.user?.email || 'HR Mobile',
+        timestamp: new Date().toISOString()
+      });
+    } catch (wsError) {
+      console.error('Failed to broadcast leave balance update:', wsError);
+    }
 
     res.json({
       success: true,

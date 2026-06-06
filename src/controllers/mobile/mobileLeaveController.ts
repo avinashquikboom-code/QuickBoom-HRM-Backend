@@ -597,6 +597,26 @@ export const approveLeaveRequest = async (
 
     console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
+    // Broadcast real-time leave balance update after approval
+    try {
+      // Get updated leave balance
+      const { webSocketService } = require('../..');
+      const leaveBalanceService = require('../services/leaveBalanceService').default;
+      const updatedBalance = await leaveBalanceService.getEmployeeLeaveBalance(existingLeave.employee.id);
+      
+      await webSocketService.broadcastLeaveBalanceUpdate(existingLeave.employee.id, {
+        type: 'LEAVE_BALANCE_UPDATED',
+        employeeId: existingLeave.employee.id,
+        leaveId: leave.id,
+        action: 'APPROVED',
+        leaveBalance: updatedBalance,
+        updatedBy: reviewerName || req.user?.email || 'HR',
+        timestamp: new Date().toISOString()
+      });
+    } catch (wsError) {
+      console.error('Failed to broadcast leave balance update after approval:', wsError);
+    }
+
     res.json({
       success: true,
       message: 'Leave request approved successfully',
@@ -684,6 +704,26 @@ export const rejectLeaveRequest = async (
     });
 
     console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
+
+    // Broadcast real-time leave balance update after rejection
+    try {
+      // Get updated leave balance
+      const { webSocketService } = require('../..');
+      const leaveBalanceService = require('../services/leaveBalanceService').default;
+      const updatedBalance = await leaveBalanceService.getEmployeeLeaveBalance(existingLeave.employee.id);
+      
+      await webSocketService.broadcastLeaveBalanceUpdate(existingLeave.employee.id, {
+        type: 'LEAVE_BALANCE_UPDATED',
+        employeeId: existingLeave.employee.id,
+        leaveId: leave.id,
+        action: 'REJECTED',
+        leaveBalance: updatedBalance,
+        updatedBy: reviewerName || req.user?.email || 'HR',
+        timestamp: new Date().toISOString()
+      });
+    } catch (wsError) {
+      console.error('Failed to broadcast leave balance update after rejection:', wsError);
+    }
 
     res.json({
       success: true,

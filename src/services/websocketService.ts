@@ -2,6 +2,7 @@ import { Server as HTTPServer } from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../utils/db';
+import leaveBalanceService from './leaveBalanceService';
 
 interface AuthenticatedSocket extends Socket {
   userId?: number;
@@ -104,6 +105,9 @@ class WebSocketService {
             case 'dashboard':
               await this.sendRealTimeDashboard(socket);
               break;
+            case 'leaveBalance':
+              await this.sendRealTimeLeaveBalance(socket);
+              break;
             default:
               socket.emit('error', 'Unknown data type requested');
           }
@@ -135,6 +139,13 @@ class WebSocketService {
   // Real-time dashboard updates
   async broadcastDashboardUpdate(role: string, data: any): Promise<void> {
     this.io.to(`role_${role}`).emit('dashboardUpdate', data);
+  }
+
+  // Real-time leave balance updates
+  async broadcastLeaveBalanceUpdate(employeeId: number, data: any): Promise<void> {
+    this.io.to(`employee_${employeeId}`).emit('leaveBalanceUpdate', data);
+    this.io.to('role_HR').emit('leaveBalanceUpdate', data);
+    this.io.to('role_ADMIN').emit('leaveBalanceUpdate', data);
   }
 
   // Send real-time data to specific socket
@@ -183,6 +194,18 @@ class WebSocketService {
     } else if (socket.role === 'HR' || socket.role === 'ADMIN') {
       const hrStats = await this.getHRDashboardStats();
       socket.emit('dashboardData', hrStats);
+    }
+  }
+
+  private async sendRealTimeLeaveBalance(socket: AuthenticatedSocket): Promise<void> {
+    if (!socket.employeeId) return;
+
+    try {
+      const leaveBalance = await leaveBalanceService.getEmployeeLeaveBalance(socket.employeeId);
+      socket.emit('leaveBalanceData', leaveBalance);
+    } catch (error) {
+      console.error('Error sending real-time leave balance:', error);
+      socket.emit('error', 'Failed to fetch leave balance');
     }
   }
 
