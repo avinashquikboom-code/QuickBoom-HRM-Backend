@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { Prisma } from '@prisma/client';
+const pdfmake = require('pdfmake');
 
 // Fetch employee's own leave requests and balances
 export const fetchMyLeaves = async (
@@ -198,7 +199,6 @@ export const downloadMyLeaveReport = async (
     }
 
     // Generate PDF content
-    const pdfmake = require('pdfmake');
     const fonts = {
       Roboto: {
         normal: 'Helvetica',
@@ -326,7 +326,6 @@ export const downloadLeaveReport = async (
     }));
 
     // Generate PDF content
-    const pdfmake = require('pdfmake');
     const fonts = {
       Roboto: {
         normal: 'Helvetica',

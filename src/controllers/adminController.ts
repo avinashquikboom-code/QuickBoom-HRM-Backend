@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
+const pdfmake = require('pdfmake');
 
 // ==========================================
 // 1. User Management
@@ -2226,7 +2227,6 @@ export const downloadLeaveReport = async (
     }));
 
     // Generate PDF content
-    const pdfmake = require('pdfmake');
     const fonts = {
       Roboto: {
         normal: 'Helvetica',
