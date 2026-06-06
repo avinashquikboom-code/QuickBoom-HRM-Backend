@@ -1,0 +1,316 @@
+import { prisma } from '../utils/db';
+import { LocationPoint, TrackingSession, RouteHistory, GeofenceEvent } from '../models/locationTracking';
+// @ts-ignore - WebSocket service is imported dynamically
+const { webSocketService } = require('../..');
+
+class LiveTrackingService {
+  private activeSessions: Map<string, TrackingSession> = new Map();
+  private locationBuffer: Map<number, LocationPoint[]> = new Map();
+
+  /**
+   * Start a new tracking session for an employee
+   */
+  async startTrackingSession(employeeId: number, purpose: string, notes?: string): Promise<TrackingSession> {
+    try {
+      const sessionId = `session_${employeeId}_${Date.now()}`;
+      const session: TrackingSession = {
+        id: sessionId,
+        employeeId,
+        startTime: new Date(),
+        isActive: true,
+        purpose: purpose as any,
+        notes,
+        locations: []
+      };
+
+      // Store in memory and database
+      this.activeSessions.set(sessionId, session);
+      
+      // Initialize location buffer for employee
+      if (!this.locationBuffer.has(employeeId)) {
+        this.locationBuffer.set(employeeId, []);
+      }
+
+      // Broadcast session start to HR
+      try {
+        await webSocketService.broadcastNotification(employeeId, {
+          title: 'Live Tracking Started',
+          body: `Employee has started ${purpose} tracking session.`,
+          type: 'tracking_started',
+          sessionId,
+          purpose
+        });
+      } catch (wsError) {
+        console.error('❌ Failed to broadcast tracking start:', wsError);
+      }
+
+      return session;
+    } catch (error) {
+      console.error('Start tracking session error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Stop an active tracking session
+   */
+  async stopTrackingSession(sessionId: string): Promise<TrackingSession> {
+    try {
+      const session = this.activeSessions.get(sessionId);
+      if (!session) {
+        throw new Error('Tracking session not found');
+      }
+
+      session.endTime = new Date();
+      session.isActive = false;
+
+      // Calculate total distance and duration
+      session.duration = session.endTime.getTime() - session.startTime.getTime();
+      session.totalDistance = this.calculateTotalDistance(session.locations);
+
+      // Save to database (would typically save to a tracking_sessions table)
+      // For now, just update in memory
+
+      // Broadcast session end to HR
+      try {
+        await webSocketService.broadcastNotification(session.employeeId, {
+          title: 'Live Tracking Stopped',
+          body: `Employee has ended ${session.purpose} tracking session.`,
+          type: 'tracking_stopped',
+          sessionId,
+          duration: session.duration,
+          distance: session.totalDistance
+        });
+      } catch (wsError) {
+        console.error('❌ Failed to broadcast tracking stop:', wsError);
+      }
+
+      return session;
+    } catch (error) {
+      console.error('Stop tracking session error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update employee location
+   */
+  async updateLocation(employeeId: number, location: LocationPoint): Promise<void> {
+    try {
+      // Validate coordinates
+      if (!this.isValidLocation(location)) {
+        throw new Error('Invalid location coordinates');
+      }
+
+      // Add to location buffer
+      const buffer = this.locationBuffer.get(employeeId) || [];
+      buffer.push(location);
+      
+      // Keep only last 100 points to prevent memory issues
+      if (buffer.length > 100) {
+        buffer.shift();
+      }
+      this.locationBuffer.set(employeeId, buffer);
+
+      // Update active session
+      const activeSession = Array.from(this.activeSessions.values())
+        .find(s => s.employeeId === employeeId && s.isActive);
+      
+      if (activeSession) {
+        activeSession.locations.push(location);
+      }
+
+      // Check for geofence events
+      await this.checkGeofenceEvents(employeeId, location);
+
+      // Broadcast location update to HR (throttled)
+      if (buffer.length % 5 === 0) { // Every 5th location update
+        try {
+          await webSocketService.broadcastNotification(employeeId, {
+            title: 'Location Update',
+            body: 'Employee location updated',
+            type: 'location_update',
+            location: {
+              latitude: location.latitude,
+              longitude: location.longitude,
+              timestamp: location.timestamp,
+              accuracy: location.accuracy
+            }
+          });
+        } catch (wsError) {
+          console.error('❌ Failed to broadcast location update:', wsError);
+        }
+      }
+    } catch (error) {
+      console.error('Update location error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get current location of employee
+   */
+  async getCurrentLocation(employeeId: number): Promise<LocationPoint | null> {
+    try {
+      const buffer = this.locationBuffer.get(employeeId);
+      return buffer && buffer.length > 0 ? buffer[buffer.length - 1] : null;
+    } catch (error) {
+      console.error('Get current location error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get active tracking sessions
+   */
+  async getActiveSessions(): Promise<TrackingSession[]> {
+    try {
+      return Array.from(this.activeSessions.values()).filter(s => s.isActive);
+    } catch (error) {
+      console.error('Get active sessions error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get employee route history
+   */
+  async getRouteHistory(employeeId: number, startDate: Date, endDate: Date): Promise<RouteHistory[]> {
+    try {
+      // This would typically query a route_history table
+      // For now, return empty array as placeholder
+      return [];
+    } catch (error) {
+      console.error('Get route history error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get geofence events for employee
+   */
+  async getGeofenceEvents(employeeId: number, limit: number = 50): Promise<GeofenceEvent[]> {
+    try {
+      // This would typically query a geofence_events table
+      // For now, return empty array as placeholder
+      return [];
+    } catch (error) {
+      console.error('Get geofence events error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get live tracking statistics
+   */
+  async getTrackingStats(): Promise<{
+    activeSessions: number;
+    totalEmployeesTracked: number;
+    averageSessionDuration: number;
+    totalDistanceTracked: number;
+  }> {
+    try {
+      const activeSessions = Array.from(this.activeSessions.values()).filter(s => s.isActive);
+      const totalDistance = activeSessions.reduce((sum, session) => 
+        sum + (session.totalDistance || 0), 0);
+      
+      const avgDuration = activeSessions.length > 0 
+        ? activeSessions.reduce((sum, session) => 
+            sum + (session.endTime ? session.endTime.getTime() - session.startTime.getTime() : 0), 0) / activeSessions.length
+        : 0;
+
+      return {
+        activeSessions: activeSessions.length,
+        totalEmployeesTracked: this.locationBuffer.size,
+        averageSessionDuration: avgDuration,
+        totalDistanceTracked: totalDistance
+      };
+    } catch (error) {
+      console.error('Get tracking stats error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Calculate total distance from location points
+   */
+  private calculateTotalDistance(locations: LocationPoint[]): number {
+    let totalDistance = 0;
+    for (let i = 1; i < locations.length; i++) {
+      totalDistance += this.calculateDistance(
+        locations[i - 1].latitude,
+        locations[i - 1].longitude,
+        locations[i].latitude,
+        locations[i].longitude
+      );
+    }
+    return totalDistance;
+  }
+
+  /**
+   * Calculate distance between two points
+   */
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c; // Distance in meters
+  }
+
+  /**
+   * Validate location coordinates
+   */
+  private isValidLocation(location: LocationPoint): boolean {
+    return location.latitude >= -90 && location.latitude <= 90 &&
+           location.longitude >= -180 && location.longitude <= 180 &&
+           location.timestamp instanceof Date;
+  }
+
+  /**
+   * Check for geofence events
+   */
+  private async checkGeofenceEvents(employeeId: number, location: LocationPoint): Promise<void> {
+    try {
+      // This would check against office geofences and create events
+      // For now, this is a placeholder implementation
+    } catch (error) {
+      console.error('Check geofence events error:', error);
+    }
+  }
+
+  /**
+   * Clean up old data
+   */
+  async cleanup(): Promise<void> {
+    try {
+      // Clean up completed sessions older than 24 hours
+      const now = new Date();
+      const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+      for (const [sessionId, session] of this.activeSessions.entries()) {
+        if (!session.isActive && session.endTime && session.endTime < dayAgo) {
+          this.activeSessions.delete(sessionId);
+        }
+      }
+
+      // Clean up location buffers for inactive employees
+      for (const [employeeId, buffer] of this.locationBuffer.entries()) {
+        if (buffer.length === 0 || buffer[buffer.length - 1].timestamp < dayAgo) {
+          this.locationBuffer.delete(employeeId);
+        }
+      }
+    } catch (error) {
+      console.error('Cleanup error:', error);
+    }
+  }
+}
+
+export default new LiveTrackingService();

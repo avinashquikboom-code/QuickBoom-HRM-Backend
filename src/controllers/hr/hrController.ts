@@ -822,3 +822,211 @@ export const fetchHRPayrollRuns = async (
     res.status(500).json({ success: false, message: 'Failed to retrieve payroll runs.' });
   }
 };
+
+// ==========================================
+// HR Attendance Correction Management
+// ==========================================
+
+export const fetchAttendanceCorrections = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const corrections = await prisma.attendanceCorrection.findMany({
+      include: {
+        employee: {
+          include: {
+            user: { select: { email: true } }
+          }
+        },
+        attendance: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const mapped = corrections.map((correction) => ({
+      id: correction.id,
+      attendanceId: correction.attendanceId,
+      employeeId: correction.employeeId,
+      employeeName: `${correction.employee.firstName} ${correction.employee.lastName}`,
+      employeeEmail: correction.employee.user?.email || 'N/A',
+      correctionType: correction.correctionType,
+      requestedCheckIn: correction.requestedCheckIn?.toISOString(),
+      requestedCheckOut: correction.requestedCheckOut?.toISOString(),
+      originalCheckIn: correction.originalCheckIn?.toISOString(),
+      originalCheckOut: correction.originalCheckOut?.toISOString(),
+      attendanceDate: correction.attendance.date,
+      reason: correction.reason,
+      status: correction.status,
+      requestedBy: correction.requestedBy,
+      reviewedBy: correction.reviewedBy,
+      reviewedAt: correction.reviewedAt?.toISOString(),
+      approvedAt: correction.approvedAt?.toISOString(),
+      createdAt: correction.createdAt.toISOString(),
+      updatedAt: correction.updatedAt.toISOString()
+    }));
+
+    res.json({ success: true, corrections: mapped });
+  } catch (error) {
+    console.error('Fetch attendance corrections error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch attendance corrections.' });
+  }
+};
+
+export const approveAttendanceCorrection = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { reviewerName, reviewNote } = req.body;
+
+  try {
+    const correction = await prisma.attendanceCorrection.findUnique({
+      where: { id: parseInt(id as string, 10) },
+      include: {
+        employee: { include: { user: true } },
+        attendance: true
+      }
+    });
+
+    if (!correction) {
+      res.status(404).json({ success: false, message: 'Attendance correction request not found.' });
+      return;
+    }
+
+    if (correction.status !== 'PENDING') {
+      res.status(400).json({ success: false, message: 'Correction request has already been processed.' });
+      return;
+    }
+
+    // Update attendance record with corrected times
+    const attendanceUpdateData: any = {};
+    if (correction.requestedCheckIn && (correction.correctionType === 'CHECK_IN' || correction.correctionType === 'BOTH')) {
+      attendanceUpdateData.checkIn = correction.requestedCheckIn;
+    }
+    if (correction.requestedCheckOut && (correction.correctionType === 'CHECK_OUT' || correction.correctionType === 'BOTH')) {
+      attendanceUpdateData.checkOut = correction.requestedCheckOut;
+    }
+
+    // Update attendance record
+    await prisma.attendance.update({
+      where: { id: correction.attendanceId },
+      data: attendanceUpdateData
+    });
+
+    // Update correction request
+    const updatedCorrection = await prisma.attendanceCorrection.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'APPROVED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewedAt: new Date(),
+        approvedAt: new Date()
+      }
+    });
+
+    // Send notification to employee
+    await prisma.notification.create({
+      data: {
+        employeeId: correction.employee.id,
+        userId: correction.employee.userId,
+        title: 'Attendance Correction Approved',
+        body: `Your attendance correction request for ${correction.attendance.date} has been approved.`,
+        category: 'ATTENDANCE',
+        actionId: correction.id.toString(),
+        actionType: 'ATTENDANCE_CORRECTION_APPROVED'
+      }
+    });
+
+    // Broadcast real-time update
+    try {
+      await webSocketService.broadcastNotification(correction.employee.id, {
+        title: 'Attendance Correction Approved',
+        body: `Your attendance correction for ${correction.attendance.date} has been approved.`,
+        type: 'attendance_correction_approved',
+        attendanceId: correction.attendanceId,
+        status: 'APPROVED'
+      });
+    } catch (wsError) {
+      console.error('❌ Failed to broadcast attendance correction update:', wsError);
+    }
+
+    console.log(`✅ Attendance correction ${correction.id} approved and notification sent to employee ${correction.employee.firstName} ${correction.employee.lastName}`);
+
+    res.json({ success: true, message: 'Attendance correction approved.', correction: updatedCorrection });
+  } catch (error) {
+    console.error('Approve attendance correction error:', error);
+    res.status(500).json({ success: false, message: 'Failed to approve attendance correction.' });
+  }
+};
+
+export const rejectAttendanceCorrection = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { reviewerName, reviewNote } = req.body;
+
+  try {
+    const correction = await prisma.attendanceCorrection.findUnique({
+      where: { id: parseInt(id as string, 10) },
+      include: {
+        employee: { include: { user: true } },
+        attendance: true
+      }
+    });
+
+    if (!correction) {
+      res.status(404).json({ success: false, message: 'Attendance correction request not found.' });
+      return;
+    }
+
+    if (correction.status !== 'PENDING') {
+      res.status(400).json({ success: false, message: 'Correction request has already been processed.' });
+      return;
+    }
+
+    // Update correction request
+    const updatedCorrection = await prisma.attendanceCorrection.update({
+      where: { id: parseInt(id as string, 10) },
+      data: {
+        status: 'REJECTED',
+        reviewedBy: reviewerName || req.user?.email || 'HR',
+        reviewedAt: new Date()
+      }
+    });
+
+    // Send notification to employee
+    await prisma.notification.create({
+      data: {
+        employeeId: correction.employee.id,
+        userId: correction.employee.userId,
+        title: 'Attendance Correction Rejected',
+        body: `Your attendance correction request for ${correction.attendance.date} has been rejected. ${reviewNote ? `Reason: ${reviewNote}` : ''}`,
+        category: 'ATTENDANCE',
+        actionId: correction.id.toString(),
+        actionType: 'ATTENDANCE_CORRECTION_REJECTED'
+      }
+    });
+
+    // Broadcast real-time update
+    try {
+      await webSocketService.broadcastNotification(correction.employee.id, {
+        title: 'Attendance Correction Rejected',
+        body: `Your attendance correction for ${correction.attendance.date} has been rejected.`,
+        type: 'attendance_correction_rejected',
+        attendanceId: correction.attendanceId,
+        status: 'REJECTED'
+      });
+    } catch (wsError) {
+      console.error('❌ Failed to broadcast attendance correction update:', wsError);
+    }
+
+    console.log(`❌ Attendance correction ${correction.id} rejected and notification sent to employee ${correction.employee.firstName} ${correction.employee.lastName}`);
+
+    res.json({ success: true, message: 'Attendance correction rejected.', correction: updatedCorrection });
+  } catch (error) {
+    console.error('Reject attendance correction error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reject attendance correction.' });
+  }
+};

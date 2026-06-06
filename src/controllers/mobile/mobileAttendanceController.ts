@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { webSocketService } from '../..';
+import geofenceService from '../../services/geofenceService';
 const PdfPrinter = require('pdfmake');
 
 // Helper function to calculate distance between two coordinates
@@ -461,6 +462,107 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       success: false,
       message: 'Error during punch out.',
       errorCode: 'PUNCH_OUT_ERROR'
+    });
+  }
+};
+
+// Attendance Correction Request
+export const requestAttendanceCorrection = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { attendanceId, correctionType, requestedCheckIn, requestedCheckOut, reason } = req.body;
+
+    if (!attendanceId || !correctionType || !reason) {
+      res.status(400).json({
+        success: false,
+        message: 'Attendance ID, correction type, and reason are required.',
+        errorCode: 'MISSING_REQUIRED_FIELDS'
+      });
+      return;
+    }
+
+    // Get employee information
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+      include: { user: true }
+    });
+
+    if (!employee) {
+      res.status(404).json({
+        success: false,
+        message: 'Employee record not found.',
+        errorCode: 'EMPLOYEE_NOT_FOUND'
+      });
+      return;
+    }
+
+    // Get attendance record
+    const attendance = await prisma.attendance.findFirst({
+      where: { 
+        id: parseInt(attendanceId),
+        employeeId: employee.id
+      }
+    });
+
+    if (!attendance) {
+      res.status(404).json({
+        success: false,
+        message: 'Attendance record not found.',
+        errorCode: 'ATTENDANCE_NOT_FOUND'
+      });
+      return;
+    }
+
+    // Create correction request
+    const correctionRequest = await prisma.attendanceCorrection.create({
+      data: {
+        attendanceId: attendance.id,
+        employeeId: employee.id,
+        correctionType,
+        requestedCheckIn: requestedCheckIn ? new Date(requestedCheckIn) : null,
+        requestedCheckOut: requestedCheckOut ? new Date(requestedCheckOut) : null,
+        originalCheckIn: attendance.checkIn,
+        originalCheckOut: attendance.checkOut,
+        reason,
+        status: 'PENDING',
+        requestedBy: req.user?.email || 'Unknown'
+      }
+    });
+
+    // Send notification to HR
+    await prisma.notification.create({
+      data: {
+        title: 'Attendance Correction Request',
+        body: `${employee.firstName} ${employee.lastName} has requested a ${correctionType.toLowerCase()} correction for ${attendance.date}.`,
+        category: 'ATTENDANCE',
+        actionId: correctionRequest.id.toString(),
+        actionType: 'ATTENDANCE_CORRECTION'
+      }
+    });
+
+    // Broadcast real-time update
+    try {
+      await webSocketService.broadcastNotification(employee.id, {
+        title: 'Attendance Correction Requested',
+        body: `Your attendance correction request for ${attendance.date} has been submitted for review.`,
+        type: 'attendance_correction',
+        attendanceId: attendance.id,
+        status: 'PENDING'
+      });
+    } catch (wsError) {
+      console.error('❌ Failed to broadcast attendance correction update:', wsError);
+    }
+
+    res.json({
+      success: true,
+      message: 'Attendance correction request submitted successfully.',
+      correctionRequest
+    });
+  } catch (error) {
+    console.error('Attendance correction request error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error submitting attendance correction request.',
+      errorCode: 'CORRECTION_REQUEST_ERROR'
     });
   }
 };

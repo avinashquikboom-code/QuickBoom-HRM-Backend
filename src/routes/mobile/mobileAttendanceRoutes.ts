@@ -10,7 +10,8 @@ import {
   getAttendanceHistory,
   getAttendanceStats,
   downloadMyAttendanceReport,
-  downloadAttendanceReport
+  downloadAttendanceReport,
+  requestAttendanceCorrection
 } from '../../controllers/mobile/mobileAttendanceController';
 
 const router = Router();
@@ -599,5 +600,81 @@ router.get('/my-report/download', downloadMyAttendanceReport);
  *         description: Server error
  */
 router.get('/report/download', downloadAttendanceReport);
+
+/**
+ * @swagger
+ * /api/mobile/attendance/correction:
+ *   post:
+ *     summary: Request attendance correction (Mobile)
+ *     tags: [Mobile - Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - attendanceId
+ *               - correctionType
+ *               - reason
+ *             properties:
+ *               attendanceId:
+ *                 type: integer
+ *                 example: 1
+ *                 description: ID of the attendance record to correct
+ *               correctionType:
+ *                 type: string
+ *                 enum: [CHECK_IN, CHECK_OUT, BOTH]
+ *                 example: "CHECK_IN"
+ *                 description: Type of correction requested
+ *               requestedCheckIn:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2024-01-15T09:30:00Z"
+ *                 description: Requested check-in time (for CHECK_IN and BOTH types)
+ *               requestedCheckOut:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2024-01-15T18:30:00Z"
+ *                 description: Requested check-out time (for CHECK_OUT and BOTH types)
+ *               reason:
+ *                 type: string
+ *                 example: "Was stuck in traffic"
+ *                 description: Reason for correction request
+ *     responses:
+ *       200:
+ *         description: Correction request submitted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Attendance correction request submitted successfully."
+ *                 correctionRequest:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: integer
+ *                       example: 1
+ *                     status:
+ *                       type: string
+ *                       example: "PENDING"
+ *       400:
+ *         description: Bad request (missing required fields)
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Attendance record not found
+ *       500:
+ *         description: Server error
+ */
+router.post('/correction', requestAttendanceCorrection);
 
 export default router;

@@ -18,6 +18,9 @@ import {
   createHRTask,
   fetchHRPayrollStats,
   fetchHRPayrollRuns,
+  fetchAttendanceCorrections,
+  approveAttendanceCorrection,
+  rejectAttendanceCorrection,
 } from '../../controllers/hr/hrController';
 import {
   sendNotification,
@@ -223,6 +226,11 @@ router.post('/tasks', createHRTask);
 // Payroll Management
 router.get('/payroll/stats', fetchHRPayrollStats);
 router.get('/payroll/runs', fetchHRPayrollRuns);
+
+// Attendance Correction Management
+router.get('/attendance-corrections', fetchAttendanceCorrections);
+router.post('/attendance-corrections/:id/approve', approveAttendanceCorrection);
+router.post('/attendance-corrections/:id/reject', rejectAttendanceCorrection);
 
 // Notifications & Announcements
 router.post('/notifications/send', sendNotification);

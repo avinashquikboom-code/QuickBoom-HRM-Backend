@@ -95,6 +95,7 @@ model Employee {
   assignedTasks    Task[]            @relation("AssignedTasks")
   payslips         Payslip[]
   documents        Document[]
+  attendanceCorrections AttendanceCorrection[]
 }
 
 model Attendance {
@@ -117,6 +118,7 @@ model Attendance {
   updatedAt             DateTime  @updatedAt
   employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   office                Office?   @relation(fields: [officeId], references: [id])
+  attendanceCorrections AttendanceCorrection[]
 }
 
 model Comment {
@@ -257,6 +259,27 @@ model Document {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   employee    Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model AttendanceCorrection {
+  id                Int       @id @default(autoincrement())
+  attendanceId      Int
+  employeeId        Int
+  correctionType    String
+  requestedCheckIn  DateTime?
+  requestedCheckOut DateTime?
+  originalCheckIn   DateTime?
+  originalCheckOut  DateTime?
+  reason            String
+  status            String    @default("PENDING")
+  requestedBy       String
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  approvedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  attendance        Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  employee          Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Announcement {
