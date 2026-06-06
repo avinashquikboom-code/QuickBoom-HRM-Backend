@@ -28,6 +28,7 @@
     "express": "^5.2.1",
     "firebase": "^12.14.0",
     "firebase-admin": "^13.10.0",
+    "glob": "^13.0.6",
     "jsonwebtoken": "^9.0.3",
     "pdfmake": "^0.2.12",
     "pg": "^8.21.0",
