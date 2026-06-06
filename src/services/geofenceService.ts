@@ -279,6 +279,66 @@ class GeofenceService {
       throw error;
     }
   }
+
+  /**
+   * Get all office geofences
+   */
+  async getAllOfficeGeofences(): Promise<OfficeGeofence[]> {
+    try {
+      const offices = await prisma.office.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          address: true,
+          latitude: true,
+          longitude: true,
+          idealRadiusMeters: true,
+          maxPunchRadiusMeters: true,
+          isActive: true
+        }
+      });
+
+      return offices.map(office => ({
+        id: office.id,
+        name: office.name,
+        code: office.code,
+        address: office.address,
+        latitude: office.latitude,
+        longitude: office.longitude,
+        idealRadiusMeters: office.idealRadiusMeters,
+        maxPunchRadiusMeters: office.maxPunchRadiusMeters,
+        isActive: office.isActive
+      }));
+    } catch (error) {
+      console.error('Get all office geofences error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get nearby offices within radius
+   */
+  async getNearbyOffices(
+    userLat: number,
+    userLon: number,
+    radius: number = 5000
+  ): Promise<OfficeGeofence[]> {
+    try {
+      const allOffices = await this.getAllOfficeGeofences();
+      
+      const nearbyOffices = allOffices.filter(office => {
+        const distance = this.calculateDistance(userLat, userLon, office.latitude, office.longitude);
+        return distance <= radius;
+      });
+
+      return nearbyOffices;
+    } catch (error) {
+      console.error('Get nearby offices error:', error);
+      throw error;
+    }
+  }
 }
 
 export default new GeofenceService();

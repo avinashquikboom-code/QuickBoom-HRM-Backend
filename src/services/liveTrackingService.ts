@@ -160,18 +160,7 @@ class LiveTrackingService {
     }
   }
 
-  /**
-   * Get active tracking sessions
-   */
-  async getActiveSessions(): Promise<TrackingSession[]> {
-    try {
-      return Array.from(this.activeSessions.values()).filter(s => s.isActive);
-    } catch (error) {
-      console.error('Get active sessions error:', error);
-      throw error;
-    }
-  }
-
+  
   /**
    * Get employee route history
    */
@@ -283,6 +272,96 @@ class LiveTrackingService {
       // For now, this is a placeholder implementation
     } catch (error) {
       console.error('Check geofence events error:', error);
+    }
+  }
+
+  /**
+   * Get active sessions for an employee
+   */
+  async getActiveSessions(employeeId: number): Promise<TrackingSession[]> {
+    try {
+      const sessions: TrackingSession[] = [];
+      for (const [sessionId, session] of this.activeSessions.entries()) {
+        if (session.employeeId === employeeId && session.isActive) {
+          sessions.push(session);
+        }
+      }
+      return sessions;
+    } catch (error) {
+      console.error('Get active sessions error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get location history for an employee
+   */
+  async getLocationHistory(employeeId: number, sessionId?: string, limit: number = 100): Promise<LocationPoint[]> {
+    try {
+      const locations = this.locationBuffer.get(employeeId) || [];
+      
+      // Filter by session if provided
+      let filteredLocations = locations;
+      if (sessionId) {
+        const session = this.activeSessions.get(sessionId);
+        if (session) {
+          filteredLocations = locations.filter(loc => 
+            loc.timestamp >= session.startTime && 
+            (!session.endTime || loc.timestamp <= session.endTime)
+          );
+        }
+      }
+      
+      // Sort by timestamp (newest first) and limit
+      return filteredLocations
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        .slice(0, limit);
+    } catch (error) {
+      console.error('Get location history error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get live locations of all employees (HR/Admin only)
+   */
+  async getLiveLocations(): Promise<any[]> {
+    try {
+      const liveLocations: any[] = [];
+      
+      for (const [sessionId, session] of this.activeSessions.entries()) {
+        if (session.isActive && session.locations.length > 0) {
+          const latestLocation = session.locations[session.locations.length - 1];
+          
+          // Get employee details
+          const employee = await prisma.employee.findUnique({
+            where: { id: session.employeeId },
+            include: {
+              user: { select: { email: true, profile: { select: { fullName: true } } } },
+              office: { select: { name: true, address: true } }
+            }
+          });
+          
+          if (employee) {
+            liveLocations.push({
+              sessionId,
+              employeeId: session.employeeId,
+              employeeName: employee.user?.profile?.fullName || 'Unknown',
+              employeeEmail: employee.user?.email || '',
+              officeName: employee.office?.name || '',
+              purpose: session.purpose,
+              startTime: session.startTime,
+              currentLocation: latestLocation,
+              totalLocations: session.locations.length
+            });
+          }
+        }
+      }
+      
+      return liveLocations;
+    } catch (error) {
+      console.error('Get live locations error:', error);
+      throw error;
     }
   }
 

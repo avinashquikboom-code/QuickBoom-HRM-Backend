@@ -148,6 +148,113 @@ export const updateLocation = async (
   }
 };
 
+export const getActiveSessions = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    // Get employee information
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id }
+    });
+
+    if (!employee) {
+      res.status(404).json({
+        success: false,
+        message: 'Employee record not found.',
+        errorCode: 'EMPLOYEE_NOT_FOUND'
+      });
+      return;
+    }
+
+    const sessions = await liveTrackingService.getActiveSessions(employee.id);
+
+    res.json({
+      success: true,
+      sessions
+    });
+  } catch (error) {
+    console.error('Get active sessions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get active sessions.',
+      errorCode: 'GET_ACTIVE_SESSIONS_ERROR'
+    });
+  }
+};
+
+export const getLocationHistory = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { sessionId, limit = 100 } = req.query;
+
+    // Get employee information
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id }
+    });
+
+    if (!employee) {
+      res.status(404).json({
+        success: false,
+        message: 'Employee record not found.',
+        errorCode: 'EMPLOYEE_NOT_FOUND'
+      });
+      return;
+    }
+
+    const history = await liveTrackingService.getLocationHistory(
+      employee.id,
+      sessionId as string,
+      parseInt(limit as string)
+    );
+
+    res.json({
+      success: true,
+      history
+    });
+  } catch (error) {
+    console.error('Get location history error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get location history.',
+      errorCode: 'GET_LOCATION_HISTORY_ERROR'
+    });
+  }
+};
+
+export const getLiveLocations = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    // Check if user has HR or Admin role
+    if (req.user?.role !== 'HR' && req.user?.role !== 'ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. HR/Admin access required.',
+        errorCode: 'ACCESS_DENIED'
+      });
+      return;
+    }
+
+    const liveLocations = await liveTrackingService.getLiveLocations();
+
+    res.json({
+      success: true,
+      locations: liveLocations
+    });
+  } catch (error) {
+    console.error('Get live locations error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get live locations.',
+      errorCode: 'GET_LIVE_LOCATIONS_ERROR'
+    });
+  }
+};
+
 export const getCurrentLocation = async (
   req: AuthenticatedRequest,
   res: Response
@@ -196,26 +303,6 @@ export const getCurrentLocation = async (
   }
 };
 
-export const getActiveSessions = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const sessions = await liveTrackingService.getActiveSessions();
-
-    res.json({
-      success: true,
-      sessions
-    });
-  } catch (error) {
-    console.error('Get active sessions error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get active sessions.',
-      errorCode: 'GET_SESSIONS_ERROR'
-    });
-  }
-};
 
 export const getRouteHistory = async (
   req: AuthenticatedRequest,
