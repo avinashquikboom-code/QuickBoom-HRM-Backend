@@ -98,6 +98,59 @@ router.get('/dashboard/stats', fetchEmployeeDashboardStats);
  */
 router.get('/profile', fetchEmployeeProfile);
 
+// Debug endpoint for employee profile
+router.get('/profile/debug', async (req, res) => {
+  try {
+    const user = (req as any).user;
+    console.log('=== DEBUG EMPLOYEE PROFILE ===');
+    console.log('User from request:', user);
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'No user found in request',
+        debug: { user: null }
+      });
+    }
+    
+    // Check if employee record exists
+    const employee = await prisma.employee.findFirst({
+      where: { userId: user.id },
+      include: { department: true, office: true, user: { include: { profile: true } } }
+    });
+    
+    console.log('Employee found:', employee);
+    
+    // Check user and profile directly
+    const userWithProfile = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: { profile: true }
+    });
+    
+    console.log('User with profile:', userWithProfile);
+    
+    res.json({
+      success: true,
+      debug: {
+        user: user,
+        employee: employee,
+        userWithProfile: userWithProfile,
+        hasEmployeeRecord: !!employee,
+        hasUserProfile: !!userWithProfile?.profile,
+        employeeId: employee?.id,
+        userId: user.id
+      }
+    });
+  } catch (error) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Debug error',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 /**
  * @swagger
  * /api/employee/profile:
