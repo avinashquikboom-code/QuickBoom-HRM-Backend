@@ -138,11 +138,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         profile: profileResponse,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Login error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error during login.',
+      details: error.message || String(error),
+      stack: error.stack,
     });
   }
 };
@@ -486,11 +488,13 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
         profile: profileResponse,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Role-specific login error:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error during login.',
+      details: error.message || String(error),
+      stack: error.stack,
     });
   }
 };
