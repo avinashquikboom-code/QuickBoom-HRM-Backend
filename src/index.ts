@@ -21,6 +21,8 @@ import firebaseNotificationRoutes from './routes/mobile/firebaseNotificationRout
 import mobilePayrollRoutes from './routes/mobile/mobilePayrollRoutes';
 import mobileTrackingRoutes from './routes/mobile/mobileTrackingRoutes';
 import mobileGeofenceRoutes from './routes/mobile/mobileGeofenceRoutes';
+import mobileLeaveBalanceRoutes from './routes/mobile/mobileLeaveBalanceRoutes';
+import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 
@@ -78,6 +80,7 @@ app.use('/api/employee', employeeRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hr', hrRoutes);
+app.use('/api/leave-balance', leaveBalanceRoutes);
 
 // Mobile API Routes
 app.use('/api/mobile/auth', mobileAuthRoutes);
@@ -87,6 +90,7 @@ app.use('/api/mobile/firebase', firebaseNotificationRoutes);
 app.use('/api/mobile/payroll', mobilePayrollRoutes);
 app.use('/api/mobile/tracking', mobileTrackingRoutes);
 app.use('/api/mobile/geofence', mobileGeofenceRoutes);
+app.use('/api/mobile/leave-balance', mobileLeaveBalanceRoutes);
 
 const host = process.env.HOST || '0.0.0.0';
 

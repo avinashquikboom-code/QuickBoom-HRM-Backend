@@ -148,7 +148,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 };
 
 export const register = async (req: Request, res: Response): Promise<void> => {
-  const { email, password, role } = req.body;
+  const { email, password, role, firstName, lastName, departmentId, officeId, designation } = req.body;
 
   if (!email || !password || !role) {
     res.status(400).json({
@@ -243,16 +243,32 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     if (dbRole === Role.EMPLOYEE || dbRole === Role.HR || dbRole === Role.PLATFORM_ADMIN) {
       try {
         const employeeCode = `EMP${String(newUser.id).padStart(4, '0')}`;
-        await prisma.employee.create({
+        const employee = await prisma.employee.create({
           data: {
             userId: newUser.id,
             employeeCode,
-            firstName: fallbackName,
-            lastName: '',
-            designation: dbRole === Role.EMPLOYEE ? 'Employee' : 'HR Administrator',
+            firstName: firstName || fallbackName,
+            lastName: lastName || '',
+            designation: designation || (dbRole === Role.EMPLOYEE ? 'Employee' : 'HR Administrator'),
             status: 'active',
+            departmentId: departmentId ? parseInt(departmentId) : null,
+            officeId: officeId ? parseInt(officeId) : null,
           },
         });
+
+        // Create leave balance allocation for the new employee
+        try {
+          const leaveBalanceService = require('../services/leaveBalanceService').default;
+          await leaveBalanceService.createOrUpdateLeaveBalance({
+            employeeId: employee.id,
+            departmentId: departmentId ? parseInt(departmentId) : undefined,
+            createdBy: 'Registration System'
+          });
+          console.log(`✅ Leave balance allocated for new employee ${employee.id}`);
+        } catch (leaveError) {
+          console.error('Failed to create leave balance for new employee:', leaveError);
+          // Non-fatal: employee is still registered even if leave balance creation fails
+        }
       } catch (empError) {
         console.error('Failed to create employee record for new user:', empError);
         // Non-fatal: user is still registered even if employee creation fails

@@ -3580,3 +3580,119 @@ export const updateAdminSettings = async (
   }
 };
 
+// ==========================================
+// 10. Admin Leave Balance Management
+// ==========================================
+
+export const fetchAdminLeaveBalancesDetailed = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { fiscalYear, departmentId } = req.query;
+    
+    const leaveBalanceService = require('../services/leaveBalanceService').default;
+    const leaveBalances = await leaveBalanceService.getAllLeaveBalances(
+      fiscalYear as string,
+      departmentId ? parseInt(departmentId as string) : undefined
+    );
+
+    res.json({
+      success: true,
+      data: leaveBalances,
+      count: leaveBalances.length
+    });
+  } catch (error) {
+    console.error('Fetch admin leave balances error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load leave balances.' });
+  }
+};
+
+export const updateAdminEmployeeLeaveBalance = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { employeeId } = req.params;
+  const { casualTotal, sickTotal, earnedTotal, fiscalYear } = req.body;
+  
+  const employeeIdInt = parseInt(employeeId as string, 10);
+  if (isNaN(employeeIdInt)) {
+    res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
+    return;
+  }
+
+  try {
+    const leaveBalanceService = require('../services/leaveBalanceService').default;
+    const updatedBalance = await leaveBalanceService.createOrUpdateLeaveBalance({
+      employeeId: employeeIdInt,
+      fiscalYear,
+      casualTotal: casualTotal ? parseInt(casualTotal) : undefined,
+      sickTotal: sickTotal ? parseInt(sickTotal) : undefined,
+      earnedTotal: earnedTotal ? parseInt(earnedTotal) : undefined,
+      createdBy: req.user?.email || 'Admin'
+    });
+
+    res.json({
+      success: true,
+      message: 'Leave balance updated successfully!',
+      data: updatedBalance,
+    });
+  } catch (error) {
+    console.error('Update admin leave balance error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update leave balance.' });
+  }
+};
+
+export const getAdminLeaveBalanceStats = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { fiscalYear } = req.query;
+    
+    const leaveBalanceService = require('../services/leaveBalanceService').default;
+    const stats = await leaveBalanceService.getLeaveBalanceStats(fiscalYear as string);
+
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Get admin leave balance stats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load leave balance statistics.' });
+  }
+};
+
+export const bulkUpdateAdminLeaveBalances = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { allocations } = req.body;
+
+  if (!allocations || !Array.isArray(allocations)) {
+    res.status(400).json({ success: false, message: 'Allocations array is required.' });
+    return;
+  }
+
+  try {
+    const leaveBalanceService = require('../services/leaveBalanceService').default;
+    const createdBy = req.user?.email || 'Admin';
+    
+    const processedAllocations = allocations.map(allocation => ({
+      ...allocation,
+      createdBy
+    }));
+
+    const results = await leaveBalanceService.bulkAllocateLeaves(processedAllocations);
+
+    res.json({
+      success: true,
+      message: `Bulk update completed. Success: ${results.success}, Failed: ${results.failed}`,
+      data: results
+    });
+  } catch (error) {
+    console.error('Bulk update admin leave balances error:', error);
+    res.status(500).json({ success: false, message: 'Failed to bulk update leave balances.' });
+  }
+};
+

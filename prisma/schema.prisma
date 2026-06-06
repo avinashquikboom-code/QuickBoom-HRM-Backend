@@ -90,6 +90,7 @@ model Employee {
   user             User?             @relation(fields: [userId], references: [id])
   expenses         Expense[]
   leaveRequests    LeaveRequest[]
+  leaveBalance     LeaveBalance?
   notifications    Notification[]
   shiftAssignments ShiftAssignment[]
   assignedTasks    Task[]            @relation("AssignedTasks")
@@ -159,6 +160,22 @@ model LeaveRequest {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model LeaveBalance {
+  id           Int      @id @default(autoincrement())
+  employeeId   Int      @unique
+  fiscalYear   String   @default("2026")
+  casualTotal  Int      @default(12)
+  casualUsed   Int      @default(0)
+  sickTotal    Int      @default(10)
+  sickUsed     Int      @default(0)
+  earnedTotal  Int      @default(15)
+  earnedUsed   Int      @default(0)
+  createdBy    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Expense {
