@@ -9,26 +9,37 @@ const PdfPrinter = require('pdfmake');
 interface AttendanceWithOffice {
   id: number;
   employeeId: number;
-  officeId?: number;
+  officeId: number | null;
   date: string;
-  checkIn?: Date;
-  checkOut?: Date;
+  checkIn: Date | null;
+  checkOut: Date | null;
   status: string;
-  notes?: string;
-  latitude?: number;
-  longitude?: number;
+  notes: string | null;
+  latitude: number | null;
+  longitude: number | null;
   isFingerprintCheckIn: boolean;
   isFingerprintCheckOut: boolean;
   isOnBreak: boolean;
-  breakStartTime?: Date;
+  breakStartTime: Date | null;
   totalBreakSeconds: number;
   createdAt: Date;
   updatedAt: Date;
   office?: {
     id: number;
     name: string;
-    code?: string;
-  };
+    code: string | null;
+    address: string;
+    latitude: number;
+    longitude: number;
+    idealRadiusMeters: number;
+    maxPunchRadiusMeters: number;
+    isActive: boolean;
+    subscriptionPlan: string;
+    billingCycle: string;
+    invoiceStatus: string;
+    createdAt: Date;
+    updatedAt: Date;
+  } | null;
 }
 
 // Helper function to calculate distance between two coordinates
