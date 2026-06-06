@@ -333,14 +333,14 @@ class LeaveBalanceService {
         }
       });
 
-      const stats = {
+      const stats: any = {
         totalEmployees: balances.length,
-        totalCasualAllocated: balances.reduce((sum, b) => sum + b.casualTotal, 0),
-        totalCasualUsed: balances.reduce((sum, b) => sum + b.casualUsed, 0),
-        totalSickAllocated: balances.reduce((sum, b) => sum + b.sickTotal, 0),
-        totalSickUsed: balances.reduce((sum, b) => sum + b.sickUsed, 0),
-        totalEarnedAllocated: balances.reduce((sum, b) => sum + b.earnedTotal, 0),
-        totalEarnedUsed: balances.reduce((sum, b) => sum + b.earnedUsed, 0),
+        totalCasualAllocated: balances.reduce((sum: number, b: any) => sum + b.casualTotal, 0),
+        totalCasualUsed: balances.reduce((sum: number, b: any) => sum + b.casualUsed, 0),
+        totalSickAllocated: balances.reduce((sum: number, b: any) => sum + b.sickTotal, 0),
+        totalSickUsed: balances.reduce((sum: number, b: any) => sum + b.sickUsed, 0),
+        totalEarnedAllocated: balances.reduce((sum: number, b: any) => sum + b.earnedTotal, 0),
+        totalEarnedUsed: balances.reduce((sum: number, b: any) => sum + b.earnedUsed, 0),
         departmentBreakdown: {} as any
       };
 
@@ -351,7 +351,7 @@ class LeaveBalanceService {
       stats.totalRemaining = stats.totalCasualRemaining + stats.totalSickRemaining + stats.totalEarnedRemaining;
 
       // Department breakdown
-      balances.forEach(balance => {
+      balances.forEach((balance: any) => {
         const deptName = balance.employee.department?.name || 'Unassigned';
         if (!stats.departmentBreakdown[deptName]) {
           stats.departmentBreakdown[deptName] = {

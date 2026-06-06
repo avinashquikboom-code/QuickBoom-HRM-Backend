@@ -52,6 +52,10 @@ import {
   markAllAdminNotificationsRead,
   fetchAdminSettings,
   updateAdminSettings,
+  fetchAdminLeaveBalancesDetailed,
+  updateAdminEmployeeLeaveBalance,
+  getAdminLeaveBalanceStats,
+  bulkUpdateAdminLeaveBalances,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -361,5 +365,11 @@ router.put('/notifications/read-all', markAllAdminNotificationsRead);
 // Settings Management
 router.get('/settings', fetchAdminSettings);
 router.put('/settings', updateAdminSettings);
+
+// Leave Balance Management
+router.get('/leave-balances', fetchAdminLeaveBalancesDetailed);
+router.put('/leave-balances/:employeeId', updateAdminEmployeeLeaveBalance);
+router.get('/leave-balances/stats', getAdminLeaveBalanceStats);
+router.post('/leave-balances/bulk-update', bulkUpdateAdminLeaveBalances);
 
 export default router;

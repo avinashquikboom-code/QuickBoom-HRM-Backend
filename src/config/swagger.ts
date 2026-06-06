@@ -255,16 +255,19 @@ const options: swaggerJsdoc.Options = {
         },
         RegisterRequest: {
           type: 'object',
-          required: ['email', 'password', 'name', 'role'],
+          required: ['email', 'password', 'role'],
           properties: {
             email: { type: 'string', format: 'email' },
             password: { type: 'string', minLength: 6 },
-            name: { type: 'string' },
+            firstName: { type: 'string' },
+            lastName: { type: 'string' },
             role: {
               type: 'string',
               enum: ['SUPER_ADMIN', 'ADMIN', 'HR', 'EMPLOYEE', 'PLATFORM_ADMIN']
             },
-            officeId: { type: 'string', format: 'uuid' },
+            departmentId: { type: 'integer' },
+            officeId: { type: 'integer' },
+            designation: { type: 'string' },
           },
         },
         CreateEmployeeRequest: {
@@ -324,6 +327,48 @@ const options: swaggerJsdoc.Options = {
               enum: ['TRAVEL', 'MEAL', 'ACCOMMODATION', 'OFFICE', 'MEDICAL', 'OTHER']
             },
             receiptUrl: { type: 'string' },
+          },
+        },
+        LeaveBalanceRequest: {
+          type: 'object',
+          required: ['employeeId'],
+          properties: {
+            employeeId: { type: 'integer' },
+            departmentId: { type: 'integer' },
+            fiscalYear: { type: 'string' },
+            casualTotal: { type: 'integer' },
+            sickTotal: { type: 'integer' },
+            earnedTotal: { type: 'integer' },
+          },
+        },
+        LeaveBalanceResponse: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            employeeId: { type: 'integer' },
+            fiscalYear: { type: 'string' },
+            casualTotal: { type: 'integer' },
+            casualUsed: { type: 'integer' },
+            casualRemaining: { type: 'integer' },
+            sickTotal: { type: 'integer' },
+            sickUsed: { type: 'integer' },
+            sickRemaining: { type: 'integer' },
+            earnedTotal: { type: 'integer' },
+            earnedUsed: { type: 'integer' },
+            earnedRemaining: { type: 'integer' },
+            totalRemaining: { type: 'integer' },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        BulkLeaveAllocationRequest: {
+          type: 'object',
+          required: ['allocations'],
+          properties: {
+            allocations: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/LeaveBalanceRequest' }
+            },
           },
         },
       },

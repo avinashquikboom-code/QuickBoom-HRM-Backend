@@ -62,7 +62,8 @@ export const getEmployeeLeaveBalance = async (
     
     if (employeeId) {
       // Admin/HR viewing another employee's balance
-      targetEmployeeId = parseInt(employeeId);
+      const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
+      targetEmployeeId = parseInt(employeeIdStr);
     } else {
       // Employee viewing their own balance
       const employee = await prisma.employee.findFirst({
@@ -329,7 +330,8 @@ export const getDepartmentLeavePolicy = async (
       return;
     }
 
-    const policy = await leaveBalanceService.getDepartmentLeavePolicy(parseInt(departmentId));
+    const departmentIdStr = Array.isArray(departmentId) ? departmentId[0] : departmentId;
+    const policy = await leaveBalanceService.getDepartmentLeavePolicy(parseInt(departmentIdStr));
 
     if (!policy) {
       res.status(404).json({

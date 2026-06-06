@@ -167,7 +167,8 @@ export const getDepartmentLeavePolicyMobile = async (
       return;
     }
 
-    const policy = await leaveBalanceService.getDepartmentLeavePolicy(parseInt(departmentId));
+    const departmentIdStr = Array.isArray(departmentId) ? departmentId[0] : departmentId;
+    const policy = await leaveBalanceService.getDepartmentLeavePolicy(parseInt(departmentIdStr));
 
     if (!policy) {
       res.status(404).json({ success: false, message: 'Department not found' });
