@@ -310,11 +310,29 @@ export const registerFcmToken = async (req: AuthenticatedRequest, res: Response)
     }
 
     // Add token if it doesn't already exist
-    const currentTokens = user.fcmTokens || [];
-    if (!currentTokens.includes(token)) {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { fcmTokens: { push: token } }
+    const existingToken = await prisma.fCMToken.findFirst({
+      where: { userId, token }
+    });
+    
+    if (!existingToken) {
+      await prisma.fCMToken.create({
+        data: {
+          userId,
+          token,
+          platform: req.body.platform || 'unknown',
+          isActive: true,
+          lastUsedAt: new Date(),
+        }
+      });
+    } else {
+      // Update existing token
+      await prisma.fCMToken.update({
+        where: { id: existingToken.id },
+        data: {
+          isActive: true,
+          lastUsedAt: new Date(),
+          platform: req.body.platform || existingToken.platform,
+        }
       });
     }
 

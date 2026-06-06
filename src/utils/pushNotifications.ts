@@ -20,20 +20,21 @@ export async function sendPushNotification(
   }
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { fcmTokens: true },
+    const fcmTokens = await prisma.fCMToken.findMany({
+      where: { userId, isActive: true },
+      select: { token: true, id: true },
     });
 
-    if (!user || !user.fcmTokens || user.fcmTokens.length === 0) {
+    if (!fcmTokens || fcmTokens.length === 0) {
       console.log(`No FCM tokens found for user ${userId}. Skipping push.`);
       return;
     }
 
+    const tokenStrings = fcmTokens.map(t => t.token);
     const payload = {
       notification: { title, body },
       data: data || {},
-      tokens: user.fcmTokens,
+      tokens: tokenStrings,
     };
 
     const response = await messaging.sendEachForMulticast(payload);
@@ -43,21 +44,22 @@ export async function sendPushNotification(
       const failedTokens: string[] = [];
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
-          failedTokens.push(user.fcmTokens[idx]);
+          failedTokens.push(tokenStrings[idx]);
         }
       });
       
       if (failedTokens.length > 0) {
-        // Remove invalid tokens from DB
-        await prisma.user.update({
-          where: { id: userId },
+        // Deactivate invalid tokens from DB
+        await prisma.fCMToken.updateMany({
+          where: {
+            userId,
+            token: { in: failedTokens },
+          },
           data: {
-            fcmTokens: {
-              set: user.fcmTokens.filter(token => !failedTokens.includes(token))
-            }
-          }
+            isActive: false,
+          },
         });
-        console.log(`Removed ${failedTokens.length} invalid FCM tokens for user ${userId}`);
+        console.log(`Deactivated ${failedTokens.length} invalid FCM tokens for user ${userId}`);
       }
     }
     

@@ -99,14 +99,29 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
 
     // 6. Store FCM token if provided (optional)
     if (req.body.fcmToken) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          fcmTokens: {
-            push: req.body.fcmToken
-          }
-        },
+      const existingToken = await prisma.fCMToken.findFirst({
+        where: { userId: user.id, token: req.body.fcmToken }
       });
+      
+      if (!existingToken) {
+        await prisma.fCMToken.create({
+          data: {
+            userId: user.id,
+            token: req.body.fcmToken,
+            platform: 'mobile',
+            isActive: true,
+            lastUsedAt: new Date(),
+          }
+        });
+      } else {
+        await prisma.fCMToken.update({
+          where: { id: existingToken.id },
+          data: {
+            isActive: true,
+            lastUsedAt: new Date(),
+          }
+        });
+      }
     }
 
     // 7. Structure mobile-optimized response
