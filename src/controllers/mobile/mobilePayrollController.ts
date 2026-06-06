@@ -19,8 +19,8 @@ export const getMyPayslips = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  try {y 
-    
+  try {
+
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id }
     });
