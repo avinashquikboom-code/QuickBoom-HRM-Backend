@@ -2179,8 +2179,9 @@ export const downloadLeaveReport = async (
   try {
     const { employeeId, startDate, endDate } = req.query;
 
-    // Check if user is HR or Admin
-    if (req.user?.role !== 'HR' && req.user?.role !== 'SUPER_ADMIN') {
+    // Check if user is allowed (Admin / HR roles)
+    const allowedRoles = ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN'];
+    if (!req.user?.role || !allowedRoles.includes(req.user.role)) {
       res.status(403).json({ success: false, message: 'Access denied' });
       return;
     }
@@ -2879,13 +2880,15 @@ export const fetchAnalyticsOverview = async (
 
     res.json({
       success: true,
-      totalEmployees,
-      activeEmployees,
-      onLeaveEmployees,
-      averageRetention,
-      presentToday,
-      data,
-      employeeRetentionData,
+      data: {
+        totalEmployees,
+        activeEmployees,
+        onLeaveEmployees,
+        averageRetention,
+        totalPresentToday: presentToday,
+        weeklyData: data,
+        retentionData: employeeRetentionData,
+      },
     });
   } catch (error) {
     console.error('Fetch analytics overview error:', error);
