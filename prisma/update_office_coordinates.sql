@@ -5,15 +5,15 @@
 
 UPDATE "Office" 
 SET 
-  latitude = 19.102528,
-  longitude = 73.008861,
-  idealRadiusMeters = 25.0,
-  maxPunchRadiusMeters = 50.0,
-  updatedAt = CURRENT_TIMESTAMP
-WHERE name = 'Rahul and Avin Office' OR name LIKE '%Rahul%' OR name LIKE '%Avin%' OR code = 'RAVI_OFFICE';
+  "latitude" = 19.102528,
+  "longitude" = 73.008861,
+  "idealRadiusMeters" = 25.0,
+  "maxPunchRadiusMeters" = 50.0,
+  "updatedAt" = CURRENT_TIMESTAMP
+WHERE "name" = 'Rahul and Avin Office' OR "name" LIKE '%Rahul%' OR "name" LIKE '%Avin%' OR "code" = 'RAVI_OFFICE';
 
 -- If office doesn't exist, insert it
-INSERT INTO "Office" (name, code, address, latitude, longitude, idealRadiusMeters, maxPunchRadiusMeters, isActive, subscriptionPlan, billingCycle, invoiceStatus, createdAt, updatedAt)
+INSERT INTO "Office" ("name", "code", "address", "latitude", "longitude", "idealRadiusMeters", "maxPunchRadiusMeters", "isActive", "subscriptionPlan", "billingCycle", "invoiceStatus", "createdAt", "updatedAt")
 SELECT 
   'Rahul and Avin Office',
   'RAVI_OFFICE',
@@ -29,5 +29,5 @@ SELECT
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP
 WHERE NOT EXISTS (
-  SELECT 1 FROM "Office" WHERE name = 'Rahul and Avin Office' OR code = 'RAVI_OFFICE'
+  SELECT 1 FROM "Office" WHERE "name" = 'Rahul and Avin Office' OR "code" = 'RAVI_OFFICE'
 );
