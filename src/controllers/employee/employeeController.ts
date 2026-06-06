@@ -1177,3 +1177,46 @@ export const fetchEmployeeDashboardStats = async (
     res.status(500).json({ success: false, message: 'Failed to fetch dashboard metrics.' });
   }
 };
+
+// ==========================================
+// 7. Holiday Management
+// ==========================================
+
+export const fetchEmployeeHolidays = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const currentYear = new Date().getFullYear();
+    
+    // Fetch holidays for the current year
+    const holidays = await prisma.holiday.findMany({
+      where: {
+        date: {
+          gte: new Date(currentYear, 0, 1), // Start of current year
+          lt: new Date(currentYear + 1, 0, 1), // Start of next year
+        }
+      },
+      orderBy: {
+        date: 'asc'
+      }
+    });
+
+    // Format holidays for mobile app
+    const formattedHolidays = holidays.map(holiday => ({
+      id: holiday.id.toString(),
+      name: holiday.name,
+      date: holiday.date.toISOString().split('T')[0], // Format as YYYY-MM-DD
+      isPublic: holiday.isPublic,
+      description: holiday.description,
+    }));
+
+    res.json({
+      success: true,
+      holidays: formattedHolidays,
+    });
+  } catch (error) {
+    console.error('Fetch holidays error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch holidays.' });
+  }
+};

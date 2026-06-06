@@ -24,6 +24,7 @@ import {
   markEmployeeNotificationRead,
   markAllEmployeeNotificationsRead,
   fetchEmployeeDashboardStats,
+  fetchEmployeeHolidays,
 } from '../../controllers/employee/employeeController';
 
 const router = Router();
@@ -315,6 +316,9 @@ router.post('/attendance/debug', async (req, res) => {
 // Leaves Management
 router.get('/leaves', fetchLeavesAndBalances);
 router.post('/leaves', applyEmployeeLeave);
+
+// Holidays
+router.get('/holidays', fetchEmployeeHolidays);
 
 // Shift Timings
 router.get('/shifts', fetchEmployeeShift);
