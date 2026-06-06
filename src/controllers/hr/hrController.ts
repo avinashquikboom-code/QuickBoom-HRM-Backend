@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import { webSocketService } from '../..';
+import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 
 // ==========================================
 // HR Dashboard Stats
@@ -571,6 +572,29 @@ export const approveLeave = async (
 
     console.log(`✅ Leave request ${leave.id} approved and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
     
+    // Send push notification to employee
+    try {
+      await firebaseNotificationService.sendNotificationToUser(
+        leave.employee.userId!,
+        'Leave Request Approved ✅',
+        `Your ${leave.type.toLowerCase()} leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
+        {
+          type: 'leave_approved',
+          leaveId: leave.id.toString(),
+          leaveType: leave.type,
+          fromDate: leave.fromDate.toISOString().split('T')[0],
+          toDate: leave.toDate.toISOString().split('T')[0],
+          reviewedBy: reviewerName || req.user?.email || 'HR',
+          actionType: 'LEAVE_APPROVED',
+        },
+        { priority: { high: true } }
+      );
+      
+      console.log(`📱 Push notification sent for approved leave ${leave.id}`);
+    } catch (notificationError) {
+      console.error('❌ Failed to send push notification:', notificationError);
+    }
+    
     // Broadcast real-time leave update to employee
     try {
       const webSocketService = require('../services/websocketService').default;
@@ -677,6 +701,30 @@ export const rejectLeave = async (
     });
 
     console.log(`❌ Leave request ${leave.id} rejected and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
+    
+    // Send push notification to employee
+    try {
+      await firebaseNotificationService.sendNotificationToUser(
+        leave.employee.userId!,
+        'Leave Request Rejected ❌',
+        `Your ${leave.type.toLowerCase()} leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected by ${reviewerName || 'HR'}. ${reviewNote ? `Reason: ${reviewNote}` : ''}`,
+        {
+          type: 'leave_rejected',
+          leaveId: leave.id.toString(),
+          leaveType: leave.type,
+          fromDate: leave.fromDate.toISOString().split('T')[0],
+          toDate: leave.toDate.toISOString().split('T')[0],
+          reviewedBy: reviewerName || req.user?.email || 'HR',
+          reviewNote: reviewNote || '',
+          actionType: 'LEAVE_REJECTED',
+        },
+        { priority: { high: true } }
+      );
+      
+      console.log(`📱 Push notification sent for rejected leave ${leave.id}`);
+    } catch (notificationError) {
+      console.error('❌ Failed to send push notification:', notificationError);
+    }
     
     // Broadcast real-time leave update to employee
     try {

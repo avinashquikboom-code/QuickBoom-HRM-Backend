@@ -111,19 +111,19 @@ export class FirebaseNotificationService {
     data?: Record<string, string>,
     options?: NotificationOptions
   ): Promise<admin.messaging.BatchResponse> {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { fcmTokens: true }
+    const fcmTokens = await prisma.fCMToken.findMany({
+      where: { 
+        userId: userId,
+        isActive: true 
+      },
+      select: { token: true }
     });
 
-    if (!user || !user.fcmTokens || user.fcmTokens.length === 0) {
-      throw new Error('User not found or has no FCM tokens');
+    if (!fcmTokens || fcmTokens.length === 0) {
+      throw new Error('User not found or has no active FCM tokens');
     }
 
-    const tokens = Array.isArray(user.fcmTokens) 
-      ? user.fcmTokens 
-      : [user.fcmTokens];
-
+    const tokens = fcmTokens.map(t => t.token);
     return this.sendNotificationToTokens(tokens, title, body, data, options);
   }
 
@@ -135,30 +135,24 @@ export class FirebaseNotificationService {
     data?: Record<string, string>,
     options?: NotificationOptions
   ): Promise<admin.messaging.BatchResponse> {
-    const users = await prisma.user.findMany({
+    const fcmTokens = await prisma.fCMToken.findMany({
       where: { 
-        role: role as any,
         isActive: true,
-        fcmTokens: {
-          isEmpty: false
+        user: {
+          role: role as any,
+          isActive: true,
         }
       },
-      select: { fcmTokens: true }
+      select: { token: true }
     });
 
-    const allTokens: string[] = [];
-    users.forEach(user => {
-      const tokens = Array.isArray(user.fcmTokens) 
-        ? user.fcmTokens 
-        : [user.fcmTokens];
-      allTokens.push(...tokens);
-    });
+    const tokens = fcmTokens.map(t => t.token);
 
-    if (allTokens.length === 0) {
+    if (tokens.length === 0) {
       throw new Error(`No active users with FCM tokens found for role: ${role}`);
     }
 
-    return this.sendNotificationToTokens(allTokens, title, body, data, options);
+    return this.sendNotificationToTokens(tokens, title, body, data, options);
   }
 
   // Send notification to users by department
@@ -169,32 +163,26 @@ export class FirebaseNotificationService {
     data?: Record<string, string>,
     options?: NotificationOptions
   ): Promise<admin.messaging.BatchResponse> {
-    const users = await prisma.user.findMany({
+    const fcmTokens = await prisma.fCMToken.findMany({
       where: {
         isActive: true,
-        employee: {
-          departmentId,
-        },
-        fcmTokens: {
-          isEmpty: false
+        user: {
+          isActive: true,
+          employee: {
+            departmentId,
+          }
         }
       },
-      select: { fcmTokens: true }
+      select: { token: true }
     });
 
-    const allTokens: string[] = [];
-    users.forEach(user => {
-      const tokens = Array.isArray(user.fcmTokens) 
-        ? user.fcmTokens 
-        : [user.fcmTokens];
-      allTokens.push(...tokens);
-    });
+    const tokens = fcmTokens.map(t => t.token);
 
-    if (allTokens.length === 0) {
+    if (tokens.length === 0) {
       throw new Error(`No active users with FCM tokens found for department: ${departmentId}`);
     }
 
-    return this.sendNotificationToTokens(allTokens, title, body, data, options);
+    return this.sendNotificationToTokens(tokens, title, body, data, options);
   }
 
   // Send notification to all active users
@@ -204,29 +192,23 @@ export class FirebaseNotificationService {
     data?: Record<string, string>,
     options?: NotificationOptions
   ): Promise<admin.messaging.BatchResponse> {
-    const users = await prisma.user.findMany({
+    const fcmTokens = await prisma.fCMToken.findMany({
       where: {
         isActive: true,
-        fcmTokens: {
-          isEmpty: false
+        user: {
+          isActive: true,
         }
       },
-      select: { fcmTokens: true }
+      select: { token: true }
     });
 
-    const allTokens: string[] = [];
-    users.forEach(user => {
-      const tokens = Array.isArray(user.fcmTokens) 
-        ? user.fcmTokens 
-        : [user.fcmTokens];
-      allTokens.push(...tokens);
-    });
+    const tokens = fcmTokens.map(t => t.token);
 
-    if (allTokens.length === 0) {
+    if (tokens.length === 0) {
       throw new Error('No active users with FCM tokens found');
     }
 
-    return this.sendNotificationToTokens(allTokens, title, body, data, options);
+    return this.sendNotificationToTokens(tokens, title, body, data, options);
   }
 
   // Remove invalid tokens from database
@@ -234,21 +216,19 @@ export class FirebaseNotificationService {
     if (tokens.length === 0) return;
 
     try {
-      // Update users to remove invalid tokens
-      await prisma.user.updateMany({
+      // Deactivate invalid tokens
+      await prisma.fCMToken.updateMany({
         where: {
-          fcmTokens: {
-            hasSome: tokens
+          token: {
+            in: tokens
           }
         },
         data: {
-          fcmTokens: {
-            set: [] // This will be handled more precisely in a real implementation
-          }
+          isActive: false
         }
       });
 
-      console.log(`🗑️ Removed ${tokens.length} invalid FCM tokens from database`);
+      console.log(`🗑️ Deactivated ${tokens.length} invalid FCM tokens from database`);
     } catch (error) {
       console.error('❌ Error removing invalid tokens:', error);
     }
