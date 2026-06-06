@@ -12,9 +12,14 @@ export const fetchHRStats = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
+  console.log('📊 [HR STATS] Fetch request started');
+  console.log('📊 [HR STATS] User:', req.user?.email, 'Role:', req.user?.role);
+  
   const todayStr = new Date().toISOString().split('T')[0];
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  console.log('📊 [HR STATS] Date range:', { todayStr, thirtyDaysAgo: thirtyDaysAgo.toISOString() });
 
   try {
     const [
@@ -45,6 +50,22 @@ export const fetchHRStats = async (
       prisma.user.count({ where: { isActive: true } })
     ]);
 
+    console.log('📊 [HR STATS] Database queries completed');
+    console.log('📊 [HR STATS] Raw data:', {
+      totalEmployees,
+      activeEmployees,
+      presentToday,
+      pendingLeaves,
+      newHires,
+      openTasks,
+      departments,
+      totalAttendanceToday,
+      totalHRAdmins,
+      activeSessions,
+      totalUsers,
+      activeUsers
+    });
+
     const attendanceRate = totalEmployees > 0
       ? Math.round((presentToday / totalEmployees) * 100)
       : 0;
@@ -52,6 +73,8 @@ export const fetchHRStats = async (
     const onboardingRate = totalUsers > 0
       ? ((activeUsers / totalUsers) * 100).toFixed(1) + '%'
       : '100%';
+
+    console.log('📊 [HR STATS] Calculated rates:', { attendanceRate, onboardingRate });
 
     // Compute last 5 months hiring growth dynamically
     const hiringGrowth = [];
@@ -88,6 +111,23 @@ export const fetchHRStats = async (
       { name: 'Pending', value: 0, color: '#F4B860' }
     ];
 
+    console.log('📊 [HR STATS] Final response data:', {
+      totalEmployees,
+      activeEmployees,
+      presentToday,
+      pendingLeaves,
+      newHires,
+      openTasks,
+      departments,
+      attendanceRate,
+      totalAttendanceToday,
+      totalHRAdmins,
+      activeSessions: activeSessions || 1,
+      onboardingRate,
+      hiringGrowth: hiringGrowth.length,
+      hrDistribution
+    });
+
     res.json({
       success: true,
       data: {
@@ -107,6 +147,8 @@ export const fetchHRStats = async (
         hrDistribution
       },
     });
+    
+    console.log('📊 [HR STATS] Response sent successfully');
   } catch (error) {
     console.error('Fetch HR stats error:', error);
     res.status(500).json({ success: false, message: 'Failed to load HR stats.' });
@@ -121,7 +163,11 @@ export const fetchDepartmentOverview = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
+  console.log('🏢 [DEPARTMENTS] Fetch department overview started');
+  console.log('🏢 [DEPARTMENTS] User:', req.user?.email, 'Role:', req.user?.role);
+  
   try {
+    console.log('🏢 [DEPARTMENTS] Querying departments with employee counts...');
     const departments = await prisma.department.findMany({
       include: {
         _count: { select: { employees: true } },
@@ -131,12 +177,18 @@ export const fetchDepartmentOverview = async (
       },
     });
 
+    console.log('🏢 [DEPARTMENTS] Found departments:', departments.length);
+    departments.forEach(dept => {
+      console.log(`🏢 [DEPARTMENTS] - ${dept.name}: ${dept._count.employees} employees`);
+    });
+
     const totalEmployees = await prisma.employee.count();
+    console.log('🏢 [DEPARTMENTS] Total employees in system:', totalEmployees);
 
     const mapped = departments.map((dept) => {
       const active = dept.employees.filter((e) => e.status === 'active').length;
       const count = dept._count.employees;
-      return {
+      const result = {
         id: dept.id,
         name: dept.name,
         code: dept.code,
@@ -145,10 +197,15 @@ export const fetchDepartmentOverview = async (
         inactive: count - active,
         percentage: totalEmployees > 0 ? Math.round((count / totalEmployees) * 100) : 0,
       };
+      console.log(`🏢 [DEPARTMENTS] Mapped ${dept.name}:`, result);
+      return result;
     });
 
     // Employees without a department
     const unassigned = await prisma.employee.count({ where: { departmentId: null } });
+    console.log('🏢 [DEPARTMENTS] Unassigned employees:', unassigned);
+
+    console.log('🏢 [DEPARTMENTS] Final response:', { departments: mapped.length, unassigned, totalEmployees });
 
     res.json({
       success: true,
@@ -156,6 +213,8 @@ export const fetchDepartmentOverview = async (
       unassigned,
       totalEmployees,
     });
+    
+    console.log('🏢 [DEPARTMENTS] Department overview response sent successfully');
   } catch (error) {
     console.error('Fetch department overview error:', error);
     res.status(500).json({ success: false, message: 'Failed to load department data.' });
@@ -170,7 +229,11 @@ export const fetchLeaveOverview = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
+  console.log('📋 [LEAVE OVERVIEW] Fetch leave overview started');
+  console.log('📋 [LEAVE OVERVIEW] User:', req.user?.email, 'Role:', req.user?.role);
+  
   try {
+    console.log('📋 [LEAVE OVERVIEW] Querying leave statistics...');
     const [pending, approved, rejected, total] = await Promise.all([
       prisma.leaveRequest.count({ where: { status: 'PENDING' } }),
       prisma.leaveRequest.count({ where: { status: 'APPROVED' } }),
@@ -178,14 +241,20 @@ export const fetchLeaveOverview = async (
       prisma.leaveRequest.count(),
     ]);
 
+    console.log('📋 [LEAVE OVERVIEW] Leave statistics:', { pending, approved, rejected, total });
+
     // Type breakdown
+    console.log('📋 [LEAVE OVERVIEW] Querying leave type breakdown...');
     const leaveTypes = await prisma.leaveRequest.groupBy({
       by: ['type'],
       _count: { type: true },
       orderBy: { _count: { type: 'desc' } },
     });
 
+    console.log('📋 [LEAVE OVERVIEW] Leave types:', leaveTypes);
+
     // Recent leave requests
+    console.log('📋 [LEAVE OVERVIEW] Querying recent leave requests...');
     const recent = await prisma.leaveRequest.findMany({
       take: 8,
       orderBy: { appliedOn: 'desc' },
@@ -201,20 +270,26 @@ export const fetchLeaveOverview = async (
       },
     });
 
-    const mappedRecent = recent.map((lr) => ({
-      id: lr.id,
-      employeeName: `${lr.employee.firstName} ${lr.employee.lastName}`,
-      designation: lr.employee.designation || 'Employee',
-      department: lr.employee.department?.name || 'General',
-      type: lr.type,
-      fromDate: lr.fromDate.toISOString(),
-      toDate: lr.toDate.toISOString(),
-      reason: lr.reason,
-      status: lr.status,
-      appliedOn: lr.appliedOn.toISOString(),
-    }));
+    console.log('📋 [LEAVE OVERVIEW] Found recent leave requests:', recent.length);
 
-    res.json({
+    const mappedRecent = recent.map((lr) => {
+      const result = {
+        id: lr.id,
+        employeeName: `${lr.employee.firstName} ${lr.employee.lastName}`,
+        designation: lr.employee.designation || 'Employee',
+        department: lr.employee.department?.name || 'General',
+        type: lr.type,
+        fromDate: lr.fromDate.toISOString(),
+        toDate: lr.toDate.toISOString(),
+        reason: lr.reason,
+        status: lr.status,
+        appliedOn: lr.appliedOn.toISOString(),
+      };
+      console.log(`📋 [LEAVE OVERVIEW] Mapped leave request:`, result);
+      return result;
+    });
+
+    const response = {
       success: true,
       data: {
         pending,
@@ -224,7 +299,16 @@ export const fetchLeaveOverview = async (
         leaveTypes: leaveTypes.map((lt) => ({ type: lt.type, count: lt._count.type })),
         recent: mappedRecent,
       },
+    };
+
+    console.log('📋 [LEAVE OVERVIEW] Final response:', {
+      statistics: { pending, approved, rejected, total },
+      leaveTypesCount: leaveTypes.length,
+      recentRequestsCount: mappedRecent.length
     });
+
+    res.json(response);
+    console.log('📋 [LEAVE OVERVIEW] Leave overview response sent successfully');
   } catch (error) {
     console.error('Fetch leave overview error:', error);
     res.status(500).json({ success: false, message: 'Failed to load leave data.' });
@@ -239,6 +323,9 @@ export const fetchHREmployees = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
+  console.log('👥 [HR EMPLOYEES] Fetch employee list started');
+  console.log('👥 [HR EMPLOYEES] User:', req.user?.email, 'Role:', req.user?.role);
+  
   const {
     search = '',
     status = '',
@@ -246,6 +333,8 @@ export const fetchHREmployees = async (
     page = '1',
     limit = '10',
   } = req.query;
+
+  console.log('👥 [HR EMPLOYEES] Query params:', { search, status, department, page, limit });
 
   const pageInt = parseInt(page as string, 10);
   const limitInt = parseInt(limit as string, 10);
@@ -270,7 +359,10 @@ export const fetchHREmployees = async (
     where.department = { name: { contains: department as string, mode: 'insensitive' } };
   }
 
+  console.log('👥 [HR EMPLOYEES] Built where clause:', where);
+
   try {
+    console.log('👥 [HR EMPLOYEES] Querying employees with pagination...');
     const [employees, total] = await Promise.all([
       prisma.employee.findMany({
         where,
@@ -293,32 +385,48 @@ export const fetchHREmployees = async (
       prisma.employee.count({ where }),
     ]);
 
-    const mapped = employees.map((emp) => ({
-      id: emp.id,
-      employeeCode: emp.employeeCode,
-      firstName: emp.firstName,
-      lastName: emp.lastName,
-      fullName: `${emp.firstName} ${emp.lastName}`,
-      designation: emp.designation || 'Employee',
-      status: emp.status,
-      department: emp.department?.name || 'Unassigned',
-      office: emp.office?.name || 'Remote',
-      email: emp.user?.email || null,
-      isActive: emp.user?.isActive ?? true,
-      leaveCount: emp._count.leaveRequests,
-      taskCount: emp._count.assignedTasks,
-      attendanceCount: emp._count.attendances,
-      joinedAt: emp.createdAt.toISOString(),
-    }));
+    console.log('👥 [HR EMPLOYEES] Query results:', { employeesFound: employees.length, totalEmployees: total });
 
-    res.json({
+    const mapped = employees.map((emp) => {
+      const result = {
+        id: emp.id,
+        employeeCode: emp.employeeCode,
+        firstName: emp.firstName,
+        lastName: emp.lastName,
+        fullName: `${emp.firstName} ${emp.lastName}`,
+        designation: emp.designation || 'Employee',
+        status: emp.status,
+        department: emp.department?.name || 'Unassigned',
+        office: emp.office?.name || 'Remote',
+        email: emp.user?.email || null,
+        isActive: emp.user?.isActive ?? true,
+        leaveCount: emp._count.leaveRequests,
+        taskCount: emp._count.assignedTasks,
+        attendanceCount: emp._count.attendances,
+        joinedAt: emp.createdAt.toISOString(),
+      };
+      console.log(`👥 [HR EMPLOYEES] Mapped employee:`, result);
+      return result;
+    });
+
+    const response = {
       success: true,
       employees: mapped,
       total,
       page: pageInt,
       limit: limitInt,
       totalPages: Math.ceil(total / limitInt),
+    };
+
+    console.log('👥 [HR EMPLOYEES] Final response:', {
+      employeesCount: mapped.length,
+      total,
+      page: pageInt,
+      totalPages: Math.ceil(total / limitInt)
     });
+
+    res.json(response);
+    console.log('👥 [HR EMPLOYEES] Employee list response sent successfully');
   } catch (error) {
     console.error('Fetch HR employees error:', error);
     res.status(500).json({ success: false, message: 'Failed to load employee list.' });
