@@ -49,21 +49,7 @@ async function main() {
   });
 
   // 3. Create Offices
-  const officeDelhi = await prisma.office.create({
-    data: {
-      name: 'Delhi HQ',
-      code: 'OFF-DEL-01',
-      address: 'Connaught Place, New Delhi, Delhi 110001',
-      latitude: 28.6139,
-      longitude: 77.2090,
-      idealRadiusMeters: 50,
-      maxPunchRadiusMeters: 100,
-      isActive: true,
-      subscriptionPlan: 'Enterprise',
-      billingCycle: 'yearly',
-      invoiceStatus: 'Paid',
-    },
-  });
+  
 
   const officeMumbai = await prisma.office.create({
     data: {
@@ -76,6 +62,38 @@ async function main() {
       maxPunchRadiusMeters: 100,
       isActive: true,
       subscriptionPlan: 'Pro',
+      billingCycle: 'monthly',
+      invoiceStatus: 'Paid',
+    },
+  });
+
+  const officeKoparkhairne = await prisma.office.create({
+    data: {
+      name: 'Koparkhairne Office',
+      code: 'OFF-KOP-03',
+      address: 'Koparkhairne, Navi Mumbai, Maharashtra 400709',
+      latitude: 19.0420,
+      longitude: 73.0600,
+      idealRadiusMeters: 50,
+      maxPunchRadiusMeters: 100,
+      isActive: true,
+      subscriptionPlan: 'Pro',
+      billingCycle: 'monthly',
+      invoiceStatus: 'Paid',
+    },
+  });
+
+  const officeDelhi = await prisma.office.create({
+    data: {
+      name: 'Delhi Headquarters',
+      code: 'OFF-DEL-01',
+      address: 'Connaught Place, New Delhi, Delhi 110001',
+      latitude: 28.6140,
+      longitude: 77.2091,
+      idealRadiusMeters: 50,
+      maxPunchRadiusMeters: 100,
+      isActive: true,
+      subscriptionPlan: 'Enterprise',
       billingCycle: 'monthly',
       invoiceStatus: 'Paid',
     },
@@ -209,7 +227,7 @@ async function main() {
           timezoneLabel: '(GMT+5:30) Mumbai, New Delhi',
           twoFactorEnabled: false,
           twoFactorStatus: 'disabled',
-          lastLoginLocation: 'Delhi HQ',
+          lastLoginLocation: 'Koparkhairne Office',
         },
       },
     },
@@ -224,7 +242,7 @@ async function main() {
       lastName: 'Magar',
       designation: 'Mobile Developer',
       status: 'active',
-      officeId: officeDelhi.id,
+      officeId: officeKoparkhairne.id,
       departmentId: deptEngineering.id,
     },
   });
