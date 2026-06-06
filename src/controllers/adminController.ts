@@ -2070,10 +2070,25 @@ export const createAdminTask = async (
     return;
   }
 
+  if (!req.user || !req.user.id) {
+    res.status(401).json({ success: false, message: 'Authentication required.' });
+    return;
+  }
+
   try {
     const parsedAssigneeId = parseInt(assigneeId, 10);
     if (isNaN(parsedAssigneeId)) {
       res.status(400).json({ success: false, message: 'Invalid Assignee ID.' });
+      return;
+    }
+
+    // Verify the assigned employee exists
+    const assignedEmployee = await prisma.employee.findUnique({
+      where: { id: parsedAssigneeId },
+    });
+
+    if (!assignedEmployee) {
+      res.status(404).json({ success: false, message: 'Assigned employee not found.' });
       return;
     }
 
@@ -2082,7 +2097,7 @@ export const createAdminTask = async (
         title,
         description,
         assignedToId: parsedAssigneeId,
-        assignedById: req.user!.id,
+        assignedById: req.user.id,
         projectName: projectName || 'General',
         dueDate: new Date(deadline),
         status: 'TODO',

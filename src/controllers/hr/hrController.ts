@@ -732,13 +732,34 @@ export const createHRTask = async (
     return;
   }
 
+  if (!req.user || !req.user.id) {
+    res.status(401).json({ success: false, message: 'Authentication required.' });
+    return;
+  }
+
+  const parsedAssignedToId = parseInt(assignedToId, 10);
+  if (isNaN(parsedAssignedToId)) {
+    res.status(400).json({ success: false, message: 'Invalid assignedToId.' });
+    return;
+  }
+
+  // Verify the assigned employee exists
+  const assignedEmployee = await prisma.employee.findUnique({
+    where: { id: parsedAssignedToId },
+  });
+
+  if (!assignedEmployee) {
+    res.status(404).json({ success: false, message: 'Assigned employee not found.' });
+    return;
+  }
+
   try {
     const task = await prisma.task.create({
       data: {
         title,
         description: description || '',
-        assignedToId: parseInt(assignedToId, 10),
-        assignedById: req.user?.id ?? parseInt(assignedById, 10),
+        assignedToId: parsedAssignedToId,
+        assignedById: req.user.id,
         projectName: projectName || 'General',
         dueDate: new Date(dueDate),
         priority: (priority || 'MEDIUM').toUpperCase(),
