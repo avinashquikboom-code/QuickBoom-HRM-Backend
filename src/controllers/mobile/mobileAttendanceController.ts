@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+import { webSocketService } from '../..';
 const PdfPrinter = require('pdfmake');
 
 // Helper function to calculate distance between two coordinates
@@ -229,6 +230,20 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       clientTimestampUsed: clientTimestamp ? 'yes' : 'no'
     });
     
+    // Broadcast real-time attendance update
+    try {
+      await webSocketService.broadcastAttendanceUpdate(employee.id, {
+        type: 'punch_in',
+        employeeId: employee.id,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        timestamp: attendance.checkIn,
+        location: { latitude: attendance.latitude, longitude: attendance.longitude },
+        status: 'PRESENT'
+      });
+    } catch (wsError) {
+      console.error('❌ Failed to broadcast attendance update:', wsError);
+    }
+    
     res.json({
       success: true,
       message: 'Punched in successfully.',
@@ -392,6 +407,25 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       timezone: timezone || 'not provided',
       clientTimestampUsed: clientTimestamp ? 'yes' : 'no'
     });
+    
+    // Broadcast real-time attendance update
+    try {
+      await webSocketService.broadcastAttendanceUpdate(employee.id, {
+        type: 'punch_out',
+        employeeId: employee.id,
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        timestamp: updatedAttendance.checkOut,
+        location: { latitude: updatedAttendance.latitude, longitude: updatedAttendance.longitude },
+        status: 'COMPLETED',
+        workDuration: {
+          hours: workHours,
+          minutes: workMinutes,
+          totalMinutes: Math.floor(workDuration / (1000 * 60))
+        }
+      });
+    } catch (wsError) {
+      console.error('❌ Failed to broadcast attendance update:', wsError);
+    }
 
     res.json({
       success: true,

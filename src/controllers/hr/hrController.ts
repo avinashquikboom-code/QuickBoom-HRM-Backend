@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
+import { webSocketService } from '../..';
 
 // ==========================================
 // HR Dashboard Stats
@@ -567,6 +568,22 @@ export const approveLeave = async (
     });
 
     console.log(`✅ Leave request ${leave.id} approved and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
+    
+    // Broadcast real-time leave update
+    try {
+      await webSocketService.broadcastLeaveUpdate(leave.employee.id, {
+        type: 'leave_approved',
+        employeeId: leave.employee.id,
+        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`,
+        leaveId: leave.id,
+        fromDate: leave.fromDate,
+        toDate: leave.toDate,
+        status: 'APPROVED',
+        reviewNote: reviewNote || 'Approved'
+      });
+    } catch (wsError) {
+      console.error('❌ Failed to broadcast leave update:', wsError);
+    }
 
     res.json({ success: true, message: 'Leave approved.', leave });
   } catch (error) {
@@ -631,6 +648,22 @@ export const rejectLeave = async (
     });
 
     console.log(`❌ Leave request ${leave.id} rejected and notification sent to employee ${leave.employee.firstName} ${leave.employee.lastName}`);
+    
+    // Broadcast real-time leave update
+    try {
+      await webSocketService.broadcastLeaveUpdate(leave.employee.id, {
+        type: 'leave_rejected',
+        employeeId: leave.employee.id,
+        employeeName: `${leave.employee.firstName} ${leave.employee.lastName}`,
+        leaveId: leave.id,
+        fromDate: leave.fromDate,
+        toDate: leave.toDate,
+        status: 'REJECTED',
+        reviewNote: reviewNote || 'Rejected'
+      });
+    } catch (wsError) {
+      console.error('❌ Failed to broadcast leave update:', wsError);
+    }
 
     res.json({ success: true, message: 'Leave rejected.', leave });
   } catch (error) {

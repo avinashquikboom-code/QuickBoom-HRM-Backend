@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { createServer } from 'http';
 import { apiReference } from '@scalar/express-api-reference';
 import { specs } from './config/swagger';
 import { metricsMiddleware } from './controllers/healthController';
@@ -19,6 +20,7 @@ import mobileLeaveRoutes from './routes/mobile/mobileLeaveRoutes';
 import firebaseNotificationRoutes from './routes/mobile/firebaseNotificationRoutes';
 import mobilePayrollRoutes from './routes/mobile/mobilePayrollRoutes';
 import { initializeFirebase } from './config/firebase';
+import WebSocketService from './services/websocketService';
 
 dotenv.config();
 
@@ -84,7 +86,13 @@ app.use('/api/mobile/payroll', mobilePayrollRoutes);
 
 const host = process.env.HOST || '0.0.0.0';
 
-app.listen(port, host, () => {
+// Create HTTP server for WebSocket support
+const server = createServer(app);
+
+// Initialize WebSocket service
+const webSocketService = new WebSocketService(server);
+
+server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);
   
   // Print HR credentials to console for easy access
@@ -103,5 +111,9 @@ app.listen(port, host, () => {
   console.log('👤 Admin Name: Super Admin');
   console.log('═══════════════════════════════════════');
   console.log('📚 Scalar Docs: http://' + (host === '0.0.0.0' ? 'localhost' : host) + ':' + port + '/scalar-docs');
+  console.log('🔌 WebSocket Real-time Updates: Enabled');
   console.log('═══════════════════════════════════════\n');
 });
+
+// Export WebSocket service for use in controllers
+export { webSocketService };
