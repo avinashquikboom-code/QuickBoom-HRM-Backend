@@ -1215,7 +1215,18 @@ export const getAttendanceStats = async (req: AuthenticatedRequest, res: Respons
       }
     });
 
-    const stats = attendances.reduce((acc, att) => {
+    interface AttendanceStats {
+      totalDays: number;
+      presentDays: number;
+      absentDays: number;
+      lateDays: number;
+      halfDays: number;
+      leaveDays: number;
+      totalWorkMinutes: number;
+      totalBreakMinutes: number;
+    }
+
+    const stats = attendances.reduce((acc: AttendanceStats, att: AttendanceWithOffice) => {
       const workDuration = att.checkIn && att.checkOut 
         ? att.checkOut.getTime() - att.checkIn.getTime()
         : 0;
@@ -1310,11 +1321,11 @@ export const downloadMyAttendanceReport = async (
     });
 
     // Calculate attendance statistics
-    const present = attendances.filter((a) => a.status === 'PRESENT').length;
-    const late = attendances.filter((a) => a.status === 'LATE').length;
-    const absent = attendances.filter((a) => a.status === 'ABSENT').length;
-    const halfDay = attendances.filter((a) => a.status === 'HALF_DAY').length;
-    const leave = attendances.filter((a) => a.status === 'LEAVE').length;
+    const present = attendances.filter((a: any) => a.status === 'PRESENT').length;
+    const late = attendances.filter((a: any) => a.status === 'LATE').length;
+    const absent = attendances.filter((a: any) => a.status === 'ABSENT').length;
+    const halfDay = attendances.filter((a: any) => a.status === 'HALF_DAY').length;
+    const leave = attendances.filter((a: any) => a.status === 'LEAVE').length;
     const totalDays = attendances.length;
     const attendanceRate = totalDays > 0 
       ? Math.round(((present + late + halfDay * 0.5) / totalDays) * 100)
@@ -1486,7 +1497,7 @@ export const downloadAttendanceReport = async (
 
     // Group attendances by employee
     const attendanceByEmployee: Record<number, typeof attendances> = {};
-    attendances.forEach((att) => {
+    attendances.forEach((att: AttendanceWithOffice) => {
       if (!attendanceByEmployee[att.employeeId]) {
         attendanceByEmployee[att.employeeId] = [];
       }
@@ -1496,11 +1507,11 @@ export const downloadAttendanceReport = async (
     // Create employee data for PDF
     const employeeData = employees.map((emp: any) => {
       const empAtts = attendanceByEmployee[emp.id] || [];
-      const present = empAtts.filter((a) => a.status === 'PRESENT').length;
-      const late = empAtts.filter((a) => a.status === 'LATE').length;
-      const absent = empAtts.filter((a) => a.status === 'ABSENT').length;
-      const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
-      const leave = empAtts.filter((a) => a.status === 'LEAVE').length;
+      const present = empAtts.filter((a: AttendanceWithOffice) => a.status === 'PRESENT').length;
+      const late = empAtts.filter((a: AttendanceWithOffice) => a.status === 'LATE').length;
+      const absent = empAtts.filter((a: AttendanceWithOffice) => a.status === 'ABSENT').length;
+      const halfDay = empAtts.filter((a: AttendanceWithOffice) => a.status === 'HALF_DAY').length;
+      const leave = empAtts.filter((a: AttendanceWithOffice) => a.status === 'LEAVE').length;
       const totalDays = empAtts.length;
       const attendanceRate = totalDays > 0 
         ? Math.round(((present + late + halfDay * 0.5) / totalDays) * 100)
