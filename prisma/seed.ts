@@ -189,7 +189,47 @@ async function main() {
     },
   });
 
-  // D. Mock unregistered employee (without User account yet)
+  // D. Additional Employee User (am5544671@gmail.com)
+  const customPasswordHash = await bcrypt.hash('Avinash15#', 10);
+  const customEmployeeUser = await prisma.user.create({
+    data: {
+      email: 'am5544671@gmail.com',
+      password: customPasswordHash,
+      role: Role.EMPLOYEE,
+      isActive: true,
+      profile: {
+        create: {
+          email: 'am5544671@gmail.com',
+          fullName: 'Avinash Magar',
+          phone: '+919876543210',
+          bio: 'Mobile App Developer',
+          clearanceLevel: 1,
+          clearanceLabel: 'Level 1 (General)',
+          timezone: 'Asia/Kolkata',
+          timezoneLabel: '(GMT+5:30) Mumbai, New Delhi',
+          twoFactorEnabled: false,
+          twoFactorStatus: 'disabled',
+          lastLoginLocation: 'Delhi HQ',
+        },
+      },
+    },
+  });
+
+  // Create Employee profile for custom user
+  const customEmployee = await prisma.employee.create({
+    data: {
+      userId: customEmployeeUser.id,
+      employeeCode: 'QB002',
+      firstName: 'Avinash',
+      lastName: 'Magar',
+      designation: 'Mobile Developer',
+      status: 'active',
+      officeId: officeDelhi.id,
+      departmentId: deptEngineering.id,
+    },
+  });
+
+  // E. Mock unregistered employee (without User account yet)
   const unregisteredEmployee = await prisma.employee.create({
     data: {
       employeeCode: 'EMP-OPS-999',
