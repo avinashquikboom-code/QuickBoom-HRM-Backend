@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { Prisma } from '@prisma/client';
-const pdfmake = require('pdfmake');
+const PdfPrinter = require('pdfmake');
 
 // Fetch employee's own leave requests and balances
 export const fetchMyLeaves = async (
@@ -207,7 +207,7 @@ export const downloadMyLeaveReport = async (
         bolditalics: 'Helvetica-BoldOblique'
       }
     };
-    const printer = new pdfmake.constructor(fonts);
+    const printer = new PdfPrinter(fonts);
 
     const leaveData = employee.leaveRequests.map(lr => ({
       type: lr.type,
@@ -334,7 +334,7 @@ export const downloadLeaveReport = async (
         bolditalics: 'Helvetica-BoldOblique'
       }
     };
-    const printer = new pdfmake.constructor(fonts);
+    const printer = new PdfPrinter(fonts);
 
     const docDefinition = {
       content: [

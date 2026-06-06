@@ -287,6 +287,51 @@ router.get('/leaves', fetchAdminLeaves);
 router.get('/leaves/balances', fetchAdminLeaveBalances);
 router.post('/leaves', createAdminLeaveRequest);
 router.put('/leaves/:id', updateAdminLeaveStatus);
+
+/**
+ * @swagger
+ * /api/admin/leaves/report/download:
+ *   get:
+ *     summary: Download a leave report as PDF (Admin, HR only)
+ *     tags: [Admin - Leave]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: employeeId
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: Filter the report to a single employee
+ *       - in: query
+ *         name: startDate
+ *         required: false
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start of the applied-on date range (YYYY-MM-DD)
+ *       - in: query
+ *         name: endDate
+ *         required: false
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End of the applied-on date range (YYYY-MM-DD)
+ *     responses:
+ *       200:
+ *         description: PDF file stream of the leave report
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Access denied (HR/Admin only)
+ *       500:
+ *         description: Failed to generate leave report
+ */
 router.get('/leaves/report/download', downloadLeaveReport);
 
 

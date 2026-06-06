@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
-const pdfmake = require('pdfmake');
+const PdfPrinter = require('pdfmake');
 
 const fonts = {
   Roboto: {
@@ -12,7 +12,7 @@ const fonts = {
   }
 };
 
-const printer = new pdfmake.constructor(fonts);
+const printer = new PdfPrinter(fonts);
 
 // Fetch all payslips for the logged-in employee
 export const getMyPayslips = async (

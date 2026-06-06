@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
-const pdfmake = require('pdfmake');
+const PdfPrinter = require('pdfmake');
 
 // ==========================================
 // 1. User Management
@@ -2235,7 +2235,7 @@ export const downloadLeaveReport = async (
         bolditalics: 'Helvetica-BoldOblique'
       }
     };
-    const printer = new pdfmake.constructor(fonts);
+    const printer = new PdfPrinter(fonts);
 
     const docDefinition = {
       content: [
