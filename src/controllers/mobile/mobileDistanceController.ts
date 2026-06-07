@@ -1,6 +1,6 @@
 import { Response } from 'express';
-import { AuthenticatedRequest } from '../middlewares/authMiddleware';
-import { prisma } from '../utils/db';
+import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+import { prisma } from '../../utils/db';
 
 // ==========================================
 // Distance Tracking Controller for Mobile
@@ -156,7 +156,7 @@ export const getCurrentDistance = async (
       office.longitude
     );
 
-    const isWithinRadius = (distance * 1000) <= office.radius; // Convert km to meters
+    const isWithinRadius = (distance * 1000) <= office.maxPunchRadiusMeters; // Convert km to meters
 
     res.json({
       success: true,
@@ -165,7 +165,7 @@ export const getCurrentDistance = async (
         officeName: office.name,
         officeAddress: office.address,
         isWithinRadius,
-        officeRadius: office.radius,
+        officeRadius: office.maxPunchRadiusMeters,
         coordinates: {
           current: {
             latitude: currentLat,
@@ -178,7 +178,7 @@ export const getCurrentDistance = async (
         },
         message: isWithinRadius 
           ? 'You are within the office radius' 
-          : `You are ${Math.round((distance * 1000 - office.radius))} meters outside the office radius`
+          : `You are ${Math.round((distance * 1000 - office.maxPunchRadiusMeters))} meters outside the office radius`
       }
     });
 
@@ -349,11 +349,11 @@ export const getDistanceHistory = async (
         office.longitude
       );
 
-      const isWithinRadius = (distance * 1000) <= office.radius;
+      const isWithinRadius = (distance * 1000) <= office.maxPunchRadiusMeters;
       const locationStatus = isWithinRadius ? 'IN_OFFICE' : 'OUTSIDE_OFFICE';
 
       return {
-        date: record.date.toISOString().split('T')[0],
+        date: record.date,
         checkIn: record.checkIn?.toISOString(),
         checkOut: record.checkOut?.toISOString(),
         distance: Math.round(distance * 100) / 100,
@@ -385,7 +385,7 @@ export const getDistanceHistory = async (
           farthestDistance: Math.round(farthestDistance * 100) / 100,
           closestDistance: Math.round(closestDistance * 100) / 100,
           officeName: office.name,
-          officeRadius: office.radius
+          officeRadius: office.maxPunchRadiusMeters
         }
       }
     });
@@ -482,9 +482,8 @@ export const getOfficeInfo = async (
           address: office.address,
           latitude: office.latitude,
           longitude: office.longitude,
-          radius: office.radius,
-          timezone: office.timezone,
-          workingHours: office.workingHours
+          radius: office.maxPunchRadiusMeters,
+          idealRadius: office.idealRadiusMeters
         }
       }
     });

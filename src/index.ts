@@ -22,7 +22,7 @@ import mobilePayrollRoutes from './routes/mobile/mobilePayrollRoutes';
 import mobileTrackingRoutes from './routes/mobile/mobileTrackingRoutes';
 import mobileGeofenceRoutes from './routes/mobile/mobileGeofenceRoutes';
 import mobileLeaveBalanceRoutes from './routes/mobile/mobileLeaveBalanceRoutes';
-import mobileDistanceRoutes from './routes/mobileDistanceRoutes';
+import mobileDistanceRoutes from './routes/mobile/mobileDistanceRoutes';
 import mobileNotificationRoutes from './routes/mobile/mobileNotificationRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';

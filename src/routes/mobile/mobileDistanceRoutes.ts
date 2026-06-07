@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { authenticateToken } from '../middlewares/authMiddleware';
+import { authenticateToken } from '../../middlewares/authMiddleware';
 import {
   getCurrentDistance,
   getDistanceHistory,
   getOfficeInfo
-} from '../controllers/distanceTrackingController';
+} from '../../controllers/mobile/mobileDistanceController';
 
 const router = Router();
 
