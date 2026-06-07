@@ -22,7 +22,6 @@ export const fetchMyNotifications = async (
     const notifications = await prisma.notification.findMany({
       where: { employeeId: employee.id },
       orderBy: { createdAt: 'desc' },
-      take: 50,
     });
 
     const unreadCount = notifications.filter(n => !n.isRead).length;
