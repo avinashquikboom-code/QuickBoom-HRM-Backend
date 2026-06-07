@@ -49,8 +49,8 @@ model Office {
   name                 String
   code                 String?      @unique
   address              String
-  latitude             Float
-  longitude            Float
+  latitude             Float        @db.DoublePrecision
+  longitude            Float        @db.DoublePrecision
   idealRadiusMeters    Float        @default(25.0)
   maxPunchRadiusMeters Float        @default(50.0)
   isActive             Boolean      @default(true)
@@ -108,8 +108,8 @@ model Attendance {
   checkOut              DateTime?
   status                String    @default("ABSENT")
   notes                 String?
-  latitude              Float?
-  longitude             Float?
+  latitude              Float?    @db.DoublePrecision
+  longitude             Float?    @db.DoublePrecision
   isFingerprintCheckIn  Boolean   @default(false)
   isFingerprintCheckOut Boolean   @default(false)
   isOnBreak             Boolean   @default(false)
