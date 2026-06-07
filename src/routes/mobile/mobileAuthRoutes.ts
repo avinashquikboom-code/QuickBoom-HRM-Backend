@@ -8,7 +8,8 @@ import {
 
 const router = Router();
 
-// Refresh endpoint does not require auth middleware (allows refresh with expired token)
+// Login and refresh endpoints do not require auth middleware
+router.post('/login', mobileLogin);
 router.post('/refresh', mobileRefreshToken);
 
 // Apply auth middleware to protected routes
@@ -104,7 +105,6 @@ router.use(authMiddleware);
  *       500:
  *         description: Server error
  */
-router.post('/login', mobileLogin);
 
 /**
  * @swagger
@@ -161,7 +161,6 @@ router.post('/logout', mobileLogout);
  *       500:
  *         description: Server error
  */
-router.post('/refresh', mobileRefreshToken);
 
 /**
  * @swagger
