@@ -183,7 +183,7 @@ class GeofenceService {
           latitude: officeData.latitude || 0,
           longitude: officeData.longitude || 0,
           idealRadiusMeters: officeData.idealRadiusMeters || 25,
-          maxPunchRadiusMeters: officeData.maxPunchRadiusMeters || 50,
+          maxPunchRadiusMeters: officeData.maxPunchRadiusMeters || 25,
           isActive: officeData.isActive ?? true
         }
       });

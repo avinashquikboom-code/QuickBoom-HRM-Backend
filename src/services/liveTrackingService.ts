@@ -290,7 +290,7 @@ class LiveTrackingService {
       const office = employee.office;
       const officeLat = office.latitude;
       const officeLon = office.longitude;
-      const maxRadius = office.maxPunchRadiusMeters || 50; // Default 50 meters
+      const maxRadius = office.maxPunchRadiusMeters || 25; // Default 25 meters
 
       // Calculate distance to office
       const distance = this.calculateDistance(

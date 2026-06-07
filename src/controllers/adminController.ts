@@ -570,7 +570,7 @@ export const createOffice = async (
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
         idealRadiusMeters: parseFloat(idealRadiusMeters || '25.0'),
-        maxPunchRadiusMeters: parseFloat(maxPunchRadiusMeters || '50.0'),
+        maxPunchRadiusMeters: 25,
         isActive: isActive !== undefined ? !!isActive : true,
         subscriptionPlan: subscriptionPlan || 'Basic',
         billingCycle: billingCycle || 'monthly',
@@ -653,10 +653,7 @@ export const updateOffice = async (
           idealRadiusMeters !== undefined
             ? parseFloat(idealRadiusMeters)
             : existingOffice.idealRadiusMeters,
-        maxPunchRadiusMeters:
-          maxPunchRadiusMeters !== undefined
-            ? parseFloat(maxPunchRadiusMeters)
-            : existingOffice.maxPunchRadiusMeters,
+        maxPunchRadiusMeters: 25,
         isActive: isActive !== undefined ? !!isActive : existingOffice.isActive,
         subscriptionPlan:
           subscriptionPlan !== undefined ? subscriptionPlan : existingOffice.subscriptionPlan,
