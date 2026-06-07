@@ -11,6 +11,14 @@ export const initializeFirebase = (): admin.app.App => {
   }
 
   try {
+    // Check if Firebase app already exists
+    const existingApps = admin.getApps();
+    if (existingApps.length > 0) {
+      firebaseApp = existingApps[0]; // Use the first existing app
+      console.log('✅ Firebase Admin SDK already initialized, using existing app');
+      return firebaseApp;
+    }
+
     // Check if we have a service account key file
     const serviceAccountPath = join(process.cwd(), 'firebase-service-account.json');
     
