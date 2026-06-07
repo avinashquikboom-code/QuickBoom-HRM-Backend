@@ -3,7 +3,8 @@ import { authenticateToken } from '../middlewares/authMiddleware';
 import {
   getComprehensiveAttendanceReport,
   getAttendanceTrends,
-  getLocationTrackingReport
+  getLocationTrackingReport,
+  downloadComprehensiveAttendanceReport
 } from '../controllers/comprehensiveAttendanceController';
 
 const router = Router();
@@ -13,6 +14,9 @@ router.use(authenticateToken);
 
 // Get comprehensive attendance report
 router.get('/comprehensive-report', getComprehensiveAttendanceReport);
+
+// Download comprehensive attendance report as PDF
+router.get('/comprehensive-report/download', downloadComprehensiveAttendanceReport);
 
 // Get attendance trends
 router.get('/trends', getAttendanceTrends);

@@ -3564,7 +3564,7 @@ export const downloadAttendanceReport = async (
           {
             table: {
               headerRows: 1,
-              widths: ['*', '*', '*', '*'],
+              widths: ['auto', '*', '*', 'auto'],
               body: [
                 [
                   { text: 'Date', style: 'tableHeader' },
@@ -3584,6 +3584,7 @@ export const downloadAttendanceReport = async (
           }
         ])
       ],
+      pageMargins: [40, 60, 40, 60],
       styles: {
         header: {
           fontSize: 18,

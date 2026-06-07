@@ -1,6 +1,10 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+const PdfPrinter = require('pdfmake');
+
+// Primary color for all PDF reports
+const PRIMARY_COLOR = '#14B8A6';
 
 // ==========================================
 // Comprehensive Attendance Report Controller
@@ -665,3 +669,284 @@ function calculateEmployeeSummaries(attendanceData: any[]) {
   
   return Array.from(employeeMap.values()).sort((a, b) => a.firstName.localeCompare(b.firstName));
 }
+
+/**
+ * @swagger
+ * /api/attendance/comprehensive-report/download:
+ *   get:
+ *     summary: Download comprehensive attendance report as PDF
+ *     tags: [Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: month
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 12
+ *         description: Month number (1-12)
+ *       - in: query
+ *         name: year
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 2020
+ *           maximum: 2030
+ *         description: Year
+ *       - in: query
+ *         name: employeeId
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: Specific employee ID
+ *       - in: query
+ *         name: departmentId
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: Specific department ID
+ *     responses:
+ *       200:
+ *         description: PDF file generated successfully
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       400:
+ *         description: Bad request - missing or invalid parameters
+ *       401:
+ *         description: Unauthorized - invalid or missing token
+ *       500:
+ *         description: Internal server error
+ */
+export const downloadComprehensiveAttendanceReport = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { employeeId, month, year, departmentId } = req.query;
+
+    if (!month || !year) {
+      res.status(400).json({
+        success: false,
+        message: 'Month and year are required.',
+        errorCode: 'MISSING_DATE_PARAMS'
+      });
+      return;
+    }
+
+    const monthNum = parseInt(month as string);
+    const yearNum = parseInt(year as string);
+
+    // Validate month and year
+    if (monthNum < 1 || monthNum > 12 || yearNum < 2020 || yearNum > 2030) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid month or year.',
+        errorCode: 'INVALID_DATE_PARAMS'
+      });
+      return;
+    }
+
+    // Build date range for the month
+    const startDate = new Date(yearNum, monthNum - 1, 1);
+    const endDate = new Date(yearNum, monthNum, 0);
+
+    console.log(`📊 [ATTENDANCE] Downloading comprehensive report for ${monthNum}/${yearNum}`);
+
+    // Get attendance data
+    const attendanceData = await prisma.$queryRaw`
+      SELECT
+        a.id,
+        a.employeeId,
+        a.date,
+        a.checkIn,
+        a.checkOut,
+        a.status,
+        a.notes,
+        a.latitude,
+        a.longitude,
+        a.totalBreakSeconds,
+        e.employeeCode,
+        e.firstName,
+        e.lastName,
+        e.email,
+        d.name as departmentName,
+        o.name as officeName,
+        -- Calculate work hours
+        CASE
+          WHEN a.checkIn IS NOT NULL AND a.checkOut IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (a.checkOut - a.checkIn)) - a.totalBreakSeconds
+          ELSE 0
+        END as totalWorkSeconds
+      FROM Attendance a
+      LEFT JOIN Employee e ON a.employeeId = e.id
+      LEFT JOIN Department d ON e.departmentId = d.id
+      LEFT JOIN Office o ON a.officeId = o.id
+      WHERE a.date >= ${startDate.toISOString().split('T')[0]}
+        AND a.date <= ${endDate.toISOString().split('T')[0]}
+        ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
+        ${departmentId ? `AND e.departmentId = ${parseInt(departmentId as string)}` : ''}
+      ORDER BY e.firstName, e.lastName, a.date
+    ` as any[];
+
+    // Group by employee
+    const employeeMap = new Map();
+    attendanceData.forEach((record: any) => {
+      const empId = record.employeeid;
+      if (!employeeMap.has(empId)) {
+        employeeMap.set(empId, {
+          employeeId: empId,
+          employeeCode: record.employeecode,
+          firstName: record.firstname,
+          lastName: record.lastname,
+          departmentName: record.departmentname,
+          officeName: record.officename,
+          attendances: []
+        });
+      }
+      employeeMap.get(empId).attendances.push(record);
+    });
+
+    const employees = Array.from(employeeMap.values());
+
+    // Generate PDF
+    const printer = new PdfPrinter({
+      Roboto: {
+        normal: 'Helvetica',
+        bold: 'Helvetica-Bold',
+        italics: 'Helvetica-Oblique',
+        bolditalics: 'Helvetica-BoldOblique'
+      }
+    });
+
+    const docDefinition = {
+      content: [
+        {
+          canvas: [
+            {
+              type: 'rect',
+              x: -20,
+              y: -60,
+              w: 595,
+              h: 50,
+              color: PRIMARY_COLOR
+            }
+          ]
+        },
+        {
+          text: 'Comprehensive Attendance Report',
+          style: 'header',
+          color: 'white',
+          alignment: 'center',
+          margin: [0, -45, 0, 20]
+        },
+        {
+          text: `Period: ${monthNum}/${yearNum}`,
+          style: 'subheader',
+          margin: [0, 0, 0, 10]
+        },
+        {
+          text: `Generated by: ${req.user?.email || 'Admin'}`,
+          style: 'subheader',
+          margin: [0, 0, 0, 10]
+        },
+        {
+          text: `Generated on: ${new Date().toLocaleDateString()}`,
+          style: 'subheader',
+          margin: [0, 0, 0, 20]
+        },
+        ...employees.map((emp, index) => [
+          {
+            text: `Employee: ${emp.firstName} ${emp.lastName} (${emp.employeeCode})`,
+            style: 'subheader',
+            margin: [0, 20, 0, 10],
+            pageBreak: index > 0 ? 'before' : undefined
+          },
+          {
+            columns: [
+              {
+                text: `Department: ${emp.departmentName || 'N/A'}`,
+                style: 'normal'
+              },
+              {
+                text: `Office: ${emp.officeName || 'N/A'}`,
+                style: 'normal'
+              }
+            ],
+            margin: [0, 0, 0, 10]
+          },
+          {
+            text: 'Attendance Details',
+            style: 'tableHeader',
+            margin: [0, 0, 0, 10]
+          },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['auto', '*', '*', 'auto', 'auto'],
+              body: [
+                [
+                  { text: 'Date', style: 'tableHeader' },
+                  { text: 'Check In', style: 'tableHeader' },
+                  { text: 'Check Out', style: 'tableHeader' },
+                  { text: 'Status', style: 'tableHeader' },
+                  { text: 'Work Hours', style: 'tableHeader' }
+                ],
+                ...emp.attendances.map((att: any) => [
+                  att.date,
+                  att.checkin ? new Date(att.checkin).toLocaleTimeString() : '--:--',
+                  att.checkout ? new Date(att.checkout).toLocaleTimeString() : '--:--',
+                  att.status,
+                  att.totalworkseconds ? `${(parseFloat(att.totalworkseconds) / 3600).toFixed(2)}h` : '--'
+                ])
+              ]
+            },
+            margin: [0, 0, 0, 30]
+          }
+        ])
+      ],
+      pageMargins: [40, 60, 40, 60],
+      styles: {
+        header: {
+          fontSize: 18,
+          bold: true,
+          margin: [0, 0, 0, 10]
+        },
+        subheader: {
+          fontSize: 14,
+          bold: true,
+          margin: [0, 0, 0, 5]
+        },
+        normal: {
+          fontSize: 12
+        },
+        tableHeader: {
+          fontSize: 11,
+          bold: true,
+          color: PRIMARY_COLOR,
+          margin: [0, 5, 0, 5]
+        }
+      }
+    };
+
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="comprehensive-attendance-report-${monthNum}-${yearNum}.pdf"`);
+
+    pdfDoc.pipe(res);
+    pdfDoc.end();
+
+  } catch (error) {
+    console.error('Download comprehensive report error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download comprehensive report.',
+      errorCode: 'DOWNLOAD_COMPREHENSIVE_REPORT_ERROR'
+    });
+  }
+};
