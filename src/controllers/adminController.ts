@@ -1839,28 +1839,87 @@ export const fetchLiveLocations = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Start backend telemetry simulation on first request
-    initBackendTelemetrySimulator();
-
-    const locations = await prisma.liveLocation.findMany({
-      orderBy: { updatedAt: 'desc' },
+    // Fetch all active employees with their latest attendance
+    const employees = await prisma.employee.findMany({
+      where: {
+        isActive: true,
+        user: {
+          isActive: true
+        }
+      },
+      include: {
+        user: {
+          include: {
+            profile: true
+          }
+        },
+        office: true
+      }
     });
 
-    const mappedLocations = locations.map((loc) => ({
-      employeeId: loc.employeeId,
-      name: loc.name,
-      role: loc.role,
-      lat: loc.lat,
-      lng: loc.lng,
-      status: loc.status,
-      speed: loc.speed,
-      battery: loc.battery,
-    }));
+    // Get today's date in YYYY-MM-DD format
+    const today = new Date().toISOString().split('T')[0];
+
+    // Fetch today's attendance for all employees
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        date: today
+      },
+      include: {
+        employee: true
+      }
+    });
+
+    // Create a map of employeeId to attendance
+    const attendanceMap = new Map();
+    attendances.forEach(att => {
+      attendanceMap.set(att.employeeId, att);
+    });
+
+    // Map employees to live location format
+    const mappedLocations = employees.map((emp) => {
+      const attendance = attendanceMap.get(emp.id);
+      const profile = emp.user?.profile;
+      const fullName = profile?.fullName || `${emp.firstName} ${emp.lastName}`;
+
+      // Determine status based on attendance
+      let status = 'On Leave';
+      let lat = emp.office?.latitude || 19.0760;
+      let lng = emp.office?.longitude || 72.8777;
+      let speed = '0 km/h';
+      let battery = '100%';
+
+      if (attendance) {
+        if (attendance.status === 'PRESENT' || attendance.status === 'LATE' || attendance.status === 'HALF_DAY') {
+          // Check if currently checked in and not checked out
+          if (attendance.checkIn && !attendance.checkOut) {
+            status = 'In Office';
+            lat = attendance.latitude || lat;
+            lng = attendance.longitude || lng;
+          } else if (attendance.checkOut) {
+            status = 'Outside Geofence';
+          }
+        } else if (attendance.status === 'ABSENT') {
+          status = 'Outside Geofence';
+        }
+      }
+
+      return {
+        employeeId: emp.id,
+        name: fullName,
+        role: emp.designation || 'Employee',
+        lat,
+        lng,
+        status,
+        speed,
+        battery,
+      };
+    });
 
     res.json({
       success: true,
       count: mappedLocations.length,
-      pollIntervalSeconds: 7,
+      pollIntervalSeconds: 10,
       updatedAt: new Date().toISOString(),
       employees: mappedLocations,
     });
