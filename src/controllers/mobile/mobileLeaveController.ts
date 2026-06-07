@@ -4,7 +4,7 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { Prisma } from '@prisma/client';
 const PdfPrinter = require('pdfmake');
 
-// Fetch employee's own leave requests and balances
+// Fetch employee's own leave requests and balances (including HR-applied leaves)
 export const fetchMyLeaves = async (
   req: AuthenticatedRequest,
   res: Response
@@ -12,11 +12,6 @@ export const fetchMyLeaves = async (
   try {
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
-      include: {
-        leaveRequests: {
-          orderBy: { appliedOn: 'desc' },
-        },
-      },
     });
 
     if (!employee) {
@@ -24,11 +19,17 @@ export const fetchMyLeaves = async (
       return;
     }
 
+    // Fetch all leave requests for this employee (including those applied by HR)
+    const allLeaveRequests = await prisma.leaveRequest.findMany({
+      where: { employeeId: employee.id },
+      orderBy: { appliedOn: 'desc' },
+    });
+
     // Calculate leave balances
     const leaveBalances = {
       casual: {
         total: 12,
-        used: employee.leaveRequests
+        used: allLeaveRequests
           .filter(l => l.status === 'APPROVED' && l.type === 'CASUAL')
           .reduce((sum, l) => {
             const days = Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -38,7 +39,7 @@ export const fetchMyLeaves = async (
       },
       sick: {
         total: 10,
-        used: employee.leaveRequests
+        used: allLeaveRequests
           .filter(l => l.status === 'APPROVED' && l.type === 'SICK')
           .reduce((sum, l) => {
             const days = Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -48,7 +49,7 @@ export const fetchMyLeaves = async (
       },
       earned: {
         total: 15,
-        used: employee.leaveRequests
+        used: allLeaveRequests
           .filter(l => l.status === 'APPROVED' && l.type === 'EARNED')
           .reduce((sum, l) => {
             const days = Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -63,7 +64,7 @@ export const fetchMyLeaves = async (
     leaveBalances.sick.remaining = Math.max(0, leaveBalances.sick.total - leaveBalances.sick.used);
     leaveBalances.earned.remaining = Math.max(0, leaveBalances.earned.total - leaveBalances.earned.used);
 
-    const leaveRequests = employee.leaveRequests.map(l => ({
+    const leaveRequests = allLeaveRequests.map(l => ({
       id: l.id.toString(),
       type: l.type,
       typeLabel: l.type === 'CASUAL' ? 'Casual Leave' : l.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',

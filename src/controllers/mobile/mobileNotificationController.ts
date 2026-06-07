@@ -3,6 +3,128 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 
 /**
+ * Fetch user's notifications
+ */
+export const fetchMyNotifications = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    const notifications = await prisma.notification.findMany({
+      where: { employeeId: employee.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    const unreadCount = notifications.filter(n => !n.isRead).length;
+
+    const formattedNotifications = notifications.map(n => ({
+      id: n.id.toString(),
+      title: n.title,
+      body: n.body,
+      category: n.category,
+      isRead: n.isRead,
+      createdAt: n.createdAt.toISOString(),
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        notifications: formattedNotifications,
+        unreadCount,
+      },
+    });
+  } catch (error) {
+    console.error('Fetch notifications error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch notifications' });
+  }
+};
+
+/**
+ * Mark notification as read
+ */
+export const markNotificationAsRead = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { notificationId } = req.params;
+
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    const notification = await prisma.notification.findFirst({
+      where: {
+        id: parseInt(notificationId),
+        employeeId: employee.id,
+      },
+    });
+
+    if (!notification) {
+      res.status(404).json({ success: false, message: 'Notification not found' });
+      return;
+    }
+
+    await prisma.notification.update({
+      where: { id: parseInt(notificationId) },
+      data: { isRead: true },
+    });
+
+    res.json({ success: true, message: 'Notification marked as read' });
+  } catch (error) {
+    console.error('Mark notification as read error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark notification as read' });
+  }
+};
+
+/**
+ * Mark all notifications as read
+ */
+export const markAllNotificationsAsRead = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    await prisma.notification.updateMany({
+      where: {
+        employeeId: employee.id,
+        isRead: false,
+      },
+      data: { isRead: true },
+    });
+
+    res.json({ success: true, message: 'All notifications marked as read' });
+  } catch (error) {
+    console.error('Mark all notifications as read error:', error);
+    res.status(500).json({ success: false, message: 'Failed to mark all notifications as read' });
+  }
+};
+
+/**
  * Save FCM token for push notifications
  */
 export const saveFCMToken = async (
