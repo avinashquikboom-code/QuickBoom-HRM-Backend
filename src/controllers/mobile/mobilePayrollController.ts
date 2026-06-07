@@ -3,6 +3,9 @@ import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 const PdfPrinter = require('pdfmake');
 
+// Primary color for all PDF reports
+const PRIMARY_COLOR = '#3BA38B';
+
 const fonts = {
   Roboto: {
     normal: 'Helvetica',
@@ -217,7 +220,7 @@ export const downloadPayslip = async (
             body: [
               [
                 {
-                  fillColor: '#3ba38b',
+                  fillColor: PRIMARY_COLOR,
                   color: 'white',
                   text: [
                     { text: 'NET TAKE-HOME PAY\n', fontSize: 10, bold: true },
@@ -242,7 +245,7 @@ export const downloadPayslip = async (
         }
       ],
       styles: {
-        companyName: { fontSize: 20, bold: true, color: '#3ba38b' },
+        companyName: { fontSize: 20, bold: true, color: PRIMARY_COLOR },
         companySub: { fontSize: 9, color: '#6b7280' },
         docTitle: { fontSize: 14, bold: true, decoration: 'underline', color: '#111827' },
         sectionHeader: { fontSize: 12, bold: true, color: '#374151' },

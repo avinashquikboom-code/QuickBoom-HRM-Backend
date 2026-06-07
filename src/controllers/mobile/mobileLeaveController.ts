@@ -4,6 +4,9 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { Prisma } from '@prisma/client';
 const PdfPrinter = require('pdfmake');
 
+// Primary color for all PDF reports
+const PRIMARY_COLOR = '#3BA38B';
+
 // Fetch employee's own leave requests and balances (including HR-applied leaves)
 export const fetchMyLeaves = async (
   req: AuthenticatedRequest,
@@ -413,7 +416,7 @@ export const downloadLeaveReport = async (
               y: -80,
               w: 842,
               h: 70,
-              color: '#3BA38B'
+              color: PRIMARY_COLOR
             }
           ]
         },

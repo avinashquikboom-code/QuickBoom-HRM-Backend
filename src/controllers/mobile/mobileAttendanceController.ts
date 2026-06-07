@@ -6,6 +6,9 @@ import geofenceService from '../../services/geofenceService';
 import { Role } from '@prisma/client';
 const PdfPrinter = require('pdfmake');
 
+// Primary color for all PDF reports
+const PRIMARY_COLOR = '#3BA38B';
+
 // Interface for attendance with office data
 interface AttendanceWithOffice {
   id: number;
@@ -1375,10 +1378,23 @@ export const downloadMyAttendanceReport = async (
     const docDefinition = {
       content: [
         {
+          canvas: [
+            {
+              type: 'rect',
+              x: -20,
+              y: -60,
+              w: 595,
+              h: 50,
+              color: PRIMARY_COLOR
+            }
+          ]
+        },
+        {
           text: 'Attendance Report',
           style: 'header',
+          color: 'white',
           alignment: 'center',
-          margin: [0, 0, 0, 20]
+          margin: [0, -45, 0, 20]
         },
         {
           columns: [
@@ -1574,10 +1590,23 @@ export const downloadAttendanceReport = async (
     const docDefinition = {
       content: [
         {
+          canvas: [
+            {
+              type: 'rect',
+              x: -20,
+              y: -60,
+              w: 595,
+              h: 50,
+              color: PRIMARY_COLOR
+            }
+          ]
+        },
+        {
           text: 'HR Attendance Report',
           style: 'header',
+          color: 'white',
           alignment: 'center',
-          margin: [0, 0, 0, 20]
+          margin: [0, -45, 0, 20]
         },
         {
           text: `Month: ${targetMonth}`,
