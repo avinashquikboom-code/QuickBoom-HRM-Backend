@@ -127,9 +127,12 @@ class LiveTrackingService {
       if (buffer.length % 5 === 0) { // Every 5th location update
         try {
           await webSocketService.broadcastNotification(employeeId, {
-            title: 'Location Update',
-            body: 'Employee location updated',
+            title: location.isLocationEnabled === false ? 'Location Disabled' : 'Location Update',
+            body: location.isLocationEnabled === false 
+              ? 'Employee has turned off device location' 
+              : 'Employee location updated',
             type: 'location_update',
+            isLocationEnabled: location.isLocationEnabled,
             location: {
               latitude: location.latitude,
               longitude: location.longitude,
@@ -453,7 +456,8 @@ class LiveTrackingService {
               purpose: session.purpose,
               startTime: session.startTime,
               currentLocation: latestLocation,
-              totalLocations: session.locations.length
+              totalLocations: session.locations.length,
+              isLocationEnabled: latestLocation.isLocationEnabled !== false
             });
           }
         }

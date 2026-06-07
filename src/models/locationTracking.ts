@@ -6,6 +6,7 @@ export interface LocationPoint {
   speed?: number;
   heading?: number;
   altitude?: number;
+  isLocationEnabled?: boolean;
 }
 
 export interface TrackingSession {

@@ -121,6 +121,8 @@ export const updateLocation = async (
       return;
     }
 
+    const { isLocationEnabled } = req.body;
+
     const location = {
       latitude,
       longitude,
@@ -128,7 +130,8 @@ export const updateLocation = async (
       accuracy,
       speed,
       heading,
-      altitude
+      altitude,
+      isLocationEnabled: isLocationEnabled !== undefined ? isLocationEnabled : true
     };
 
     await liveTrackingService.updateLocation(employee.id, location);
