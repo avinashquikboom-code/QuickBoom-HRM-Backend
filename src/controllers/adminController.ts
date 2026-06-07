@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
+import bcrypt from 'bcrypt';
 const PdfPrinter = require('pdfmake');
 
 // ==========================================
@@ -185,7 +186,7 @@ export const createEmployee = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { userId, firstName, lastName, designation, status, officeId, departmentId } = req.body;
+  const { userId, firstName, lastName, designation, status, officeId, departmentId, email, password, role } = req.body;
 
   if (!userId || !firstName) {
     res.status(400).json({ success: false, message: 'userId and firstName are required.' });
@@ -193,14 +194,63 @@ export const createEmployee = async (
   }
 
   try {
-    const user = await prisma.user.findUnique({ where: { id: parseInt(userId, 10) } });
-    if (!user) {
-      res.status(404).json({ success: false, message: 'User not found.' });
-      return;
+    let user;
+    
+    // If email and password are provided, create a new user
+    if (email && password) {
+      const existingUser = await prisma.user.findUnique({
+        where: { email: email.trim().toLowerCase() },
+      });
+      
+      if (existingUser) {
+        res.status(400).json({ success: false, message: 'User with this email already exists.' });
+        return;
+      }
+      
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const dbRole = (role || 'EMPLOYEE').toUpperCase();
+      
+      user = await prisma.user.create({
+        data: {
+          email: email.trim().toLowerCase(),
+          password: hashedPassword,
+          role: dbRole as any,
+          profile: {
+            create: {
+              email: email.trim().toLowerCase(),
+              fullName: `${firstName} ${lastName || ''}`.trim(),
+              phone: '',
+              bio: '',
+              clearanceLevel: dbRole === 'HR' || dbRole === 'ADMIN' ? 3 : 1,
+              clearanceLabel: dbRole === 'HR' || dbRole === 'ADMIN' ? 'Level 3 (HR Lead)' : 'Level 1 (General)',
+              timezone: 'Asia/Kolkata',
+              timezoneLabel: '(GMT+5:30) Mumbai, New Delhi',
+              lastLoginLocation: 'Admin Panel',
+            },
+          },
+        },
+        include: { profile: true },
+      });
+    } else {
+      // Use existing user
+      user = await prisma.user.findUnique({ where: { id: parseInt(userId, 10) } });
+      if (!user) {
+        res.status(404).json({ success: false, message: 'User not found.' });
+        return;
+      }
+      
+      // Check if user has a password for mobile login
+      if (!user.password || user.password === '') {
+        res.status(400).json({ 
+          success: false, 
+          message: 'User does not have a password set. Please provide email and password to enable mobile login.' 
+        });
+        return;
+      }
     }
 
     const existingEmployee = await prisma.employee.findUnique({
-      where: { userId: parseInt(userId, 10) },
+      where: { userId: user.id },
     });
     if (existingEmployee) {
       res.status(400).json({ success: false, message: 'Employee record already exists for this user.' });
@@ -225,6 +275,19 @@ export const createEmployee = async (
         department: true,
       },
     });
+
+    // Create leave balance for the new employee
+    try {
+      const leaveBalanceService = require('../services/leaveBalanceService').default;
+      await leaveBalanceService.createOrUpdateLeaveBalance({
+        employeeId: newEmployee.id,
+        departmentId: departmentId ? parseInt(departmentId) : undefined,
+        createdBy: 'Admin Panel',
+      });
+      console.log(`✅ Leave balance allocated for employee ${newEmployee.id}`);
+    } catch (leaveError) {
+      console.error('Failed to create leave balance for employee:', leaveError);
+    }
 
     res.status(201).json({
       success: true,
