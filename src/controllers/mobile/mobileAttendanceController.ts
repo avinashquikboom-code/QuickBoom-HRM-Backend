@@ -239,7 +239,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       punchLon = employee.office.longitude;
     } else {
       const distance = calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude);
-      const maxRadius = employee.office.maxPunchRadiusMeters || 25; // Default to 25m if not set
+      const maxRadius = employee.office.maxPunchRadiusMeters || 10; // Default to 10m if not set
       
       console.log('📏 Distance Calculation:', {
         distance: Math.round(distance),
@@ -475,7 +475,7 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       punchLon = attendance.longitude || employee.office?.longitude || 0;
     } else {
       const distance = calculateDistance(latitude, longitude, employee.office?.latitude || 0, employee.office?.longitude || 0);
-      const maxRadius = employee.office?.maxPunchRadiusMeters || 25; // Default to 25m if not set
+      const maxRadius = employee.office?.maxPunchRadiusMeters || 10; // Default to 10m if not set
       
       console.log('📏 Punch Out Distance Calculation:', {
         distance: Math.round(distance),

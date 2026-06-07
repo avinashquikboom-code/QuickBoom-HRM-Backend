@@ -6,7 +6,7 @@ import bcrypt from 'bcrypt';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
-const PRIMARY_COLOR = '#3BA38B';
+const PRIMARY_COLOR = '#14B8A6';
 
 // ==========================================
 // 1. User Management
@@ -572,8 +572,8 @@ export const createOffice = async (
         address: address.trim(),
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
-        idealRadiusMeters: parseFloat(idealRadiusMeters || '25.0'),
-        maxPunchRadiusMeters: 25,
+        idealRadiusMeters: parseFloat(idealRadiusMeters || '10.0'),
+        maxPunchRadiusMeters: 10,
         isActive: isActive !== undefined ? !!isActive : true,
         subscriptionPlan: subscriptionPlan || 'Basic',
         billingCycle: billingCycle || 'monthly',
@@ -656,7 +656,7 @@ export const updateOffice = async (
           idealRadiusMeters !== undefined
             ? parseFloat(idealRadiusMeters)
             : existingOffice.idealRadiusMeters,
-        maxPunchRadiusMeters: 25,
+        maxPunchRadiusMeters: 10,
         isActive: isActive !== undefined ? !!isActive : existingOffice.isActive,
         subscriptionPlan:
           subscriptionPlan !== undefined ? subscriptionPlan : existingOffice.subscriptionPlan,
@@ -2504,9 +2504,19 @@ export const downloadLeaveReport = async (
         {
           table: {
             headerRows: 1,
-            widths: ['*', '*', '*', '*', '*', '*', '*', '*', '*'],
+            widths: ['auto', 'auto', '*', '*', '*', 'auto', 'auto', '*', '*'],
             body: [
-              ['Employee', 'Code', 'Designation', 'Type', 'From', 'To', 'Days', 'Status', 'Reviewed By'],
+              [
+                { text: 'Employee', style: 'tableHeader' },
+                { text: 'Code', style: 'tableHeader' },
+                { text: 'Designation', style: 'tableHeader' },
+                { text: 'Type', style: 'tableHeader' },
+                { text: 'From', style: 'tableHeader' },
+                { text: 'To', style: 'tableHeader' },
+                { text: 'Days', style: 'tableHeader' },
+                { text: 'Status', style: 'tableHeader' },
+                { text: 'Reviewed By', style: 'tableHeader' }
+              ],
               ...(leaveData.length > 0
                 ? leaveData.map(lr => [
                     lr.employeeName,
@@ -2524,6 +2534,7 @@ export const downloadLeaveReport = async (
           }
         }
       ],
+      pageMargins: [40, 60, 40, 60],
       styles: {
         header: { fontSize: 18, bold: true, margin: [0, 0, 0, 10] },
         subheader: { fontSize: 12, margin: [0, 5, 0, 5] },
@@ -3555,7 +3566,12 @@ export const downloadAttendanceReport = async (
               headerRows: 1,
               widths: ['*', '*', '*', '*'],
               body: [
-                ['Date', 'Check In', 'Check Out', 'Status'],
+                [
+                  { text: 'Date', style: 'tableHeader' },
+                  { text: 'Check In', style: 'tableHeader' },
+                  { text: 'Check Out', style: 'tableHeader' },
+                  { text: 'Status', style: 'tableHeader' }
+                ],
                 ...empData.attendances.map(att => [
                   att.date,
                   att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
@@ -3581,6 +3597,12 @@ export const downloadAttendanceReport = async (
         },
         normal: {
           fontSize: 12
+        },
+        tableHeader: {
+          fontSize: 11,
+          bold: true,
+          color: PRIMARY_COLOR,
+          margin: [0, 5, 0, 5]
         }
       }
     };
