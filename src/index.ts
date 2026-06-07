@@ -166,25 +166,9 @@ const webSocketService = new WebSocketService(server);
 
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);
-  
-  // Print HR credentials to console for easy access
-  console.log('\n🔐 HR MOBILE LOGIN CREDENTIALS:');
-  console.log('═══════════════════════════════════════');
-  console.log('📧 HR Email: hr@hrm.com');
-  console.log('🔑 HR Password: 123456');
-  console.log('👤 HR Name: Priya Sharma');
-  console.log('═══════════════════════════════════════');
-  console.log('📧 Employee Email: employee@hrm.com');
-  console.log('🔑 Employee Password: employee123');
-  console.log('👤 Employee Name: Rahul Verma');
-  console.log('═══════════════════════════════════════');
-  console.log('📧 Admin Email: admin@hr.com');
-  console.log('🔑 Admin Password: 123456');
-  console.log('👤 Admin Name: Super Admin');
-  console.log('═══════════════════════════════════════');
-  console.log('📚 Scalar Docs: http://' + (host === '0.0.0.0' ? 'localhost' : host) + ':' + port + '/scalar-docs');
+  console.log(' Scalar Docs: http://' + (host === '0.0.0.0' ? 'localhost' : host) + ':' + port + '/scalar-docs');
   console.log('🔌 WebSocket Real-time Updates: Enabled');
-  console.log('═══════════════════════════════════════\n');
+  console.log('🚀 QuickBoom HRM Backend is ready!\n');
 });
 
 // Export WebSocket service for use in controllers
