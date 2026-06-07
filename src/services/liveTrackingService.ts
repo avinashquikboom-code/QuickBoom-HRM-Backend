@@ -180,9 +180,11 @@ class LiveTrackingService {
    */
   async getGeofenceEvents(employeeId: number, limit: number = 50): Promise<GeofenceEvent[]> {
     try {
-      // This would typically query a geofence_events table
-      // For now, return empty array as placeholder
-      return [];
+      const events = this.geofenceEvents.get(employeeId) || [];
+      // Return most recent events first, limited by the specified number
+      return events
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        .slice(0, limit);
     } catch (error) {
       console.error('Get geofence events error:', error);
       throw error;
@@ -268,12 +270,111 @@ class LiveTrackingService {
    */
   private async checkGeofenceEvents(employeeId: number, location: LocationPoint): Promise<void> {
     try {
-      // This would check against office geofences and create events
-      // For now, this is a placeholder implementation
+      // Get employee's assigned office
+      const employee = await prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: { 
+          office: true,
+          user: {
+            include: {
+              profile: true
+            }
+          }
+        }
+      });
+
+      if (!employee || !employee.office) {
+        return; // No office assigned, skip geofence check
+      }
+
+      const office = employee.office;
+      const officeLat = office.latitude;
+      const officeLon = office.longitude;
+      const maxRadius = office.maxPunchRadiusMeters || 50; // Default 50 meters
+
+      // Calculate distance to office
+      const distance = this.calculateDistance(
+        location.latitude,
+        location.longitude,
+        officeLat,
+        officeLon
+      );
+
+      const isWithinGeofence = distance <= maxRadius;
+
+      // Get previous geofence status (stored in a simple in-memory map for this session)
+      const previousStatus = this.geofenceStatusMap.get(employeeId);
+      const statusChanged = previousStatus !== undefined && previousStatus !== isWithinGeofence;
+
+      // Update current status
+      this.geofenceStatusMap.set(employeeId, isWithinGeofence);
+
+      // If status changed, create event and broadcast
+      if (statusChanged) {
+        const eventType = isWithinGeofence ? 'ENTERED_GEOFENCE' : 'EXITED_GEOFENCE';
+        
+        // Create geofence event (would typically save to database)
+        const geofenceEvent: GeofenceEvent = {
+          id: `geofence_${employeeId}_${Date.now()}`,
+          employeeId,
+          eventType: eventType as any,
+          location,
+          officeId: office.id,
+          officeName: office.name,
+          distance,
+          timestamp: new Date(),
+          description: isWithinGeofence 
+            ? `Employee entered office geofence at ${distance.toFixed(0)}m distance`
+            : `Employee exited office geofence at ${distance.toFixed(0)}m distance`
+        };
+
+        // Store event (in memory for now)
+        if (!this.geofenceEvents.has(employeeId)) {
+          this.geofenceEvents.set(employeeId, []);
+        }
+        const events = this.geofenceEvents.get(employeeId)!;
+        events.push(geofenceEvent);
+        
+        // Keep only last 100 events
+        if (events.length > 100) {
+          events.shift();
+        }
+
+        // Broadcast notification to HR/Admin
+        try {
+          await webSocketService.broadcastNotification(employeeId, {
+            title: isWithinGeofence ? 'Employee Entered Office Area' : 'Employee Left Office Area',
+            body: `${employee.user?.profile?.fullName || 'Employee'} has ${isWithinGeofence ? 'entered' : 'left'} the office geofence. Distance: ${distance.toFixed(0)}m`,
+            type: 'geofence_event',
+            eventType,
+            employeeId,
+            employeeName: employee.user?.profile?.fullName || 'Unknown',
+            location: {
+              latitude: location.latitude,
+              longitude: location.longitude,
+              timestamp: location.timestamp
+            },
+            office: {
+              name: office.name,
+              address: office.address
+            },
+            distance,
+            isWithinGeofence
+          });
+        } catch (wsError) {
+          console.error('❌ Failed to broadcast geofence event:', wsError);
+        }
+
+        console.log(`📍 Geofence event: ${eventType} for employee ${employeeId}, distance: ${distance.toFixed(0)}m`);
+      }
     } catch (error) {
       console.error('Check geofence events error:', error);
     }
   }
+
+  // In-memory storage for geofence status and events
+  private geofenceStatusMap: Map<number, boolean> = new Map();
+  private geofenceEvents: Map<number, GeofenceEvent[]> = new Map();
 
   /**
    * Get active sessions for an employee

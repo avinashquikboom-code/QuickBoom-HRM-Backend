@@ -43,4 +43,5 @@ export interface GeofenceEvent {
   officeName: string;
   timestamp: Date;
   description: string;
+  distance?: number;
 }
