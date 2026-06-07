@@ -14,11 +14,11 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
-        url: 'https://quickboom-hrm-backend-gjch.onrender.com',
+        url: 'https://quickboom-hrm-backend.onrender.com',
         description: 'Production server',
       },
       {
-        url: 'http://localhost:5003',
+        url: 'http://localhost:3000',
         description: 'Development server',
       },
     ],
@@ -370,6 +370,203 @@ const options: swaggerJsdoc.Options = {
               items: { $ref: '#/components/schemas/LeaveBalanceRequest' }
             },
           },
+        },
+        ComprehensiveAttendanceReport: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                period: {
+                  type: 'object',
+                  properties: {
+                    month: { type: 'integer' },
+                    year: { type: 'integer' },
+                    startDate: { type: 'string', format: 'date' },
+                    endDate: { type: 'string', format: 'date' },
+                    totalDays: { type: 'integer' }
+                  }
+                },
+                summary: {
+                  type: 'object',
+                  properties: {
+                    totalDays: { type: 'integer' },
+                    presentDays: { type: 'integer' },
+                    absentDays: { type: 'integer' },
+                    leaveDays: { type: 'integer' },
+                    fullDays: { type: 'integer' },
+                    halfDays: { type: 'integer' },
+                    averageWorkHours: { type: 'number' },
+                    averageBreakTime: { type: 'number' },
+                    locationTrackingCompliance: { type: 'number' },
+                    attendancePercentage: { type: 'number' },
+                    punctualityRate: { type: 'number' }
+                  }
+                },
+                attendanceRecords: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/AttendanceRecord' }
+                },
+                locationTracking: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/LocationTracking' }
+                },
+                breakDetails: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/BreakDetail' }
+                },
+                metrics: {
+                  type: 'object',
+                  properties: {
+                    totalEmployees: { type: 'integer' },
+                    totalRecords: { type: 'integer' },
+                    averageWorkHours: { type: 'number' },
+                    averageBreakTime: { type: 'number' },
+                    locationTrackingCompliance: { type: 'number' }
+                  }
+                }
+              }
+            }
+          }
+        },
+        AttendanceRecord: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            employeeId: { type: 'integer' },
+            date: { type: 'string', format: 'date' },
+            checkIn: { type: 'string', format: 'date-time' },
+            checkOut: { type: 'string', format: 'date-time' },
+            status: { type: 'string' },
+            attendanceType: { type: 'string', enum: ['FULL_DAY', 'HALF_DAY', 'ABSENT', 'LEAVE'] },
+            totalWorkSeconds: { type: 'number' },
+            totalBreakSeconds: { type: 'number' },
+            hasLocation: { type: 'integer' },
+            employeeCode: { type: 'string' },
+            firstName: { type: 'string' },
+            lastName: { type: 'string' },
+            departmentName: { type: 'string' }
+          }
+        },
+        LocationTracking: {
+          type: 'object',
+          properties: {
+            employeeId: { type: 'integer' },
+            date: { type: 'string', format: 'date' },
+            checkIn: { type: 'string', format: 'date-time' },
+            checkOut: { type: 'string', format: 'date-time' },
+            latitude: { type: 'number' },
+            longitude: { type: 'number' },
+            firstName: { type: 'string' },
+            lastName: { type: 'string' },
+            locationUpdates: { type: 'integer' },
+            locationStatus: { type: 'string', enum: ['IN_OFFICE', 'OUT_OF_OFFICE'] }
+          }
+        },
+        BreakDetail: {
+          type: 'object',
+          properties: {
+            employeeId: { type: 'integer' },
+            date: { type: 'string', format: 'date' },
+            breakStartTime: { type: 'string', format: 'date-time' },
+            totalBreakSeconds: { type: 'number' },
+            breakMinutes: { type: 'number' },
+            breakType: { type: 'string', enum: ['SHORT_BREAK', 'STANDARD_BREAK', 'LONG_BREAK', 'NO_BREAK'] },
+            firstName: { type: 'string' },
+            lastName: { type: 'string' }
+          }
+        },
+        AttendanceTrends: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                period: { type: 'string' },
+                monthsAnalyzed: { type: 'integer' },
+                trends: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      month: { type: 'string', format: 'date-time' },
+                      totalRecords: { type: 'integer' },
+                      presentDays: { type: 'integer' },
+                      absentDays: { type: 'integer' },
+                      leaveDays: { type: 'integer' },
+                      completeDays: { type: 'integer' },
+                      averageWorkHours: { type: 'number' },
+                      averageBreakTime: { type: 'number' },
+                      locationTrackingCompliance: { type: 'number' },
+                      uniqueEmployees: { type: 'integer' }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        LocationTrackingReport: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                period: {
+                  type: 'object',
+                  properties: {
+                    startDate: { type: 'string', format: 'date' },
+                    endDate: { type: 'string', format: 'date' }
+                  }
+                },
+                statistics: {
+                  type: 'object',
+                  properties: {
+                    totalRecords: { type: 'integer' },
+                    trackedRecords: { type: 'integer' },
+                    officeCompliantRecords: { type: 'integer' },
+                    averageDistance: { type: 'number' },
+                    locationTrackingPercentage: { type: 'number' },
+                    officeCompliancePercentage: { type: 'number' }
+                  }
+                },
+                locationRecords: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/LocationRecord' }
+                },
+                insights: {
+                  type: 'object',
+                  properties: {
+                    trackingCompliance: { type: 'number' },
+                    officeCompliance: { type: 'number' },
+                    averageDistanceFromOffice: { type: 'number' }
+                  }
+                }
+              }
+            }
+          }
+        },
+        LocationRecord: {
+          type: 'object',
+          properties: {
+            employeeId: { type: 'integer' },
+            date: { type: 'string', format: 'date' },
+            checkIn: { type: 'string', format: 'date-time' },
+            checkOut: { type: 'string', format: 'date-time' },
+            latitude: { type: 'number' },
+            longitude: { type: 'number' },
+            status: { type: 'string' },
+            firstName: { type: 'string' },
+            lastName: { type: 'string' },
+            employeeCode: { type: 'string' },
+            officeName: { type: 'string' },
+            distanceFromOffice: { type: 'number' },
+            locationStatus: { type: 'string', enum: ['TRACKED', 'NOT_TRACKED'] },
+            officeCompliance: { type: 'string', enum: ['IN_OFFICE_AREA', 'OUTSIDE_OFFICE_AREA'] }
+          }
         },
       },
     },

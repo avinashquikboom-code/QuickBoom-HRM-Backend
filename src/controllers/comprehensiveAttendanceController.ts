@@ -6,6 +6,71 @@ import { prisma } from '../utils/db';
 // Comprehensive Attendance Report Controller
 // ==========================================
 
+/**
+ * @swagger
+ * /api/attendance/comprehensive-report:
+ *   get:
+ *     summary: Get comprehensive attendance report
+ *     tags: [Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: month
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 12
+ *         description: Month number (1-12)
+ *       - in: query
+ *         name: year
+ *         required: true
+ *         schema:
+ *           type: integer
+ *           minimum: 2020
+ *           maximum: 2030
+ *         description: Year
+ *       - in: query
+ *         name: employeeId
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: Specific employee ID
+ *       - in: query
+ *         name: departmentId
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: Specific department ID
+ *       - in: query
+ *         name: includeLocationTracking
+ *         required: false
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include location tracking data
+ *       - in: query
+ *         name: includeBreakDetails
+ *         required: false
+ *         schema:
+ *           type: boolean
+ *           default: true
+ *         description: Include break time details
+ *     responses:
+ *       200:
+ *         description: Comprehensive attendance report generated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ComprehensiveAttendanceReport'
+ *       400:
+ *         description: Bad request - missing or invalid parameters
+ *       401:
+ *         description: Unauthorized - invalid or missing token
+ *       500:
+ *         description: Internal server error
+ */
 export const getComprehensiveAttendanceReport = async (
   req: AuthenticatedRequest,
   res: Response
@@ -233,6 +298,44 @@ export const getComprehensiveAttendanceReport = async (
   }
 };
 
+/**
+ * @swagger
+ * /api/attendance/trends:
+ *   get:
+ *     summary: Get attendance trends analysis
+ *     tags: [Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         required: false
+ *         schema:
+ *           type: string
+ *           enum: [monthly]
+ *           default: monthly
+ *         description: Analysis period
+ *       - in: query
+ *         name: months
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 12
+ *           default: 6
+ *         description: Number of months to analyze
+ *     responses:
+ *       200:
+ *         description: Attendance trends generated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AttendanceTrends'
+ *       401:
+ *         description: Unauthorized - invalid or missing token
+ *       500:
+ *         description: Internal server error
+ */
 export const getAttendanceTrends = async (
   req: AuthenticatedRequest,
   res: Response
@@ -300,6 +403,49 @@ export const getAttendanceTrends = async (
   }
 };
 
+/**
+ * @swagger
+ * /api/attendance/location-tracking:
+ *   get:
+ *     summary: Get location tracking report
+ *     tags: [Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: startDate
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date (YYYY-MM-DD)
+ *       - in: query
+ *         name: endDate
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date (YYYY-MM-DD)
+ *       - in: query
+ *         name: employeeId
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: Specific employee ID
+ *     responses:
+ *       200:
+ *         description: Location tracking report generated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/LocationTrackingReport'
+ *       400:
+ *         description: Bad request - missing or invalid parameters
+ *       401:
+ *         description: Unauthorized - invalid or missing token
+ *       500:
+ *         description: Internal server error
+ */
 export const getLocationTrackingReport = async (
   req: AuthenticatedRequest,
   res: Response
