@@ -858,7 +858,7 @@ export const fetchAttendanceHistory = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { from, to, limit = '50', page = '1' } = req.query;
+  const { from, to, limit = '50', page = '1', employeeId } = req.query;
 
   const limitInt = parseInt(limit as string, 10);
   const pageInt = parseInt(page as string, 10);
@@ -873,6 +873,9 @@ export const fetchAttendanceHistory = async (
     if (to) {
       whereClause.date.lte = to as string;
     }
+  }
+  if (employeeId) {
+    whereClause.employeeId = parseInt(employeeId as string, 10);
   }
 
   try {
@@ -1905,8 +1908,16 @@ export const fetchAdminLeaves = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
+  const { employeeId } = req.query;
+
+  const whereClause: Prisma.LeaveRequestWhereInput = {};
+  if (employeeId) {
+    whereClause.employeeId = parseInt(employeeId as string, 10);
+  }
+
   try {
     const leaves = await prisma.leaveRequest.findMany({
+      where: whereClause,
       include: {
         employee: true,
       },
