@@ -1899,24 +1899,52 @@ export const fetchLiveLocations = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Use live tracking service to get real-time locations
+    // Get all employees with office assignments
+    const employees = await prisma.employee.findMany({
+      where: {
+        officeId: { not: null },
+        status: 'active'
+      },
+      include: {
+        user: {
+          include: {
+            profile: true
+          }
+        },
+        office: true,
+        department: true
+      }
+    });
+
+    // Get live tracking data for actively tracking employees
     const liveTrackingService = (await import('../services/liveTrackingService')).default;
     const liveLocations = await liveTrackingService.getLiveLocations();
 
-    // Map live tracking data to admin panel format
-    const mappedLocations = liveLocations.map((loc: any) => ({
-      employeeId: loc.employeeId,
-      name: loc.employeeName,
-      role: 'EMPLOYEE',
-      lat: loc.currentLocation.latitude,
-      lng: loc.currentLocation.longitude,
-      status: loc.purpose || 'TRACKING',
-      speed: loc.currentLocation.speed ? `${(loc.currentLocation.speed * 3.6).toFixed(1)} km/h` : '0 km/h',
-      battery: '100%', // Would need to be sent from mobile
-      sessionId: loc.sessionId,
-      officeName: loc.officeName,
-      startTime: loc.startTime
-    }));
+    // Create a map of employeeId to live location data
+    const liveLocationMap = new Map();
+    liveLocations.forEach((loc: any) => {
+      liveLocationMap.set(loc.employeeId, loc);
+    });
+
+    // Map all employees to admin panel format
+    const mappedLocations = employees.map((emp) => {
+      const liveLoc = liveLocationMap.get(emp.id);
+      
+      return {
+        employeeId: emp.id,
+        name: emp.user?.profile?.fullName || `${emp.firstName} ${emp.lastName}`,
+        role: emp.user?.role || 'EMPLOYEE',
+        lat: liveLoc?.currentLocation?.latitude || emp.office?.latitude || 0,
+        lng: liveLoc?.currentLocation?.longitude || emp.office?.longitude || 0,
+        status: liveLoc ? (liveLoc.purpose || 'TRACKING') : 'OFFLINE',
+        speed: liveLoc?.currentLocation?.speed ? `${(liveLoc.currentLocation.speed * 3.6).toFixed(1)} km/h` : '0 km/h',
+        battery: '100%',
+        sessionId: liveLoc?.sessionId,
+        officeName: emp.office?.name || '',
+        startTime: liveLoc?.startTime,
+        isLocationEnabled: liveLoc?.isLocationEnabled !== false
+      };
+    });
 
     res.json({
       success: true,
