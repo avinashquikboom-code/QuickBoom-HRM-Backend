@@ -191,23 +191,9 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-// Mobile logout with device cleanup
+// Mobile logout - simplified to just return success
 export const mobileLogout = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { fcmToken } = req.body;
-    
-    if (fcmToken && req.user) {
-      // Remove FCM token from user's tokens
-      await prisma.user.update({
-        where: { id: req.user?.id },
-        data: {
-          fcmTokens: {
-            set: [] // Clear all tokens or implement specific token removal
-          }
-        },
-      });
-    }
-
     res.json({
       success: true,
       message: 'Mobile logout successful',
