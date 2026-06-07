@@ -10,17 +10,9 @@ export const fetchMyNotifications = async (
   res: Response
 ): Promise<void> => {
   try {
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-    });
-
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found' });
-      return;
-    }
-
+    // Fetch notifications by userId (works for both employees and HR users)
     const notifications = await prisma.notification.findMany({
-      where: { employeeId: employee.id },
+      where: { userId: req.user?.id },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -59,19 +51,10 @@ export const markNotificationAsRead = async (
     const { notificationId } = req.params;
     const id = Array.isArray(notificationId) ? notificationId[0] : notificationId;
 
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-    });
-
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found' });
-      return;
-    }
-
     const notification = await prisma.notification.findFirst({
       where: {
         id: parseInt(id),
-        employeeId: employee.id,
+        userId: req.user?.id,
       },
     });
 
@@ -100,18 +83,9 @@ export const markAllNotificationsAsRead = async (
   res: Response
 ): Promise<void> => {
   try {
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-    });
-
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found' });
-      return;
-    }
-
     await prisma.notification.updateMany({
       where: {
-        employeeId: employee.id,
+        userId: req.user?.id,
         isRead: false,
       },
       data: { isRead: true },
