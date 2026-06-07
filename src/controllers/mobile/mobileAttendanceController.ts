@@ -116,8 +116,12 @@ function getLocalDateString(timezone: string = 'Asia/Kolkata', dateInput: Date =
 // Mobile Punch In
 export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, notes, photo, clientTimestamp, timezone, isFingerprint = false } = req.body;
-    
+    const { latitude, longitude, photo, timezone, isFingerprint = false } = req.body;
+
+    // Generate internal notes and timestamp
+    const notes = 'Punch in recorded via mobile app';
+    const clientTimestamp = new Date().toISOString();
+
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH IN REQUEST:', {
       timestamp: new Date().toISOString(),
@@ -128,7 +132,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       isFingerprint,
       userId: req.user?.id
     });
-    
+
     if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
       res.status(400).json({
         success: false,
@@ -167,15 +171,9 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Determine the punch-in time with timezone handling
-    let punchInTime: Date;
-    if (clientTimestamp) {
-      punchInTime = new Date(clientTimestamp);
-      console.log('✅ Using client timestamp for punch-in:', punchInTime.toISOString());
-    } else {
-      punchInTime = new Date();
-      console.log('📅 No client timestamp provided, using server timestamp');
-    }
+    // Use server timestamp for punch-in
+    const punchInTime = new Date();
+    console.log('✅ Using server timestamp for punch-in:', punchInTime.toISOString());
 
     // Check if already punched in today
     const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
@@ -335,9 +333,10 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
           address: attendance.office?.address
         },
         status: attendance.status,
-        notes: attendance.notes,
+        notes: notes,
+        clientTimestamp: clientTimestamp,
         timezone: timezone || 'UTC',
-        timestampSource: clientTimestamp && attendance.checkIn && Math.abs(new Date(clientTimestamp).getTime() - attendance.checkIn.getTime()) <= 30 * 60 * 1000 ? 'client' : 'server'
+        timestampSource: 'server'
       }
     });
   } catch (error) {
@@ -353,8 +352,12 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
 // Mobile Punch Out
 export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, notes, clientTimestamp, timezone, isFingerprint = false } = req.body;
-    
+    const { latitude, longitude, timezone, isFingerprint = false } = req.body;
+
+    // Generate internal notes and timestamp
+    const notes = 'Punch out recorded via mobile app';
+    const clientTimestamp = new Date().toISOString();
+
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH OUT REQUEST:', {
       timestamp: new Date().toISOString(),
@@ -387,15 +390,9 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       return;
     }
 
-    // Determine the punch-out time with timezone handling
-    let punchOutTime: Date;
-    if (clientTimestamp) {
-      punchOutTime = new Date(clientTimestamp);
-      console.log('✅ Using client timestamp for punch-out:', punchOutTime.toISOString());
-    } else {
-      punchOutTime = new Date();
-      console.log('📅 No client timestamp provided, using server timestamp');
-    }
+    // Use server timestamp for punch-out
+    const punchOutTime = new Date();
+    console.log('✅ Using server timestamp for punch-out:', punchOutTime.toISOString());
 
     // Get today's attendance record
     const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
@@ -578,9 +575,10 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
           longitude: updatedAttendance.longitude
         },
         status: updatedAttendance.status,
+        notes: notes,
+        clientTimestamp: clientTimestamp,
         timezone: timezone || 'UTC',
-        timestampSource: clientTimestamp && updatedAttendance.checkOut && updatedAttendance.checkIn && 
-          Math.abs(new Date(clientTimestamp).getTime() - updatedAttendance.checkOut.getTime()) <= 30 * 60 * 1000 ? 'client' : 'server'
+        timestampSource: 'server'
       }
     });
   } catch (error) {
