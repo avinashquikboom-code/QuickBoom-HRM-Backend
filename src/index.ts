@@ -25,6 +25,7 @@ import mobileLeaveBalanceRoutes from './routes/mobile/mobileLeaveBalanceRoutes';
 import mobileNotificationRoutes from './routes/mobile/mobileNotificationRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
+import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoutes';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 
@@ -85,6 +86,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/hr', hrRoutes);
 app.use('/api/leave-balance', leaveBalanceRoutes);
 app.use('/api/realtime/leave', realtimeLeaveRoutes);
+app.use('/api/attendance', comprehensiveAttendanceRoutes);
 
 // Mobile API Routes
 app.use('/api/mobile/auth', mobileAuthRoutes);
