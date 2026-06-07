@@ -22,6 +22,7 @@ import mobilePayrollRoutes from './routes/mobile/mobilePayrollRoutes';
 import mobileTrackingRoutes from './routes/mobile/mobileTrackingRoutes';
 import mobileGeofenceRoutes from './routes/mobile/mobileGeofenceRoutes';
 import mobileLeaveBalanceRoutes from './routes/mobile/mobileLeaveBalanceRoutes';
+import mobileDistanceRoutes from './routes/mobileDistanceRoutes';
 import mobileNotificationRoutes from './routes/mobile/mobileNotificationRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
@@ -155,6 +156,7 @@ app.use('/api/mobile/payroll', mobilePayrollRoutes);
 app.use('/api/mobile/tracking', mobileTrackingRoutes);
 app.use('/api/mobile/geofence', mobileGeofenceRoutes);
 app.use('/api/mobile/leave-balance', mobileLeaveBalanceRoutes);
+app.use('/api/mobile/distance', mobileDistanceRoutes);
 
 const host = process.env.HOST || '0.0.0.0';
 
