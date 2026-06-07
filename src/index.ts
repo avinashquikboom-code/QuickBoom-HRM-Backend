@@ -85,7 +85,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/employee', employeeRoutes);
-app.use('/api/employee', mobileNotificationRoutes);
+app.use('/api/mobile/notifications', mobileNotificationRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hr', hrRoutes);
