@@ -178,7 +178,7 @@ export const applyLeave = async (
           data: {
             userId: hrUser.id,
             title: 'New Leave Application',
-            body: `${employee.firstName} ${employee.lastName} has applied for ${type.toLowerCase()} leave from ${fromDate} to ${toDate}`,
+            body: `${employee.firstName} ${employee.lastName} requested for ${type.toLowerCase()} leave from ${fromDate} to ${toDate}`,
             category: 'LEAVE',
             actionId: leaveRequest.id.toString(),
             actionType: 'LEAVE_APPLICATION',
