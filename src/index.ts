@@ -72,23 +72,6 @@ app.use('/scalar-docs', apiReference({
   metaData: {
     title: 'QuickBoom HRM API Documentation',
     description: 'Comprehensive API endpoints for QuickBoom HRM applications (including Web, Admin, and Mobile)',
-  },
-  configuration: {
-    darkMode: false,
-    hideDownloadButton: false,
-    hideTestButton: false,
-    hideModels: false,
-    hideSecurity: false,
-    hideServerInfo: false,
-    hideAuthentication: false,
-    searchHotKey: 'k',
-    baseServerURL: 'https://quickboom-hrm-backend.onrender.com',
-    servers: [
-      {
-        url: 'https://quickboom-hrm-backend.onrender.com',
-        description: 'Production Server'
-      }
-    ]
   }
 }));
 
