@@ -3,6 +3,7 @@ import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { webSocketService } from '../..';
 import geofenceService from '../../services/geofenceService';
+import { Role } from '@prisma/client';
 const PdfPrinter = require('pdfmake');
 
 // Interface for attendance with office data
@@ -1651,10 +1652,129 @@ export const downloadAttendanceReport = async (
     pdfDoc.end();
   } catch (error) {
     console.error('Download attendance report error:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Failed to download attendance report.',
       errorCode: 'DOWNLOAD_ATTENDANCE_REPORT_ERROR'
     });
+  }
+};
+
+// Fetch all employees' attendance (HR/Admin only)
+export const fetchAllEmployeesAttendance = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { from, to, limit = '50', page = '1', employeeId, departmentId, officeId } = req.query;
+
+  // Only HR, ADMIN, and SUPER_ADMIN can access this
+  if (req.user?.role !== Role.HR && req.user?.role !== Role.ADMIN && req.user?.role !== Role.SUPER_ADMIN) {
+    res.status(403).json({
+      success: false,
+      message: 'Access denied. HR, Admin, and Super Admin only.',
+      errorCode: 'ACCESS_DENIED'
+    });
+    return;
+  }
+
+  const limitInt = parseInt(limit as string, 10);
+  const pageInt = parseInt(page as string, 10);
+  const skip = (pageInt - 1) * limitInt;
+
+  const whereClause: any = {};
+
+  if (from || to) {
+    whereClause.date = {};
+    if (from) {
+      whereClause.date.gte = from as string;
+    }
+    if (to) {
+      whereClause.date.lte = to as string;
+    }
+  }
+
+  if (employeeId) {
+    whereClause.employeeId = parseInt(employeeId as string);
+  }
+
+  if (departmentId) {
+    whereClause.employee = {
+      departmentId: parseInt(departmentId as string)
+    };
+  }
+
+  if (officeId) {
+    whereClause.officeId = parseInt(officeId as string);
+  }
+
+  try {
+    const total = await prisma.attendance.count({ where: whereClause });
+
+    const records = await prisma.attendance.findMany({
+      where: whereClause,
+      include: {
+        employee: {
+          include: {
+            department: true,
+            user: {
+              include: {
+                profile: true
+              }
+            }
+          }
+        },
+        office: true,
+      },
+      orderBy: { date: 'desc' },
+      skip,
+      take: limitInt,
+    });
+
+    const mappedRecords = records.map((att) => ({
+      id: att.id,
+      date: att.date,
+      checkIn: att.checkIn ? att.checkIn.toISOString() : null,
+      checkOut: att.checkOut ? att.checkOut.toISOString() : null,
+      status: att.status,
+      notes: att.notes,
+      employee: {
+        id: att.employee.id,
+        employeeCode: att.employee.employeeCode,
+        firstName: att.employee.firstName,
+        lastName: att.employee.lastName,
+        designation: att.employee.designation,
+        department: att.employee.department ? {
+          id: att.employee.department.id,
+          name: att.employee.department.name
+        } : null,
+        email: att.employee.user?.email,
+        phone: att.employee.user?.profile?.phone,
+      },
+      office: att.office
+        ? {
+            id: att.office.id,
+            name: att.office.name,
+            address: att.office.address,
+          }
+        : null,
+      isOnBreak: att.isOnBreak,
+      breakStartTime: att.breakStartTime ? att.breakStartTime.toISOString() : null,
+      totalBreakSeconds: att.totalBreakSeconds,
+      latitude: att.latitude,
+      longitude: att.longitude,
+    }));
+
+    res.json({
+      success: true,
+      from: from || null,
+      to: to || null,
+      page: pageInt,
+      limit: limitInt,
+      total,
+      records: mappedRecords,
+    });
+  } catch (error) {
+    console.error('Fetch all employees attendance error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load attendance data.' });
   }
 };
