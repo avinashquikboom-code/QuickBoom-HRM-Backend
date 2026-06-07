@@ -404,7 +404,7 @@ export const downloadLeaveReport = async (
       pageOrientation: 'landscape',
       pageMargins: [20, 80, 20, 20],
       content: [
-        // Header with colored background
+        // Header with colored background using app primary color
         {
           canvas: [
             {
@@ -413,7 +413,7 @@ export const downloadLeaveReport = async (
               y: -80,
               w: 842,
               h: 70,
-              color: '#4F46E5'
+              color: '#3BA38B'
             }
           ]
         },
@@ -441,10 +441,10 @@ export const downloadLeaveReport = async (
         {
           table: {
             headerRows: 1,
-            widths: [100, 60, 80, 70, 70, 70, 35, 60, 80],
+            widths: [110, 60, 75, 65, 65, 65, 35, 55, 75],
             body: [
               [
-                { text: 'Employee', style: 'tableHeaderCell', color: 'white' },
+                { text: 'Employee Name', style: 'tableHeaderCell', color: 'white' },
                 { text: 'Code', style: 'tableHeaderCell', color: 'white' },
                 { text: 'Designation', style: 'tableHeaderCell', color: 'white' },
                 { text: 'Type', style: 'tableHeaderCell', color: 'white' },
