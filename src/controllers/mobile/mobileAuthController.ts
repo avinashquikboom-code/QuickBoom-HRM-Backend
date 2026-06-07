@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../../utils/db';
-import { signToken, signRefreshToken } from '../../utils/jwt';
+import { signToken, verifyToken } from '../../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 
@@ -225,7 +225,32 @@ export const mobileLogout = async (req: AuthenticatedRequest, res: Response): Pr
 // Refresh token for mobile
 export const mobileRefreshToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const user = req.user;
+    // Try to get user from auth middleware first (if token is still valid)
+    let user = req.user;
+    
+    // If no user from middleware, try to verify token from request body
+    if (!user) {
+      const { token } = req.body;
+      if (!token) {
+        res.status(400).json({
+          success: false,
+          message: 'Token is required',
+          errorCode: 'MISSING_TOKEN'
+        });
+        return;
+      }
+      
+      try {
+        user = verifyToken(token);
+      } catch (error) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid or expired token',
+          errorCode: 'INVALID_TOKEN'
+        });
+        return;
+      }
+    }
     
     // Generate new token (7 days expiration for mobile)
     const newToken = signToken({

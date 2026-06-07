@@ -8,6 +8,13 @@ import {
 
 const router = Router();
 
+// Refresh endpoint does not require auth middleware (allows refresh with expired token)
+router.post('/refresh', mobileRefreshToken);
+
+// Apply auth middleware to protected routes
+import { authMiddleware } from '../../middlewares/authMiddleware';
+router.use(authMiddleware);
+
 /**
  * @swagger
  * /api/mobile/auth/login:
