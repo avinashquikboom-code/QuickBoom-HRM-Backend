@@ -57,6 +57,7 @@ export const markNotificationAsRead = async (
 ): Promise<void> => {
   try {
     const { notificationId } = req.params;
+    const id = Array.isArray(notificationId) ? notificationId[0] : notificationId;
 
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
@@ -69,7 +70,7 @@ export const markNotificationAsRead = async (
 
     const notification = await prisma.notification.findFirst({
       where: {
-        id: parseInt(notificationId),
+        id: parseInt(id),
         employeeId: employee.id,
       },
     });
@@ -80,7 +81,7 @@ export const markNotificationAsRead = async (
     }
 
     await prisma.notification.update({
-      where: { id: parseInt(notificationId) },
+      where: { id: parseInt(id) },
       data: { isRead: true },
     });
 
