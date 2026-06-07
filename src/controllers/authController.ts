@@ -71,8 +71,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // 3. Generate token
-    const token = signToken({
+    // 3. Generate refresh token (7 days expiration)
+    const token = signRefreshToken({
       id: user.id,
       email: user.email,
       role: user.role,
@@ -440,8 +440,8 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
       }
     }
 
-    // Generate token
-    const token = signToken({
+    // Generate refresh token (7 days expiration)
+    const token = signRefreshToken({
       id: user.id,
       email: user.email,
       role: user.role,
