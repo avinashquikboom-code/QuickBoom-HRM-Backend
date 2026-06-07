@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../utils/db';
-import { signToken } from '../utils/jwt';
+import { signToken, signRefreshToken } from '../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 

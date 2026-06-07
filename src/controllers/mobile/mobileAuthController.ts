@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../../utils/db';
-import { signToken } from '../../utils/jwt';
+import { signToken, signRefreshToken } from '../../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 
@@ -227,8 +227,8 @@ export const mobileRefreshToken = async (req: AuthenticatedRequest, res: Respons
   try {
     const user = req.user;
     
-    // Generate new token
-    const newToken = signToken({
+    // Generate new refresh token (7 days expiration)
+    const newToken = signRefreshToken({
       id: user!.id,
       email: user!.email,
       role: user!.role,
@@ -237,6 +237,7 @@ export const mobileRefreshToken = async (req: AuthenticatedRequest, res: Respons
     res.json({
       success: true,
       token: newToken,
+      expiresIn: '7d',
       user: {
         id: user?.id,
         email: user?.email,
