@@ -23,6 +23,7 @@ import mobileTrackingRoutes from './routes/mobile/mobileTrackingRoutes';
 import mobileGeofenceRoutes from './routes/mobile/mobileGeofenceRoutes';
 import mobileLeaveBalanceRoutes from './routes/mobile/mobileLeaveBalanceRoutes';
 import mobileDistanceRoutes from './routes/mobile/mobileDistanceRoutes';
+import mobileComprehensiveAttendanceRoutes from './routes/mobile/mobileComprehensiveAttendanceRoutes';
 import mobileNotificationRoutes from './routes/mobile/mobileNotificationRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
@@ -157,6 +158,7 @@ app.use('/api/mobile/tracking', mobileTrackingRoutes);
 app.use('/api/mobile/geofence', mobileGeofenceRoutes);
 app.use('/api/mobile/leave-balance', mobileLeaveBalanceRoutes);
 app.use('/api/mobile/distance', mobileDistanceRoutes);
+app.use('/api/mobile/attendance/comprehensive', mobileComprehensiveAttendanceRoutes);
 
 const host = process.env.HOST || '0.0.0.0';
 
