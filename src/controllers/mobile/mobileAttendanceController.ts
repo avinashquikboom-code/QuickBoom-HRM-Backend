@@ -116,11 +116,13 @@ function getLocalDateString(timezone: string = 'Asia/Kolkata', dateInput: Date =
 // Mobile Punch In
 export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, photo, timezone, isFingerprint = false } = req.body;
+    const { latitude, longitude } = req.body;
 
     // Generate internal notes and timestamp
     const notes = 'Punch in recorded via mobile app';
     const clientTimestamp = new Date().toISOString();
+    const timezone = 'Asia/Kolkata';
+    const isFingerprint = false;
 
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH IN REQUEST:', {
@@ -352,11 +354,13 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
 // Mobile Punch Out
 export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude, timezone, isFingerprint = false } = req.body;
+    const { latitude, longitude } = req.body;
 
     // Generate internal notes and timestamp
     const notes = 'Punch out recorded via mobile app';
     const clientTimestamp = new Date().toISOString();
+    const timezone = 'Asia/Kolkata';
+    const isFingerprint = false;
 
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH OUT REQUEST:', {
