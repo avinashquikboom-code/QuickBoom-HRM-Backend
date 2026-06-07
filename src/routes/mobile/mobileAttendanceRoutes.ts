@@ -11,7 +11,8 @@ import {
   getAttendanceStats,
   downloadMyAttendanceReport,
   downloadAttendanceReport,
-  requestAttendanceCorrection
+  requestAttendanceCorrection,
+  fetchAllEmployeesAttendance
 } from '../../controllers/mobile/mobileAttendanceController';
 
 const router = Router();
@@ -676,5 +677,63 @@ router.get('/report/download', downloadAttendanceReport);
  *         description: Server error
  */
 router.post('/correction', requestAttendanceCorrection);
+
+/**
+ * @swagger
+ * /api/mobile/attendance/all:
+ *   get:
+ *     summary: Fetch all employees' attendance (HR/Admin only)
+ *     tags: [Mobile - Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: from
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Start date filter (YYYY-MM-DD)
+ *       - in: query
+ *         name: to
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: End date filter (YYYY-MM-DD)
+ *       - in: query
+ *         name: employeeId
+ *         schema:
+ *           type: integer
+ *         description: Filter by specific employee
+ *       - in: query
+ *         name: departmentId
+ *         schema:
+ *           type: integer
+ *         description: Filter by department
+ *       - in: query
+ *         name: officeId
+ *         schema:
+ *           type: integer
+ *         description: Filter by office
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *         description: Records per page
+ *     responses:
+ *       200:
+ *         description: Attendance data retrieved successfully
+ *       403:
+ *         description: Access denied (HR/Admin only)
+ *       500:
+ *         description: Server error
+ */
+router.get('/all', fetchAllEmployeesAttendance);
 
 export default router;
