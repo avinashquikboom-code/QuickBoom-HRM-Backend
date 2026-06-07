@@ -53,8 +53,17 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    // 3. Check if user has mobile-compatible role
+    // 3. Check if user has mobile-compatible role (block SUPER_ADMIN and PLATFORM_ADMIN)
     const mobileCompatibleRoles = ['EMPLOYEE' as Role, 'HR' as Role, 'ADMIN' as Role];
+    const blockedRoles = ['SUPER_ADMIN' as Role, 'PLATFORM_ADMIN' as Role];
+    if (blockedRoles.includes(user.role)) {
+      res.status(403).json({
+        success: false,
+        message: 'Super Admin and Platform Admin roles cannot access the mobile app. Please use the web portal.',
+        errorCode: 'MOBILE_ACCESS_DENIED'
+      });
+      return;
+    }
     if (!mobileCompatibleRoles.includes(user.role)) {
       res.status(403).json({
         success: false,
