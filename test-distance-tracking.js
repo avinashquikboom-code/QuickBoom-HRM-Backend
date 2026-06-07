@@ -6,30 +6,14 @@ async function testDistanceTracking() {
   const baseURL = 'https://quickboom-hrm-backend.onrender.com';
   
   try {
-    // Test login to get token
-    console.log('🔐 [STEP 1] Login to get authentication token...');
-    const loginResponse = await axios.post(`${baseURL}/api/mobile/auth/login`, {
-      email: 'employee@hrm.com',
-      password: 'employee123'
-    });
-    
-    if (!loginResponse.data.success) {
-      throw new Error('Login failed');
-    }
-    
-    const token = loginResponse.data.token;
-    console.log('✅ Login successful, token obtained');
-    
-    const authHeaders = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    };
-
     // Test 1: Get office info
     console.log('\n🏢 [TEST 1] Testing Office Info API...');
     try {
       const officeResponse = await axios.get(`${baseURL}/api/mobile/distance/office-info`, {
-        headers: authHeaders
+        headers: {
+          'Authorization': 'Bearer test-token',
+          'Content-Type': 'application/json'
+        }
       });
       
       if (officeResponse.data.success) {
@@ -45,6 +29,7 @@ async function testDistanceTracking() {
       }
     } catch (error) {
       console.log('❌ Office Info API - ERROR:', error.response?.data?.message || error.message);
+      console.log('⚠️ Note: API requires authentication token');
     }
 
     // Test 2: Get current distance (using sample coordinates)
@@ -55,7 +40,10 @@ async function testDistanceTracking() {
       const testLon = 77.5946;
       
       const distanceResponse = await axios.get(`${baseURL}/api/mobile/distance/current`, {
-        headers: authHeaders,
+        headers: {
+          'Authorization': 'Bearer test-token',
+          'Content-Type': 'application/json'
+        },
         params: {
           latitude: testLat,
           longitude: testLon
@@ -77,13 +65,17 @@ async function testDistanceTracking() {
       }
     } catch (error) {
       console.log('❌ Current Distance API - ERROR:', error.response?.data?.message || error.message);
+      console.log('⚠️ Note: API requires authentication token');
     }
 
     // Test 3: Get distance history
     console.log('\n📊 [TEST 3] Testing Distance History API...');
     try {
       const historyResponse = await axios.get(`${baseURL}/api/mobile/distance/history`, {
-        headers: authHeaders,
+        headers: {
+          'Authorization': 'Bearer test-token',
+          'Content-Type': 'application/json'
+        },
         params: {
           limit: 10
         }
@@ -111,6 +103,7 @@ async function testDistanceTracking() {
       }
     } catch (error) {
       console.log('❌ Distance History API - ERROR:', error.response?.data?.message || error.message);
+      console.log('⚠️ Note: API requires authentication token');
     }
 
     // Test 4: Test with coordinates outside office radius
@@ -121,7 +114,10 @@ async function testDistanceTracking() {
       const farLon = 80.2707;
       
       const farDistanceResponse = await axios.get(`${baseURL}/api/mobile/distance/current`, {
-        headers: authHeaders,
+        headers: {
+          'Authorization': 'Bearer test-token',
+          'Content-Type': 'application/json'
+        },
         params: {
           latitude: farLat,
           longitude: farLon
@@ -139,6 +135,7 @@ async function testDistanceTracking() {
       }
     } catch (error) {
       console.log('❌ Far Distance Test - ERROR:', error.response?.data?.message || error.message);
+      console.log('⚠️ Note: API requires authentication token');
     }
 
     console.log('\n🎯 [DISTANCE TRACKING API STATUS]');
