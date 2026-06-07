@@ -65,10 +65,30 @@ app.use('/scalar-docs', apiReference({
     .scalar-header {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
   `,
   metaData: {
     title: 'QuickBoom HRM API Documentation',
     description: 'Comprehensive API endpoints for QuickBoom HRM applications (including Web, Admin, and Mobile)',
+  },
+  configuration: {
+    darkMode: false,
+    hideDownloadButton: false,
+    hideTestButton: false,
+    hideModels: false,
+    hideSecurity: false,
+    hideServerInfo: false,
+    hideAuthentication: false,
+    searchHotKey: 'k',
+    baseServerURL: 'https://quickboom-hrm-backend.onrender.com',
+    servers: [
+      {
+        url: 'https://quickboom-hrm-backend.onrender.com',
+        description: 'Production Server'
+      }
+    ]
   }
 }));
 
@@ -87,6 +107,61 @@ app.use('/api/hr', hrRoutes);
 app.use('/api/leave-balance', leaveBalanceRoutes);
 app.use('/api/realtime/leave', realtimeLeaveRoutes);
 app.use('/api/attendance', comprehensiveAttendanceRoutes);
+
+// Scalar documentation fallback
+app.get('/scalar-docs', (req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>QuickBoom HRM API Documentation</title>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@latest"></script>
+      <style>
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .loading { 
+          display: flex; 
+          justify-content: center; 
+          align-items: center; 
+          height: 100vh; 
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          font-size: 18px;
+        }
+      </style>
+    </head>
+    <body>
+      <div id="scalar-api-reference"></div>
+      <script>
+        // Initialize Scalar API Reference
+        ScalarApiReference.create({
+          spec: {
+            url: '/api-docs.json'
+          },
+          configuration: {
+            baseServerURL: 'https://quickboom-hrm-backend.onrender.com',
+            darkMode: false,
+            hideDownloadButton: false,
+            hideTestButton: false
+          },
+          theme: 'default',
+          customCss: \`
+            .scalar-header {
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+          \`
+        }).catch(error => {
+          console.error('Scalar initialization failed:', error);
+          document.body.innerHTML = '<div class="loading">Loading API Documentation...</div>';
+        });
+      </script>
+      <div class="loading" id="loading">Loading API Documentation...</div>
+    </body>
+    </html>
+  `);
+});
 
 // Mobile API Routes
 app.use('/api/mobile/auth', mobileAuthRoutes);
