@@ -227,8 +227,8 @@ export const mobileRefreshToken = async (req: AuthenticatedRequest, res: Respons
   try {
     const user = req.user;
     
-    // Generate new refresh token (7 days expiration)
-    const newToken = signRefreshToken({
+    // Generate new token (7 days expiration for mobile)
+    const newToken = signToken({
       id: user!.id,
       email: user!.email,
       role: user!.role,
