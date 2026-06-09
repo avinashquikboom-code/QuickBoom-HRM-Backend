@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import leaveBalanceService from '../services/leaveBalanceService';
 import { prisma } from '../utils/db';
-import { webSocketService } from '..';
+import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 // ==========================================
 // Leave Balance Management Controller
@@ -38,7 +38,7 @@ export const createEmployeeLeaveBalance = async (
 
     // Broadcast real-time leave balance update
     try {
-      await webSocketService.broadcastLeaveBalanceUpdate(parseInt(employeeId), {
+      await getWebSocketInstance().broadcastLeaveBalanceUpdate(parseInt(employeeId), {
         type: 'LEAVE_BALANCE_UPDATED',
         employeeId: parseInt(employeeId),
         fiscalYear,
@@ -274,7 +274,7 @@ export const updateUsedLeave = async (
 
     // Broadcast real-time leave balance update
     try {
-      await webSocketService.broadcastLeaveBalanceUpdate(parseInt(employeeId), {
+      await getWebSocketInstance().broadcastLeaveBalanceUpdate(parseInt(employeeId), {
         type: 'LEAVE_BALANCE_UPDATED',
         employeeId: parseInt(employeeId),
         leaveType,

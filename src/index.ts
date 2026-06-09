@@ -30,6 +30,7 @@ import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
 import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoutes';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
+import { setWebSocketInstance } from './utils/websocketSingleton';
 
 dotenv.config();
 
@@ -167,6 +168,7 @@ const server = createServer(app);
 
 // Initialize WebSocket service
 const webSocketService = new WebSocketService(server);
+setWebSocketInstance(webSocketService);
 
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);
@@ -175,5 +177,4 @@ server.listen(port, host, () => {
   console.log('🚀 QuickBoom HRM Backend is ready!\n');
 });
 
-// Export WebSocket service for use in controllers
-export { webSocketService };
+// webSocketService is available via getWebSocketInstance() from utils/websocketSingleton

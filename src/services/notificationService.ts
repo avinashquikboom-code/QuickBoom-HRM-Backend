@@ -1,6 +1,5 @@
 import { prisma } from '../utils/db';
-// @ts-ignore - WebSocket service is imported dynamically
-const { webSocketService } = require('../..');
+import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 export interface NotificationTemplate {
   id: number;
@@ -164,7 +163,7 @@ class NotificationService {
 
           // Send real-time notification
           try {
-            await webSocketService.broadcastNotification(recipientId, {
+            await getWebSocketInstance().broadcastNotification(recipientId, {
               title: processedTitle,
               body: processedBody,
               category,

@@ -1,7 +1,6 @@
 import { prisma } from '../utils/db';
 import { LocationPoint, TrackingSession, RouteHistory, GeofenceEvent } from '../models/locationTracking';
-// @ts-ignore - WebSocket service is imported dynamically
-const { webSocketService } = require('../..');
+import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 class LiveTrackingService {
   private activeSessions: Map<string, TrackingSession> = new Map();
@@ -33,7 +32,7 @@ class LiveTrackingService {
 
       // Broadcast session start to HR
       try {
-        await webSocketService.broadcastNotification(employeeId, {
+        await getWebSocketInstance().broadcastNotification(employeeId, {
           title: 'Live Tracking Started',
           body: `Employee has started ${purpose} tracking session.`,
           type: 'tracking_started',
@@ -73,7 +72,7 @@ class LiveTrackingService {
 
       // Broadcast session end to HR
       try {
-        await webSocketService.broadcastNotification(session.employeeId, {
+        await getWebSocketInstance().broadcastNotification(session.employeeId, {
           title: 'Live Tracking Stopped',
           body: `Employee has ended ${session.purpose} tracking session.`,
           type: 'tracking_stopped',
@@ -126,7 +125,7 @@ class LiveTrackingService {
       // Broadcast location update to HR (throttled)
       if (buffer.length % 5 === 0) { // Every 5th location update
         try {
-          await webSocketService.broadcastNotification(employeeId, {
+          await getWebSocketInstance().broadcastNotification(employeeId, {
             title: location.isLocationEnabled === false ? 'Location Disabled' : 'Location Update',
             body: location.isLocationEnabled === false 
               ? 'Employee has turned off device location' 
@@ -345,7 +344,7 @@ class LiveTrackingService {
 
         // Broadcast notification to HR/Admin
         try {
-          await webSocketService.broadcastNotification(employeeId, {
+          await getWebSocketInstance().broadcastNotification(employeeId, {
             title: isWithinGeofence ? 'Employee Entered Office Area' : 'Employee Left Office Area',
             body: `${employee.user?.profile?.fullName || 'Employee'} has ${isWithinGeofence ? 'entered' : 'left'} the office geofence. Distance: ${distance.toFixed(0)}m`,
             type: 'geofence_event',

@@ -2,6 +2,8 @@ import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { Prisma } from '@prisma/client';
+import { getWebSocketInstance } from '../../utils/websocketSingleton';
+import leaveBalanceService from '../../services/leaveBalanceService';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -193,9 +195,8 @@ export const applyLeave = async (
       await Promise.all(notificationPromises);
 
       // Broadcast real-time WebSocket event to HR users
-      const webSocketService = require('../services/websocketService').default;
       try {
-        await webSocketService.broadcastToRole('HR', {
+        await getWebSocketInstance().broadcastToRole('HR', {
           type: 'new_leave_application',
           leaveRequest: {
             id: leaveRequest.id.toString(),
@@ -659,11 +660,9 @@ export const approveLeaveRequest = async (
     // Broadcast real-time leave balance update after approval
     try {
       // Get updated leave balance
-      const { webSocketService } = require('../..');
-      const leaveBalanceService = require('../services/leaveBalanceService').default;
       const updatedBalance = await leaveBalanceService.getEmployeeLeaveBalance(existingLeave.employee.id);
       
-      await webSocketService.broadcastLeaveBalanceUpdate(existingLeave.employee.id, {
+      await getWebSocketInstance().broadcastLeaveBalanceUpdate(existingLeave.employee.id, {
         type: 'LEAVE_BALANCE_UPDATED',
         employeeId: existingLeave.employee.id,
         leaveId: leave.id,
@@ -767,11 +766,9 @@ export const rejectLeaveRequest = async (
     // Broadcast real-time leave balance update after rejection
     try {
       // Get updated leave balance
-      const { webSocketService } = require('../..');
-      const leaveBalanceService = require('../services/leaveBalanceService').default;
       const updatedBalance = await leaveBalanceService.getEmployeeLeaveBalance(existingLeave.employee.id);
       
-      await webSocketService.broadcastLeaveBalanceUpdate(existingLeave.employee.id, {
+      await getWebSocketInstance().broadcastLeaveBalanceUpdate(existingLeave.employee.id, {
         type: 'LEAVE_BALANCE_UPDATED',
         employeeId: existingLeave.employee.id,
         leaveId: leave.id,

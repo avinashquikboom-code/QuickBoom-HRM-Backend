@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
-import { webSocketService } from '../..';
+import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import geofenceService from '../../services/geofenceService';
 import { Role } from '@prisma/client';
 const PdfPrinter = require('pdfmake');
@@ -320,7 +320,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     
     // Broadcast real-time attendance update
     try {
-      await webSocketService.broadcastAttendanceUpdate(employee.id, {
+      await getWebSocketInstance().broadcastAttendanceUpdate(employee.id, {
         type: 'punch_in',
         employeeId: employee.id,
         employeeName: `${employee.firstName} ${employee.lastName}`,
@@ -565,7 +565,7 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     
     // Broadcast real-time attendance update
     try {
-      await webSocketService.broadcastAttendanceUpdate(employee.id, {
+      await getWebSocketInstance().broadcastAttendanceUpdate(employee.id, {
         type: 'punch_out',
         employeeId: employee.id,
         employeeName: `${employee.firstName} ${employee.lastName}`,
@@ -696,7 +696,7 @@ export const requestAttendanceCorrection = async (req: AuthenticatedRequest, res
 
     // Broadcast real-time update
     try {
-      await webSocketService.broadcastNotification(employee.id, {
+      await getWebSocketInstance().broadcastNotification(employee.id, {
         title: 'Attendance Correction Requested',
         body: `Your attendance correction request for ${attendance.date} has been submitted for review.`,
         type: 'attendance_correction',

@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { webSocketService } from '../..';
+import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 
 // ==========================================
@@ -705,8 +705,7 @@ export const approveLeave = async (
     
     // Broadcast real-time leave update to employee
     try {
-      const webSocketService = require('../services/websocketService').default;
-      await webSocketService.broadcastToUser(leave.employee.userId!, {
+      await getWebSocketInstance().broadcastLeaveUpdate(leave.employee.id, {
         type: 'leave_approved',
         leaveRequest: {
           id: leave.id.toString(),
@@ -723,7 +722,7 @@ export const approveLeave = async (
       });
       
       // Also broadcast to all HR users that this leave has been processed
-      await webSocketService.broadcastToRole('HR', {
+      await getWebSocketInstance().broadcastToRole('HR', {
         type: 'leave_request_processed',
         leaveRequest: {
           id: leave.id.toString(),
@@ -836,8 +835,7 @@ export const rejectLeave = async (
     
     // Broadcast real-time leave update to employee
     try {
-      const webSocketService = require('../services/websocketService').default;
-      await webSocketService.broadcastToUser(leave.employee.userId!, {
+      await getWebSocketInstance().broadcastLeaveUpdate(leave.employee.id, {
         type: 'leave_rejected',
         leaveRequest: {
           id: leave.id.toString(),
@@ -854,7 +852,7 @@ export const rejectLeave = async (
       });
       
       // Also broadcast to all HR users that this leave has been processed
-      await webSocketService.broadcastToRole('HR', {
+      await getWebSocketInstance().broadcastToRole('HR', {
         type: 'leave_request_processed',
         leaveRequest: {
           id: leave.id.toString(),
@@ -1171,7 +1169,7 @@ export const approveAttendanceCorrection = async (
 
     // Broadcast real-time update
     try {
-      await webSocketService.broadcastNotification(correction.employee.id, {
+      await getWebSocketInstance().broadcastNotification(correction.employee.id, {
         title: 'Attendance Correction Approved',
         body: `Your attendance correction for ${correction.attendance.date} has been approved.`,
         type: 'attendance_correction_approved',
@@ -1242,7 +1240,7 @@ export const rejectAttendanceCorrection = async (
 
     // Broadcast real-time update
     try {
-      await webSocketService.broadcastNotification(correction.employee.id, {
+      await getWebSocketInstance().broadcastNotification(correction.employee.id, {
         title: 'Attendance Correction Rejected',
         body: `Your attendance correction for ${correction.attendance.date} has been rejected.`,
         type: 'attendance_correction_rejected',
