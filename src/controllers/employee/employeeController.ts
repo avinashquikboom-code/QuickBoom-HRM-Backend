@@ -912,6 +912,8 @@ export const updateEmployeeTaskStatus = async (
   let dbStatus = 'TODO';
   if (status === 'inProgress') {
     dbStatus = 'IN_PROGRESS';
+  } else if (status === 'underReview') {
+    dbStatus = 'UNDER_REVIEW';
   } else if (status === 'completed') {
     dbStatus = 'COMPLETED';
   } else if (status === 'overdue') {

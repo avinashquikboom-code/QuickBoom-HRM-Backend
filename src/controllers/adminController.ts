@@ -2192,18 +2192,47 @@ export const fetchAdminTasks = async (
 
     res.json({
       success: true,
-      tasks: tasks.map((t) => ({
-        id: t.id.toString(),
-        title: t.title,
-        description: t.description,
-        assignee: t.assignedTo ? `${t.assignedTo.firstName} ${t.assignedTo.lastName}` : 'Unassigned',
-        assigneeId: t.assignedToId?.toString() ?? '',
-        priority: t.priority.toLowerCase() === 'high' ? 'High' : t.priority.toLowerCase() === 'medium' ? 'Medium' : 'Low',
-        status: t.status === 'COMPLETED' ? 'Completed' : t.status === 'UNDER_REVIEW' ? 'Under Review' : t.status === 'IN_PROGRESS' ? 'In Progress' : t.status === 'OVERDUE' ? 'Overdue' : 'To Do',
-        deadline: t.dueDate.toISOString().split('T')[0],
-        projectName: t.projectName || 'General',
-        progress: t.status === 'COMPLETED' ? 100 : t.status === 'UNDER_REVIEW' ? 90 : t.status === 'IN_PROGRESS' ? 40 : 0,
-      })),
+      tasks: tasks.map((t) => {
+        let deadlineStr = '';
+        try {
+          if (t.dueDate instanceof Date && !isNaN(t.dueDate.getTime())) {
+            deadlineStr = t.dueDate.toISOString().split('T')[0];
+          } else if (t.dueDate) {
+            const d = new Date(t.dueDate);
+            if (!isNaN(d.getTime())) {
+              deadlineStr = d.toISOString().split('T')[0];
+            }
+          }
+        } catch (e) {
+          deadlineStr = '';
+        }
+
+        const rawPriority = (t.priority || '').toLowerCase();
+        const priorityStr = rawPriority === 'high' ? 'High' : rawPriority === 'medium' ? 'Medium' : 'Low';
+
+        const rawStatus = (t.status || '').toUpperCase();
+        const statusStr = rawStatus === 'COMPLETED' ? 'Completed' : 
+                          rawStatus === 'UNDER_REVIEW' ? 'Under Review' : 
+                          rawStatus === 'IN_PROGRESS' ? 'In Progress' : 
+                          rawStatus === 'OVERDUE' ? 'Overdue' : 'To Do';
+
+        const progressVal = rawStatus === 'COMPLETED' ? 100 : 
+                            rawStatus === 'UNDER_REVIEW' ? 90 : 
+                            rawStatus === 'IN_PROGRESS' ? 40 : 0;
+
+        return {
+          id: t.id.toString(),
+          title: t.title || '',
+          description: t.description || '',
+          assignee: t.assignedTo ? `${t.assignedTo.firstName} ${t.assignedTo.lastName}` : 'Unassigned',
+          assigneeId: t.assignedToId?.toString() ?? '',
+          priority: priorityStr,
+          status: statusStr,
+          deadline: deadlineStr,
+          projectName: t.projectName || 'General',
+          progress: progressVal,
+        };
+      }),
     });
   } catch (error) {
     console.error('Fetch admin tasks error:', error);
