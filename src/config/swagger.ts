@@ -14,8 +14,8 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
-        url: 'https://quickboom-hrm-backend.onrender.com',
-        description: 'Production server',
+        url: 'http://69.62.80.20:3000',
+        description: 'Hostinger VPS Production server',
       },
       {
         url: 'http://localhost:3000',

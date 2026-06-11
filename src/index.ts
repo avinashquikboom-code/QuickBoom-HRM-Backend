@@ -135,7 +135,7 @@ app.get('/scalar-docs', (req, res) => {
             url: '/api-docs.json'
           },
           configuration: {
-            baseServerURL: 'https://quickboom-hrm-backend.onrender.com',
+            baseServerURL: 'http://69.62.80.20:3000',
             darkMode: false,
             hideDownloadButton: false,
             hideTestButton: false
