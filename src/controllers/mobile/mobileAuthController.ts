@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../../utils/db';
-import { signToken, verifyToken } from '../../utils/jwt';
+import { signToken, verifyToken, signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 
@@ -85,8 +85,14 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
-    // 4. Generate mobile-specific token
-    const token = signToken({
+    // 4. Generate mobile-specific tokens
+    const token = signAccessToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    const refreshToken = signRefreshToken({
       id: user.id,
       email: user.email,
       role: user.role,
@@ -168,6 +174,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
     res.json({
       success: true,
       token,
+      refreshToken,
       user: mobileUserResponse,
       fcmToken: req.body.fcmToken || null,
       loginInfo: {
@@ -211,48 +218,59 @@ export const mobileLogout = async (req: AuthenticatedRequest, res: Response): Pr
 // Refresh token for mobile
 export const mobileRefreshToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    // Try to get user from auth middleware first (if token is still valid)
-    let user = req.user;
+    // Expect refreshToken from body. Fallback to token (which could be legacy access/refresh token)
+    const refreshToken = req.body.refreshToken || req.body.token;
+
+    if (!refreshToken) {
+      res.status(400).json({
+        success: false,
+        message: 'Refresh token is required',
+        errorCode: 'MISSING_REFRESH_TOKEN'
+      });
+      return;
+    }
     
-    // If no user from middleware, try to verify token from request body
-    if (!user) {
-      const { token } = req.body;
-      if (!token) {
-        res.status(400).json({
-          success: false,
-          message: 'Token is required',
-          errorCode: 'MISSING_TOKEN'
-        });
-        return;
-      }
-      
+    let user;
+    try {
+      // Try verifying as a refresh token first (uses REFRESH_SECRET)
+      user = verifyRefreshToken(refreshToken);
+    } catch (error) {
       try {
-        user = verifyToken(token);
-      } catch (error) {
+        // Fallback: try verifying as a legacy token/access token (uses JWT_SECRET)
+        user = verifyToken(refreshToken);
+      } catch (innerError) {
         res.status(401).json({
           success: false,
-          message: 'Invalid or expired token',
-          errorCode: 'INVALID_TOKEN'
+          message: 'Invalid or expired refresh token',
+          errorCode: 'INVALID_REFRESH_TOKEN'
         });
         return;
       }
     }
     
-    // Generate new token (7 days expiration for mobile)
-    const newToken = signToken({
-      id: user!.id,
-      email: user!.email,
-      role: user!.role,
+    // Generate new access token (1 hour)
+    const newAccessToken = signAccessToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    // Generate new refresh token (7 days)
+    const newRefreshToken = signRefreshToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
     });
 
     res.json({
       success: true,
-      token: newToken,
-      expiresIn: '7d',
+      token: newAccessToken,
+      refreshToken: newRefreshToken,
+      expiresIn: '1h',
       user: {
-        id: user?.id,
-        email: user?.email,
-        role: user?.role,
+        id: user.id,
+        email: user.email,
+        role: user.role,
       }
     });
   } catch (error) {
