@@ -443,23 +443,44 @@ export const fetchAttendanceTrend = async (
 ): Promise<void> => {
   try {
     const days = 7;
-    const results = [];
+    const dates: string[] = [];
+    const weekdayNames: Record<string, string> = {};
+    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
-      const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
-
-      const [present, absent, late, onLeave] = await Promise.all([
-        prisma.attendance.count({ where: { date: dateStr, status: 'PRESENT' } }),
-        prisma.attendance.count({ where: { date: dateStr, status: 'ABSENT' } }),
-        prisma.attendance.count({ where: { date: dateStr, status: 'LATE' } }),
-        prisma.attendance.count({ where: { date: dateStr, status: 'LEAVE' } }),
-      ]);
-
-      results.push({ date: dateStr, day: dayName, present, absent, late, onLeave });
+      dates.push(dateStr);
+      weekdayNames[dateStr] = weekdays[d.getDay()];
     }
+
+    const attendances = await prisma.attendance.groupBy({
+      by: ['date', 'status'],
+      where: {
+        date: { in: dates }
+      },
+      _count: {
+        _all: true
+      }
+    });
+
+    const results = dates.map(dateStr => {
+      const dateRecords = attendances.filter(a => a.date === dateStr);
+      const present = dateRecords.find(a => a.status === 'PRESENT')?._count._all || 0;
+      const absent = dateRecords.find(a => a.status === 'ABSENT')?._count._all || 0;
+      const late = dateRecords.find(a => a.status === 'LATE')?._count._all || 0;
+      const onLeave = dateRecords.find(a => a.status === 'LEAVE')?._count._all || 0;
+
+      return {
+        date: dateStr,
+        day: weekdayNames[dateStr],
+        present,
+        absent,
+        late,
+        onLeave
+      };
+    });
 
     res.json({ success: true, data: results });
   } catch (error) {
