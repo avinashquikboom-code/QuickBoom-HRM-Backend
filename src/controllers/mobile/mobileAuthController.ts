@@ -98,45 +98,43 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       role: user.role,
     });
 
-    // 5. Update last login metadata
-    let updatedProfile = user.profile;
+    // 5. Update last login metadata (non-blocking)
     const loginLocation = 'Mobile App';
-    
     if (user.profile) {
-      updatedProfile = await prisma.profile.update({
+      prisma.profile.update({
         where: { id: user.profile.id },
         data: {
           lastLoginAt: new Date(),
           lastLoginLocation: loginLocation,
         },
-      });
+      }).catch(err => console.error('Failed to update profile lastLoginAt:', err));
     }
 
-    // 6. Store FCM token if provided (optional)
+    // 6. Store FCM token if provided (optional, non-blocking)
     if (req.body.fcmToken) {
-      const existingToken = await prisma.fCMToken.findFirst({
+      prisma.fCMToken.findFirst({
         where: { userId: user.id, token: req.body.fcmToken }
-      });
-      
-      if (!existingToken) {
-        await prisma.fCMToken.create({
-          data: {
-            userId: user.id,
-            token: req.body.fcmToken,
-            platform: 'mobile',
-            isActive: true,
-            lastUsedAt: new Date(),
-          }
-        });
-      } else {
-        await prisma.fCMToken.update({
-          where: { id: existingToken.id },
-          data: {
-            isActive: true,
-            lastUsedAt: new Date(),
-          }
-        });
-      }
+      }).then(existingToken => {
+        if (!existingToken) {
+          return prisma.fCMToken.create({
+            data: {
+              userId: user.id,
+              token: req.body.fcmToken,
+              platform: 'mobile',
+              isActive: true,
+              lastUsedAt: new Date(),
+            }
+          });
+        } else {
+          return prisma.fCMToken.update({
+            where: { id: existingToken.id },
+            data: {
+              isActive: true,
+              lastUsedAt: new Date(),
+            }
+          });
+        }
+      }).catch(err => console.error('Failed to update FCM token:', err));
     }
 
     // 7. Structure mobile-optimized response
@@ -144,13 +142,13 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       id: user?.id,
       email: user?.email,
       role: user?.role,
-      profile: updatedProfile ? {
-        id: updatedProfile.id,
-        fullName: updatedProfile.fullName,
-        phone: updatedProfile.phone,
-        avatarUrl: updatedProfile.avatarUrl,
-        timezone: updatedProfile.timezone,
-        timezoneLabel: updatedProfile.timezoneLabel,
+      profile: user.profile ? {
+        id: user.profile.id,
+        fullName: user.profile.fullName,
+        phone: user.profile.phone,
+        avatarUrl: user.profile.avatarUrl,
+        timezone: user.profile.timezone,
+        timezoneLabel: user.profile.timezoneLabel,
       } : null,
       employee: user?.employee ? {
         id: user.employee.id,
