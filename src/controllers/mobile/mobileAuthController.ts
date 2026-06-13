@@ -7,9 +7,14 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 
 // Mobile-specific login - simplified to email and password only
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
+  const startTime = Date.now();
   const { email, password } = req.body;
 
+  console.log('[MOBILE_LOGIN] Request received at:', new Date().toISOString());
+  console.log('[MOBILE_LOGIN] Email:', email);
+
   if (!email || !password) {
+    console.log('[MOBILE_LOGIN] Missing credentials');
     res.status(400).json({
       success: false,
       message: 'Email and password are required.',
@@ -20,6 +25,8 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
 
   try {
     const normalizedEmail = email.trim().toLowerCase();
+    console.log('[MOBILE_LOGIN] Phase 1: Fetching user auth data...');
+    const phase1Start = Date.now();
 
     // Phase 1: minimal fetch for credential verification (avoids heavy JOINs on failed attempts)
     const userAuth = await prisma.user.findUnique({
@@ -35,7 +42,10 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       },
     });
 
+    console.log('[MOBILE_LOGIN] Phase 1 completed in:', Date.now() - phase1Start, 'ms');
+
     if (!userAuth || !userAuth.isActive) {
+      console.log('[MOBILE_LOGIN] User not found or inactive');
       res.status(401).json({
         success: false,
         message: 'Invalid credentials or inactive account.',
@@ -44,8 +54,13 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    console.log('[MOBILE_LOGIN] Phase 2: Password comparison...');
+    const passwordStart = Date.now();
     const isPasswordMatch = await bcrypt.compare(password, userAuth.password);
+    console.log('[MOBILE_LOGIN] Password comparison completed in:', Date.now() - passwordStart, 'ms');
+    
     if (!isPasswordMatch) {
+      console.log('[MOBILE_LOGIN] Invalid password');
       res.status(401).json({
         success: false,
         message: 'Invalid email or password.',
@@ -54,9 +69,11 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    console.log('[MOBILE_LOGIN] Phase 3: Role validation...');
     const mobileCompatibleRoles = ['EMPLOYEE' as Role, 'HR' as Role, 'ADMIN' as Role];
     const blockedRoles = ['SUPER_ADMIN' as Role, 'PLATFORM_ADMIN' as Role];
     if (blockedRoles.includes(userAuth.role)) {
+      console.log('[MOBILE_LOGIN] Blocked role:', userAuth.role);
       res.status(403).json({
         success: false,
         message: 'Super Admin and Platform Admin roles cannot access the mobile app. Please use the web portal.',
@@ -65,6 +82,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       return;
     }
     if (!mobileCompatibleRoles.includes(userAuth.role)) {
+      console.log('[MOBILE_LOGIN] Incompatible role:', userAuth.role);
       res.status(403).json({
         success: false,
         message: 'Mobile access not available for this role.',
@@ -75,6 +93,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
 
     if (userAuth.role === Role.EMPLOYEE) {
       if (!userAuth.employee || !userAuth.employee.officeId) {
+        console.log('[MOBILE_LOGIN] Office not allotted for employee');
         res.status(403).json({
           success: false,
           message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
@@ -83,6 +102,9 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
         return;
       }
     }
+
+    console.log('[MOBILE_LOGIN] Phase 4: Loading full profile data...');
+    const phase4Start = Date.now();
 
     // Phase 2: load full profile data only after successful authentication
     const user = await prisma.user.findUnique({
@@ -98,7 +120,10 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       },
     });
 
+    console.log('[MOBILE_LOGIN] Phase 4 completed in:', Date.now() - phase4Start, 'ms');
+
     if (!user) {
+      console.log('[MOBILE_LOGIN] User not found in phase 4');
       res.status(401).json({
         success: false,
         message: 'Invalid credentials or inactive account.',
@@ -106,6 +131,9 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       });
       return;
     }
+
+    console.log('[MOBILE_LOGIN] Phase 5: Generating tokens...');
+    const tokenStart = Date.now();
 
     // 4. Generate mobile-specific tokens
     const token = signAccessToken({
@@ -119,6 +147,8 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       email: user.email,
       role: user.role,
     });
+
+    console.log('[MOBILE_LOGIN] Token generation completed in:', Date.now() - tokenStart, 'ms');
 
     // 5. Update last login metadata (non-blocking)
     const loginLocation = 'Mobile App';
@@ -159,6 +189,8 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       }).catch(err => console.error('Failed to update FCM token:', err));
     }
 
+    console.log('[MOBILE_LOGIN] Phase 6: Structuring response...');
+
     // 7. Structure mobile-optimized response
     const mobileUserResponse = {
       id: user?.id,
@@ -191,6 +223,9 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       } : null,
     };
 
+    const totalTime = Date.now() - startTime;
+    console.log('[MOBILE_LOGIN] Total request time:', totalTime, 'ms');
+
     res.json({
       success: true,
       token,
@@ -209,7 +244,8 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       }
     });
   } catch (error) {
-    console.error('Mobile login error:', error);
+    const totalTime = Date.now() - startTime;
+    console.error('[MOBILE_LOGIN] Error after', totalTime, 'ms:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error during mobile login.',

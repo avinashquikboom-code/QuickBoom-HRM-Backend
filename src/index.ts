@@ -184,4 +184,9 @@ server.listen(port, host, () => {
   console.log('🚀 QuickBoom HRM Backend is ready!\n');
 });
 
+// Set server timeout to 60 seconds to handle slow mobile requests
+server.timeout = 60000;
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+
 // webSocketService is available via getWebSocketInstance() from utils/websocketSingleton
