@@ -36,6 +36,7 @@ import {
   updateSubscription,
   fetchPricingPlans,
   updatePricingPlan,
+  downloadSubscriptionReport,
   fetchPayrollStats,
   fetchPayrollRuns,
   executePayrollDisbursement,
@@ -277,6 +278,7 @@ router.get('/companies/stats', fetchCompanyStats); // Super Admin specific info
 // Subscriptions
 router.get('/subscriptions', fetchSubscriptions);
 router.put('/subscriptions/:officeId', updateSubscription);
+router.get('/subscriptions/report', downloadSubscriptionReport);
 
 // Pricing Plans (Super Admin)
 router.get('/pricing-plans', fetchPricingPlans);
