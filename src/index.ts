@@ -31,7 +31,6 @@ import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoute
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 import { setWebSocketInstance } from './utils/websocketSingleton';
-import { getSupabase } from './config/supabase';
 
 dotenv.config();
 
@@ -54,12 +53,6 @@ try {
   console.error('❌ Firebase initialization failed:', error);
 }
 
-// Initialize Supabase
-try {
-  getSupabase();
-} catch (error) {
-  console.error('❌ Supabase initialization failed:', error);
-}
 
 // Raw OpenAPI JSON endpoint (must be before UI)
 app.get('/api-docs/swagger.json', (req, res) => {
