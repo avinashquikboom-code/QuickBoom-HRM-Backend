@@ -125,14 +125,23 @@ export const fetchEmployees = async (
   res: Response
 ): Promise<void> => {
   try {
-    const employees = await prisma.employee.findMany({
-      include: {
-        office: true,
-        user: true,
-        department: true,
-      },
-      orderBy: { employeeCode: 'asc' },
-    });
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const skip = (page - 1) * limit;
+
+    const [employees, total] = await Promise.all([
+      prisma.employee.findMany({
+        include: {
+          office: true,
+          user: true,
+          department: true,
+        },
+        orderBy: { employeeCode: 'asc' },
+        skip,
+        take: limit,
+      }),
+      prisma.employee.count(),
+    ]);
 
     const mappedEmployees = employees.map((emp) => ({
       id: emp.id.toString(),
@@ -169,12 +178,15 @@ export const fetchEmployees = async (
         : null,
     }));
 
-    const count = mappedEmployees.length;
+    const count = total;
     const registeredCount = mappedEmployees.filter((e) => e.user !== null).length;
 
     res.json({
       success: true,
       count,
+      total,
+      page,
+      limit,
       registeredCount,
       employees: mappedEmployees,
     });
@@ -821,7 +833,7 @@ export const fetchTodayAttendance = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { clientTimestamp, timezone } = req.query;
+  const { clientTimestamp, timezone, page = 1, limit = 100 } = req.query;
   const userTimezone = (timezone as string) || 'Asia/Kolkata';
 
   let dateInput = new Date();
@@ -848,16 +860,26 @@ export const fetchTodayAttendance = async (
   };
 
   const todayStr = getLocalDateString(userTimezone, dateInput);
+  const pageNum = parseInt(page as string) || 1;
+  const limitNum = parseInt(limit as string) || 100;
+  const skip = (pageNum - 1) * limitNum;
 
   try {
-    const attendances = await prisma.attendance.findMany({
-      where: { date: todayStr },
-      include: {
-        employee: true,
-        office: true,
-      },
-      orderBy: { checkIn: 'desc' },
-    });
+    const [attendances, total] = await Promise.all([
+      prisma.attendance.findMany({
+        where: { date: todayStr },
+        include: {
+          employee: true,
+          office: true,
+        },
+        orderBy: { checkIn: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+      prisma.attendance.count({
+        where: { date: todayStr },
+      }),
+    ]);
 
     const mappedRecords = attendances.map((att) => ({
       id: att.id,
@@ -908,6 +930,9 @@ export const fetchTodayAttendance = async (
       success: true,
       date: todayStr,
       count: mappedRecords.length,
+      total,
+      page: pageNum,
+      limit: limitNum,
       attendances: mappedRecords,
       attendanceDistribution,
     });
@@ -1174,33 +1199,39 @@ export const fetchDashboardStats = async (
   res: Response
 ): Promise<void> => {
   const todayStr = new Date().toISOString().split('T')[0];
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   try {
-    const totalEmployees = await prisma.employee.count();
-
-    const presentToday = await prisma.attendance.count({
-      where: {
-        date: todayStr,
-        status: 'PRESENT',
-      },
-    });
-
-    const onLeave = await prisma.employee.count({
-      where: { status: 'on_leave' },
-    });
-
-    // Mock count new hires within last 30 days
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const newHires = await prisma.employee.count({
-      where: {
-        createdAt: { gte: thirtyDaysAgo },
-      },
-    });
+    // Run all queries in parallel for better performance
+    const [
+      totalEmployees,
+      presentToday,
+      onLeave,
+      newHires,
+      offices,
+      pricingPlans,
+    ] = await Promise.all([
+      prisma.employee.count(),
+      prisma.attendance.count({
+        where: {
+          date: todayStr,
+          status: 'PRESENT',
+        },
+      }),
+      prisma.employee.count({
+        where: { status: 'on_leave' },
+      }),
+      prisma.employee.count({
+        where: {
+          createdAt: { gte: thirtyDaysAgo },
+        },
+      }),
+      prisma.office.findMany(),
+      prisma.pricingPlan.findMany(),
+    ]);
 
     // Subscription plan distribution
-    const offices = await prisma.office.findMany();
-    const pricingPlans = await prisma.pricingPlan.findMany();
     const planCounts: Record<string, number> = {};
     offices.forEach((off) => {
       const plan = off.subscriptionPlan || 'Basic';
