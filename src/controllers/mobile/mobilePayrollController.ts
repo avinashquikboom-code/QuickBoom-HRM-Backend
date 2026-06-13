@@ -252,7 +252,7 @@ export const downloadPayslip = async (
         footerDisclaimer: { fontSize: 8, color: '#9ca3af', italics: true }
       },
       defaultStyle: {
-        font: 'Helvetica',
+        font: 'Roboto',
         fontSize: 10
       }
     };
