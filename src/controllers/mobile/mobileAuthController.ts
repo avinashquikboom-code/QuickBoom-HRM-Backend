@@ -19,9 +19,74 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
   }
 
   try {
-    // 1. Fetch user by email only (simplified for mobile)
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // Phase 1: minimal fetch for credential verification (avoids heavy JOINs on failed attempts)
+    const userAuth = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: {
+        id: true,
+        email: true,
+        password: true,
+        role: true,
+        isActive: true,
+        profile: { select: { id: true } },
+        employee: { select: { id: true, officeId: true } },
+      },
+    });
+
+    if (!userAuth || !userAuth.isActive) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid credentials or inactive account.',
+        errorCode: 'INVALID_CREDENTIALS'
+      });
+      return;
+    }
+
+    const isPasswordMatch = await bcrypt.compare(password, userAuth.password);
+    if (!isPasswordMatch) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid email or password.',
+        errorCode: 'INVALID_PASSWORD'
+      });
+      return;
+    }
+
+    const mobileCompatibleRoles = ['EMPLOYEE' as Role, 'HR' as Role, 'ADMIN' as Role];
+    const blockedRoles = ['SUPER_ADMIN' as Role, 'PLATFORM_ADMIN' as Role];
+    if (blockedRoles.includes(userAuth.role)) {
+      res.status(403).json({
+        success: false,
+        message: 'Super Admin and Platform Admin roles cannot access the mobile app. Please use the web portal.',
+        errorCode: 'MOBILE_ACCESS_DENIED'
+      });
+      return;
+    }
+    if (!mobileCompatibleRoles.includes(userAuth.role)) {
+      res.status(403).json({
+        success: false,
+        message: 'Mobile access not available for this role.',
+        errorCode: 'MOBILE_ACCESS_DENIED'
+      });
+      return;
+    }
+
+    if (userAuth.role === Role.EMPLOYEE) {
+      if (!userAuth.employee || !userAuth.employee.officeId) {
+        res.status(403).json({
+          success: false,
+          message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
+          errorCode: 'OFFICE_NOT_ALLOTTED'
+        });
+        return;
+      }
+    }
+
+    // Phase 2: load full profile data only after successful authentication
     const user = await prisma.user.findUnique({
-      where: { email: email.trim().toLowerCase() },
+      where: { id: userAuth.id },
       include: {
         profile: true,
         employee: {
@@ -33,56 +98,13 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       },
     });
 
-    if (!user || !user.isActive) {
+    if (!user) {
       res.status(401).json({
         success: false,
         message: 'Invalid credentials or inactive account.',
         errorCode: 'INVALID_CREDENTIALS'
       });
       return;
-    }
-
-    // 2. Verify password
-    const isPasswordMatch = await bcrypt.compare(password, user.password);
-    if (!isPasswordMatch) {
-      res.status(401).json({
-        success: false,
-        message: 'Invalid email or password.',
-        errorCode: 'INVALID_PASSWORD'
-      });
-      return;
-    }
-
-    // 3. Check if user has mobile-compatible role (block SUPER_ADMIN and PLATFORM_ADMIN)
-    const mobileCompatibleRoles = ['EMPLOYEE' as Role, 'HR' as Role, 'ADMIN' as Role];
-    const blockedRoles = ['SUPER_ADMIN' as Role, 'PLATFORM_ADMIN' as Role];
-    if (blockedRoles.includes(user.role)) {
-      res.status(403).json({
-        success: false,
-        message: 'Super Admin and Platform Admin roles cannot access the mobile app. Please use the web portal.',
-        errorCode: 'MOBILE_ACCESS_DENIED'
-      });
-      return;
-    }
-    if (!mobileCompatibleRoles.includes(user.role)) {
-      res.status(403).json({
-        success: false,
-        message: 'Mobile access not available for this role.',
-        errorCode: 'MOBILE_ACCESS_DENIED'
-      });
-      return;
-    }
-
-    // 3.5. Check office/branch allotment for employees
-    if (user.role === Role.EMPLOYEE) {
-      if (!user.employee || !user.employee.officeId) {
-        res.status(403).json({
-          success: false,
-          message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
-          errorCode: 'OFFICE_NOT_ALLOTTED'
-        });
-        return;
-      }
     }
 
     // 4. Generate mobile-specific tokens
