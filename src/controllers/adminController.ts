@@ -3762,20 +3762,21 @@ export const downloadAttendanceReport = async (
           canvas: [
             {
               type: 'rect',
-              x: -20,
-              y: -60,
-              w: 595,
+              x: 0,
+              y: 0,
+              w: 515,
               h: 50,
               color: PRIMARY_COLOR
             }
-          ]
+          ],
+          margin: [0, 0, 0, 20]
         },
         {
           text: 'Admin Attendance Report',
           style: 'header',
           color: 'white',
           alignment: 'center',
-          margin: [0, -45, 0, 20]
+          margin: [0, -40, 0, 20]
         },
         {
           text: `Month: ${targetMonth}`,
@@ -4453,6 +4454,64 @@ export const sendNotificationToRole = async (
   } catch (error) {
     console.error('Send notification to role error:', error);
     res.status(500).json({ success: false, message: 'Failed to send notification to role.' });
+  }
+};
+
+// ==========================================
+// Forgot Password
+// ==========================================
+
+export const forgotPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const body = req.body as { email?: string };
+    const { email } = body;
+
+    if (!email || typeof email !== 'string') {
+      res.status(400).json({ success: false, message: 'Email is required.' });
+      return;
+    }
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() }
+    });
+
+    if (!user) {
+      // For security, don't reveal if email exists
+      res.json({
+        success: true,
+        message: 'If an account with this email exists, a password reset link will be sent.'
+      });
+      return;
+    }
+
+    if (!user.isActive) {
+      res.status(400).json({ success: false, message: 'Account is inactive. Please contact your administrator.' });
+      return;
+    }
+
+    // Generate a temporary password reset token (in production, use a proper token system)
+    const resetToken = Math.random().toString(36).substring(2, 15);
+    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour from now
+
+    // Store the reset token (in production, store in a separate table)
+    // For now, we'll just log it (in production, send email)
+    console.log(`Password reset token for ${user.email}: ${resetToken}`);
+    console.log(`Token expires at: ${resetTokenExpiry.toISOString()}`);
+
+    // In production, send email with reset link
+    // await sendPasswordResetEmail(user.email, resetToken);
+
+    res.json({
+      success: true,
+      message: 'If an account with this email exists, a password reset link will be sent.'
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ success: false, message: 'Failed to process forgot password request.' });
   }
 };
 

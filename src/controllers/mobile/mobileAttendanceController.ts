@@ -148,13 +148,27 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Get employee information
+    // Get employee information with shift assignment
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: {
         office: true,
         user: {
           include: { profile: true }
+        },
+        shiftAssignments: {
+          where: {
+            effectiveFrom: { lte: new Date() },
+            OR: [
+              { effectiveTo: null },
+              { effectiveTo: { gte: new Date() } }
+            ]
+          },
+          include: {
+            shift: true
+          },
+          orderBy: { effectiveFrom: 'desc' },
+          take: 1
         }
       }
     });
@@ -286,6 +300,39 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       }
     }
     
+    // Calculate late arrival based on shift assignment
+    let attendanceStatus = 'PRESENT';
+    let isLate = false;
+    
+    if (employee.shiftAssignments.length > 0) {
+      const activeShiftAssignment = employee.shiftAssignments[0];
+      const shift = activeShiftAssignment.shift;
+      
+      // Check if today is a working day for this shift
+      const dayOfWeek = punchInTime.toLocaleDateString('en-US', { weekday: 'long' });
+      if (shift.workingDays.includes(dayOfWeek)) {
+        // Parse shift start time
+        const [shiftHours, shiftMinutes] = shift.startTime.split(':').map(Number);
+        const shiftStartTime = new Date(punchInTime);
+        shiftStartTime.setHours(shiftHours, shiftMinutes, 0, 0);
+        
+        // Add grace minutes
+        const graceTime = new Date(shiftStartTime.getTime() + shift.graceMinutes * 60000);
+        
+        // Check if punch-in is after grace time
+        if (punchInTime > graceTime) {
+          attendanceStatus = 'LATE';
+          isLate = true;
+          console.log('⏰ Late arrival detected:', {
+            shiftStartTime: shiftStartTime.toISOString(),
+            graceTime: graceTime.toISOString(),
+            punchInTime: punchInTime.toISOString(),
+            graceMinutes: shift.graceMinutes
+          });
+        }
+      }
+    }
+    
     // Create attendance record
     const attendance = await prisma.attendance.create({
       data: {
@@ -293,7 +340,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         officeId: employee.office.id,
         date: today,
         checkIn: punchInTime,
-        status: 'PRESENT',
+        status: attendanceStatus,
         notes: notes || '',
         latitude: punchLat,
         longitude: punchLon,

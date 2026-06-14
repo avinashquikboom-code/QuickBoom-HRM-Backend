@@ -391,4 +391,11 @@ router.put('/change-password', changeOwnPassword);
 router.post('/notifications/send-department', sendNotificationToDepartment);
 router.post('/notifications/send-role', sendNotificationToRole);
 
+// Shift Management
+router.get('/shifts', fetchShifts);
+router.post('/shifts', createShift);
+router.put('/shifts/:id', updateShift);
+router.delete('/shifts/:id', deleteShift);
+router.post('/shifts/assign', assignShiftToEmployee);
+
 export default router;

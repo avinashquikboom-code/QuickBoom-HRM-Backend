@@ -331,12 +331,234 @@ export const generatePayslipPDF = async (
       return;
     }
 
-    // Generate PDF (placeholder implementation)
-    const pdfBuffer = Buffer.from('PDF payslip content placeholder');
+    // Generate real PDF using pdfmake
+    const PdfPrinter = require('pdfmake');
+    const pdfFonts = require('pdfmake/build/vfs_fonts');
+    
+    const printer = new PdfPrinter(pdfFonts);
+    
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+    
+    const grossSalary = payslip.baseSalary + payslip.allowance;
+    
+    const docDefinition = {
+      content: [
+        {
+          text: 'SALARY SLIP',
+          style: 'header',
+          alignment: 'center',
+          margin: [0, 0, 0, 20]
+        },
+        {
+          columns: [
+            {
+              text: [
+                { text: 'Employee Name: ', bold: true },
+                `${payslip.employeeName}\n`,
+                { text: 'Employee Code: ', bold: true },
+                `${payslip.employeeCode}\n`,
+                { text: 'Department: ', bold: true },
+                `${payslip.department || 'N/A'}\n`,
+                { text: 'Designation: ', bold: true },
+                `${payslip.designation || 'N/A'}`
+              ],
+              width: '50%'
+            },
+            {
+              text: [
+                { text: 'Month: ', bold: true },
+                `${monthNames[monthNum - 1]} ${yearNum}\n`,
+                { text: 'Office: ', bold: true },
+                `${payslip.officeName || 'N/A'}\n`,
+                { text: 'Pay Date: ', bold: true },
+                `${new Date().toLocaleDateString()}\n`,
+                { text: 'Status: ', bold: true },
+                `${payslip.status}`
+              ],
+              width: '50%',
+              alignment: 'right'
+            }
+          ],
+          margin: [0, 0, 0, 30]
+        },
+        {
+          canvas: [
+            { type: 'line', x1: 0, y1: 0, x2: 515, y1: 0, lineWidth: 1, lineColor: '#cccccc' }
+          ],
+          margin: [0, 0, 0, 20]
+        },
+        {
+          text: 'EARNINGS',
+          style: 'subheader',
+          margin: [0, 0, 0, 10]
+        },
+        {
+          table: {
+            headerRows: 1,
+            widths: ['*', 'auto'],
+            body: [
+              [
+                { text: 'Description', style: 'tableHeader' },
+                { text: 'Amount', style: 'tableHeader' }
+              ],
+              [
+                'Base Salary',
+                `₹${payslip.baseSalary.toFixed(2)}`
+              ],
+              [
+                'Allowances',
+                `₹${payslip.allowance.toFixed(2)}`
+              ],
+              [
+                { text: 'Total Earnings', bold: true },
+                { text: `₹${grossSalary.toFixed(2)}`, bold: true }
+              ]
+            ]
+          },
+          layout: {
+            hLineWidth: (i: number) => i === 0 || i === 3 ? 1 : 0.5,
+            vLineWidth: () => 0.5,
+            hLineColor: () => '#e0e0e0',
+            vLineColor: () => '#e0e0e0',
+            paddingLeft: () => 10,
+            paddingRight: () => 10,
+            paddingTop: () => 8,
+            paddingBottom: () => 8
+          },
+          margin: [0, 0, 0, 20]
+        },
+        {
+          text: 'DEDUCTIONS',
+          style: 'subheader',
+          margin: [0, 0, 0, 10]
+        },
+        {
+          table: {
+            headerRows: 1,
+            widths: ['*', 'auto'],
+            body: [
+              [
+                { text: 'Description', style: 'tableHeader' },
+                { text: 'Amount', style: 'tableHeader' }
+              ],
+              [
+                'Total Deductions',
+                `₹${payslip.deductions.toFixed(2)}`
+              ]
+            ]
+          },
+          layout: {
+            hLineWidth: (i: number) => i === 0 || i === 2 ? 1 : 0.5,
+            vLineWidth: () => 0.5,
+            hLineColor: () => '#e0e0e0',
+            vLineColor: () => '#e0e0e0',
+            paddingLeft: () => 10,
+            paddingRight: () => 10,
+            paddingTop: () => 8,
+            paddingBottom: () => 8
+          },
+          margin: [0, 0, 0, 20]
+        },
+        {
+          canvas: [
+            { type: 'line', x1: 0, y1: 0, x2: 515, y1: 0, lineWidth: 2, lineColor: '#3BA38B' }
+          ],
+          margin: [0, 0, 0, 15]
+        },
+        {
+          columns: [
+            {
+              text: [
+                { text: 'Gross Salary: ', bold: true },
+                `₹${grossSalary.toFixed(2)}\n`,
+                { text: 'Total Deductions: ', bold: true },
+                `₹${payslip.deductions.toFixed(2)}`
+              ],
+              width: '50%'
+            },
+            {
+              text: [
+                { text: 'NET SALARY: ', bold: true, fontSize: 14, color: '#3BA38B' },
+                { text: `₹${payslip.netSalary.toFixed(2)}`, bold: true, fontSize: 16, color: '#3BA38B' }
+              ],
+              width: '50%',
+              alignment: 'right'
+            }
+          ],
+          margin: [0, 0, 0, 30]
+        },
+        {
+          canvas: [
+            { type: 'line', x1: 0, y1: 0, x2: 515, y1: 0, lineWidth: 1, lineColor: '#cccccc' }
+          ],
+          margin: [0, 0, 0, 20]
+        },
+        {
+          text: 'NET SALARY IN WORDS',
+          style: 'subheader',
+          margin: [0, 0, 0, 10]
+        },
+        {
+          text: payslip.netInWords || 'N/A',
+          style: 'netInWords',
+          margin: [0, 0, 0, 30]
+        },
+        {
+          text: 'This is a computer-generated payslip and does not require a physical signature.',
+          style: 'footer',
+          alignment: 'center',
+          margin: [0, 30, 0, 0]
+        }
+      ],
+      styles: {
+        header: {
+          fontSize: 24,
+          bold: true,
+          color: '#3BA38B'
+        },
+        subheader: {
+          fontSize: 14,
+          bold: true,
+          color: '#333333',
+          margin: [0, 15, 0, 5]
+        },
+        tableHeader: {
+          fontSize: 11,
+          bold: true,
+          color: '#ffffff',
+          fillColor: '#3BA38B'
+        },
+        netInWords: {
+          fontSize: 11,
+          color: '#666666',
+          fontStyle: 'italic'
+        },
+        footer: {
+          fontSize: 9,
+          color: '#666666',
+          italics: true
+        }
+      },
+      defaultStyle: {
+        font: 'Roboto',
+        fontSize: 10
+      },
+      pageMargins: [40, 60, 40, 60]
+    };
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="payslip_${employeeIdStr}_${monthNum}_${yearNum}.pdf"`);
-    res.send(pdfBuffer);
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    
+    const chunks: Buffer[] = [];
+    pdfDoc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    pdfDoc.on('end', () => {
+      const pdfBuffer = Buffer.concat(chunks);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="payslip_${employeeIdStr}_${monthNum}_${yearNum}.pdf"`);
+      res.send(pdfBuffer);
+    });
+    
+    pdfDoc.end();
   } catch (error) {
     console.error('Generate payslip PDF error:', error);
     res.status(500).json({
