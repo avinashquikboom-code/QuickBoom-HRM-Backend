@@ -4196,3 +4196,478 @@ export const bulkUpdateAdminLeaveBalances = async (
   }
 };
 
+// ==========================================
+// Employee Password Reset
+// ==========================================
+
+export const resetEmployeePassword = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { userId } = req.params;
+  const { newPassword, isTemporary = false } = req.body;
+
+  const userIdInt = parseInt(userId as string, 10);
+  if (isNaN(userIdInt)) {
+    res.status(400).json({ success: false, message: 'Invalid User ID.' });
+    return;
+  }
+
+  if (!newPassword || typeof newPassword !== 'string') {
+    res.status(400).json({ success: false, message: 'New password is required.' });
+    return;
+  }
+
+  if (newPassword.length < 6) {
+    res.status(400).json({ success: false, message: 'Password must be at least 6 characters long.' });
+    return;
+  }
+
+  try {
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { id: userIdInt }
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update user password
+    await prisma.user.update({
+      where: { id: userIdInt },
+      data: { 
+        password: hashedPassword,
+        updatedAt: new Date()
+      }
+    });
+
+    // Log the password reset action
+    console.log(`Password reset for user ${user.email} by ${req.user?.email}`);
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully.',
+      data: {
+        userId: userIdInt,
+        email: user.email,
+        isTemporary
+      }
+    });
+  } catch (error) {
+    console.error('Reset employee password error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reset password.' });
+  }
+};
+
+export const changeOwnPassword = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    res.status(400).json({ success: false, message: 'Current password and new password are required.' });
+    return;
+  }
+
+  if (newPassword.length < 6) {
+    res.status(400).json({ success: false, message: 'New password must be at least 6 characters long.' });
+    return;
+  }
+
+  try {
+    // Get current user
+    const user = await prisma.user.findUnique({
+      where: { id: req.user?.id }
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordValid) {
+      res.status(400).json({ success: false, message: 'Current password is incorrect.' });
+      return;
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update user password
+    await prisma.user.update({
+      where: { id: req.user?.id },
+      data: {
+        password: hashedPassword,
+        updatedAt: new Date()
+      }
+    });
+
+    // Log the password change action
+    console.log(`Password changed for user ${user.email}`);
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully.'
+    });
+  } catch (error) {
+    console.error('Change own password error:', error);
+    res.status(500).json({ success: false, message: 'Failed to change password.' });
+  }
+};
+
+// ==========================================
+// Send Notifications by Department/Role
+// ==========================================
+
+export const sendNotificationToDepartment = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { departmentId, title, body, category = 'info' } = req.body;
+
+  if (!departmentId || !title || !body) {
+    res.status(400).json({ success: false, message: 'Department ID, title, and body are required.' });
+    return;
+  }
+
+  try {
+    // Get all employees in the department
+    const employees = await prisma.employee.findMany({
+      where: { departmentId: parseInt(departmentId) },
+      include: { user: true }
+    });
+
+    if (employees.length === 0) {
+      res.status(404).json({ success: false, message: 'No employees found in this department.' });
+      return;
+    }
+
+    // Create notifications for all employees
+    const notifications = await Promise.all(
+      employees.map(employee =>
+        prisma.notification.create({
+          data: {
+            title,
+            body,
+            category,
+            userId: employee.userId
+          }
+        })
+      )
+    );
+
+    // Send push notifications via Firebase (if available)
+    try {
+      const firebaseNotificationService = require('../services/firebaseNotificationService').firebaseNotificationService;
+      await firebaseNotificationService.sendNotificationToDepartment(
+        parseInt(departmentId),
+        title,
+        body,
+        { category }
+      );
+    } catch (firebaseError) {
+      console.error('Firebase notification error:', firebaseError);
+      // Continue even if Firebase fails
+    }
+
+    res.json({
+      success: true,
+      message: `Notification sent to ${employees.length} employees in the department.`,
+      data: {
+        employeeCount: employees.length,
+        notificationsCreated: notifications.length
+      }
+    });
+  } catch (error) {
+    console.error('Send notification to department error:', error);
+    res.status(500).json({ success: false, message: 'Failed to send notification to department.' });
+  }
+};
+
+export const sendNotificationToRole = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { role, title, body, category = 'info' } = req.body;
+
+  if (!role || !title || !body) {
+    res.status(400).json({ success: false, message: 'Role, title, and body are required.' });
+    return;
+  }
+
+  try {
+    // Get all users with the specified role
+    const users = await prisma.user.findMany({
+      where: { role: role as any, isActive: true }
+    });
+
+    if (users.length === 0) {
+      res.status(404).json({ success: false, message: 'No users found with this role.' });
+      return;
+    }
+
+    // Create notifications for all users
+    const notifications = await Promise.all(
+      users.map(user =>
+        prisma.notification.create({
+          data: {
+            title,
+            body,
+            category,
+            userId: user.id
+          }
+        })
+      )
+    );
+
+    // Send push notifications via Firebase (if available)
+    try {
+      const firebaseNotificationService = require('../services/firebaseNotificationService').firebaseNotificationService;
+      await firebaseNotificationService.sendNotificationToRole(
+        role,
+        title,
+        body,
+        { category }
+      );
+    } catch (firebaseError) {
+      console.error('Firebase notification error:', firebaseError);
+      // Continue even if Firebase fails
+    }
+
+    res.json({
+      success: true,
+      message: `Notification sent to ${users.length} users with role ${role}.`,
+      data: {
+        userCount: users.length,
+        notificationsCreated: notifications.length
+      }
+    });
+  } catch (error) {
+    console.error('Send notification to role error:', error);
+    res.status(500).json({ success: false, message: 'Failed to send notification to role.' });
+  }
+};
+
+// ==========================================
+// Shift Management
+// ==========================================
+
+export const fetchShifts = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const shifts = await prisma.shift.findMany({
+      include: {
+        assignments: {
+          include: {
+            employee: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                employeeCode: true
+              }
+            }
+          },
+          where: {
+            effectiveTo: null
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({
+      success: true,
+      shifts
+    });
+  } catch (error) {
+    console.error('Fetch shifts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch shifts.' });
+  }
+};
+
+export const createShift = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { name, startTime, endTime, workingDays, graceMinutes, breakMinutes, color } = req.body;
+
+  if (!name || !startTime || !endTime || !workingDays || !Array.isArray(workingDays)) {
+    res.status(400).json({ success: false, message: 'Name, start time, end time, and working days are required.' });
+    return;
+  }
+
+  try {
+    const shift = await prisma.shift.create({
+      data: {
+        name,
+        startTime,
+        endTime,
+        workingDays,
+        graceMinutes: graceMinutes || 15,
+        breakMinutes: breakMinutes || 60,
+        color: color || '#3BA38B'
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Shift created successfully.',
+      shift
+    });
+  } catch (error) {
+    console.error('Create shift error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create shift.' });
+  }
+};
+
+export const updateShift = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { name, startTime, endTime, workingDays, graceMinutes, breakMinutes, color } = req.body;
+
+  const shiftId = parseInt(id as string, 10);
+  if (isNaN(shiftId)) {
+    res.status(400).json({ success: false, message: 'Invalid Shift ID.' });
+    return;
+  }
+
+  try {
+    const shift = await prisma.shift.update({
+      where: { id: shiftId },
+      data: {
+        ...(name && { name }),
+        ...(startTime && { startTime }),
+        ...(endTime && { endTime }),
+        ...(workingDays && { workingDays }),
+        ...(graceMinutes !== undefined && { graceMinutes }),
+        ...(breakMinutes !== undefined && { breakMinutes }),
+        ...(color && { color })
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Shift updated successfully.',
+      shift
+    });
+  } catch (error) {
+    console.error('Update shift error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update shift.' });
+  }
+};
+
+export const deleteShift = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+
+  const shiftId = parseInt(id as string, 10);
+  if (isNaN(shiftId)) {
+    res.status(400).json({ success: false, message: 'Invalid Shift ID.' });
+    return;
+  }
+
+  try {
+    await prisma.shift.delete({
+      where: { id: shiftId }
+    });
+
+    res.json({
+      success: true,
+      message: 'Shift deleted successfully.'
+    });
+  } catch (error) {
+    console.error('Delete shift error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete shift.' });
+  }
+};
+
+export const assignShiftToEmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { employeeId, shiftId, effectiveFrom, effectiveTo } = req.body;
+
+  if (!employeeId || !shiftId || !effectiveFrom) {
+    res.status(400).json({ success: false, message: 'Employee ID, shift ID, and effective date are required.' });
+    return;
+  }
+
+  try {
+    // Check if employee exists
+    const employee = await prisma.employee.findUnique({
+      where: { id: parseInt(employeeId) }
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // Check if shift exists
+    const shift = await prisma.shift.findUnique({
+      where: { id: parseInt(shiftId) }
+    });
+
+    if (!shift) {
+      res.status(404).json({ success: false, message: 'Shift not found.' });
+      return;
+    }
+
+    // End any existing active assignments for this employee
+    await prisma.shiftAssignment.updateMany({
+      where: {
+        employeeId: parseInt(employeeId),
+        effectiveTo: null
+      },
+      data: {
+        effectiveTo: new Date()
+      }
+    });
+
+    // Create new assignment
+    const assignment = await prisma.shiftAssignment.create({
+      data: {
+        employeeId: parseInt(employeeId),
+        shiftId: parseInt(shiftId),
+        effectiveFrom: new Date(effectiveFrom),
+        effectiveTo: effectiveTo ? new Date(effectiveTo) : null
+      },
+      include: {
+        shift: true,
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true
+          }
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Shift assigned successfully.',
+      assignment
+    });
+  } catch (error) {
+    console.error('Assign shift error:', error);
+    res.status(500).json({ success: false, message: 'Failed to assign shift.' });
+  }
+};
+

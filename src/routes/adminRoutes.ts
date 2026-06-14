@@ -57,6 +57,15 @@ import {
   updateAdminEmployeeLeaveBalance,
   getAdminLeaveBalanceStats,
   bulkUpdateAdminLeaveBalances,
+  resetEmployeePassword,
+  changeOwnPassword,
+  sendNotificationToDepartment,
+  sendNotificationToRole,
+  fetchShifts,
+  createShift,
+  updateShift,
+  deleteShift,
+  assignShiftToEmployee,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -373,5 +382,13 @@ router.get('/leave-balances', fetchAdminLeaveBalancesDetailed);
 router.put('/leave-balances/:employeeId', updateAdminEmployeeLeaveBalance);
 router.get('/leave-balances/stats', getAdminLeaveBalanceStats);
 router.post('/leave-balances/bulk-update', bulkUpdateAdminLeaveBalances);
+
+// Password Management
+router.put('/users/:userId/reset-password', resetEmployeePassword);
+router.put('/change-password', changeOwnPassword);
+
+// Notification Management - Send by Department/Role
+router.post('/notifications/send-department', sendNotificationToDepartment);
+router.post('/notifications/send-role', sendNotificationToRole);
 
 export default router;
