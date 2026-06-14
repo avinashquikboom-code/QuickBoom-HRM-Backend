@@ -97,6 +97,10 @@ model Employee {
   payslips         Payslip[]
   documents        Document[]
   attendanceCorrections AttendanceCorrection[]
+
+  @@index([officeId])
+  @@index([departmentId])
+  @@index([status])
 }
 
 model Attendance {
@@ -120,6 +124,11 @@ model Attendance {
   employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   office                Office?   @relation(fields: [officeId], references: [id])
   attendanceCorrections AttendanceCorrection[]
+
+  @@index([date])
+  @@index([employeeId])
+  @@index([status])
+  @@index([employeeId, date])
 }
 
 model Comment {
@@ -161,6 +170,11 @@ model LeaveRequest {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([fromDate])
+  @@index([employeeId, status])
 }
 
 model LeaveBalance {
@@ -195,6 +209,11 @@ model Expense {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([date])
+  @@index([employeeId, status])
 }
 
 model Task {
@@ -253,6 +272,11 @@ model Notification {
   updatedAt  DateTime  @updatedAt
   employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
 }
 
 model Holiday {

@@ -131,10 +131,39 @@ export const fetchEmployees = async (
 
     const [employees, total] = await Promise.all([
       prisma.employee.findMany({
-        include: {
-          office: true,
-          user: true,
-          department: true,
+        select: {
+          id: true,
+          employeeCode: true,
+          firstName: true,
+          lastName: true,
+          designation: true,
+          status: true,
+          officeId: true,
+          office: {
+            select: {
+              id: true,
+              name: true,
+              latitude: true,
+              longitude: true,
+              idealRadiusMeters: true,
+              maxPunchRadiusMeters: true,
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              email: true,
+              role: true,
+              isActive: true,
+            },
+          },
+          department: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
         },
         orderBy: { employeeCode: 'asc' },
         skip,
@@ -868,9 +897,31 @@ export const fetchTodayAttendance = async (
     const [attendances, total] = await Promise.all([
       prisma.attendance.findMany({
         where: { date: todayStr },
-        include: {
-          employee: true,
-          office: true,
+        select: {
+          id: true,
+          date: true,
+          checkIn: true,
+          checkOut: true,
+          status: true,
+          notes: true,
+          isOnBreak: true,
+          breakStartTime: true,
+          totalBreakSeconds: true,
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              designation: true,
+            },
+          },
+          office: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
         orderBy: { checkIn: 'desc' },
         skip,
@@ -971,9 +1022,31 @@ export const fetchAttendanceHistory = async (
 
     const records = await prisma.attendance.findMany({
       where: whereClause,
-      include: {
-        employee: true,
-        office: true,
+      select: {
+        id: true,
+        date: true,
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        notes: true,
+        isOnBreak: true,
+        breakStartTime: true,
+        totalBreakSeconds: true,
+        employee: {
+          select: {
+            id: true,
+            employeeCode: true,
+            firstName: true,
+            lastName: true,
+            designation: true,
+          },
+        },
+        office: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
       orderBy: { date: 'desc' },
       skip,

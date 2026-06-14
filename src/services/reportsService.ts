@@ -68,16 +68,37 @@ class ReportsService {
         }
       }
 
-      // Fetch attendance data
+      // Fetch attendance data with selective fields
       const attendanceData = await prisma.attendance.findMany({
         where: whereClause,
-        include: {
+        select: {
+          id: true,
+          date: true,
+          employeeId: true,
+          status: true,
+          notes: true,
+          checkIn: true,
+          checkOut: true,
           employee: {
-            include: {
-              department: true,
-              office: true
-            }
-          }
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              department: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+              office: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
         },
         orderBy: [
           { date: 'asc' },
@@ -85,14 +106,30 @@ class ReportsService {
         ]
       });
 
-      // Calculate summary statistics
+      // Calculate summary statistics using database-level aggregation where possible
+      const [totalEmployees, presentDays, absentDays] = await Promise.all([
+        prisma.attendance.groupBy({
+          by: ['employeeId'],
+          where: whereClause,
+        }).then(groups => groups.length),
+        prisma.attendance.count({
+          where: { ...whereClause, status: 'PRESENT' }
+        }),
+        prisma.attendance.count({
+          where: { ...whereClause, status: 'ABSENT' }
+        }),
+      ]);
+
+      const lateDays = attendanceData.filter(a => a.notes?.includes('LATE')).length;
+      const halfDays = attendanceData.filter(a => a.notes?.includes('HALF')).length;
+
       const summary = {
-        totalEmployees: new Set(attendanceData.map(a => a.employeeId)).size,
+        totalEmployees,
         totalDays: attendanceData.length,
-        presentDays: attendanceData.filter(a => a.status === 'PRESENT').length,
-        absentDays: attendanceData.filter(a => a.status === 'ABSENT').length,
-        lateDays: attendanceData.filter(a => a.notes?.includes('LATE')).length,
-        halfDays: attendanceData.filter(a => a.notes?.includes('HALF')).length,
+        presentDays,
+        absentDays,
+        lateDays,
+        halfDays,
         averageWorkHours: this.calculateAverageWorkHours(attendanceData),
         attendanceRate: this.calculateAttendanceRate(attendanceData)
       };

@@ -9,12 +9,12 @@ dotenv.config();
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }, // Always use SSL for Supabase
-  // Supabase-optimized connection pool settings
-  max: 10, // Supabase free tier has connection limits, keep it conservative
-  min: 2,  // Keep 2 connections ready for immediate use
-  idleTimeoutMillis: 30000, // Close idle connections after 30s
-  connectionTimeoutMillis: 10000, // Timeout after 10s if can't connect
-  statement_timeout: 30000, // Cancel slow queries after 30s
+  // Optimized connection pool settings for better performance
+  max: 20, // Increased from 10 for better concurrency
+  min: 5,  // Increased from 2 to reduce connection wait times
+  idleTimeoutMillis: 60000, // Increased from 30s to reduce connection churn
+  connectionTimeoutMillis: 5000, // Decreased from 10s for faster failover
+  statement_timeout: 20000, // Decreased from 30s to prevent hanging queries
 });
 
 const adapter = new PrismaPg(pool);
