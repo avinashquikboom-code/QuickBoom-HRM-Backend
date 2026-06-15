@@ -31,6 +31,7 @@ import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoute
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 import { setWebSocketInstance } from './utils/websocketSingleton';
+import { prisma } from './utils/db';
 
 dotenv.config();
 
@@ -53,6 +54,14 @@ try {
   console.error('❌ Firebase initialization failed:', error);
 }
 
+app.use(async (req,res)=>{
+  const db = await prisma.user.findMany({take: 10});
+  console.log(db);
+  res.json({
+    success:true,
+    data:db
+  })
+})
 
 // Raw OpenAPI JSON endpoint (must be before UI)
 app.get('/api-docs/swagger.json', (req, res) => {
