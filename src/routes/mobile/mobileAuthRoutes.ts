@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import {
   mobileLogin,
   mobileLogout,
@@ -6,9 +6,14 @@ import {
   getMobileProfile,
   changeMobilePassword
 } from '../../controllers/mobile/mobileAuthController';
-import { forgotPassword } from '../../controllers/adminController';
+import { forgotPassword as adminForgotPassword } from '../../controllers/adminController';
 
 const router = Router();
+
+// Forgot password wrapper for mobile auth routes
+const forgotPassword = async (req: Request, res: Response) => {
+  await adminForgotPassword(req, res);
+};
 
 // Login and refresh endpoints do not require auth middleware
 router.post('/login', mobileLogin);

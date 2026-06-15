@@ -384,7 +384,7 @@ export const generatePayslipPDF = async (
         },
         {
           canvas: [
-            { type: 'line', x1: 0, y1: 0, x2: 515, y1: 0, lineWidth: 1, lineColor: '#cccccc' }
+            { type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#cccccc' }
           ],
           margin: [0, 0, 0, 20]
         },
@@ -462,7 +462,7 @@ export const generatePayslipPDF = async (
         },
         {
           canvas: [
-            { type: 'line', x1: 0, y1: 0, x2: 515, y1: 0, lineWidth: 2, lineColor: '#3BA38B' }
+            { type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: '#3BA38B' }
           ],
           margin: [0, 0, 0, 15]
         },
@@ -490,7 +490,7 @@ export const generatePayslipPDF = async (
         },
         {
           canvas: [
-            { type: 'line', x1: 0, y1: 0, x2: 515, y1: 0, lineWidth: 1, lineColor: '#cccccc' }
+            { type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#cccccc' }
           ],
           margin: [0, 0, 0, 20]
         },
