@@ -3,18 +3,61 @@ import {
   mobileLogin,
   mobileLogout,
   mobileRefreshToken,
-  getMobileProfile
+  getMobileProfile,
+  changeMobilePassword
 } from '../../controllers/mobile/mobileAuthController';
+import { forgotPassword } from '../../controllers/adminController';
 
 const router = Router();
 
 // Login and refresh endpoints do not require auth middleware
 router.post('/login', mobileLogin);
 router.post('/refresh', mobileRefreshToken);
+router.post('/forgot-password', forgotPassword);
 
 // Apply auth middleware to protected routes
 import { authMiddleware } from '../../middlewares/authMiddleware';
 router.use(authMiddleware);
+
+/**
+ * @swagger
+ * /api/mobile/auth/forgot-password:
+ *   post:
+ *     summary: Request password reset link
+ *     tags: [Mobile - Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: User email address
+ *                 example: "employee@hrm.com"
+ *     responses:
+ *       200:
+ *         description: Password reset link sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "If an account with this email exists, a password reset link will be sent."
+ *       400:
+ *         description: Bad request (missing email)
+ *       500:
+ *         description: Server error
+ */
 
 /**
  * @swagger
@@ -233,5 +276,54 @@ router.post('/logout', mobileLogout);
  *         description: Server error
  */
 router.get('/profile', getMobileProfile);
+router.put('/change-password', changeMobilePassword);
+
+/**
+ * @swagger
+ * /api/mobile/auth/change-password:
+ *   put:
+ *     summary: Change mobile user password
+ *     tags: [Mobile - Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *                 description: Current password
+ *               newPassword:
+ *                 type: string
+ *                 description: New password (minimum 6 characters)
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Password changed successfully."
+ *       400:
+ *         description: Bad request (invalid password)
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Server error
+ */
 
 export default router;

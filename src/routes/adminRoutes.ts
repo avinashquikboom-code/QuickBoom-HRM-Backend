@@ -387,6 +387,83 @@ router.post('/leave-balances/bulk-update', bulkUpdateAdminLeaveBalances);
 router.put('/users/:userId/reset-password', resetEmployeePassword);
 router.put('/change-password', changeOwnPassword);
 
+/**
+ * @swagger
+ * /api/admin/change-password:
+ *   put:
+ *     summary: Change own password (authenticated user)
+ *     tags: [Admin - Users]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *                 description: Current password
+ *               newPassword:
+ *                 type: string
+ *                 description: New password (minimum 6 characters)
+ *     responses:
+ *       200:
+ *         description: Password changed successfully
+ *       400:
+ *         description: Bad request (invalid password)
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+
+/**
+ * @swagger
+ * /api/admin/users/{userId}/reset-password:
+ *   put:
+ *     summary: Reset employee password (Admin/HR only)
+ *     tags: [Admin - Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: User ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - newPassword
+ *             properties:
+ *               newPassword:
+ *                 type: string
+ *                 description: New password (minimum 6 characters)
+ *               isTemporary:
+ *                 type: boolean
+ *                 description: Whether the password is temporary
+ *                 default: false
+ *     responses:
+ *       200:
+ *         description: Password reset successfully
+ *       400:
+ *         description: Bad request
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Server error
+ */
+
 // Notification Management - Send by Department/Role
 router.post('/notifications/send-department', sendNotificationToDepartment);
 router.post('/notifications/send-role', sendNotificationToRole);
@@ -397,5 +474,174 @@ router.post('/shifts', createShift);
 router.put('/shifts/:id', updateShift);
 router.delete('/shifts/:id', deleteShift);
 router.post('/shifts/assign', assignShiftToEmployee);
+
+/**
+ * @swagger
+ * /api/admin/shifts:
+ *   get:
+ *     summary: Fetch all shifts
+ *     tags: [Admin - Shift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Shifts retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ *   post:
+ *     summary: Create a new shift
+ *     tags: [Admin - Shift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - startTime
+ *               - endTime
+ *               - workingDays
+ *             properties:
+ *               name:
+ *                 type: string
+ *               startTime:
+ *                 type: string
+ *                 example: "09:00"
+ *               endTime:
+ *                 type: string
+ *                 example: "18:00"
+ *               workingDays:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               graceMinutes:
+ *                 type: integer
+ *                 default: 15
+ *               breakMinutes:
+ *                 type: integer
+ *                 default: 60
+ *     responses:
+ *       200:
+ *         description: Shift created successfully
+ *       400:
+ *         description: Bad request
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+
+/**
+ * @swagger
+ * /api/admin/shifts/{id}:
+ *   put:
+ *     summary: Update a shift
+ *     tags: [Admin - Shift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               startTime:
+ *                 type: string
+ *               endTime:
+ *                 type: string
+ *               workingDays:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               graceMinutes:
+ *                 type: integer
+ *               breakMinutes:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Shift updated successfully
+ *       400:
+ *         description: Bad request
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Shift not found
+ *       500:
+ *         description: Server error
+ *   delete:
+ *     summary: Delete a shift
+ *     tags: [Admin - Shift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Shift deleted successfully
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Shift not found
+ *       500:
+ *         description: Server error
+ */
+
+/**
+ * @swagger
+ * /api/admin/shifts/assign:
+ *   post:
+ *     summary: Assign shift to employee
+ *     tags: [Admin - Shift Management]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - employeeId
+ *               - shiftId
+ *               - effectiveFrom
+ *             properties:
+ *               employeeId:
+ *                 type: integer
+ *               shiftId:
+ *                 type: integer
+ *               effectiveFrom:
+ *                 type: string
+ *                 format: date
+ *               effectiveTo:
+ *                 type: string
+ *                 format: date
+ *     responses:
+ *       200:
+ *         description: Shift assigned successfully
+ *       400:
+ *         description: Bad request
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
 
 export default router;
