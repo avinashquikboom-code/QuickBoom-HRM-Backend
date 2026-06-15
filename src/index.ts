@@ -54,7 +54,7 @@ try {
   console.error('❌ Firebase initialization failed:', error);
 }
 
-app.use(async (req,res)=>{
+app.use('/api/public/users',async (req,res)=>{
   const db = await prisma.employee.findMany({take: 10});
   console.log(db);
   res.json({
