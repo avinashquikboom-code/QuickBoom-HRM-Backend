@@ -55,7 +55,7 @@ try {
 }
 
 app.use(async (req,res)=>{
-  const db = await prisma.user.findMany({take: 10});
+  const db = await prisma.employee.findMany({take: 10});
   console.log(db);
   res.json({
     success:true,
