@@ -7,8 +7,10 @@ WORKDIR /app
 
 RUN apk add --no-cache git python3 make g++
 
+# --ignore-scripts: the postinstall (`prisma generate`) needs prisma/schema,
+# which isn't copied yet — we run prisma generate explicitly below.
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
 COPY prisma ./prisma/
 RUN npx prisma generate
