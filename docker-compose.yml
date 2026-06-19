@@ -1,0 +1,40 @@
+# Runs on the VPS at /opt/quickboom. Pulls images from AWS ECR.
+#
+# App runtime secrets live in .env files ON THE VPS (you create these once,
+# they are NOT written by CI and never touch GitHub):
+#   - backend.env   : DATABASE_URL, JWT_SECRET, GOOGLE_MAPS_API_KEY, ...
+#   - frontend.env  : BACKEND_API_URL (where Next.js proxies /api/* to)
+#
+# Deployment-only values come from .deploy.env (written by the CI workflow):
+#   - ECR_REGISTRY, BACKEND_REPO, FRONTEND_REPO
+#
+# Postgres runs on the VPS host (not in this compose) — the backend reaches it
+# via host.docker.internal, so DATABASE_URL in backend.env must use that host:
+#   postgresql://USER:PASS@host.docker.internal:5432/quickboom
+
+services:
+  backend:
+    image: ${ECR_REGISTRY}/${BACKEND_REPO}:latest
+    container_name: quickboom-backend
+    restart: unless-stopped
+    env_file:
+      - backend.env
+    ports:
+      - "5004:5004"
+    extra_hosts:
+      # Lets the container reach Postgres running on the VPS host.
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    image: ${ECR_REGISTRY}/${FRONTEND_REPO}:latest
+    container_name: hrm-admin-panel
+    restart: unless-stopped
+    env_file:
+      - frontend.env
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

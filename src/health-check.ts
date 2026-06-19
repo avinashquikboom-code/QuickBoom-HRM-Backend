@@ -2,8 +2,8 @@ import http from 'http';
 
 const options = {
   host: '127.0.0.1',
-  port: process.env.PORT || 10000,
-  path: '/health',
+  port: process.env.PORT || 5004,
+  path: '/api/health',
   timeout: 2000
 };
 

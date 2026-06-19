@@ -1,6 +1,10 @@
 node_modules/
 dist/
 .env
+# VPS runtime env (real secrets) — keep the *.example templates only
+backend.env
+frontend.env
+.deploy.env
 .DS_Store
 
 /src/generated/prisma
