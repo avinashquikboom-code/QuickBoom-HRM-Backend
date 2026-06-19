@@ -5,10 +5,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Optimize connection pool for Supabase on Hostinger
+const isLocal = process.env.DATABASE_URL?.includes('localhost') || process.env.DATABASE_URL?.includes('127.0.0.1');
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // Always use SSL for Supabase
+  ssl: isLocal ? false : { rejectUnauthorized: false }, // Always use SSL for remote databases (e.g. Supabase)
   // Optimized connection pool settings for better performance
   max: 20, // Increased from 10 for better concurrency
   min: 5,  // Increased from 2 to reduce connection wait times

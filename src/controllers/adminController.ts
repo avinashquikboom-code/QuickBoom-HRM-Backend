@@ -2249,8 +2249,31 @@ export const fetchLiveLocations = async (
     });
 
     // Get live tracking data for actively tracking employees
-    const liveTrackingService = (await import('../services/liveTrackingService')).default;
-    const liveLocations = await liveTrackingService.getLiveLocations();
+    let liveLocations: any[] = [];
+    try {
+      const liveTrackingService = (await import('../services/liveTrackingService')).default;
+      liveLocations = await liveTrackingService.getLiveLocations();
+    } catch (serviceError) {
+      console.warn('⚠️ LiveTrackingService call failed, falling back to database query:', serviceError);
+      try {
+        const dbLiveLocations = await prisma.liveLocation.findMany();
+        liveLocations = dbLiveLocations.map(dbLoc => ({
+          employeeId: dbLoc.employeeId,
+          employeeName: dbLoc.name,
+          role: dbLoc.role,
+          currentLocation: {
+            latitude: dbLoc.lat,
+            longitude: dbLoc.lng,
+            speed: parseFloat(dbLoc.speed) / 3.6 || 0, // km/h to m/s
+          },
+          purpose: dbLoc.status,
+          battery: dbLoc.battery,
+          isLocationEnabled: true
+        }));
+      } catch (dbError) {
+        console.error('❌ Fallback database query failed:', dbError);
+      }
+    }
 
     // Create a map of employeeId to live location data
     const liveLocationMap = new Map();
