@@ -275,15 +275,15 @@ export const fetchLeaveOverview = async (
     const mappedRecent = recent.map((lr) => {
       const result = {
         id: lr.id,
-        employeeName: `${lr.employee.firstName} ${lr.employee.lastName}`,
-        designation: lr.employee.designation || 'Employee',
-        department: lr.employee.department?.name || 'General',
-        type: lr.type,
-        fromDate: lr.fromDate.toISOString(),
-        toDate: lr.toDate.toISOString(),
-        reason: lr.reason,
-        status: lr.status,
-        appliedOn: lr.appliedOn.toISOString(),
+        employeeName: lr.employee ? `${lr.employee.firstName} ${lr.employee.lastName}` : 'Unknown Employee',
+        designation: lr.employee?.designation || 'Employee',
+        department: lr.employee?.department?.name || 'General',
+        type: lr.type || 'CASUAL',
+        fromDate: lr.fromDate ? lr.fromDate.toISOString() : new Date().toISOString(),
+        toDate: lr.toDate ? lr.toDate.toISOString() : new Date().toISOString(),
+        reason: lr.reason || '',
+        status: lr.status || 'PENDING',
+        appliedOn: lr.appliedOn ? lr.appliedOn.toISOString() : new Date().toISOString(),
       };
       console.log(`📋 [LEAVE OVERVIEW] Mapped leave request:`, result);
       return result;
@@ -521,19 +521,19 @@ export const fetchHRActivity = async (
         id: `task-${t.id}`,
         type: 'task' as const,
         title: t.title,
-        description: `Assigned to ${t.assignedTo.firstName} ${t.assignedTo.lastName}`,
+        description: t.assignedTo ? `Assigned to ${t.assignedTo.firstName} ${t.assignedTo.lastName}` : 'Assigned to Unknown',
         status: t.status,
         priority: t.priority,
-        date: t.createdAt.toISOString(),
+        date: t.createdAt ? t.createdAt.toISOString() : new Date().toISOString(),
       })),
       ...recentLeaves.map((l) => ({
         id: `leave-${l.id}`,
         type: 'leave' as const,
-        title: `${l.type} Leave Request`,
-        description: `${l.employee.firstName} ${l.employee.lastName} — ${l.reason}`,
+        title: `${l.type || 'CASUAL'} Leave Request`,
+        description: l.employee ? `${l.employee.firstName} ${l.employee.lastName} — ${l.reason || ''}` : `Unknown — ${l.reason || ''}`,
         status: l.status,
         priority: null,
-        date: l.appliedOn.toISOString(),
+        date: l.appliedOn ? l.appliedOn.toISOString() : new Date().toISOString(),
       })),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 8);
 

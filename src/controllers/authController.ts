@@ -511,10 +511,10 @@ export const employeeLogin = async (req: Request, res: Response): Promise<void> 
 };
 
 export const hrLogin = async (req: Request, res: Response): Promise<void> => {
-  await authenticateRoleLogin(req, res, [Role.HR, Role.ADMIN]);
+  await authenticateRoleLogin(req, res, [Role.HR, Role.PLATFORM_ADMIN]);
 };
 
 export const superAdminLogin = async (req: Request, res: Response): Promise<void> => {
-  await authenticateRoleLogin(req, res, [Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]);
+  await authenticateRoleLogin(req, res, [Role.SUPER_ADMIN, Role.ADMIN]);
 };
 

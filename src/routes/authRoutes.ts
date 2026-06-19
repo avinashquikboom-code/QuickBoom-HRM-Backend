@@ -119,7 +119,7 @@ router.post('/employee/login', employeeLogin);
  *       401:
  *         description: Invalid credentials or inactive account
  *       403:
- *         description: Restricted to HR/ADMIN roles only
+ *         description: Restricted to HR/PLATFORM_ADMIN roles only
  *       500:
  *         description: Server error
  */
@@ -156,7 +156,7 @@ router.post('/hr/login', hrLogin);
  *       401:
  *         description: Invalid credentials or inactive account
  *       403:
- *         description: Restricted to SUPER_ADMIN/PLATFORM_ADMIN roles only
+ *         description: Restricted to SUPER_ADMIN/ADMIN roles only
  *       500:
  *         description: Server error
  */
