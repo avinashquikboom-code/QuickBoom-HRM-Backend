@@ -366,9 +366,9 @@ export const createAndAssignEmployee = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { userId, officeId } = req.body;
+  const { userId, officeId, departmentId } = req.body;
 
-  console.log('[createAndAssignEmployee] Received:', { userId, officeId, body: req.body });
+  console.log('[createAndAssignEmployee] Received:', { userId, officeId, departmentId, body: req.body });
 
   if (!userId) {
     res.status(400).json({ success: false, message: 'userId is required.' });
@@ -384,6 +384,12 @@ export const createAndAssignEmployee = async (
   const offIdInt = officeId ? parseInt(officeId, 10) : null;
   if (officeId && isNaN(offIdInt as number)) {
     res.status(400).json({ success: false, message: 'Invalid officeId.' });
+    return;
+  }
+
+  const deptIdInt = departmentId ? parseInt(departmentId, 10) : null;
+  if (departmentId && isNaN(deptIdInt as number)) {
+    res.status(400).json({ success: false, message: 'Invalid departmentId.' });
     return;
   }
 
@@ -410,6 +416,16 @@ export const createAndAssignEmployee = async (
       }
     }
 
+    if (deptIdInt !== null) {
+      const department = await prisma.department.findUnique({
+        where: { id: deptIdInt },
+      });
+      if (!department) {
+        res.status(404).json({ success: false, message: 'Specified department not found.' });
+        return;
+      }
+    }
+
     // Auto-create employee record if user doesn't have one
     let resultEmployee;
     if (!user.employee) {
@@ -428,16 +444,20 @@ export const createAndAssignEmployee = async (
           designation: user.role === 'EMPLOYEE' ? 'Employee' : 'HR Administrator',
           status: 'active',
           officeId: offIdInt,
+          departmentId: deptIdInt,
         },
-        include: { office: true, user: true },
+        include: { office: true, user: true, department: true },
       });
     } else {
       console.log('[createAndAssignEmployee] Updating existing employee:', user.employee.id);
-      // Update existing employee's office assignment
+      // Update existing employee's office and department assignment
       resultEmployee = await prisma.employee.update({
         where: { id: user.employee.id },
-        data: { officeId: offIdInt },
-        include: { office: true, user: true },
+        data: { 
+          officeId: offIdInt,
+          departmentId: deptIdInt,
+        },
+        include: { office: true, user: true, department: true },
       });
     }
 
@@ -455,6 +475,10 @@ export const createAndAssignEmployee = async (
         office: resultEmployee.office
           ? { id: resultEmployee.office.id.toString(), name: resultEmployee.office.name }
           : null,
+        departmentId: resultEmployee.departmentId?.toString() || null,
+        department: resultEmployee.department
+          ? { id: resultEmployee.department.id.toString(), name: resultEmployee.department.name, code: resultEmployee.department.code }
+          : null,
         user: resultEmployee.user
           ? { id: resultEmployee.user.id, email: resultEmployee.user.email, role: resultEmployee.user.role, isActive: resultEmployee.user.isActive }
           : null,
@@ -467,7 +491,208 @@ export const createAndAssignEmployee = async (
 };
 
 // ==========================================
-// 3. Office Management CRUD
+// 3. Department Management CRUD
+// ==========================================
+
+export const fetchDepartments = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const departments = await prisma.department.findMany({
+      include: {
+        _count: {
+          select: { employees: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const mappedDepartments = departments.map((dept) => ({
+      id: dept.id.toString(),
+      name: dept.name,
+      code: dept.code,
+      createdAt: dept.createdAt.toISOString(),
+      updatedAt: dept.updatedAt.toISOString(),
+      _count: {
+        employees: dept._count.employees,
+      },
+    }));
+
+    res.json({
+      success: true,
+      departments: mappedDepartments,
+    });
+  } catch (error) {
+    console.error('Fetch departments error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load departments.' });
+  }
+};
+
+export const createDepartment = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { name, code } = req.body;
+
+  if (!name) {
+    res.status(400).json({ success: false, message: 'Department name is required.' });
+    return;
+  }
+
+  try {
+    // Check if code already exists
+    if (code) {
+      const existing = await prisma.department.findUnique({
+        where: { code: code.trim() },
+      });
+      if (existing) {
+        res.status(400).json({ success: false, message: 'Department code already exists.' });
+        return;
+      }
+    }
+
+    const department = await prisma.department.create({
+      data: {
+        name: name.trim(),
+        code: code ? code.trim() : null,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Department created successfully.',
+      department: {
+        id: department.id.toString(),
+        name: department.name,
+        code: department.code,
+        createdAt: department.createdAt.toISOString(),
+        updatedAt: department.updatedAt.toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Create department error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create department.' });
+  }
+};
+
+export const updateDepartment = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { name, code } = req.body;
+
+  const departmentIdInt = parseInt(id as string, 10);
+  if (isNaN(departmentIdInt)) {
+    res.status(400).json({ success: false, message: 'Invalid Department ID.' });
+    return;
+  }
+
+  if (!name) {
+    res.status(400).json({ success: false, message: 'Department name is required.' });
+    return;
+  }
+
+  try {
+    // Check if department exists
+    const existing = await prisma.department.findUnique({
+      where: { id: departmentIdInt },
+    });
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Department not found.' });
+      return;
+    }
+
+    // Check if new code conflicts with another department
+    if (code && code !== existing.code) {
+      const codeConflict = await prisma.department.findUnique({
+        where: { code: code.trim() },
+      });
+      if (codeConflict) {
+        res.status(400).json({ success: false, message: 'Department code already exists.' });
+        return;
+      }
+    }
+
+    const updated = await prisma.department.update({
+      where: { id: departmentIdInt },
+      data: {
+        name: name.trim(),
+        code: code ? code.trim() : null,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Department updated successfully.',
+      department: {
+        id: updated.id.toString(),
+        name: updated.name,
+        code: updated.code,
+        createdAt: updated.createdAt.toISOString(),
+        updatedAt: updated.updatedAt.toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Update department error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update department.' });
+  }
+};
+
+export const deleteDepartment = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+
+  const departmentIdInt = parseInt(id as string, 10);
+  if (isNaN(departmentIdInt)) {
+    res.status(400).json({ success: false, message: 'Invalid Department ID.' });
+    return;
+  }
+
+  try {
+    // Check if department exists
+    const existing = await prisma.department.findUnique({
+      where: { id: departmentIdInt },
+      include: {
+        _count: {
+          select: { employees: true },
+        },
+      },
+    });
+
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Department not found.' });
+      return;
+    }
+
+    // Check if department has employees
+    if (existing._count.employees > 0) {
+      res.status(400).json({
+        success: false,
+        message: `Cannot delete department. It has ${existing._count.employees} employee(s) assigned.`
+      });
+      return;
+    }
+
+    await prisma.department.delete({
+      where: { id: departmentIdInt },
+    });
+
+    res.json({
+      success: true,
+      message: 'Department deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete department error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete department.' });
+  }
+};
+
+// ==========================================
+// 4. Office Management CRUD
 // ==========================================
 
 export const fetchOffices = async (

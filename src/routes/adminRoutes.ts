@@ -7,6 +7,10 @@ import {
   fetchEmployees,
   createEmployee,
   createAndAssignEmployee,
+  fetchDepartments,
+  createDepartment,
+  updateDepartment,
+  deleteDepartment,
   fetchOffices,
   fetchOfficeById,
   createOffice,
@@ -168,6 +172,12 @@ router.get('/employees', fetchEmployees);
  *         description: Server error
  */
 router.post('/employees', createEmployee);
+
+// Department Management
+router.get('/departments', fetchDepartments);
+router.post('/departments', createDepartment);
+router.put('/departments/:id', updateDepartment);
+router.delete('/departments/:id', deleteDepartment);
 
 /**
  * @swagger
