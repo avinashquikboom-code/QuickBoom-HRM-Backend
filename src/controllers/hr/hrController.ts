@@ -356,7 +356,7 @@ export const fetchHREmployees = async (
   }
 
   if (department) {
-    where.department = { name: { contains: department as string, mode: 'insensitive' } };
+    where.departmentId = parseInt(department as string, 10);
   }
 
   console.log('👥 [HR EMPLOYEES] Built where clause:', where);
@@ -1297,7 +1297,13 @@ export const createHREmployee = async (
     status = 'active', 
     officeId, 
     departmentId,
-    phone = ''
+    phone = '',
+    aadharNumber = '',
+    pfNumber = '',
+    esicNumber = '',
+    isHandicapped = false,
+    currentAddress = '',
+    permanentAddress = ''
   } = req.body;
 
   if (!email || !firstName) {
@@ -1358,13 +1364,19 @@ export const createHREmployee = async (
       },
     });
 
-    // Create profile for the employee
+    // Create profile for the employee with new fields
     await prisma.profile.create({
       data: {
         userId: user.id,
         email,
         fullName: `${firstName} ${lastName || ''}`.trim(),
         phone,
+        aadharNumber,
+        pfNumber,
+        esicNumber,
+        isHandicapped,
+        currentAddress,
+        permanentAddress,
       },
     });
 
@@ -1381,6 +1393,12 @@ export const createHREmployee = async (
         status: newEmployee.status,
         email: newEmployee.user?.email || '',
         phone,
+        aadharNumber,
+        pfNumber,
+        esicNumber,
+        isHandicapped,
+        currentAddress,
+        permanentAddress,
         department: newEmployee.department?.name || 'Unassigned',
         office: newEmployee.office?.name || 'Remote',
         createdAt: newEmployee.createdAt,
@@ -1404,7 +1422,13 @@ export const updateHREmployee = async (
     status, 
     officeId, 
     departmentId,
-    phone
+    phone,
+    aadharNumber,
+    pfNumber,
+    esicNumber,
+    isHandicapped,
+    currentAddress,
+    permanentAddress
   } = req.body;
 
   if (!id) {
@@ -1436,14 +1460,23 @@ export const updateHREmployee = async (
       },
     });
 
-    // Update profile if phone is provided
-    if (phone !== undefined && updatedEmployee.userId) {
+    // Update profile with new fields
+    if (updatedEmployee.userId) {
+      const profileUpdateData: any = {
+        fullName: `${firstName || updatedEmployee.firstName} ${lastName || updatedEmployee.lastName || ''}`.trim(),
+      };
+      
+      if (phone !== undefined) profileUpdateData.phone = phone;
+      if (aadharNumber !== undefined) profileUpdateData.aadharNumber = aadharNumber;
+      if (pfNumber !== undefined) profileUpdateData.pfNumber = pfNumber;
+      if (esicNumber !== undefined) profileUpdateData.esicNumber = esicNumber;
+      if (isHandicapped !== undefined) profileUpdateData.isHandicapped = isHandicapped;
+      if (currentAddress !== undefined) profileUpdateData.currentAddress = currentAddress;
+      if (permanentAddress !== undefined) profileUpdateData.permanentAddress = permanentAddress;
+
       await prisma.profile.update({
         where: { userId: updatedEmployee.userId },
-        data: {
-          fullName: `${firstName || updatedEmployee.firstName} ${lastName || updatedEmployee.lastName || ''}`.trim(),
-          phone,
-        },
+        data: profileUpdateData,
       });
     }
 
@@ -1459,6 +1492,13 @@ export const updateHREmployee = async (
         designation: updatedEmployee.designation,
         status: updatedEmployee.status,
         email: updatedEmployee.user?.email || '',
+        phone,
+        aadharNumber,
+        pfNumber,
+        esicNumber,
+        isHandicapped,
+        currentAddress,
+        permanentAddress,
         department: updatedEmployee.department?.name || 'Unassigned',
         office: updatedEmployee.office?.name || 'Remote',
         updatedAt: updatedEmployee.updatedAt,

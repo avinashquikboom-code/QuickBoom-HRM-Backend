@@ -39,6 +39,12 @@ model Profile {
   lastLoginLocation String   @default("Unknown")
   clearanceLevel    Int      @default(1)
   clearanceLabel    String   @default("Level 1 (General)")
+  aadharNumber      String?  @default("")
+  pfNumber          String?  @default("")
+  esicNumber        String?  @default("")
+  isHandicapped     Boolean  @default(false)
+  currentAddress    String?  @default("")
+  permanentAddress  String?  @default("")
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -376,6 +376,12 @@ export const getMobileProfile = async (req: AuthenticatedRequest, res: Response)
         timezone: user.profile.timezone,
         timezoneLabel: user.profile.timezoneLabel,
         bio: user.profile.bio,
+        aadharNumber: user.profile.aadharNumber,
+        pfNumber: user.profile.pfNumber,
+        esicNumber: user.profile.esicNumber,
+        isHandicapped: user.profile.isHandicapped,
+        currentAddress: user.profile.currentAddress,
+        permanentAddress: user.profile.permanentAddress,
       } : null,
       employee: user.employee ? {
         id: user.employee.id,
@@ -449,20 +455,103 @@ export const changeMobilePassword = async (
     // Update password
     await prisma.user.update({
       where: { id: user.id },
-      data: { 
+      data: {
         password: hashedPassword,
-        updatedAt: new Date()
-      }
+      },
     });
-
-    console.log(`Password changed for user ${user.email}`);
 
     res.json({
       success: true,
-      message: 'Password changed successfully.'
+      message: 'Password changed successfully.',
     });
   } catch (error) {
     console.error('Change mobile password error:', error);
-    res.status(500).json({ success: false, message: 'Failed to change password.' });
+    res.status(500).json({
+      success: false,
+      message: 'Error changing password.',
+      errorCode: 'PASSWORD_CHANGE_ERROR'
+    });
+  }
+};
+
+export const updateMobileProfile = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const {
+      fullName,
+      phone,
+      avatarUrl,
+      timezone,
+      timezoneLabel,
+      bio,
+      aadharNumber,
+      pfNumber,
+      esicNumber,
+      isHandicapped,
+      currentAddress,
+      permanentAddress,
+    } = req.body;
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user?.id },
+      include: { profile: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    if (!user.profile) {
+      res.status(404).json({ success: false, message: 'Profile not found.' });
+      return;
+    }
+
+    const updatedProfile = await prisma.profile.update({
+      where: { id: user.profile.id },
+      data: {
+        ...(fullName !== undefined && { fullName }),
+        ...(phone !== undefined && { phone }),
+        ...(avatarUrl !== undefined && { avatarUrl }),
+        ...(timezone !== undefined && { timezone }),
+        ...(timezoneLabel !== undefined && { timezoneLabel }),
+        ...(bio !== undefined && { bio }),
+        ...(aadharNumber !== undefined && { aadharNumber }),
+        ...(pfNumber !== undefined && { pfNumber }),
+        ...(esicNumber !== undefined && { esicNumber }),
+        ...(isHandicapped !== undefined && { isHandicapped }),
+        ...(currentAddress !== undefined && { currentAddress }),
+        ...(permanentAddress !== undefined && { permanentAddress }),
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully.',
+      profile: {
+        id: updatedProfile.id,
+        fullName: updatedProfile.fullName,
+        phone: updatedProfile.phone,
+        avatarUrl: updatedProfile.avatarUrl,
+        timezone: updatedProfile.timezone,
+        timezoneLabel: updatedProfile.timezoneLabel,
+        bio: updatedProfile.bio,
+        aadharNumber: updatedProfile.aadharNumber,
+        pfNumber: updatedProfile.pfNumber,
+        esicNumber: updatedProfile.esicNumber,
+        isHandicapped: updatedProfile.isHandicapped,
+        currentAddress: updatedProfile.currentAddress,
+        permanentAddress: updatedProfile.permanentAddress,
+      },
+    });
+  } catch (error) {
+    console.error('Update mobile profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating profile.',
+      errorCode: 'PROFILE_UPDATE_ERROR'
+    });
   }
 };

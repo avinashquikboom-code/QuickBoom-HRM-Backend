@@ -4,7 +4,8 @@ import {
   mobileLogout,
   mobileRefreshToken,
   getMobileProfile,
-  changeMobilePassword
+  changeMobilePassword,
+  updateMobileProfile
 } from '../../controllers/mobile/mobileAuthController';
 import { forgotPassword as adminForgotPassword } from '../../controllers/adminController';
 
@@ -281,6 +282,7 @@ router.post('/logout', mobileLogout);
  *         description: Server error
  */
 router.get('/profile', getMobileProfile);
+router.put('/profile', updateMobileProfile);
 router.put('/change-password', changeMobilePassword);
 
 /**
