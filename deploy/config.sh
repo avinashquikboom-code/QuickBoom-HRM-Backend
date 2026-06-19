@@ -87,7 +87,7 @@ run_service() {
     --network "$NETWORK" \
     --env-file "$envfile" \
     --add-host host.docker.internal:host-gateway \
-    -p "$portmap" \
+    -p "127.0.0.1:$portmap" \
     --cpus "$cpus" \
     --memory "$mem" \
     --memory-reservation "$memres" \
