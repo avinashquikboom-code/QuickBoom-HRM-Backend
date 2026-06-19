@@ -8,8 +8,9 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }} # e.g. quickboom-backend
+  # Hardcoded ECR target (no secrets needed for region/repo).
+  AWS_REGION: ap-south-1
+  IMAGE_URI: 546941058055.dkr.ecr.ap-south-1.amazonaws.com/hrm-backend
 
 jobs:
   build-and-push:
@@ -28,15 +29,12 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push image to ECR
         env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
           docker build \
             -f Dockerfile.deploy \
             -t "$IMAGE_URI:$IMAGE_TAG" \
