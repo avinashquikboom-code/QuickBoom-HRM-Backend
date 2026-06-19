@@ -12,3 +12,4 @@ frontend.env
 # Firebase keys
 firebase-service-account.json
 quickboom-*-firebase-adminsdk-*.json
+deploy/deploy.env

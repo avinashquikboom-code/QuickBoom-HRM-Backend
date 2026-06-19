@@ -1,33 +1,43 @@
-# Runs on the VPS at /opt/quickboom. Pulls images from AWS ECR.
+# Declarative alternative to the deploy/*.sh scripts. Runs on the VPS at
+# /opt/quickboom. Resource limits sized for a 2 vCPU / ~1.9GB host.
 #
-# App runtime secrets live in .env files ON THE VPS (you create these once,
-# they are NOT written by CI and never touch GitHub):
-#   - backend.env   : DATABASE_URL, JWT_SECRET, GOOGLE_MAPS_API_KEY, ...
-#   - frontend.env  : BACKEND_API_URL (where Next.js proxies /api/* to)
+# Env:
+#   - backend.env / frontend.env : app runtime secrets (created on the VPS)
+#   - .deploy.env                : ECR_REGISTRY, BACKEND_REPO, FRONTEND_REPO, IMAGE_TAG
 #
-# Deployment-only values come from .deploy.env (written by the CI workflow):
-#   - ECR_REGISTRY, BACKEND_REPO, FRONTEND_REPO
-#
-# Postgres runs on the VPS host (not in this compose) — the backend reaches it
-# via host.docker.internal, so DATABASE_URL in backend.env must use that host:
-#   postgresql://USER:PASS@host.docker.internal:5432/quickboom
+# Usage:
+#   aws ecr get-login-password --region <r> | docker login --username AWS --password-stdin <registry>
+#   docker compose --env-file .deploy.env pull
+#   docker compose --env-file .deploy.env up -d
 
 services:
   backend:
-    image: ${ECR_REGISTRY}/${BACKEND_REPO}:latest
-    container_name: quickboom-backend
+    image: ${ECR_REGISTRY}/${BACKEND_REPO:-hrm-backend}:${IMAGE_TAG:-latest}
+    container_name: hrm-backend
     restart: unless-stopped
     env_file:
       - backend.env
     ports:
       - "5004:5004"
     extra_hosts:
-      # Lets the container reach Postgres running on the VPS host.
       - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:        { cpus: "1.0", memory: 640m }
+        reservations:  { cpus: "0.25", memory: 320m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    healthcheck:
+      test: ["CMD", "node", "dist/health-check.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   frontend:
-    image: ${ECR_REGISTRY}/${FRONTEND_REPO}:latest
-    container_name: hrm-admin-panel
+    image: ${ECR_REGISTRY}/${FRONTEND_REPO:-hrm-admin}:${IMAGE_TAG:-latest}
+    container_name: hrm-admin
     restart: unless-stopped
     env_file:
       - frontend.env
@@ -38,3 +48,10 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+    deploy:
+      resources:
+        limits:        { cpus: "0.75", memory: 512m }
+        reservations:  { cpus: "0.25", memory: 256m }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
