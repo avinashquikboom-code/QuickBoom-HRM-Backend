@@ -27,10 +27,17 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --legacy-peer-deps --omit=dev --ignore-scripts && npm cache clean --force
 
-# Prisma schema + generated client from the builder stage.
+# Prisma schema, config, generated client, AND the prisma CLI from the builder.
+# prisma.config.ts supplies the datasource URL for `migrate deploy` (Prisma 7
+# loads it via its own bundled TS loader — no ts-node needed). The `prisma` CLI
+# is a devDependency, so --omit=dev above skips it; copy it from the builder so
+# `prisma migrate deploy` works without a network fetch at boot.
 COPY --from=builder /app/prisma ./prisma/
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma/
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma/
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma/
+COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 # Built application.
 COPY --from=builder /app/dist ./dist
