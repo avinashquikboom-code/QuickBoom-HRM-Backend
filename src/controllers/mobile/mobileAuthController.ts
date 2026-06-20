@@ -70,13 +70,13 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
     }
 
     console.log('[MOBILE_LOGIN] Phase 3: Role validation...');
-    const mobileCompatibleRoles = ['EMPLOYEE' as Role, 'HR' as Role, 'ADMIN' as Role];
-    const blockedRoles = ['SUPER_ADMIN' as Role, 'PLATFORM_ADMIN' as Role];
+    const mobileCompatibleRoles = ['EMPLOYEE' as Role, 'HR' as Role, 'ADMIN' as Role, 'PLATFORM_ADMIN' as Role];
+    const blockedRoles = ['SUPER_ADMIN' as Role];
     if (blockedRoles.includes(userAuth.role)) {
       console.log('[MOBILE_LOGIN] Blocked role:', userAuth.role);
       res.status(403).json({
         success: false,
-        message: 'Super Admin and Platform Admin roles cannot access the mobile app. Please use the web portal.',
+        message: 'Super Admin role cannot access the mobile app. Please use the web portal.',
         errorCode: 'MOBILE_ACCESS_DENIED'
       });
       return;
