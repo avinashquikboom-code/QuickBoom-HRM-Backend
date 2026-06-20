@@ -184,6 +184,29 @@ server.listen(port, host, () => {
   console.log(' Scalar Docs: http://' + (host === '0.0.0.0' ? 'localhost' : host) + ':' + port + '/scalar-docs');
   console.log('🔌 WebSocket Real-time Updates: Enabled');
   console.log('🚀 QuickBoom HRM Backend is ready!\n');
+
+  // Automatically ensure all active/existing offices have at least 25m radius
+  prisma.office.updateMany({
+    where: {
+      maxPunchRadiusMeters: {
+        lt: 25
+      }
+    },
+    data: {
+      maxPunchRadiusMeters: 25,
+      idealRadiusMeters: 25
+    }
+  })
+  .then(result => {
+    if (result.count > 0) {
+      console.log(`✅ [Startup Patch] Updated ${result.count} office(s) geofence radius to 25m.`);
+    } else {
+      console.log(`ℹ️ [Startup Patch] All offices already have geofence radius >= 25m.`);
+    }
+  })
+  .catch(err => {
+    console.error('❌ [Startup Patch] Failed to update office geofence radius on startup:', err);
+  });
 });
 
 // Set server timeout to 60 seconds to handle slow mobile requests
