@@ -72,7 +72,7 @@ router.get('/public-test', testFirebaseConnection);
  */
 router.post('/public-send-test', (req, res) => {
   // Mock implementation for testing
-  const { title = 'Test Notification', body = 'This is a test notification from QuickBoom HRM', data } = req.body;
+  const { title = 'Test Notification', body = 'This is a test notification from HRM Portal', data } = req.body;
   
   res.json({
     success: true,

@@ -688,6 +688,90 @@ export const applyEmployeeLeave = async (
         appliedOn: leave.appliedOn.toISOString(),
       },
     });
+
+    // Notify HR and Admin users asynchronously
+    (async () => {
+      try {
+        const adminUsers = await prisma.user.findMany({
+          where: {
+            role: {
+              in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']
+            },
+            isActive: true
+          }
+        });
+
+        if (adminUsers.length > 0) {
+          const employeeName = `${employee.firstName} ${employee.lastName}`;
+          const title = `New Leave Request`;
+          const body = `${employeeName} has applied for ${leave.type.toLowerCase()} leave from ${new Date(fromDate).toLocaleDateString()} to ${new Date(toDate).toLocaleDateString()}.`;
+
+          // 1. Create database notifications
+          try {
+            await Promise.all(
+              adminUsers.map(user =>
+                prisma.notification.create({
+                  data: {
+                    title,
+                    body,
+                    category: 'LEAVE',
+                    userId: user.id,
+                    actionId: leave.id.toString(),
+                    actionType: 'leave_request'
+                  }
+                })
+              )
+            );
+          } catch (dbNotifyError) {
+            console.error('Database leave notifications creation error:', dbNotifyError);
+          }
+
+          // 2. Broadcast WebSockets for live updates
+          try {
+            const { getWebSocketInstance } = require('../../utils/websocketSingleton');
+            const wsInstance = getWebSocketInstance();
+            if (wsInstance) {
+              wsInstance.getServer().emit('newNotification', {
+                title,
+                body,
+                type: 'LEAVE',
+                category: 'LEAVE',
+                actionId: leave.id.toString(),
+                actionType: 'leave_request',
+                createdAt: new Date().toISOString()
+              });
+            }
+          } catch (wsError) {
+            console.error('Failed to broadcast leave websocket notification:', wsError);
+          }
+
+          // 3. Send Firebase Push Notifications
+          try {
+            const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
+            for (const adminUser of adminUsers) {
+              try {
+                await firebaseNotificationService.sendNotificationToUser(
+                  adminUser.id,
+                  title,
+                  body,
+                  {
+                    click_action: 'FLUTTER_NOTIFICATION_CLICK',
+                    type: 'leave_request',
+                    leaveId: leave.id.toString()
+                  }
+                );
+              } catch (userPushError) {
+                // Silently skip users with no active tokens
+              }
+            }
+          } catch (pushError) {
+            console.error('Failed to send FCM push notifications for leave request:', pushError);
+          }
+        }
+      } catch (bgError) {
+        console.error('Background leave request notification error:', bgError);
+      }
+    })();
   } catch (error) {
     console.error('Apply leave error:', error);
     res.status(500).json({ success: false, message: 'Failed to apply for leave.' });
@@ -1208,7 +1292,7 @@ export const fetchEmployeeHolidays = async (
     const formattedHolidays = holidays.map(holiday => ({
       id: holiday.id.toString(),
       name: holiday.name,
-      date: holiday.date.toISOString().split('T')[0], // Format as YYYY-MM-DD
+      date: holiday.date && !isNaN(new Date(holiday.date).getTime()) ? new Date(holiday.date).toISOString().split('T')[0] : '', // Format as YYYY-MM-DD
       isPublic: holiday.isPublic,
       description: holiday.description,
     }));

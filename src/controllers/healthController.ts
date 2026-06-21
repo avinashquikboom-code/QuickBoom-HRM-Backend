@@ -70,7 +70,7 @@ export const getBasicHealth = async (req: Request, res: Response) => {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      message: 'QuickBoom HRM API is running'
+      message: 'HRM API is running'
     });
   } catch (error) {
     res.status(500).json({

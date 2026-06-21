@@ -32,6 +32,7 @@ import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 import { setWebSocketInstance } from './utils/websocketSingleton';
 import { prisma } from './utils/db';
+import { Role } from '@prisma/client';
 
 dotenv.config();
 
@@ -83,8 +84,8 @@ app.use('/scalar-docs', apiReference({
     }
   `,
   metaData: {
-    title: 'QuickBoom HRM API Documentation',
-    description: 'Comprehensive API endpoints for QuickBoom HRM applications (including Web, Admin, and Mobile)',
+    title: 'HRM API Documentation',
+    description: 'Comprehensive API endpoints for HRM applications (including Web, Admin, and Mobile)',
   }
 }));
 
@@ -110,7 +111,7 @@ app.get('/scalar-docs', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>QuickBoom HRM API Documentation</title>
+      <title>HRM API Documentation</title>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@latest"></script>
@@ -179,11 +180,94 @@ const server = createServer(app);
 const webSocketService = new WebSocketService(server);
 setWebSocketInstance(webSocketService);
 
+async function initRolePermissions() {
+  const defaultSuperAdminPerms = {
+    'sa-dashboard': true,
+    'sa-companies': true,
+    'sa-subscriptions': true,
+    'sa-location': true,
+    'sa-location-new': true,
+    'sa-settings': true,
+    'sa-user-rights': true,
+    'sa-profile': true,
+  };
+
+  const defaultPlatformAdminPerms = {
+    'pa-hr': true,
+    'pa-employee-rights': true,
+    'pa-employees': true,
+    'pa-leave': true,
+    'pa-tasks': true,
+    'pa-payroll': true,
+    'pa-attendance': true,
+    'pa-policies': true,
+    'pa-analytics': true,
+    'pa-reports': true,
+    'pa-notifications': true,
+    'pa-profile': true,
+  };
+
+  const defaultEmployeePerms = {
+    'em-dashboard': true,
+    'em-attendance': true,
+    'em-leave': true,
+    'em-tasks': true,
+    'em-notifications': true,
+    'em-profile': true,
+  };
+
+  const rolesToInitialize = [
+    { role: Role.SUPER_ADMIN, perms: defaultSuperAdminPerms },
+    { role: Role.ADMIN, perms: defaultSuperAdminPerms },
+    { role: Role.HR, perms: defaultPlatformAdminPerms },
+    { role: Role.PLATFORM_ADMIN, perms: defaultPlatformAdminPerms },
+    { role: Role.EMPLOYEE, perms: defaultEmployeePerms },
+  ];
+
+  for (const item of rolesToInitialize) {
+    try {
+      const existing = await prisma.rolePermission.findUnique({
+        where: { role: item.role },
+      });
+
+      if (!existing) {
+        await prisma.rolePermission.create({
+          data: {
+            role: item.role,
+            permissions: item.perms,
+          },
+        });
+        console.log(`✅ [Startup Patch] Created default role permissions for ${item.role}`);
+      } else {
+        const currentPerms = (existing.permissions || {}) as Record<string, any>;
+        let needsUpdate = false;
+        
+        for (const [key, value] of Object.entries(item.perms)) {
+          if (currentPerms[key] !== value) {
+            currentPerms[key] = value;
+            needsUpdate = true;
+          }
+        }
+
+        if (needsUpdate) {
+          await prisma.rolePermission.update({
+            where: { role: item.role },
+            data: { permissions: currentPerms },
+          });
+          console.log(`✅ [Startup Patch] Updated role permissions for ${item.role} to include missing defaults.`);
+        }
+      }
+    } catch (err) {
+      console.error(`❌ [Startup Patch] Failed to initialize role permissions for ${item.role}:`, err);
+    }
+  }
+}
+
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);
   console.log(' Scalar Docs: http://' + (host === '0.0.0.0' ? 'localhost' : host) + ':' + port + '/scalar-docs');
   console.log('🔌 WebSocket Real-time Updates: Enabled');
-  console.log('🚀 QuickBoom HRM Backend is ready!\n');
+  console.log('🚀 HRM Backend is ready!\n');
 
   // Automatically ensure all active/existing offices have at least 25m radius
   prisma.office.updateMany({
@@ -207,6 +291,11 @@ server.listen(port, host, () => {
   .catch(err => {
     console.error('❌ [Startup Patch] Failed to update office geofence radius on startup:', err);
   });
+
+  // Initialize Role Permissions startup patch
+  initRolePermissions()
+    .then(() => console.log('✅ [Startup Patch] Role permissions verified/initialized.'))
+    .catch(err => console.error('❌ [Startup Patch] Role permissions initialization failed:', err));
 });
 
 // Set server timeout to 60 seconds to handle slow mobile requests

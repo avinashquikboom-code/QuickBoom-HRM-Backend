@@ -116,6 +116,52 @@ export const updateUserStatus = async (
   }
 };
 
+export const deletePlatformUser = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  
+  const userId = parseInt(id as string, 10);
+  if (isNaN(userId)) {
+    res.status(400).json({ success: false, message: 'Invalid user ID' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { employee: true },
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    // Delete associated employee record first to avoid constraints
+    if (user.employee) {
+      await prisma.employee.delete({
+        where: { id: user.employee.id },
+      });
+    }
+
+    // Delete the user record
+    await prisma.user.delete({
+      where: { id: userId },
+    });
+
+    res.json({
+      success: true,
+      message: 'User deleted successfully.',
+    });
+  } catch (error) {
+    console.error('Delete platform user error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete user.' });
+  }
+};
+
+
 // ==========================================
 // 2. Employee Management
 // ==========================================
@@ -793,6 +839,9 @@ export const fetchOffices = async (
       subscriptionPlan: off.subscriptionPlan,
       billingCycle: off.billingCycle,
       invoiceStatus: off.invoiceStatus,
+      workingHoursStart: off.workingHoursStart,
+      workingHoursEnd: off.workingHoursEnd,
+      workingDays: off.workingDays,
       createdAt: off.createdAt.toISOString(),
       updatedAt: off.updatedAt.toISOString(),
       _count: {
@@ -851,6 +900,9 @@ export const fetchOfficeById = async (
       subscriptionPlan: office.subscriptionPlan,
       billingCycle: office.billingCycle,
       invoiceStatus: office.invoiceStatus,
+      workingHoursStart: office.workingHoursStart,
+      workingHoursEnd: office.workingHoursEnd,
+      workingDays: office.workingDays,
       createdAt: office.createdAt.toISOString(),
       updatedAt: office.updatedAt.toISOString(),
       _count: {
@@ -891,6 +943,9 @@ export const createOffice = async (
     subscriptionPlan,
     billingCycle,
     invoiceStatus,
+    workingHoursStart,
+    workingHoursEnd,
+    workingDays,
   } = req.body;
 
   if (!name || !address || latitude === undefined || longitude === undefined) {
@@ -915,6 +970,9 @@ export const createOffice = async (
         subscriptionPlan: subscriptionPlan || 'Basic',
         billingCycle: billingCycle || 'monthly',
         invoiceStatus: invoiceStatus || 'Paid',
+        workingHoursStart: workingHoursStart || '09:00',
+        workingHoursEnd: workingHoursEnd || '18:00',
+        workingDays: workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
       },
     });
 
@@ -934,6 +992,9 @@ export const createOffice = async (
         subscriptionPlan: newOffice.subscriptionPlan,
         billingCycle: newOffice.billingCycle,
         invoiceStatus: newOffice.invoiceStatus,
+        workingHoursStart: newOffice.workingHoursStart,
+        workingHoursEnd: newOffice.workingHoursEnd,
+        workingDays: newOffice.workingDays,
         createdAt: newOffice.createdAt.toISOString(),
         updatedAt: newOffice.updatedAt.toISOString(),
         _count: { employees: 0 },
@@ -969,6 +1030,9 @@ export const updateOffice = async (
     subscriptionPlan,
     billingCycle,
     invoiceStatus,
+    workingHoursStart,
+    workingHoursEnd,
+    workingDays,
   } = req.body;
 
   try {
@@ -1004,6 +1068,12 @@ export const updateOffice = async (
           billingCycle !== undefined ? billingCycle : existingOffice.billingCycle,
         invoiceStatus:
           invoiceStatus !== undefined ? invoiceStatus : existingOffice.invoiceStatus,
+        workingHoursStart:
+          workingHoursStart !== undefined ? workingHoursStart : existingOffice.workingHoursStart,
+        workingHoursEnd:
+          workingHoursEnd !== undefined ? workingHoursEnd : existingOffice.workingHoursEnd,
+        workingDays:
+          workingDays !== undefined ? workingDays : existingOffice.workingDays,
       },
       include: {
         _count: {
@@ -1028,6 +1098,9 @@ export const updateOffice = async (
         subscriptionPlan: updatedOffice.subscriptionPlan,
         billingCycle: updatedOffice.billingCycle,
         invoiceStatus: updatedOffice.invoiceStatus,
+        workingHoursStart: updatedOffice.workingHoursStart,
+        workingHoursEnd: updatedOffice.workingHoursEnd,
+        workingDays: updatedOffice.workingDays,
         createdAt: updatedOffice.createdAt.toISOString(),
         updatedAt: updatedOffice.updatedAt.toISOString(),
         _count: {
@@ -1056,11 +1129,6 @@ export const deleteOffice = async (
   try {
     const existingOffice = await prisma.office.findUnique({
       where: { id: officeIdInt },
-      include: {
-        _count: {
-          select: { employees: true, attendances: true }
-        }
-      }
     });
 
     if (!existingOffice) {
@@ -1068,27 +1136,20 @@ export const deleteOffice = async (
       return;
     }
 
-    // Check if office has assigned employees
-    if (existingOffice._count.employees > 0) {
-      res.status(400).json({
-        success: false,
-        message: `Cannot delete office. ${existingOffice._count.employees} employee(s) are still assigned to this office. Please unassign all employees first.`
-      });
-      return;
-    }
-
-    // Check if office has attendance records
-    if (existingOffice._count.attendances > 0) {
-      res.status(400).json({
-        success: false,
-        message: `Cannot delete office. ${existingOffice._count.attendances} attendance record(s) exist for this office. Please delete attendance records first.`
-      });
-      return;
-    }
-
-    await prisma.office.delete({
-      where: { id: officeIdInt },
-    });
+    // Safely unassign employees and nullify attendance office references in a transaction before deleting
+    await prisma.$transaction([
+      prisma.employee.updateMany({
+        where: { officeId: officeIdInt },
+        data: { officeId: null },
+      }),
+      prisma.attendance.updateMany({
+        where: { officeId: officeIdInt },
+        data: { officeId: null },
+      }),
+      prisma.office.delete({
+        where: { id: officeIdInt },
+      }),
+    ]);
 
     res.json({
       success: true,
@@ -2824,7 +2885,7 @@ export const downloadLeaveReport = async (
   try {
     const { employeeId, startDate, endDate } = req.query;
 
-    // Check if user is allowed (Admin / HR roles)
+    // Role guard
     const allowedRoles = ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN'];
     if (!req.user?.role || !allowedRoles.includes(req.user.role)) {
       res.status(403).json({ success: false, message: 'Access denied' });
@@ -2832,11 +2893,7 @@ export const downloadLeaveReport = async (
     }
 
     let whereClause: any = {};
-    
-    if (employeeId) {
-      whereClause.employeeId = parseInt(employeeId as string);
-    }
-    
+    if (employeeId) whereClause.employeeId = parseInt(employeeId as string);
     if (startDate && endDate) {
       whereClause.appliedOn = {
         gte: new Date(startDate as string),
@@ -2846,186 +2903,292 @@ export const downloadLeaveReport = async (
 
     const leaveRequests = await prisma.leaveRequest.findMany({
       where: whereClause,
-      include: {
-        employee: {
-          include: {
-            office: true,
-          },
-        },
-      },
+      include: { employee: { include: { office: true, department: true } } },
       orderBy: { appliedOn: 'desc' },
     });
+
+    const employees = await prisma.employee.findMany({
+      where: employeeId ? { id: parseInt(employeeId as string) } : {},
+      include: { office: true, leaveRequests: true, department: true },
+      orderBy: { employeeCode: 'asc' },
+    });
+
+    const CASUAL_TOTAL = 12, SICK_TOTAL = 10, EARNED_TOTAL = 15;
 
     const leaveData = leaveRequests.map(lr => ({
       employeeName: `${lr.employee.firstName} ${lr.employee.lastName}`,
       employeeCode: lr.employee.employeeCode,
-      designation: lr.employee.designation,
-      office: lr.employee.office?.name || 'N/A',
-      type: lr.type,
-      typeLabel: lr.type === 'CASUAL' ? 'Casual Leave' : lr.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',
-      fromDate: lr.fromDate.toISOString().split('T')[0],
-      toDate: lr.toDate.toISOString().split('T')[0],
-      days: Math.ceil((lr.toDate.getTime() - lr.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1,
+      designation: lr.employee.designation || '—',
+      department: (lr.employee as any).department?.name || '—',
+      office: lr.employee.office?.name || '—',
+      typeLabel: lr.type === 'CASUAL' ? 'Casual Leave' : lr.type === 'SICK' ? 'Sick Leave' : lr.type === 'EARNED' ? 'Earned Leave' : lr.type,
+      fromDate: lr.fromDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      toDate: lr.toDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      days: Math.ceil((lr.toDate.getTime() - lr.fromDate.getTime()) / 86400000) + 1,
       status: lr.status,
-      reason: lr.reason,
-      appliedOn: lr.appliedOn.toISOString().split('T')[0],
+      reason: lr.reason?.slice(0, 40) + (lr.reason && lr.reason.length > 40 ? '…' : '') || '—',
+      appliedOn: lr.appliedOn.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
       reviewedBy: lr.reviewedBy || 'Pending',
     }));
 
-    // Compute leave balances (with used/remaining) for the same scope (single or all employees)
-    const employees = await prisma.employee.findMany({
-      where: employeeId ? { id: parseInt(employeeId as string) } : {},
-      include: {
-        office: true,
-        leaveRequests: true,
-      },
-      orderBy: { employeeCode: 'asc' },
-    });
-
-    const CASUAL_TOTAL = 12;
-    const SICK_TOTAL = 10;
-    const EARNED_TOTAL = 15;
-
-    const balanceData = employees.map((emp) => {
-      const getUsedDays = (type: string) =>
-        emp.leaveRequests
-          .filter((l) => l.status === 'APPROVED' && l.type === type)
-          .reduce((sum, l) => {
-            const diffDays = Math.ceil(Math.abs(l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            return sum + diffDays;
-          }, 0);
-
-      const casualUsed = getUsedDays('CASUAL');
-      const sickUsed = getUsedDays('SICK');
-      const earnedUsed = getUsedDays('EARNED');
-
+    const balanceData = employees.map(emp => {
+      const getUsed = (type: string) => emp.leaveRequests
+        .filter(l => l.status === 'APPROVED' && l.type === type)
+        .reduce((sum, l) => sum + Math.ceil(Math.abs(l.toDate.getTime() - l.fromDate.getTime()) / 86400000) + 1, 0);
+      const cu = getUsed('CASUAL'), su = getUsed('SICK'), eu = getUsed('EARNED');
       return {
-        employeeName: `${emp.firstName} ${emp.lastName}`,
-        employeeCode: emp.employeeCode,
-        casualUsed,
-        casualRemaining: Math.max(0, CASUAL_TOTAL - casualUsed),
-        sickUsed,
-        sickRemaining: Math.max(0, SICK_TOTAL - sickUsed),
-        earnedUsed,
-        earnedRemaining: Math.max(0, EARNED_TOTAL - earnedUsed),
+        name: `${emp.firstName} ${emp.lastName}`,
+        code: emp.employeeCode,
+        dept: (emp as any).department?.name || '—',
+        office: emp.office?.name || '—',
+        casualUsed: cu, casualRem: Math.max(0, CASUAL_TOTAL - cu),
+        sickUsed: su, sickRem: Math.max(0, SICK_TOTAL - su),
+        earnedUsed: eu, earnedRem: Math.max(0, EARNED_TOTAL - eu),
       };
     });
 
-    const isSingleEmployee = !!employeeId && employees.length === 1;
-    const reportTitle = isSingleEmployee
-      ? `Leave Report - ${employees[0].firstName} ${employees[0].lastName}`
-      : 'Leave Report - All Employees';
+    const isSingle = !!employeeId && employees.length === 1;
+    const emp0 = employees[0];
+    const reportTitle = isSingle ? `Leave Report — ${emp0.firstName} ${emp0.lastName}` : 'Leave Report — All Employees';
+    const generatedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+    const generatedBy = req.user?.email || 'HR Manager';
 
-    // Generate PDF content
+    // Status color helper
+    const statusColor = (s: string) =>
+      s === 'APPROVED' ? '#059669' : s === 'REJECTED' ? '#DC2626' : '#D97706';
+    const statusBg = (s: string) =>
+      s === 'APPROVED' ? '#ECFDF5' : s === 'REJECTED' ? '#FEF2F2' : '#FFFBEB';
+
     const fonts = {
       Roboto: {
         normal: 'Helvetica',
         bold: 'Helvetica-Bold',
         italics: 'Helvetica-Oblique',
-        bolditalics: 'Helvetica-BoldOblique'
-      }
+        bolditalics: 'Helvetica-BoldOblique',
+      },
     };
     const printer = new PdfPrinter(fonts);
 
-    const docDefinition = {
+    // ── Summary stats
+    const approved = leaveData.filter(l => l.status === 'APPROVED').length;
+    const pending  = leaveData.filter(l => l.status === 'PENDING').length;
+    const rejected = leaveData.filter(l => l.status === 'REJECTED').length;
+    const totalDays = leaveData.reduce((s, l) => s + l.days, 0);
+
+    const docDefinition: any = {
+      pageSize: 'A4',
+      pageMargins: [36, 36, 36, 56],
+      footer: (currentPage: number, pageCount: number) => ({
+        columns: [
+          { text: `HRM Portal  •  Confidential`, style: 'footer', alignment: 'left' },
+          { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
+        ],
+        margin: [36, 0, 36, 0],
+      }),
       content: [
+        // ── HEADER BANNER
         {
           canvas: [
+            { type: 'rect', x: -36, y: -36, w: 595, h: 90, color: PRIMARY_COLOR },
+            { type: 'rect', x: -36, y: 54, w: 595, h: 6, color: '#0D9488' },
+          ],
+        },
+        // Brand title
+        {
+          columns: [
             {
-              type: 'rect',
-              x: -20,
-              y: -60,
-              w: 595,
-              h: 50,
-              color: PRIMARY_COLOR
-            }
-          ]
+              stack: [
+                { text: 'HRM Portal', fontSize: 9, color: 'white', opacity: 0.7, margin: [0, -80, 0, 2] },
+                { text: reportTitle, fontSize: 18, bold: true, color: 'white', margin: [0, 0, 0, 2] },
+                { text: isSingle ? `${emp0.employeeCode}  •  ${(emp0 as any).department?.name || 'No Department'}  •  ${emp0.office?.name || 'No Office'}` : 'Organisation-wide leave summary', fontSize: 9, color: 'white', opacity: 0.8 },
+              ],
+            },
+            {
+              stack: [
+                { text: 'LEAVE REPORT', fontSize: 7, bold: true, color: 'white', opacity: 0.6, alignment: 'right', margin: [0, -80, 0, 4] },
+                { text: generatedOn, fontSize: 9, bold: true, color: 'white', alignment: 'right' },
+                { text: `By ${generatedBy}`, fontSize: 8, color: 'white', opacity: 0.7, alignment: 'right' },
+              ],
+            },
+          ],
+          margin: [0, 0, 0, 20],
         },
-        { text: reportTitle, style: 'header', color: 'white', margin: [0, -45, 0, 10] },
-        { text: `Generated by: ${req.user?.email || 'HR Manager'}`, style: 'subheader' },
-        { text: `Generated on: ${new Date().toLocaleDateString()}`, style: 'subheader' },
-        ...(isSingleEmployee ? [{ text: `Employee Code: ${employees[0].employeeCode}`, style: 'subheader' }] : []),
-        { text: `Total Leave Records: ${leaveData.length}`, style: 'subheader' },
-        { text: '', margin: [0, 12] },
 
-        // ── Leave Balance Summary ──────────────────────────────
-        { text: 'Leave Balance Summary', style: 'tableHeader' },
+        // ── SUMMARY STAT CARDS
+        {
+          columns: [
+            {
+              stack: [
+                { text: leaveData.length.toString(), fontSize: 22, bold: true, color: PRIMARY_COLOR, alignment: 'center' },
+                { text: 'TOTAL REQUESTS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: approved.toString(), fontSize: 22, bold: true, color: '#059669', alignment: 'center' },
+                { text: 'APPROVED', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: pending.toString(), fontSize: 22, bold: true, color: '#D97706', alignment: 'center' },
+                { text: 'PENDING', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: rejected.toString(), fontSize: 22, bold: true, color: '#DC2626', alignment: 'center' },
+                { text: 'REJECTED', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: totalDays.toString(), fontSize: 22, bold: true, color: '#6366F1', alignment: 'center' },
+                { text: 'TOTAL DAYS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+            },
+          ],
+          margin: [0, 0, 0, 16],
+        },
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 1, lineColor: '#E5E7EB' }], margin: [0, 0, 0, 16] },
+
+        // ── LEAVE BALANCE SUMMARY
+        {
+          columns: [
+            { text: 'Leave Balance Summary', bold: true, fontSize: 11, color: '#111827' },
+            { text: `${employees.length} Employee${employees.length !== 1 ? 's' : ''}`, fontSize: 9, color: '#6B7280', alignment: 'right' },
+          ],
+          margin: [0, 0, 0, 8],
+        },
         {
           table: {
             headerRows: 1,
-            widths: isSingleEmployee
-              ? ['*', '*', '*', '*']
-              : ['*', 'auto', '*', '*', '*'],
-            body: isSingleEmployee
-              ? [
-                  ['Leave Type', 'Total', 'Used', 'Remaining'],
-                  ['Casual Leave', CASUAL_TOTAL.toString(), balanceData[0]?.casualUsed.toString() ?? '0', balanceData[0]?.casualRemaining.toString() ?? CASUAL_TOTAL.toString()],
-                  ['Sick Leave', SICK_TOTAL.toString(), balanceData[0]?.sickUsed.toString() ?? '0', balanceData[0]?.sickRemaining.toString() ?? SICK_TOTAL.toString()],
-                  ['Earned Leave', EARNED_TOTAL.toString(), balanceData[0]?.earnedUsed.toString() ?? '0', balanceData[0]?.earnedRemaining.toString() ?? EARNED_TOTAL.toString()],
-                ]
-              : [
-                  ['Employee', 'Code', 'Casual (Used/Rem)', 'Sick (Used/Rem)', 'Earned (Used/Rem)'],
-                  ...balanceData.map((b) => [
-                    b.employeeName,
-                    b.employeeCode,
-                    `${b.casualUsed} / ${b.casualRemaining}`,
-                    `${b.sickUsed} / ${b.sickRemaining}`,
-                    `${b.earnedUsed} / ${b.earnedRemaining}`,
-                  ]),
-                ]
-          }
-        },
-        { text: '', margin: [0, 16] },
-
-        // ── Leave History ──────────────────────────────────────
-        { text: 'Leave History', style: 'tableHeader' },
-        {
-          table: {
-            headerRows: 1,
-            widths: ['auto', 'auto', '*', '*', '*', 'auto', 'auto', '*', '*'],
+            widths: isSingle ? ['*', 40, 40, 40, 40, 40, 40, 40, 40] : [100, 50, 55, 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
             body: [
               [
-                { text: 'Employee', style: 'tableHeader' },
-                { text: 'Code', style: 'tableHeader' },
-                { text: 'Designation', style: 'tableHeader' },
-                { text: 'Type', style: 'tableHeader' },
-                { text: 'From', style: 'tableHeader' },
-                { text: 'To', style: 'tableHeader' },
-                { text: 'Days', style: 'tableHeader' },
-                { text: 'Status', style: 'tableHeader' },
-                { text: 'Reviewed By', style: 'tableHeader' }
+                { text: 'Employee', style: 'colHeader' },
+                { text: 'Code', style: 'colHeader' },
+                isSingle ? { text: 'Dept', style: 'colHeader' } : { text: 'Office', style: 'colHeader' },
+                { text: 'CL Used', style: 'colHeader' },
+                { text: 'CL Rem', style: 'colHeader' },
+                { text: 'SL Used', style: 'colHeader' },
+                { text: 'SL Rem', style: 'colHeader' },
+                { text: 'EL Used', style: 'colHeader' },
+                { text: 'EL Rem', style: 'colHeader' },
               ],
-              ...(leaveData.length > 0
-                ? leaveData.map(lr => [
-                    lr.employeeName,
-                    lr.employeeCode,
-                    lr.designation,
-                    lr.typeLabel,
-                    lr.fromDate,
-                    lr.toDate,
-                    lr.days.toString(),
-                    lr.status,
-                    lr.reviewedBy
-                  ])
-                : [[{ text: 'No leave records found.', colSpan: 9, alignment: 'center', italics: true }, {}, {}, {}, {}, {}, {}, {}, {}]])
-            ]
-          }
-        }
+              ...balanceData.map((b, i) => [
+                { text: b.name, fontSize: 8, color: '#111827', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: b.code, fontSize: 8, color: '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: isSingle ? b.dept : b.office, fontSize: 8, color: '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: b.casualUsed.toString(), fontSize: 8, alignment: 'center', color: b.casualUsed > 0 ? '#DC2626' : '#6B7280', bold: b.casualUsed > 0, fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: b.casualRem.toString(), fontSize: 8, alignment: 'center', color: '#059669', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: b.sickUsed.toString(), fontSize: 8, alignment: 'center', color: b.sickUsed > 0 ? '#DC2626' : '#6B7280', bold: b.sickUsed > 0, fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: b.sickRem.toString(), fontSize: 8, alignment: 'center', color: '#059669', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: b.earnedUsed.toString(), fontSize: 8, alignment: 'center', color: b.earnedUsed > 0 ? '#DC2626' : '#6B7280', bold: b.earnedUsed > 0, fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                { text: b.earnedRem.toString(), fontSize: 8, alignment: 'center', color: '#059669', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+              ]),
+            ],
+          },
+          layout: {
+            hLineWidth: (i: number) => (i === 0 || i === 1) ? 1.5 : 0.5,
+            vLineWidth: () => 0,
+            hLineColor: (i: number) => i === 0 || i === 1 ? PRIMARY_COLOR : '#F3F4F6',
+            paddingLeft: () => 6,
+            paddingRight: () => 6,
+            paddingTop: () => 5,
+            paddingBottom: () => 5,
+          },
+          margin: [0, 0, 0, 20],
+        },
+
+        // ── LEAVE HISTORY TABLE
+        {
+          columns: [
+            { text: 'Leave History', bold: true, fontSize: 11, color: '#111827' },
+            { text: `${leaveData.length} Record${leaveData.length !== 1 ? 's' : ''}`, fontSize: 9, color: '#6B7280', alignment: 'right' },
+          ],
+          margin: [0, 0, 0, 8],
+        },
+        leaveData.length > 0
+          ? {
+              table: {
+                headerRows: 1,
+                widths: [80, 45, 55, 48, 48, 22, 50, 50],
+                body: [
+                  [
+                    { text: 'Employee', style: 'colHeader' },
+                    { text: 'Code', style: 'colHeader' },
+                    { text: 'Leave Type', style: 'colHeader' },
+                    { text: 'From', style: 'colHeader' },
+                    { text: 'To', style: 'colHeader' },
+                    { text: 'Days', style: 'colHeader' },
+                    { text: 'Status', style: 'colHeader' },
+                    { text: 'Applied On', style: 'colHeader' },
+                  ],
+                  ...leaveData.map((lr, i) => [
+                    { text: lr.employeeName, fontSize: 8, color: '#111827', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                    { text: lr.employeeCode, fontSize: 7, color: '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                    { text: lr.typeLabel, fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                    { text: lr.fromDate, fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                    { text: lr.toDate, fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                    { text: lr.days.toString(), fontSize: 8, alignment: 'center', bold: true, color: PRIMARY_COLOR, fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                    {
+                      text: lr.status,
+                      fontSize: 7,
+                      bold: true,
+                      color: statusColor(lr.status),
+                      fillColor: statusBg(lr.status),
+                      alignment: 'center',
+                    },
+                    { text: lr.appliedOn, fontSize: 8, color: '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                  ]),
+                ],
+              },
+              layout: {
+                hLineWidth: (i: number) => (i === 0 || i === 1) ? 1.5 : 0.5,
+                vLineWidth: () => 0,
+                hLineColor: (i: number) => i === 0 || i === 1 ? PRIMARY_COLOR : '#F3F4F6',
+                paddingLeft: () => 6,
+                paddingRight: () => 6,
+                paddingTop: () => 5,
+                paddingBottom: () => 5,
+              },
+              margin: [0, 0, 0, 16],
+            }
+          : { text: 'No leave records found for the selected filters.', fontSize: 9, color: '#9CA3AF', italics: true, alignment: 'center', margin: [0, 20, 0, 20] },
+
+        // ── LEGEND
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E5E7EB' }], margin: [0, 4, 0, 8] },
+        {
+          columns: [
+            { text: [{ text: '● ', color: '#059669' }, { text: 'CL = Casual Leave  ', fontSize: 7, color: '#6B7280' }] },
+            { text: [{ text: '● ', color: '#6366F1' }, { text: 'SL = Sick Leave  ', fontSize: 7, color: '#6B7280' }] },
+            { text: [{ text: '● ', color: PRIMARY_COLOR }, { text: 'EL = Earned Leave', fontSize: 7, color: '#6B7280' }] },
+            { text: `Rem = Remaining days out of annual quota`, fontSize: 7, color: '#9CA3AF', alignment: 'right' },
+          ],
+        },
       ],
-      pageMargins: [40, 60, 40, 60],
+
       styles: {
-        header: { fontSize: 18, bold: true, margin: [0, 0, 0, 10] },
-        subheader: { fontSize: 12, margin: [0, 5, 0, 5] },
-        tableHeader: { fontSize: 14, bold: true, margin: [0, 10, 0, 5] }
-      }
+        colHeader: { fontSize: 8, bold: true, color: 'white', fillColor: PRIMARY_COLOR, alignment: 'left' },
+        footer:    { fontSize: 8, color: '#9CA3AF' },
+      },
+      defaultStyle: { font: 'Roboto' },
     };
 
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
-
-    const fileSuffix = isSingleEmployee ? `${employees[0].employeeCode}` : 'all-employees';
+    const fileSuffix = isSingle ? emp0.employeeCode : 'all-employees';
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="leave-report-${fileSuffix}-${new Date().toISOString().split('T')[0]}.pdf"`);
-    
     pdfDoc.pipe(res);
     pdfDoc.end();
   } catch (error) {
@@ -3033,6 +3196,7 @@ export const downloadLeaveReport = async (
     res.status(500).json({ success: false, message: 'Failed to generate leave report' });
   }
 };
+
 
 export const createAdminLeaveRequest = async (
   req: AuthenticatedRequest,
@@ -3574,6 +3738,23 @@ export const fetchSalarySlips = async (
 
     const payslipMap = new Map(existingPayslips.map((p: any) => [p.employeeId, p]));
 
+    const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        date: {
+          startsWith: monthStr,
+        },
+      },
+    });
+
+    const attendanceByEmployee: Record<number, any[]> = {};
+    attendances.forEach((att) => {
+      if (!attendanceByEmployee[att.employeeId]) {
+        attendanceByEmployee[att.employeeId] = [];
+      }
+      attendanceByEmployee[att.employeeId].push(att);
+    });
+
     const slips = employees.map((emp) => {
       const dbPayslip = payslipMap.get(emp.id);
 
@@ -3596,10 +3777,19 @@ export const fetchSalarySlips = async (
         };
       }
 
+      const empAtts = attendanceByEmployee[emp.id] || [];
+      const present = empAtts.filter((a) => a.status === 'PRESENT').length;
+      const late = empAtts.filter((a) => a.status === 'LATE').length;
+      const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+      const totalDays = empAtts.length;
+      const presentDays = present + late + (halfDay * 0.5);
+      const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
+
       const isSenior = emp.designation?.toLowerCase().includes('senior') || 
                        emp.designation?.toLowerCase().includes('lead') || 
                        emp.designation?.toLowerCase().includes('manager');
-      const baseSalary = isSenior ? 85000 : 45000;
+      const defaultBase = isSenior ? 85000 : 45000;
+      const baseSalary = Math.round(defaultBase * salaryRatio);
       const allowance = Math.round(baseSalary * 0.15);
       const deductions = Math.round(baseSalary * 0.10);
       const netSalary = baseSalary + allowance - deductions;
@@ -3665,7 +3855,27 @@ export const approveSalarySlip = async (
     const isSenior = employee.designation?.toLowerCase().includes('senior') || 
                      employee.designation?.toLowerCase().includes('lead') || 
                      employee.designation?.toLowerCase().includes('manager');
-    const baseSalary = isSenior ? 85000 : 45000;
+
+    // Query attendance to compute ratio
+    const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    const empAtts = await prisma.attendance.findMany({
+      where: {
+        employeeId: empIdInt,
+        date: {
+          startsWith: monthStr,
+        },
+      },
+    });
+
+    const present = empAtts.filter((a) => a.status === 'PRESENT').length;
+    const late = empAtts.filter((a) => a.status === 'LATE').length;
+    const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+    const totalDays = empAtts.length;
+    const presentDays = present + late + (halfDay * 0.5);
+    const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
+
+    const defaultBase = isSenior ? 85000 : 45000;
+    const baseSalary = Math.round(defaultBase * salaryRatio);
     const allowance = Math.round(baseSalary * 0.15);
     const deductions = Math.round(baseSalary * 0.10);
     const netSalary = baseSalary + allowance - deductions;
@@ -3858,12 +4068,57 @@ export const fetchPayrollReportDetails = async (
     }) as any[];
 
     const payslipSet = new Set(existingPayslips.map((p: any) => p.employeeId));
+    const payslipMap = new Map(existingPayslips.map((p: any) => [p.employeeId, p]));
+
+    const monthStr = `${targetYear}-${String(targetMonthVal).padStart(2, '0')}`;
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        date: {
+          startsWith: monthStr,
+        },
+      },
+    });
+
+    const attendanceByEmployee: Record<number, any[]> = {};
+    attendances.forEach((att) => {
+      if (!attendanceByEmployee[att.employeeId]) {
+        attendanceByEmployee[att.employeeId] = [];
+      }
+      attendanceByEmployee[att.employeeId].push(att);
+    });
 
     const slips = employees.map((emp) => {
+      const dbPayslip = payslipMap.get(emp.id);
+
+      if (dbPayslip) {
+        return {
+          id: emp.id,
+          employeeCode: emp.employeeCode,
+          name: `${emp.firstName} ${emp.lastName}`,
+          designation: dbPayslip.designation,
+          department: dbPayslip.department,
+          office: dbPayslip.officeName,
+          baseSalary: dbPayslip.baseSalary,
+          allowance: dbPayslip.allowance,
+          deductions: dbPayslip.deductions,
+          netSalary: dbPayslip.netSalary,
+          status: 'Approved',
+        };
+      }
+
+      const empAtts = attendanceByEmployee[emp.id] || [];
+      const present = empAtts.filter((a) => a.status === 'PRESENT').length;
+      const late = empAtts.filter((a) => a.status === 'LATE').length;
+      const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+      const totalDays = empAtts.length;
+      const presentDays = present + late + (halfDay * 0.5);
+      const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
+
       const isSenior = emp.designation?.toLowerCase().includes('senior') || 
                        emp.designation?.toLowerCase().includes('lead') || 
                        emp.designation?.toLowerCase().includes('manager');
-      const baseSalary = isSenior ? 85000 : 45000;
+      const defaultBase = isSenior ? 85000 : 45000;
+      const baseSalary = Math.round(defaultBase * salaryRatio);
       const allowance = Math.round(baseSalary * 0.15);
       const deductions = Math.round(baseSalary * 0.10);
       const netSalary = baseSalary + allowance - deductions;
@@ -3879,7 +4134,7 @@ export const fetchPayrollReportDetails = async (
         allowance,
         deductions,
         netSalary,
-        status: payslipSet.has(emp.id) ? 'Approved' : 'Pending Approval',
+        status: 'Pending Approval',
       };
     });
 
@@ -4032,6 +4287,13 @@ export const downloadAttendanceReport = async (
     const { month, employeeId } = req.query;
     const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
 
+    // Role guard
+    const allowedRoles = ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN'];
+    if (!req.user?.role || !allowedRoles.includes(req.user.role)) {
+      res.status(403).json({ success: false, message: 'Access denied' });
+      return;
+    }
+
     let employees;
     if (employeeId) {
       // Specific employee report
@@ -4043,6 +4305,7 @@ export const downloadAttendanceReport = async (
       // All employees report
       employees = await prisma.employee.findMany({
         include: { office: true, department: true },
+        orderBy: { employeeCode: 'asc' },
       });
     }
 
@@ -4091,140 +4354,337 @@ export const downloadAttendanceReport = async (
       };
     });
 
-    // PDF document definition
-    const printer = new PdfPrinter({
+    const isSingle = !!employeeId && employees.length === 1;
+    const emp0 = employees[0];
+    
+    // Parse targetMonth to readable Month Year format (e.g. "2026-06" -> "June 2026")
+    const getMonthName = (monthStr: string): string => {
+      const parts = monthStr.split('-');
+      if (parts.length !== 2) return monthStr;
+      const year = parts[0];
+      const monthIdx = parseInt(parts[1], 10) - 1;
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+      return `${months[monthIdx]} ${year}`;
+    };
+
+    const reportTitle = isSingle 
+      ? `Attendance Report — ${emp0.firstName} ${emp0.lastName}` 
+      : 'Attendance Report — All Employees';
+      
+    const monthLabel = getMonthName(targetMonth);
+    const generatedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+    const generatedBy = req.user?.email || 'HR Manager';
+
+    // Status color helper
+    const statusColor = (s: string) => {
+      switch (s) {
+        case 'PRESENT': return '#059669';
+        case 'LATE': return '#D97706';
+        case 'HALF_DAY': return '#4F46E5';
+        case 'LEAVE': return '#7C3AED';
+        case 'ABSENT': return '#DC2626';
+        default: return '#6B7280';
+      }
+    };
+
+    const statusBg = (s: string) => {
+      switch (s) {
+        case 'PRESENT': return '#ECFDF5';
+        case 'LATE': return '#FFFBEB';
+        case 'HALF_DAY': return '#EEF2FF';
+        case 'LEAVE': return '#F5F3FF';
+        case 'ABSENT': return '#FEF2F2';
+        default: return '#F3F4F6';
+      }
+    };
+
+    const formatTime = (dateInput: Date | string | null | undefined): string => {
+      if (!dateInput) return '—';
+      const d = new Date(dateInput);
+      if (isNaN(d.getTime())) return '—';
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    };
+
+    const formatDateStr = (dateStr: string): string => {
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return dateStr;
+      const year = parts[0];
+      const monthIdx = parseInt(parts[1], 10) - 1;
+      const day = parts[2];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${day} ${months[monthIdx]} ${year}`;
+    };
+
+    const fonts = {
       Roboto: {
         normal: 'Helvetica',
         bold: 'Helvetica-Bold',
         italics: 'Helvetica-Oblique',
-        bolditalics: 'Helvetica-BoldOblique'
-      }
-    });
+        bolditalics: 'Helvetica-BoldOblique',
+      },
+    };
+    const printer = new PdfPrinter(fonts);
 
-    const docDefinition = {
+    // ── Summary stats calculation
+    let totalCardVal1 = '';
+    let totalCardLbl1 = '';
+    let totalCardVal2 = '';
+    let totalCardLbl2 = '';
+    let totalCardVal3 = '';
+    let totalCardLbl3 = '';
+    let totalCardVal4 = '';
+    let totalCardLbl4 = '';
+    let totalCardVal5 = '';
+    let totalCardLbl5 = '';
+
+    if (isSingle) {
+      const empData = employeeData[0];
+      totalCardVal1 = empData.totalDays.toString();
+      totalCardLbl1 = 'DAYS LOGGED';
+      totalCardVal2 = empData.present.toString();
+      totalCardLbl2 = 'PRESENT';
+      totalCardVal3 = empData.late.toString();
+      totalCardLbl3 = 'LATE';
+      totalCardVal4 = (empData.absent + empData.leave).toString();
+      totalCardLbl4 = 'ABSENT / LEAVE';
+      totalCardVal5 = `${empData.attendanceRate}%`;
+      totalCardLbl5 = 'ATTENDANCE RATE';
+    } else {
+      const totalEmp = employees.length;
+      const avgRate = totalEmp > 0
+        ? Math.round(employeeData.reduce((sum, e) => sum + e.attendanceRate, 0) / totalEmp)
+        : 100;
+      const totalPresent = employeeData.reduce((sum, e) => sum + e.present, 0);
+      const totalLate = employeeData.reduce((sum, e) => sum + e.late, 0);
+      const totalAbsentLeave = employeeData.reduce((sum, e) => sum + e.absent + e.leave, 0);
+
+      totalCardVal1 = totalEmp.toString();
+      totalCardLbl1 = 'TOTAL EMPLOYEES';
+      totalCardVal2 = totalPresent.toString();
+      totalCardLbl2 = 'TOTAL PRESENT';
+      totalCardVal3 = totalLate.toString();
+      totalCardLbl3 = 'TOTAL LATE';
+      totalCardVal4 = totalAbsentLeave.toString();
+      totalCardLbl4 = 'ABSENT / LEAVE';
+      totalCardVal5 = `${avgRate}%`;
+      totalCardLbl5 = 'AVG RATE';
+    }
+
+    const docDefinition: any = {
+      pageSize: 'A4',
+      pageMargins: [36, 36, 36, 56],
+      footer: (currentPage: number, pageCount: number) => ({
+        columns: [
+          { text: `HRM Portal  •  Confidential`, style: 'footer', alignment: 'left' },
+          { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
+        ],
+        margin: [36, 0, 36, 0],
+      }),
       content: [
+        // ── HEADER BANNER
         {
           canvas: [
-            {
-              type: 'rect',
-              x: 0,
-              y: 0,
-              w: 515,
-              h: 50,
-              color: PRIMARY_COLOR
-            }
+            { type: 'rect', x: -36, y: -36, w: 595, h: 90, color: PRIMARY_COLOR },
+            { type: 'rect', x: -36, y: 54, w: 595, h: 6, color: '#0D9488' },
           ],
-          margin: [0, 0, 0, 20]
         },
+        // Brand title
         {
-          text: 'Admin Attendance Report',
-          style: 'header',
-          color: 'white',
-          alignment: 'center',
-          margin: [0, -40, 0, 20]
+          columns: [
+            {
+              stack: [
+                { text: 'HRM Portal', fontSize: 9, color: 'white', opacity: 0.7, margin: [0, -80, 0, 2] },
+                { text: reportTitle, fontSize: 16, bold: true, color: 'white', margin: [0, 0, 0, 2] },
+                { text: isSingle ? `${emp0.employeeCode}  •  ${(emp0 as any).department?.name || 'No Department'}  •  ${emp0.office?.name || 'No Office'}` : `Organisation-wide attendance summary  •  ${monthLabel}`, fontSize: 9, color: 'white', opacity: 0.8 },
+              ],
+            },
+            {
+              stack: [
+                { text: 'ATTENDANCE REPORT', fontSize: 7, bold: true, color: 'white', opacity: 0.6, alignment: 'right', margin: [0, -80, 0, 4] },
+                { text: monthLabel, fontSize: 9, bold: true, color: 'white', alignment: 'right' },
+                { text: `By ${generatedBy}`, fontSize: 8, color: 'white', opacity: 0.7, alignment: 'right' },
+              ],
+            },
+          ],
+          margin: [0, 0, 0, 20],
         },
+
+        // ── SUMMARY STAT CARDS
         {
-          text: `Month: ${targetMonth}`,
-          style: 'subheader',
-          margin: [0, 0, 0, 20]
+          columns: [
+            {
+              stack: [
+                { text: totalCardVal1, fontSize: 22, bold: true, color: PRIMARY_COLOR, alignment: 'center' },
+                { text: totalCardLbl1, fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: totalCardVal2, fontSize: 22, bold: true, color: '#059669', alignment: 'center' },
+                { text: totalCardLbl2, fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: totalCardVal3, fontSize: 22, bold: true, color: '#D97706', alignment: 'center' },
+                { text: totalCardLbl3, fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: totalCardVal4, fontSize: 22, bold: true, color: '#DC2626', alignment: 'center' },
+                { text: totalCardLbl4, fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+              margin: [0, 0, 6, 0],
+            },
+            {
+              stack: [
+                { text: totalCardVal5, fontSize: 22, bold: true, color: '#6366F1', alignment: 'center' },
+                { text: totalCardLbl5, fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+            },
+          ],
+          margin: [0, 0, 0, 16],
         },
-        {
-          text: `Generated by: ${req.user?.email} (${req.user?.role})`,
-          style: 'normal',
-          margin: [0, 0, 0, 20]
-        },
-        ...employeeData.map((empData, index) => [
-          {
-            text: `Employee: ${empData.employee.firstName} ${empData.employee.lastName} (${empData.employee.employeeCode})`,
-            style: 'subheader',
-            margin: [0, 20, 0, 10],
-            pageBreak: index > 0 ? 'before' : undefined
-          },
-          {
-            columns: [
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 1, lineColor: '#E5E7EB' }], margin: [0, 0, 0, 16] },
+
+        // ── ATTENDANCE SUMMARY TABLE (All employees summary)
+        ...(!isSingle
+          ? [
               {
-                text: `Department: ${empData.employee.department?.name || 'N/A'}`,
-                style: 'normal'
+                columns: [
+                  { text: 'Employee Attendance Summary', bold: true, fontSize: 11, color: '#111827' },
+                  { text: `${employees.length} Employee${employees.length !== 1 ? 's' : ''}`, fontSize: 9, color: '#6B7280', alignment: 'right' },
+                ],
+                margin: [0, 0, 0, 8],
               },
               {
-                text: `Office: ${empData.employee.office?.name || 'N/A'}`,
-                style: 'normal'
-              }
-            ],
-            margin: [0, 0, 0, 10]
-          },
-          {
-            text: 'Attendance Summary',
-            style: 'subheader',
-            margin: [0, 0, 0, 10]
-          },
-          {
-            ul: [
-              `Present: ${empData.present} days`,
-              `Late: ${empData.late} days`,
-              `Absent: ${empData.absent} days`,
-              `Half Day: ${empData.halfDay} days`,
-              `Leave: ${empData.leave} days`,
-              `Attendance Rate: ${empData.attendanceRate}%`
-            ],
-            margin: [0, 0, 0, 20]
-          },
-          {
-            text: 'Daily Attendance Details',
-            style: 'subheader',
-            margin: [0, 0, 0, 10]
-          },
-          {
-            table: {
-              headerRows: 1,
-              widths: ['auto', '*', '*', 'auto'],
-              body: [
-                [
-                  { text: 'Date', style: 'tableHeader' },
-                  { text: 'Check In', style: 'tableHeader' },
-                  { text: 'Check Out', style: 'tableHeader' },
-                  { text: 'Status', style: 'tableHeader' }
-                ],
-                ...empData.attendances.map(att => [
-                  att.date,
-                  att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
-                  att.checkOut ? new Date(att.checkOut).toLocaleTimeString() : '--:--',
-                  att.status
-                ])
-              ]
+                table: {
+                  headerRows: 1,
+                  widths: [110, 45, 80, 40, 40, 40, 40, 40, 50],
+                  body: [
+                    [
+                      { text: 'Employee', style: 'colHeader' },
+                      { text: 'Code', style: 'colHeader' },
+                      { text: 'Department', style: 'colHeader' },
+                      { text: 'Pres', style: 'colHeader', alignment: 'center' },
+                      { text: 'Late', style: 'colHeader', alignment: 'center' },
+                      { text: 'Half', style: 'colHeader', alignment: 'center' },
+                      { text: 'Abs', style: 'colHeader', alignment: 'center' },
+                      { text: 'Leave', style: 'colHeader', alignment: 'center' },
+                      { text: 'Rate', style: 'colHeader', alignment: 'center' },
+                    ],
+                    ...employeeData.map((empData, i) => [
+                      { text: `${empData.employee.firstName} ${empData.employee.lastName}`, fontSize: 8, color: '#111827', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: empData.employee.employeeCode, fontSize: 7, color: '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: (empData.employee as any).department?.name || '—', fontSize: 8, color: '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: empData.present.toString(), fontSize: 8, alignment: 'center', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: empData.late.toString(), fontSize: 8, alignment: 'center', color: empData.late > 0 ? '#D97706' : '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: empData.halfDay.toString(), fontSize: 8, alignment: 'center', color: empData.halfDay > 0 ? '#4F46E5' : '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: empData.absent.toString(), fontSize: 8, alignment: 'center', color: empData.absent > 0 ? '#DC2626' : '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: empData.leave.toString(), fontSize: 8, alignment: 'center', color: empData.leave > 0 ? '#7C3AED' : '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      { text: `${empData.attendanceRate}%`, fontSize: 8, alignment: 'center', bold: true, color: empData.attendanceRate >= 90 ? '#059669' : empData.attendanceRate >= 75 ? '#D97706' : '#DC2626', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                    ]),
+                  ],
+                },
+                layout: {
+                  hLineWidth: (i: number) => (i === 0 || i === 1) ? 1.5 : 0.5,
+                  vLineWidth: () => 0,
+                  hLineColor: (i: number) => i === 0 || i === 1 ? PRIMARY_COLOR : '#F3F4F6',
+                  paddingLeft: () => 6,
+                  paddingRight: () => 6,
+                  paddingTop: () => 5,
+                  paddingBottom: () => 5,
+                },
+                margin: [0, 0, 0, 20],
+              },
+            ]
+          : []
+        ),
+
+        // ── DETAILED HISTORY SECTION
+        ...employeeData.map((empData, index) => {
+          const detailTitle = isSingle 
+            ? 'Daily Attendance Details' 
+            : `Daily Details — ${empData.employee.firstName} ${empData.employee.lastName} (${empData.employee.employeeCode})`;
+
+          return [
+            {
+              text: detailTitle,
+              bold: true,
+              fontSize: 11,
+              color: '#111827',
+              margin: [0, 10, 0, 8],
+              pageBreak: (!isSingle && (index > 0 || employeeData.length > 1)) ? 'before' : undefined
             },
-            margin: [0, 0, 0, 30]
-          }
-        ])
+            empData.attendances.length > 0
+              ? {
+                  table: {
+                    headerRows: 1,
+                    widths: [75, 80, 80, 65, '*'],
+                    body: [
+                      [
+                        { text: 'Date', style: 'colHeader' },
+                        { text: 'Check In', style: 'colHeader' },
+                        { text: 'Check Out', style: 'colHeader' },
+                        { text: 'Status', style: 'colHeader', alignment: 'center' },
+                        { text: 'Notes / Remarks', style: 'colHeader' },
+                      ],
+                      ...empData.attendances.map((att, i) => [
+                        { text: formatDateStr(att.date), fontSize: 8, color: '#111827', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                        { text: formatTime(att.checkIn), fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                        { text: formatTime(att.checkOut), fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                        {
+                          text: att.status,
+                          fontSize: 7,
+                          bold: true,
+                          color: statusColor(att.status),
+                          fillColor: statusBg(att.status),
+                          alignment: 'center',
+                        },
+                        { text: att.notes || '—', fontSize: 8, color: '#6B7280', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                      ]),
+                    ],
+                  },
+                  layout: {
+                    hLineWidth: (i: number) => (i === 0 || i === 1) ? 1.5 : 0.5,
+                    vLineWidth: () => 0,
+                    hLineColor: (i: number) => i === 0 || i === 1 ? PRIMARY_COLOR : '#F3F4F6',
+                    paddingLeft: () => 6,
+                    paddingRight: () => 6,
+                    paddingTop: () => 5,
+                    paddingBottom: () => 5,
+                  },
+                  margin: [0, 0, 0, 20],
+                }
+              : { text: 'No attendance records logged for this month.', fontSize: 9, color: '#9CA3AF', italics: true, alignment: 'center', margin: [0, 20, 0, 20] }
+          ];
+        }).flat()
       ],
-      pageMargins: [40, 60, 40, 60],
+
       styles: {
-        header: {
-          fontSize: 18,
-          bold: true,
-          margin: [0, 0, 0, 10]
-        },
-        subheader: {
-          fontSize: 14,
-          bold: true,
-          margin: [0, 0, 0, 5]
-        },
-        normal: {
-          fontSize: 12
-        },
-        tableHeader: {
-          fontSize: 11,
-          bold: true,
-          color: PRIMARY_COLOR,
-          margin: [0, 5, 0, 5]
-        }
-      }
+        colHeader: { fontSize: 8, bold: true, color: 'white', fillColor: PRIMARY_COLOR, alignment: 'left' },
+        footer:    { fontSize: 8, color: '#9CA3AF' },
+      },
+      defaultStyle: { font: 'Roboto' },
     };
 
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    const fileSuffix = isSingle ? emp0.employeeCode : 'all-employees';
     
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="admin-attendance-report-${new Date().toISOString().split('T')[0]}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-report-${fileSuffix}-${targetMonth}.pdf"`);
     
     pdfDoc.pipe(res);
     pdfDoc.end();
@@ -4358,37 +4818,107 @@ export const fetchAdminSettings = async (
   res: Response
 ): Promise<void> => {
   try {
-    // For now, return default settings. In a real app, this would be from a settings table
+    let settingsRecord = await prisma.systemSetting.findUnique({
+      where: { id: 1 },
+    });
+
+    if (!settingsRecord) {
+      settingsRecord = await prisma.systemSetting.create({
+        data: {
+          id: 1,
+          company: {
+            name: 'HRM Portal',
+            logo: '',
+            timezone: 'Asia/Kolkata',
+            workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+            workingHours: { start: '09:00', end: '18:00' },
+          },
+          attendance: {
+            lateThreshold: 10,
+            halfDayThreshold: 180,
+            autoMarkAbsent: true,
+            absentThreshold: 240,
+            enableGeofence: true,
+          },
+          leave: {
+            casualLeavePerYear: 12,
+            sickLeavePerYear: 10,
+            earnedLeavePerYear: 15,
+            requireApproval: true,
+            maxConsecutiveDays: 5,
+            leaveTypes: [
+              { id: '1', name: 'Casual Leave', code: 'CL', daysPerYear: 12, maxConsecutiveDays: 3, requiresApproval: true, paid: true },
+              { id: '2', name: 'Sick Leave', code: 'SL', daysPerYear: 10, maxConsecutiveDays: 5, requiresApproval: true, paid: true },
+              { id: '3', name: 'Earned Leave', code: 'EL', daysPerYear: 15, maxConsecutiveDays: 10, requiresApproval: true, paid: true },
+              { id: '4', name: 'Maternity Leave', code: 'ML', daysPerYear: 90, maxConsecutiveDays: 90, requiresApproval: true, paid: true },
+              { id: '5', name: 'Paternity Leave', code: 'PL', daysPerYear: 10, maxConsecutiveDays: 10, requiresApproval: true, paid: true },
+              { id: '6', name: 'Work From Home', code: 'WFH', daysPerYear: 24, maxConsecutiveDays: 5, requiresApproval: true, paid: true }
+            ]
+          },
+          payroll: {
+            processingDay: 25,
+            currency: 'INR',
+            includeTax: true,
+            includeProvidentFund: true,
+          },
+          notifications: {
+            emailEnabled: true,
+            smsEnabled: false,
+            pushEnabled: true,
+            dailyReports: true,
+            weeklyReports: true,
+          },
+        },
+      });
+    }
+
+    const defaultLeaveTypes = [
+      { id: '1', name: 'Casual Leave', code: 'CL', daysPerYear: 12, maxConsecutiveDays: 3, requiresApproval: true, paid: true },
+      { id: '2', name: 'Sick Leave', code: 'SL', daysPerYear: 10, maxConsecutiveDays: 5, requiresApproval: true, paid: true },
+      { id: '3', name: 'Earned Leave', code: 'EL', daysPerYear: 15, maxConsecutiveDays: 10, requiresApproval: true, paid: true },
+      { id: '4', name: 'Maternity Leave', code: 'ML', daysPerYear: 90, maxConsecutiveDays: 90, requiresApproval: true, paid: true },
+      { id: '5', name: 'Paternity Leave', code: 'PL', daysPerYear: 10, maxConsecutiveDays: 10, requiresApproval: true, paid: true },
+      { id: '6', name: 'Work From Home', code: 'WFH', daysPerYear: 24, maxConsecutiveDays: 5, requiresApproval: true, paid: true }
+    ];
+
+    const rawLeave = (settingsRecord.leave as any) || {};
+    const leaveSettings = {
+      casualLeavePerYear: rawLeave.casualLeavePerYear !== undefined ? rawLeave.casualLeavePerYear : 12,
+      sickLeavePerYear: rawLeave.sickLeavePerYear !== undefined ? rawLeave.sickLeavePerYear : 10,
+      earnedLeavePerYear: rawLeave.earnedLeavePerYear !== undefined ? rawLeave.earnedLeavePerYear : 15,
+      requireApproval: rawLeave.requireApproval !== undefined ? rawLeave.requireApproval : true,
+      maxConsecutiveDays: rawLeave.maxConsecutiveDays !== undefined ? rawLeave.maxConsecutiveDays : 5,
+      leaveTypes: rawLeave.leaveTypes || defaultLeaveTypes
+    };
+
+    const rawAttendance = (settingsRecord.attendance as any) || {};
+    const attendanceSettings = {
+      lateThreshold: rawAttendance.lateThreshold !== undefined ? rawAttendance.lateThreshold : 10,
+      halfDayThreshold: rawAttendance.halfDayThreshold !== undefined ? rawAttendance.halfDayThreshold : 180,
+      autoMarkAbsent: rawAttendance.autoMarkAbsent !== undefined ? rawAttendance.autoMarkAbsent : true,
+      absentThreshold: rawAttendance.absentThreshold !== undefined ? rawAttendance.absentThreshold : 240,
+      enableGeofence: rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true,
+    };
+
     const settings = {
-      company: {
-        name: 'QuickBoom HRM',
+      company: settingsRecord.company || {
+        name: 'HRM Portal',
         logo: '',
         timezone: 'Asia/Kolkata',
         workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
         workingHours: { start: '09:00', end: '18:00' },
       },
-      attendance: {
-        lateThreshold: 10, // minutes
-        halfDayThreshold: 180, // minutes
-        autoMarkAbsent: true,
-        absentThreshold: 240, // minutes
-      },
-      leave: {
-        casualLeavePerYear: 12,
-        sickLeavePerYear: 10,
-        earnedLeavePerYear: 15,
-        requireApproval: true,
-        maxConsecutiveDays: 5,
-      },
-      notifications: {
+      attendance: attendanceSettings,
+      leave: leaveSettings,
+      notifications: settingsRecord.notifications || {
         emailEnabled: true,
         smsEnabled: false,
         pushEnabled: true,
         dailyReports: true,
         weeklyReports: true,
       },
-      payroll: {
-        processingDay: 25, // day of month
+      payroll: settingsRecord.payroll || {
+        processingDay: 25,
         currency: 'INR',
         includeTax: true,
         includeProvidentFund: true,
@@ -4413,12 +4943,29 @@ export const updateAdminSettings = async (
     return;
   }
 
+  const validCategories = ['company', 'attendance', 'leave', 'payroll', 'notifications'];
+  if (!validCategories.includes(category)) {
+    res.status(400).json({ success: false, message: `Invalid settings category: ${category}` });
+    return;
+  }
+
   try {
-    // For now, just return success. In a real app, this would update a settings table
+    const updateData: any = {};
+    updateData[category] = updatedSettings;
+
+    const updatedRecord = await prisma.systemSetting.upsert({
+      where: { id: 1 },
+      update: updateData,
+      create: {
+        id: 1,
+        ...updateData,
+      },
+    });
+
     res.json({ 
       success: true, 
-      message: `${category} settings updated successfully.`,
-      settings: updatedSettings 
+      message: `${category.charAt(0).toUpperCase() + category.slice(1)} settings updated successfully.`,
+      settings: (updatedRecord as any)[category]
     });
   } catch (error) {
     console.error('Update admin settings error:', error);
@@ -5072,6 +5619,162 @@ export const assignShiftToEmployee = async (
   } catch (error) {
     console.error('Assign shift error:', error);
     res.status(500).json({ success: false, message: 'Failed to assign shift.' });
+  }
+};
+
+export const fetchAdminHolidays = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const holidays = await prisma.holiday.findMany({
+      orderBy: { date: 'asc' }
+    });
+
+    const formattedHolidays = holidays.map(h => ({
+      id: h.id.toString(),
+      name: h.name,
+      date: h.date && !isNaN(new Date(h.date).getTime()) ? new Date(h.date).toISOString().split('T')[0] : '',
+      type: h.type,
+      recurring: h.recurring,
+    }));
+
+    res.json({
+      success: true,
+      holidays: formattedHolidays
+    });
+  } catch (error) {
+    console.error('Fetch admin holidays error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch holidays.' });
+  }
+};
+
+export const createAdminHoliday = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { name, date, type, recurring } = req.body;
+
+  if (!name || !date || !type) {
+    res.status(400).json({ success: false, message: 'Holiday name, date, and type are required.' });
+    return;
+  }
+
+  try {
+    const holiday = await prisma.holiday.create({
+      data: {
+        name,
+        date: new Date(date),
+        type,
+        recurring: recurring ?? true,
+      }
+    });
+
+    const holidayDateStr = holiday.date && !isNaN(new Date(holiday.date).getTime())
+      ? new Date(holiday.date).toISOString().split('T')[0]
+      : '';
+
+    res.status(201).json({
+      success: true,
+      message: 'Holiday created successfully!',
+      holiday: {
+        id: holiday.id.toString(),
+        name: holiday.name,
+        date: holidayDateStr,
+        type: holiday.type,
+        recurring: holiday.recurring
+      }
+    });
+
+    // Notify users asynchronously to keep API response fast
+    (async () => {
+      try {
+        const activeUsers = await prisma.user.findMany({
+          where: { isActive: true }
+        });
+
+        if (activeUsers.length > 0) {
+          // Create database notification records
+          try {
+            await Promise.all(
+              activeUsers.map(user =>
+                prisma.notification.create({
+                  data: {
+                    title: `New Holiday: ${holiday.name}`,
+                    body: `${holiday.name} has been added as a ${holiday.type} holiday on ${holidayDateStr}.`,
+                    category: 'holiday',
+                    userId: user.id
+                  }
+                })
+              )
+            );
+          } catch (dbNotifyError) {
+            console.error('Database holiday notifications creation error:', dbNotifyError);
+          }
+
+          // Send Firebase Push Notifications
+          try {
+            const firebaseNotificationService = require('../services/firebaseNotificationService').firebaseNotificationService;
+            await firebaseNotificationService.sendNotificationToAll(
+              `New Holiday: ${holiday.name}`,
+              `${holiday.name} has been added as a ${holiday.type} holiday on ${holidayDateStr}.`,
+              { type: 'holiday' }
+            );
+          } catch (pushError) {
+            console.error('Failed to send push notifications for holiday:', pushError);
+          }
+
+          // Broadcast WebSockets for live in-app notification count updates
+          try {
+            const { getWebSocketInstance } = require('../utils/websocketSingleton');
+            const wsInstance = getWebSocketInstance();
+            if (wsInstance) {
+              wsInstance.getServer().emit('newNotification', {
+                title: `New Holiday: ${holiday.name}`,
+                body: `${holiday.name} has been added as a ${holiday.type} holiday on ${holidayDateStr}.`,
+                type: 'holiday',
+                category: 'holiday',
+                createdAt: new Date().toISOString()
+              });
+            }
+          } catch (wsError) {
+            console.error('Failed to broadcast holiday websocket notification:', wsError);
+          }
+        }
+      } catch (bgError) {
+        console.error('Background holiday notification error:', bgError);
+      }
+    })();
+  } catch (error) {
+    console.error('Create holiday error:', error);
+    res.status(500).json({ success: false, message: 'Failed to create holiday.' });
+  }
+};
+
+export const deleteAdminHoliday = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const holidayId = parseInt(id as string, 10);
+
+  if (isNaN(holidayId)) {
+    res.status(400).json({ success: false, message: 'Invalid holiday ID.' });
+    return;
+  }
+
+  try {
+    await prisma.holiday.delete({
+      where: { id: holidayId }
+    });
+
+    res.json({
+      success: true,
+      message: 'Holiday deleted successfully.'
+    });
+  } catch (error) {
+    console.error('Delete holiday error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete holiday.' });
   }
 };
 

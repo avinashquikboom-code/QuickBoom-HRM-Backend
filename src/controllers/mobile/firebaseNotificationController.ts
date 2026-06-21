@@ -196,7 +196,7 @@ export const sendTestNotification = async (req: AuthenticatedRequest, res: Respo
     const { title, body, data } = req.body;
     
     const notificationTitle = title || 'Test Notification';
-    const notificationBody = body || 'This is a test notification from QuickBoom HRM';
+    const notificationBody = body || 'This is a test notification from HRM Portal';
     const notificationData = {
       ...data,
       type: 'test',

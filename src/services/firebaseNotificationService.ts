@@ -66,7 +66,7 @@ export class FirebaseNotificationService {
           ]
         },
         fcmOptions: {
-          link: data?.click_action || 'https://quickboom.app'
+          link: data?.click_action || 'https://hrmportal.com'
         }
       }
     };

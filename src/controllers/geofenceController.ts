@@ -44,10 +44,21 @@ export const checkGeofence = async (
       officeId || employee.officeId
     );
 
+    // Fetch enableGeofence from settings
+    const systemSettings = await prisma.systemSetting.findUnique({
+      where: { id: 1 }
+    });
+    const rawAttendance = (systemSettings?.attendance as any) || {};
+    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+
     res.json({
       success: true,
       message: 'Geofence check completed.',
-      result
+      result: {
+        ...result,
+        isWithinGeofence: enableGeofence ? result.isWithinGeofence : true,
+        enableGeofence
+      }
     });
   } catch (error) {
     console.error('Check geofence error:', error);
@@ -117,10 +128,23 @@ export const getGeofenceStatus = async (
       employee.officeId || undefined
     );
 
+    // Fetch enableGeofence from settings
+    const systemSettings = await prisma.systemSetting.findUnique({
+      where: { id: 1 }
+    });
+    const rawAttendance = (systemSettings?.attendance as any) || {};
+    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+
+    const finalIsWithinGeofence = enableGeofence ? result.isWithinGeofence : true;
+
     res.json({
       success: true,
-      status: result.isWithinGeofence ? 'WITHIN_GEOFENCE' : 'OUTSIDE_GEOFENCE',
-      result
+      status: finalIsWithinGeofence ? 'WITHIN_GEOFENCE' : 'OUTSIDE_GEOFENCE',
+      result: {
+        ...result,
+        isWithinGeofence: finalIsWithinGeofence,
+        enableGeofence
+      }
     });
   } catch (error) {
     console.error('Get geofence status error:', error);

@@ -19,7 +19,7 @@ router.get('/global', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN']), 
 router.put('/global', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN']), updateGlobalPermissions);
 
 // Endpoints for managing specific user overrides
-router.get('/user/:userId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN']), getUserPermissions);
-router.put('/user/:userId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN']), updateUserPermissions);
+router.get('/user/:userId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']), getUserPermissions);
+router.put('/user/:userId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']), updateUserPermissions);
 
 export default router;

@@ -57,6 +57,24 @@ export const getUserPermissions = async (req: Request, res: Response) => {
     const userId = parseInt(userIdStr, 10);
     if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
 
+    const authReq = req as AuthenticatedRequest;
+    if (!authReq.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (authReq.user.role === 'HR' || authReq.user.role === 'PLATFORM_ADMIN') {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      if (!targetUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (targetUser.role !== 'EMPLOYEE') {
+        return res.status(403).json({ error: 'Forbidden. HR can only manage employee permissions.' });
+      }
+    }
+
     const userPerm = await prisma.userPermission.findUnique({
       where: { userId },
     });
@@ -74,6 +92,24 @@ export const updateUserPermissions = async (req: Request, res: Response) => {
     const userIdStr = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
     const userId = parseInt(userIdStr, 10);
     if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+
+    const authReq = req as AuthenticatedRequest;
+    if (!authReq.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (authReq.user.role === 'HR' || authReq.user.role === 'PLATFORM_ADMIN') {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      if (!targetUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (targetUser.role !== 'EMPLOYEE') {
+        return res.status(403).json({ error: 'Forbidden. HR can only manage employee permissions.' });
+      }
+    }
 
     const { permissions } = req.body;
     

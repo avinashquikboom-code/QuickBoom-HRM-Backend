@@ -122,7 +122,7 @@ export const downloadPayslip = async (
     const docDefinition = {
       content: [
         // Title Header
-        { text: 'QUICKBOOM HRM', style: 'companyName', alignment: 'center' },
+        { text: 'HRM PORTAL', style: 'companyName', alignment: 'center' },
         { text: 'Human Resources · Payroll Division', style: 'companySub', alignment: 'center', margin: [0, 2, 0, 15] },
         
         { text: 'SALARY SLIP', style: 'docTitle', alignment: 'center', margin: [0, 0, 0, 20] },
@@ -147,7 +147,7 @@ export const downloadPayslip = async (
                   text: [
                     { text: 'Office / Branch: ', bold: true }, payslip.officeName, '\n',
                     { text: 'Pay Period:      ', bold: true }, periodLabel, '\n',
-                    { text: 'Document ID:     ', bold: true }, `QB-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
+                    { text: 'Document ID:     ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
                     { text: 'Status:          ', bold: true }, 'PAID'
                   ],
                   margin: [5, 5, 5, 5]

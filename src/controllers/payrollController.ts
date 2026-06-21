@@ -290,282 +290,145 @@ export const generatePayslipPDF = async (
 ): Promise<void> => {
   try {
     const { employeeId, month, year } = req.params;
-
     if (!employeeId || !month || !year) {
-      res.status(400).json({
-        success: false,
-        message: 'Employee ID, month, and year are required.',
-        errorCode: 'MISSING_REQUIRED_FIELDS'
-      });
+      res.status(400).json({ success: false, message: 'Employee ID, month, and year are required.', errorCode: 'MISSING_REQUIRED_FIELDS' });
       return;
     }
-
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
     const monthNum = parseInt(Array.isArray(month) ? month[0] : month);
-    const yearNum = parseInt(Array.isArray(year) ? year[0] : year);
-
+    const yearNum  = parseInt(Array.isArray(year)  ? year[0]  : year);
     const payslip = await prisma.payslip.findUnique({
-      where: {
-        employeeId_month_year: {
-          employeeId: parseInt(employeeIdStr),
-          month: monthNum,
-          year: yearNum
-        }
-      },
-      include: {
-        employee: {
-          include: {
-            department: true,
-            office: true
-          }
-        }
-      }
+      where: { employeeId_month_year: { employeeId: parseInt(employeeIdStr), month: monthNum, year: yearNum } },
+      include: { employee: { include: { department: true, office: true } } }
     });
-
     if (!payslip) {
-      res.status(404).json({
-        success: false,
-        message: 'Payslip not found.',
-        errorCode: 'PAYSLIP_NOT_FOUND'
-      });
+      res.status(404).json({ success: false, message: 'Payslip not found.', errorCode: 'PAYSLIP_NOT_FOUND' });
       return;
     }
-
-    // Generate real PDF using pdfmake
+    const PRIMARY      = '#14B8A6';
+    const PRIMARY_DARK = '#0D9488';
     const PdfPrinter = require('pdfmake');
-    const pdfFonts = require('pdfmake/build/vfs_fonts');
-    
-    const printer = new PdfPrinter(pdfFonts);
-    
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                        'July', 'August', 'September', 'October', 'November', 'December'];
-    
+    const printer = new PdfPrinter({
+      Roboto: { normal: 'Helvetica', bold: 'Helvetica-Bold', italics: 'Helvetica-Oblique', bolditalics: 'Helvetica-BoldOblique' },
+    });
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
     const grossSalary = payslip.baseSalary + payslip.allowance;
-    
-    const docDefinition = {
+    const netSalary   = payslip.netSalary;
+    const deductions  = payslip.deductions;
+    const generatedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+    const monthLabel  = `${MONTH_NAMES[monthNum - 1]} ${yearNum}`;
+    const statusColor = payslip.status === 'PAID' ? '#059669' : payslip.status === 'PENDING' ? '#D97706' : '#6B7280';
+    const fmt = (n: number) => `\u20b9${n.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+
+    const docDefinition: any = {
+      pageSize: 'A4',
+      pageMargins: [36, 36, 36, 56],
+      footer: (currentPage: number, pageCount: number) => ({
+        columns: [
+          { text: 'HRM Portal  \u2022  Confidential  \u2022  Computer Generated', fontSize: 8, color: '#9CA3AF', alignment: 'left' },
+          { text: `Generated on ${generatedOn}  \u2022  Page ${currentPage} of ${pageCount}`, fontSize: 8, color: '#9CA3AF', alignment: 'right' },
+        ],
+        margin: [36, 0, 36, 0],
+      }),
       content: [
-        {
-          text: 'SALARY SLIP',
-          style: 'header',
-          alignment: 'center',
-          margin: [0, 0, 0, 20]
-        },
-        {
-          columns: [
-            {
-              text: [
-                { text: 'Employee Name: ', bold: true },
-                `${payslip.employeeName}\n`,
-                { text: 'Employee Code: ', bold: true },
-                `${payslip.employeeCode}\n`,
-                { text: 'Department: ', bold: true },
-                `${payslip.department || 'N/A'}\n`,
-                { text: 'Designation: ', bold: true },
-                `${payslip.designation || 'N/A'}`
-              ],
-              width: '50%'
-            },
-            {
-              text: [
-                { text: 'Month: ', bold: true },
-                `${monthNames[monthNum - 1]} ${yearNum}\n`,
-                { text: 'Office: ', bold: true },
-                `${payslip.officeName || 'N/A'}\n`,
-                { text: 'Pay Date: ', bold: true },
-                `${new Date().toLocaleDateString()}\n`,
-                { text: 'Status: ', bold: true },
-                `${payslip.status}`
-              ],
-              width: '50%',
-              alignment: 'right'
-            }
-          ],
-          margin: [0, 0, 0, 30]
-        },
-        {
-          canvas: [
-            { type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#cccccc' }
-          ],
-          margin: [0, 0, 0, 20]
-        },
-        {
-          text: 'EARNINGS',
-          style: 'subheader',
-          margin: [0, 0, 0, 10]
-        },
-        {
-          table: {
-            headerRows: 1,
-            widths: ['*', 'auto'],
+        // Header banner
+        { canvas: [
+          { type: 'rect', x: -36, y: -36, w: 595, h: 90, color: PRIMARY },
+          { type: 'rect', x: -36, y: 54,  w: 595, h: 6,  color: PRIMARY_DARK },
+        ]},
+        { columns: [
+          { stack: [
+            { text: 'HRM Portal', fontSize: 9, color: 'white', opacity: 0.7, margin: [0, -80, 0, 2] },
+            { text: 'SALARY SLIP', fontSize: 20, bold: true, color: 'white', margin: [0, 0, 0, 2] },
+            { text: `${payslip.employeeName}  \u2022  ${payslip.employeeCode}  \u2022  ${payslip.department || '\u2014'}`, fontSize: 9, color: 'white', opacity: 0.85 },
+          ]},
+          { stack: [
+            { text: monthLabel, fontSize: 12, bold: true, color: 'white', alignment: 'right', margin: [0, -78, 0, 4] },
+            { text: payslip.officeName || '\u2014', fontSize: 9, color: 'white', opacity: 0.75, alignment: 'right' },
+            { text: payslip.designation || '\u2014', fontSize: 9, color: 'white', opacity: 0.75, alignment: 'right' },
+          ]},
+        ], margin: [0, 0, 0, 20] },
+        // Stat cards
+        { columns: [
+          { stack: [{ text: fmt(grossSalary), fontSize: 15, bold: true, color: PRIMARY, alignment: 'center' }, { text: 'GROSS SALARY', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,8,0] },
+          { stack: [{ text: fmt(deductions),  fontSize: 15, bold: true, color: '#DC2626', alignment: 'center' }, { text: 'DEDUCTIONS',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,8,0] },
+          { stack: [{ text: fmt(netSalary),   fontSize: 15, bold: true, color: '#059669', alignment: 'center' }, { text: 'NET SALARY',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,8,0] },
+          { stack: [{ text: payslip.status,   fontSize: 12, bold: true, color: statusColor, alignment: 'center' }, { text: 'STATUS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }] },
+        ], margin: [0,0,0,16] },
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 1, lineColor: '#E5E7EB' }], margin: [0,0,0,16] },
+        // Employee info
+        { columns: [
+          { stack: [
+            { text: 'EMPLOYEE DETAILS', fontSize: 8, bold: true, color: PRIMARY, margin: [0,0,0,6] },
+            { text: [{ text: 'Name: ', bold: true, fontSize: 8 },        { text: payslip.employeeName,        fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Code: ', bold: true, fontSize: 8 },        { text: payslip.employeeCode,        fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Designation: ', bold: true, fontSize: 8 }, { text: payslip.designation || '\u2014', fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Department: ', bold: true, fontSize: 8 },  { text: payslip.department  || '\u2014', fontSize: 8, color: '#374151' }] },
+          ], width: '50%' },
+          { stack: [
+            { text: 'PAY PERIOD', fontSize: 8, bold: true, color: PRIMARY, margin: [0,0,0,6] },
+            { text: [{ text: 'Month: ',    bold: true, fontSize: 8 }, { text: monthLabel,                  fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Office: ',   bold: true, fontSize: 8 }, { text: payslip.officeName || '\u2014', fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Pay Date: ', bold: true, fontSize: 8 }, { text: generatedOn,                 fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Status: ',   bold: true, fontSize: 8 }, { text: payslip.status, fontSize: 8, bold: true, color: statusColor }] },
+          ], width: '50%' },
+        ], margin: [0,0,0,16] },
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E5E7EB' }], margin: [0,0,0,16] },
+        // Earnings
+        { text: 'Earnings', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
+        { table: { headerRows: 1, widths: ['*', 120],
             body: [
-              [
-                { text: 'Description', style: 'tableHeader' },
-                { text: 'Amount', style: 'tableHeader' }
-              ],
-              [
-                'Base Salary',
-                `₹${payslip.baseSalary.toFixed(2)}`
-              ],
-              [
-                'Allowances',
-                `₹${payslip.allowance.toFixed(2)}`
-              ],
-              [
-                { text: 'Total Earnings', bold: true },
-                { text: `₹${grossSalary.toFixed(2)}`, bold: true }
-              ]
-            ]
+              [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }],
+              [{ text: 'Basic Salary',    fontSize: 9, color: '#111827', fillColor: '#F9FAFB' }, { text: fmt(payslip.baseSalary),  fontSize: 9, alignment: 'right', color: '#111827', fillColor: '#F9FAFB' }],
+              [{ text: 'Allowances',      fontSize: 9, color: '#111827' },                       { text: fmt(payslip.allowance),   fontSize: 9, alignment: 'right', color: '#111827' }],
+              [{ text: 'Total Earnings',  fontSize: 9, bold: true, color: PRIMARY, fillColor: '#F0FDFA' }, { text: fmt(grossSalary), fontSize: 9, bold: true, alignment: 'right', color: PRIMARY, fillColor: '#F0FDFA' }],
+            ],
           },
-          layout: {
-            hLineWidth: (i: number) => i === 0 || i === 3 ? 1 : 0.5,
-            vLineWidth: () => 0.5,
-            hLineColor: () => '#e0e0e0',
-            vLineColor: () => '#e0e0e0',
-            paddingLeft: () => 10,
-            paddingRight: () => 10,
-            paddingTop: () => 8,
-            paddingBottom: () => 8
-          },
-          margin: [0, 0, 0, 20]
+          layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
+          margin: [0,0,0,16],
         },
-        {
-          text: 'DEDUCTIONS',
-          style: 'subheader',
-          margin: [0, 0, 0, 10]
-        },
-        {
-          table: {
-            headerRows: 1,
-            widths: ['*', 'auto'],
+        // Deductions
+        { text: 'Deductions', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
+        { table: { headerRows: 1, widths: ['*', 120],
             body: [
-              [
-                { text: 'Description', style: 'tableHeader' },
-                { text: 'Amount', style: 'tableHeader' }
-              ],
-              [
-                'Total Deductions',
-                `₹${payslip.deductions.toFixed(2)}`
-              ]
-            ]
+              [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }],
+              [{ text: 'Total Deductions', fontSize: 9, bold: true, color: '#DC2626', fillColor: '#FEF2F2' }, { text: fmt(deductions), fontSize: 9, bold: true, alignment: 'right', color: '#DC2626', fillColor: '#FEF2F2' }],
+            ],
           },
-          layout: {
-            hLineWidth: (i: number) => i === 0 || i === 2 ? 1 : 0.5,
-            vLineWidth: () => 0.5,
-            hLineColor: () => '#e0e0e0',
-            vLineColor: () => '#e0e0e0',
-            paddingLeft: () => 10,
-            paddingRight: () => 10,
-            paddingTop: () => 8,
-            paddingBottom: () => 8
-          },
-          margin: [0, 0, 0, 20]
+          layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
+          margin: [0,0,0,20],
         },
-        {
-          canvas: [
-            { type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: '#3BA38B' }
-          ],
-          margin: [0, 0, 0, 15]
-        },
-        {
-          columns: [
-            {
-              text: [
-                { text: 'Gross Salary: ', bold: true },
-                `₹${grossSalary.toFixed(2)}\n`,
-                { text: 'Total Deductions: ', bold: true },
-                `₹${payslip.deductions.toFixed(2)}`
-              ],
-              width: '50%'
-            },
-            {
-              text: [
-                { text: 'NET SALARY: ', bold: true, fontSize: 14, color: '#3BA38B' },
-                { text: `₹${payslip.netSalary.toFixed(2)}`, bold: true, fontSize: 16, color: '#3BA38B' }
-              ],
-              width: '50%',
-              alignment: 'right'
-            }
-          ],
-          margin: [0, 0, 0, 30]
-        },
-        {
-          canvas: [
-            { type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#cccccc' }
-          ],
-          margin: [0, 0, 0, 20]
-        },
-        {
-          text: 'NET SALARY IN WORDS',
-          style: 'subheader',
-          margin: [0, 0, 0, 10]
-        },
-        {
-          text: payslip.netInWords || 'N/A',
-          style: 'netInWords',
-          margin: [0, 0, 0, 30]
-        },
-        {
-          text: 'This is a computer-generated payslip and does not require a physical signature.',
-          style: 'footer',
-          alignment: 'center',
-          margin: [0, 30, 0, 0]
-        }
+        // Net salary box
+        { canvas: [{ type: 'rect', x: 0, y: 0, w: 523, h: 54, color: '#F0FDFA', r: 2 }, { type: 'rect', x: 0, y: 0, w: 6, h: 54, color: PRIMARY }] },
+        { columns: [
+          { stack: [
+            { text: 'NET SALARY (TAKE HOME)', fontSize: 8, bold: true, color: '#6B7280', margin: [0,-50,0,4] },
+            { text: payslip.netInWords || 'N/A', fontSize: 8, color: '#374151', italics: true },
+          ], margin: [14,0,0,0] },
+          { text: fmt(netSalary), fontSize: 20, bold: true, color: PRIMARY, alignment: 'right', margin: [0,-52,0,0] },
+        ], margin: [0,0,0,24] },
+        // Disclaimer
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E5E7EB' }], margin: [0,4,0,10] },
+        { text: 'This is a system-generated salary slip and does not require a physical signature. For any discrepancy, please contact the HR department.', fontSize: 8, color: '#9CA3AF', italics: true, alignment: 'center' },
       ],
-      styles: {
-        header: {
-          fontSize: 24,
-          bold: true,
-          color: '#3BA38B'
-        },
-        subheader: {
-          fontSize: 14,
-          bold: true,
-          color: '#333333',
-          margin: [0, 15, 0, 5]
-        },
-        tableHeader: {
-          fontSize: 11,
-          bold: true,
-          color: '#ffffff',
-          fillColor: '#3BA38B'
-        },
-        netInWords: {
-          fontSize: 11,
-          color: '#666666',
-          fontStyle: 'italic'
-        },
-        footer: {
-          fontSize: 9,
-          color: '#666666',
-          italics: true
-        }
-      },
-      defaultStyle: {
-        font: 'Roboto',
-        fontSize: 10
-      },
-      pageMargins: [40, 60, 40, 60]
+      styles: { colHeader: { fontSize: 8, bold: true, color: 'white', fillColor: PRIMARY } },
+      defaultStyle: { font: 'Roboto', fontSize: 10 },
     };
 
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
-    
     const chunks: Buffer[] = [];
     pdfDoc.on('data', (chunk: Buffer) => chunks.push(chunk));
     pdfDoc.on('end', () => {
       const pdfBuffer = Buffer.concat(chunks);
+      const safeName = payslip.employeeName.replace(/\s+/g, '_');
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="payslip_${employeeIdStr}_${monthNum}_${yearNum}.pdf"`);
+      res.setHeader('Content-Disposition', `attachment; filename="payslip_${payslip.employeeCode}_${safeName}_${monthLabel.replace(' ','_')}.pdf"`);
       res.send(pdfBuffer);
     });
-    
     pdfDoc.end();
   } catch (error) {
     console.error('Generate payslip PDF error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to generate payslip PDF.',
-      errorCode: 'GENERATE_PAYSLIP_PDF_ERROR'
-    });
+    res.status(500).json({ success: false, message: 'Failed to generate payslip PDF.', errorCode: 'GENERATE_PAYSLIP_PDF_ERROR' });
   }
 };
 

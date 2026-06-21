@@ -201,6 +201,13 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     const punchInTime = new Date();
     console.log('✅ Using server timestamp for punch-in:', punchInTime.toISOString());
 
+    // Fetch enableGeofence from settings
+    const systemSettings = await prisma.systemSetting.findUnique({
+      where: { id: 1 }
+    });
+    const rawAttendance = (systemSettings?.attendance as any) || {};
+    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+
     // Check if already punched in today
     const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
     const userTimezone = resolveTimezone(timezone as string, profileTimezone);
@@ -266,7 +273,9 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         ? distance <= maxRadius 
         : distance <= (maxRadius * 50); // 50x more lenient in development for testing
 
-      if (!isWithinRadius) {
+      if (!enableGeofence) {
+        console.log('⚠️ Geofence validation is disabled in settings. Bypassing check.');
+      } else if (!isWithinRadius) {
         console.log('❌ Geofence check failed:', {
           distance: Math.round(distance),
           maxRadius: maxRadius,
@@ -463,6 +472,13 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     const punchOutTime = new Date();
     console.log('✅ Using server timestamp for punch-out:', punchOutTime.toISOString());
 
+    // Fetch enableGeofence from settings
+    const systemSettings = await prisma.systemSetting.findUnique({
+      where: { id: 1 }
+    });
+    const rawAttendance = (systemSettings?.attendance as any) || {};
+    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+
     // Get today's attendance record
     const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
     const userTimezone = resolveTimezone(timezone as string, profileTimezone);
@@ -535,7 +551,11 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
         ? distance <= maxRadius 
         : distance <= (maxRadius * 50); // 50x more lenient in development for testing
 
-      if (!isWithinRadius) {
+      if (!enableGeofence) {
+        console.log('⚠️ Geofence validation is disabled in settings for punch out. Bypassing check.');
+        punchLat = latitude;
+        punchLon = longitude;
+      } else if (!isWithinRadius) {
         console.log('❌ Punch Out Geofence check failed:', {
           distance: Math.round(distance),
           maxRadius: maxRadius,

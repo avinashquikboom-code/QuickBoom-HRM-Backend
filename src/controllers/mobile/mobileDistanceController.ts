@@ -156,7 +156,14 @@ export const getCurrentDistance = async (
       office.longitude
     );
 
-    const isWithinRadius = (distance * 1000) <= office.maxPunchRadiusMeters; // Convert km to meters
+    // Fetch enableGeofence from settings
+    const systemSettings = await prisma.systemSetting.findUnique({
+      where: { id: 1 }
+    });
+    const rawAttendance = (systemSettings?.attendance as any) || {};
+    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+
+    const isWithinRadius = !enableGeofence || (distance * 1000) <= office.maxPunchRadiusMeters; // Convert km to meters
 
     res.json({
       success: true,
@@ -165,6 +172,7 @@ export const getCurrentDistance = async (
         officeName: office.name,
         officeAddress: office.address,
         isWithinRadius,
+        enableGeofence,
         officeRadius: office.maxPunchRadiusMeters,
         coordinates: {
           current: {

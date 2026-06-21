@@ -65,6 +65,9 @@ model Office {
   invoiceStatus        String       @default("Paid")
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
+  workingHoursStart    String       @default("09:00")
+  workingHoursEnd      String       @default("18:00")
+  workingDays          String[]     @default(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
   attendances          Attendance[]
   employees            Employee[]
 }
@@ -291,6 +294,8 @@ model Holiday {
   date        DateTime
   isPublic    Boolean  @default(true)
   description String?
+  type        String   @default("mandatory")
+  recurring   Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -378,6 +383,10 @@ model SystemSetting {
   auditLogs     Boolean  @default(true)
   ipRestriction Boolean  @default(false)
   notifications Json?
+  company       Json?
+  attendance    Json?
+  leave         Json?
+  payroll       Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

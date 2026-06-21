@@ -4,6 +4,7 @@ import { roleMiddleware } from '../middlewares/roleMiddleware';
 import {
   fetchPlatformUsers,
   updateUserStatus,
+  deletePlatformUser,
   fetchEmployees,
   deleteEmployee,
   createEmployee,
@@ -71,6 +72,9 @@ import {
   updateShift,
   deleteShift,
   assignShiftToEmployee,
+  fetchAdminHolidays,
+  createAdminHoliday,
+  deleteAdminHoliday,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -114,6 +118,8 @@ router.use(roleMiddleware(adminRoles));
 // Users
 router.get('/users', fetchPlatformUsers);
 router.put('/users/:id/status', updateUserStatus);
+router.delete('/users/:id', deletePlatformUser);
+
 
 /**
  * @swagger
@@ -421,6 +427,11 @@ router.put('/notifications/read-all', markAllAdminNotificationsRead);
 // Settings Management
 router.get('/settings', fetchAdminSettings);
 router.put('/settings', updateAdminSettings);
+
+// Holiday Management
+router.get('/holidays', fetchAdminHolidays);
+router.post('/holidays', createAdminHoliday);
+router.delete('/holidays/:id', deleteAdminHoliday);
 
 // Leave Balance Management
 router.get('/leave-balances', fetchAdminLeaveBalancesDetailed);

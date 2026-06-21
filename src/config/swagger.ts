@@ -4,12 +4,12 @@ const options: swaggerJsdoc.Options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'QuickBoom HRM API',
+      title: 'HRM API',
       version: '1.0.0',
       description: 'Comprehensive HR Management System API documentation',
       contact: {
-        name: 'QuickBoom Support',
-        email: 'support@quickboom.com',
+        name: 'HRM Support',
+        email: 'support@hrm.com',
       },
     },
     servers: [

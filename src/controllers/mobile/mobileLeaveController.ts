@@ -221,6 +221,31 @@ export const applyLeave = async (
       } catch (wsError) {
         console.error('❌ Failed to broadcast WebSocket event:', wsError);
       }
+
+      // Send Firebase Push Notifications to HR/Admin users
+      try {
+        const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
+        const title = 'New Leave Application';
+        const body = `${employee.firstName} ${employee.lastName} requested for ${type.toLowerCase()} leave from ${fromDate} to ${toDate}`;
+        for (const hrUser of hrUsers) {
+          try {
+            await firebaseNotificationService.sendNotificationToUser(
+              hrUser.id,
+              title,
+              body,
+              {
+                click_action: 'FLUTTER_NOTIFICATION_CLICK',
+                type: 'leave_request',
+                leaveId: leaveRequest.id.toString()
+              }
+            );
+          } catch (userPushError) {
+            // Silently ignore users with no tokens
+          }
+        }
+      } catch (pushError) {
+        console.error('Failed to send FCM push notifications for leave request:', pushError);
+      }
     } catch (notificationError) {
       console.error('❌ Failed to send HR notifications:', notificationError);
       // Don't fail the request if notifications fail
@@ -655,6 +680,25 @@ export const approveLeaveRequest = async (
       },
     });
 
+    // Send Firebase Push Notification to Employee
+    if (existingLeave.employee.userId) {
+      try {
+        const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
+        await firebaseNotificationService.sendNotificationToUser(
+          existingLeave.employee.userId,
+          'Leave Request Approved',
+          `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
+          {
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            type: 'leave_approved',
+            leaveId: leave.id.toString()
+          }
+        );
+      } catch (pushError) {
+        console.error('Failed to send FCM push notification to employee on leave approval:', pushError);
+      }
+    }
+
     console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     // Broadcast real-time leave balance update after approval
@@ -760,6 +804,25 @@ export const rejectLeaveRequest = async (
         isRead: false,
       },
     });
+
+    // Send Firebase Push Notification to Employee
+    if (existingLeave.employee.userId) {
+      try {
+        const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
+        await firebaseNotificationService.sendNotificationToUser(
+          existingLeave.employee.userId,
+          'Leave Request Rejected',
+          `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. Reason: ${reviewNote}`,
+          {
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            type: 'leave_rejected',
+            leaveId: leave.id.toString()
+          }
+        );
+      } catch (pushError) {
+        console.error('Failed to send FCM push notification to employee on leave rejection:', pushError);
+      }
+    }
 
     console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
