@@ -322,12 +322,12 @@ class SecurityService {
   async getSecurityAlerts(severity?: string, isResolved?: boolean): Promise<SecurityAlert[]> {
     try {
       let whereClause = '';
-      const conditions = [];
-      
+      const conditions: string[] = [];
+
       if (severity) {
         conditions.push(`severity = '${severity}'`);
       }
-      
+
       if (isResolved !== undefined) {
         conditions.push(`is_resolved = ${isResolved}`);
       }
@@ -379,24 +379,24 @@ class SecurityService {
     riskLevel?: string
   ): Promise<SecurityAuditLog[]> {
     try {
-      const conditions = [];
-      
+      const conditions: string[] = [];
+
       if (startDate) {
         conditions.push(`created_at >= ${startDate}`);
       }
-      
+
       if (endDate) {
         conditions.push(`created_at <= ${endDate}`);
       }
-      
+
       if (userId) {
         conditions.push(`user_id = ${userId}`);
       }
-      
+
       if (action) {
         conditions.push(`action = '${action}'`);
       }
-      
+
       if (riskLevel) {
         conditions.push(`risk_level = '${riskLevel}'`);
       }
@@ -428,7 +428,7 @@ class SecurityService {
     score: number;
     feedback: string[];
   } {
-    const feedback = [];
+    const feedback: string[] = [];
     let score = 0;
 
     // Length check

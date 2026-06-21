@@ -235,7 +235,7 @@ class ReportsService {
       }
 
       // Generate charts if requested
-      let charts = [];
+      let charts: any[] = [];
       if (config.includeCharts) {
         charts = await this.generateLeaveCharts(leaveData, config.groupBy);
       }
@@ -321,7 +321,7 @@ class ReportsService {
       }
 
       // Generate charts if requested
-      let charts = [];
+      let charts: any[] = [];
       if (config.includeCharts) {
         charts = await this.generatePayrollCharts(payrollData, config.groupBy);
       }
@@ -408,7 +408,7 @@ class ReportsService {
       }
 
       // Generate charts if requested
-      let charts = [];
+      let charts: any[] = [];
       if (config.includeCharts) {
         charts = await this.generateExpenseCharts(expenseData, config.groupBy);
       }
@@ -497,7 +497,7 @@ class ReportsService {
       }
 
       // Generate charts if requested
-      let charts = [];
+      let charts: any[] = [];
       if (config.includeCharts) {
         charts = await this.generateEmployeeCharts(employeeData, config.groupBy);
       }
