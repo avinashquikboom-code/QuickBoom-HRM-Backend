@@ -77,7 +77,7 @@ export const fetchHRStats = async (
     console.log('📊 [HR STATS] Calculated rates:', { attendanceRate, onboardingRate });
 
     // Compute last 5 months hiring growth dynamically
-    const hiringGrowth = [];
+    const hiringGrowth: any[] = [];
     const now = new Date();
     for (let i = 4; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);

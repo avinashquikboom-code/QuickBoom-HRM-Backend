@@ -301,7 +301,7 @@ export const bulkUpdateLeaveAllocations = async (
       return;
     }
 
-    const results = [];
+    const results: any[] = [];
     
     for (const allocation of allocations) {
       try {

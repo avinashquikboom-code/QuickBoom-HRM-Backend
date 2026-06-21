@@ -215,7 +215,7 @@ export const bulkUpdateSalaryStructures = async (
       return;
     }
 
-    const results = [];
+    const results: any[] = [];
     
     for (const structureData of structures) {
       try {

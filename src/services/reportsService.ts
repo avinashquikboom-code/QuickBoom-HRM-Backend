@@ -141,7 +141,7 @@ class ReportsService {
       }
 
       // Generate charts if requested
-      let charts = [];
+      let charts: any[] = [];
       if (config.includeCharts) {
         charts = await this.generateAttendanceCharts(attendanceData, config.groupBy);
       }

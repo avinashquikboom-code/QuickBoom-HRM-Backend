@@ -237,8 +237,11 @@ export const deleteEmployee = async (
       return;
     }
 
+    // Handle string | string[] type for id parameter
+    const idString = Array.isArray(id) ? id[0] : id;
+
     // Convert string ID to integer for Prisma
-    const employeeId = parseInt(id, 10);
+    const employeeId = parseInt(idString, 10);
     if (isNaN(employeeId)) {
       res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
       return;
@@ -1767,8 +1770,8 @@ export const fetchCompanyStats = async (
 
     // 3. Dynamic Growth History (grouping by cumulative last 6 months)
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const growthHistory = [];
-    const revenueHistory = [];
+    const growthHistory: any[] = [];
+    const revenueHistory: any[] = [];
 
     // Optimize: Fetch all data once instead of in loop
     const allOffices = await prisma.office.findMany().catch(() => []);

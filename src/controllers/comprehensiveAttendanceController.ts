@@ -188,7 +188,7 @@ export const getComprehensiveAttendanceReport = async (
     ` as any[];
 
     // Get location exit/entry tracking
-    let locationTracking = [];
+    let locationTracking: any[] = [];
     if (includeLocationTracking === 'true') {
       locationTracking = await prisma.$queryRaw`
         SELECT 
