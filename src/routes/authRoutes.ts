@@ -5,7 +5,8 @@ import {
   registerFcmToken,
   employeeLogin,
   hrLogin,
-  superAdminLogin
+  superAdminLogin,
+  refreshToken
 } from '../controllers/authController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
@@ -239,5 +240,34 @@ router.post(
  *         description: Server error
  */
 router.post('/fcm-token', authMiddleware, registerFcmToken);
+
+/**
+ * @swagger
+ * /api/auth/refresh:
+ *   post:
+ *     summary: Refresh authentication token
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Token refreshed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 token:
+ *                   type: string
+ *                 user:
+ *                   type: object
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Server error
+ */
+router.post('/refresh', authMiddleware, refreshToken);
 
 export default router;

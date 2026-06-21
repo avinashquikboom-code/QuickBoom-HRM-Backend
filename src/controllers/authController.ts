@@ -518,3 +518,39 @@ export const superAdminLogin = async (req: Request, res: Response): Promise<void
   await authenticateRoleLogin(req, res, [Role.SUPER_ADMIN, Role.ADMIN]);
 };
 
+export const refreshToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid or expired authorization token.',
+      });
+      return;
+    }
+
+    // Generate new JWT token
+    const newToken = signToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    res.json({
+      success: true,
+      token: newToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to refresh token.',
+    });
+  }
+};
+

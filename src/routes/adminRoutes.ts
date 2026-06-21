@@ -5,6 +5,7 @@ import {
   fetchPlatformUsers,
   updateUserStatus,
   fetchEmployees,
+  deleteEmployee,
   createEmployee,
   createAndAssignEmployee,
   fetchDepartments,
@@ -142,6 +143,40 @@ router.put('/users/:id/status', updateUserStatus);
  *         description: Server error
  */
 router.get('/employees', fetchEmployees);
+
+/**
+ * @swagger
+ * /api/admin/employees/:id:
+ *   delete:
+ *     summary: Delete an employee
+ *     tags: [Admin - Employees]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Employee ID
+ *     responses:
+ *       200:
+ *         description: Employee deleted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *       404:
+ *         description: Employee not found
+ *       500:
+ *         description: Server error
+ */
+router.delete('/employees/:id', deleteEmployee);
 
 /**
  * @swagger

@@ -225,6 +225,74 @@ export const fetchEmployees = async (
   }
 };
 
+export const deleteEmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      res.status(400).json({ success: false, message: 'Employee ID is required.' });
+      return;
+    }
+
+    // Convert string ID to integer for Prisma
+    const employeeId = parseInt(id, 10);
+    if (isNaN(employeeId)) {
+      res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
+      return;
+    }
+
+    // Check if employee exists
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      include: { user: true },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // Delete the employee (this will cascade delete related records due to Prisma schema)
+    await prisma.employee.delete({
+      where: { id: employeeId },
+    });
+
+    // Also delete the associated user if they exist
+    if (employee.user) {
+      await prisma.user.delete({
+        where: { id: employee.user.id },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Employee deleted successfully.',
+    });
+  } catch (error: any) {
+    console.error('Delete employee error:', error);
+
+    // Check for foreign key constraint errors
+    if (error.code === 'P2003') {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot delete employee due to existing dependencies.'
+      });
+      return;
+    }
+
+    // Check for record not found
+    if (error.code === 'P2025') {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    res.status(500).json({ success: false, message: 'Failed to delete employee.' });
+  }
+};
+
 // Create employee record for an existing user
 export const createEmployee = async (
   req: AuthenticatedRequest,
@@ -985,10 +1053,33 @@ export const deleteOffice = async (
   try {
     const existingOffice = await prisma.office.findUnique({
       where: { id: officeIdInt },
+      include: {
+        _count: {
+          select: { employees: true, attendances: true }
+        }
+      }
     });
 
     if (!existingOffice) {
       res.status(404).json({ success: false, message: 'Office not found.' });
+      return;
+    }
+
+    // Check if office has assigned employees
+    if (existingOffice._count.employees > 0) {
+      res.status(400).json({
+        success: false,
+        message: `Cannot delete office. ${existingOffice._count.employees} employee(s) are still assigned to this office. Please unassign all employees first.`
+      });
+      return;
+    }
+
+    // Check if office has attendance records
+    if (existingOffice._count.attendances > 0) {
+      res.status(400).json({
+        success: false,
+        message: `Cannot delete office. ${existingOffice._count.attendances} attendance record(s) exist for this office. Please delete attendance records first.`
+      });
       return;
     }
 
@@ -1575,24 +1666,24 @@ export const fetchCompanyStats = async (
   res: Response
 ): Promise<void> => {
   try {
-    const totalEntities = await prisma.office.count();
-    const globalSeats = await prisma.employee.count();
-    
+    const totalEntities = await prisma.office.count().catch(() => 0);
+    const globalSeats = await prisma.employee.count().catch(() => 0);
+
     // Count inactive employees as pending verification
     const pendingVerification = await prisma.employee.count({
       where: { status: 'INACTIVE' },
-    });
+    }).catch(() => 0);
 
     const now = new Date();
     const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const officesThisMonth = await prisma.office.count({
       where: { createdAt: { gte: startOfThisMonth } }
-    });
+    }).catch(() => 0);
 
     const officesBeforeThisMonth = await prisma.office.count({
       where: { createdAt: { lt: startOfThisMonth } }
-    });
+    }).catch(() => 0);
 
     let systemGrowth = '+18.7%';
     if (officesBeforeThisMonth > 0) {
@@ -1608,9 +1699,9 @@ export const fetchCompanyStats = async (
           select: { employees: true }
         }
       }
-    });
+    }).catch(() => []);
 
-    const pricingPlans = await prisma.pricingPlan.findMany();
+    const pricingPlans = await prisma.pricingPlan.findMany().catch(() => []);
     const getPlanPrices = (planName: string) => {
       const p = pricingPlans.find(pl => pl.name.toLowerCase() === planName.toLowerCase());
       return p ? { monthly: p.monthlyPrice, yearly: p.yearlyPrice } : { monthly: 1200, yearly: 12000 };
@@ -1678,19 +1769,19 @@ export const fetchCompanyStats = async (
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const growthHistory = [];
     const revenueHistory = [];
-    
+
+    // Optimize: Fetch all data once instead of in loop
+    const allOffices = await prisma.office.findMany().catch(() => []);
+    const allEmployees = await prisma.employee.findMany().catch(() => []);
+
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
-      
-      const activeOffices = await prisma.office.findMany({
-        where: { createdAt: { lte: endOfMonth } }
-      });
+
+      const activeOffices = allOffices.filter(off => new Date(off.createdAt) <= endOfMonth);
       const companiesCount = activeOffices.length;
-      
-      const seatsCount = await prisma.employee.count({
-        where: { createdAt: { lte: endOfMonth } }
-      });
+
+      const seatsCount = allEmployees.filter(emp => new Date(emp.createdAt) <= endOfMonth).length;
 
       // Growth History
       growthHistory.push({
@@ -1709,7 +1800,7 @@ export const fetchCompanyStats = async (
           monthMRR += planPrices.monthly;
         }
       });
-      
+
       // Assume approx 5% natural churn or uncollected revenue variance
       const churnVal = Math.round(monthMRR * 0.05);
 
@@ -1737,7 +1828,7 @@ export const fetchCompanyStats = async (
           include: { profile: true }
         }
       }
-    });
+    }).catch(() => []);
 
     const formatRelativeTime = (date: Date) => {
       const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
