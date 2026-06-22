@@ -1248,6 +1248,10 @@ export const fetchTodayAttendance = async (
   const { clientTimestamp, timezone, page = 1, limit = 100 } = req.query;
   const userTimezone = (timezone as string) || 'Asia/Kolkata';
 
+  console.log('=== ADMIN ATTENDANCE TODAY API CALLED ===');
+  console.log('Request query params:', { clientTimestamp, timezone, page, limit });
+  console.log('User making request:', req.user?.email, 'Role:', req.user?.role);
+
   let dateInput = new Date();
   if (clientTimestamp) {
     dateInput = new Date(clientTimestamp as string);
@@ -2481,10 +2485,20 @@ export const fetchLiveLocationLogs = async (
   res: Response
 ): Promise<void> => {
   try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + limit;
+    
+    const paginatedLogs = telemetryLogs.slice(startIndex, endIndex);
+    
     res.json({
       success: true,
       count: telemetryLogs.length,
-      logs: telemetryLogs
+      page,
+      limit,
+      totalPages: Math.ceil(telemetryLogs.length / limit),
+      logs: paginatedLogs
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to load telemetry geofence logs.' });
@@ -2514,41 +2528,89 @@ export const fetchAdminLeaves = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { employeeId } = req.query;
+  const { employeeId, status, page, limit } = req.query;
 
-  const whereClause: Prisma.LeaveRequestWhereInput = {};
+  console.log('=== ADMIN LEAVE API CALLED ===');
+  console.log('Request query params:', { employeeId, status, page, limit });
+  console.log('User making request:', req.user?.email, 'Role:', req.user?.role);
+
+  let whereClause: Prisma.LeaveRequestWhereInput = {};
+  
   if (employeeId) {
     whereClause.employeeId = parseInt(employeeId as string, 10);
   }
+  
+  if (status && status !== 'All') {
+    whereClause.status = status as string;
+  }
+
+  console.log('Where clause for query:', JSON.stringify(whereClause, null, 2));
+
+  const pageNum = parseInt(page as string) || 1;
+  const limitNum = parseInt(limit as string) || 20;
+  const skip = (pageNum - 1) * limitNum;
 
   try {
-    const leaves = await prisma.leaveRequest.findMany({
-      where: whereClause,
-      include: {
-        employee: true,
-      },
-      orderBy: { appliedOn: 'desc' },
-    });
+    const [leaves, totalCount] = await Promise.all([
+      prisma.leaveRequest.findMany({
+        where: whereClause,
+        include: {
+          employee: {
+            include: {
+              user: true,
+              office: true,
+              department: true,
+            },
+          },
+        },
+        orderBy: { appliedOn: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+      prisma.leaveRequest.count({ where: whereClause })
+    ]);
+    
+    console.log('Total leaves found in database:', totalCount);
+    console.log('Leaves for current page:', leaves.length);
+    console.log('Raw leaves data:', JSON.stringify(leaves, null, 2));
+
+    const mappedLeaves = leaves.map((l) => ({
+      id: l.id.toString(),
+      employeeId: l.employeeId.toString(),
+      employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Unassigned',
+      department: l.employee?.department?.name || 'Unassigned',
+      type: l.type === 'CASUAL' ? 'Casual Leave' : 
+            l.type === 'SICK' ? 'Sick Leave' : 
+            l.type === 'EARNED' ? 'Earned Leave' : 
+            l.type === 'ANNUAL' ? 'Annual Leave' : 
+            l.type === 'MATERNITY' ? 'Maternity Leave' : 
+            l.type === 'PATERNITY' ? 'Paternity Leave' : 
+            l.type === 'UNPAID' ? 'Unpaid Leave' : 
+            l.type.charAt(0).toUpperCase() + l.type.slice(1).toLowerCase() + ' Leave',
+      startDate: l.fromDate.toISOString().split('T')[0],
+      endDate: l.toDate.toISOString().split('T')[0],
+      reason: l.reason,
+      status: l.status === 'APPROVED' ? 'Approved' : l.status === 'REJECTED' ? 'Rejected' : 'Pending',
+      appliedOn: l.appliedOn.toISOString(),
+      reviewedBy: l.reviewedBy,
+      reviewNote: l.reviewNote,
+    }));
+
+    console.log('Mapped leaves to return:', mappedLeaves.length);
+    console.log('Mapped leaves data:', JSON.stringify(mappedLeaves, null, 2));
+    console.log('=== ADMIN LEAVE API RESPONSE ===');
 
     res.json({
       success: true,
-      leaves: leaves.map((l) => ({
-        id: l.id.toString(),
-        employeeId: l.employeeId.toString(),
-        employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Unassigned',
-        department: 'Engineering', // fallback default department label
-        type: l.type === 'CASUAL' ? 'Casual Leave' : l.type === 'SICK' ? 'Sick Leave' : l.type === 'EARNED' ? 'Earned Leave' : 'Paid Leave',
-        startDate: l.fromDate.toISOString().split('T')[0],
-        endDate: l.toDate.toISOString().split('T')[0],
-        reason: l.reason,
-        status: l.status === 'APPROVED' ? 'Approved' : l.status === 'REJECTED' ? 'Rejected' : 'Pending',
-        appliedOn: l.appliedOn.toISOString(),
-        reviewedBy: l.reviewedBy,
-        reviewNote: l.reviewNote,
-      })),
+      count: totalCount,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(totalCount / limitNum),
+      leaves: mappedLeaves,
     });
   } catch (error) {
     console.error('Fetch admin leaves error:', error);
+    console.error('Error details:', JSON.stringify(error, null, 2));
     res.status(500).json({ success: false, message: 'Failed to load leave requests.' });
   }
 };
@@ -2643,11 +2705,20 @@ export const fetchAdminLeaveBalances = async (
   res: Response
 ): Promise<void> => {
   try {
-    const employees = await prisma.employee.findMany({
-      include: {
-        leaveRequests: true,
-      }
-    });
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const skip = (page - 1) * limit;
+
+    const [employees, totalCount] = await Promise.all([
+      prisma.employee.findMany({
+        include: {
+          leaveRequests: true,
+        },
+        skip,
+        take: limit,
+      }),
+      prisma.employee.count()
+    ]);
 
     const balances = employees.map((emp) => {
       const getUsedDays = (type: string) => {
@@ -2676,6 +2747,10 @@ export const fetchAdminLeaveBalances = async (
 
     res.json({
       success: true,
+      count: totalCount,
+      page,
+      limit,
+      totalPages: Math.ceil(totalCount / limit),
       balances,
     });
   } catch (error) {

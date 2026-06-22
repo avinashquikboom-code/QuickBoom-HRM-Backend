@@ -122,6 +122,10 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
   try {
     const { latitude, longitude } = req.body;
 
+    console.log('=== MOBILE ATTENDANCE PUNCH IN API CALLED ===');
+    console.log('Request body:', { latitude, longitude });
+    console.log('User making request:', req.user?.email, 'User ID:', req.user?.id);
+
     // Generate internal notes and timestamp
     const notes = 'Punch in recorded via mobile app';
     const clientTimestamp = new Date().toISOString();

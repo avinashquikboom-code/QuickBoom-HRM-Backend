@@ -649,6 +649,10 @@ export const applyEmployeeLeave = async (
 ): Promise<void> => {
   const { type, fromDate, toDate, reason } = req.body;
 
+  console.log('=== EMPLOYEE LEAVE CREATION API CALLED ===');
+  console.log('Request body:', { type, fromDate, toDate, reason });
+  console.log('User making request:', req.user?.email, 'Employee ID:', req.user?.employeeId);
+
   if (!type || !fromDate || !toDate || !reason) {
     res.status(400).json({ success: false, message: 'All parameters (type, fromDate, toDate, reason) are required.' });
     return;
@@ -657,9 +661,12 @@ export const applyEmployeeLeave = async (
   try {
     const employee = await getEmployeeFromRequest(req);
     if (!employee) {
+      console.error('Employee not found for leave request');
       res.status(404).json({ success: false, message: 'Employee not found.' });
       return;
     }
+
+    console.log('Creating leave request for employee:', employee.id, employee.firstName, employee.lastName);
 
     const leave = await prisma.leaveRequest.create({
       data: {
@@ -671,6 +678,8 @@ export const applyEmployeeLeave = async (
         status: 'PENDING',
       },
     });
+
+    console.log('Leave request created successfully:', leave.id, 'Status:', leave.status, 'Applied on:', leave.appliedOn);
 
     res.status(201).json({
       success: true,
