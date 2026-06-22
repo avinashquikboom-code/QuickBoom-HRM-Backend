@@ -2113,8 +2113,9 @@ export const fetchCompanyStats = async (
     }).catch(() => []);
 
     const pricingPlans = await prisma.pricingPlan.findMany().catch(() => []);
-    const getPlanPrices = (planName: string) => {
-      const p = pricingPlans.find(pl => pl.name.toLowerCase() === planName.toLowerCase());
+    const getPlanPrices = (planName: string | null | undefined) => {
+      if (!planName) return { monthly: 1200, yearly: 12000 };
+      const p = pricingPlans.find(pl => pl.name && pl.name.toLowerCase() === planName.toLowerCase());
       return p ? { monthly: p.monthlyPrice, yearly: p.yearlyPrice } : { monthly: 1200, yearly: 12000 };
     };
 
@@ -2122,7 +2123,7 @@ export const fetchCompanyStats = async (
     let monthlyRevenue = 0;
     offices.forEach(off => {
       const planPrices = getPlanPrices(off.subscriptionPlan);
-      if (off.billingCycle === 'yearly') {
+      if ((off.billingCycle || 'monthly') === 'yearly') {
         monthlyRevenue += planPrices.yearly / 12;
       } else {
         monthlyRevenue += planPrices.monthly;
@@ -2140,7 +2141,7 @@ export const fetchCompanyStats = async (
     let basicCount = 0;
 
     offices.forEach(off => {
-      const plan = off.subscriptionPlan.toLowerCase();
+      const plan = (off.subscriptionPlan || 'Basic').toLowerCase();
       if (plan === 'enterprise') enterpriseCount++;
       else if (plan === 'pro') proCount++;
       else basicCount++;
@@ -2155,11 +2156,11 @@ export const fetchCompanyStats = async (
 
     // 2. Dynamic Invoices based on real offices and database pricing plans
     const recentInvoices = offices.map((off) => {
-      const plan = off.subscriptionPlan;
+      const plan = off.subscriptionPlan || 'Basic';
       const planPrices = getPlanPrices(plan);
-      const amountVal = off.billingCycle === 'yearly' ? planPrices.yearly : planPrices.monthly;
+      const amountVal = (off.billingCycle || 'monthly') === 'yearly' ? planPrices.yearly : planPrices.monthly;
       
-      const invoiceDate = new Date(off.createdAt);
+      const invoiceDate = new Date(off.createdAt || new Date());
       const formattedDate = invoiceDate.toLocaleDateString('en-IN', {
         day: 'numeric',
         month: 'short',
@@ -2171,7 +2172,7 @@ export const fetchCompanyStats = async (
         company: off.name,
         plan,
         amount: `₹${amountVal.toLocaleString('en-IN')}`,
-        status: off.invoiceStatus,
+        status: off.invoiceStatus || 'Paid',
         date: formattedDate
       };
     }).slice(0, 5);
@@ -2189,10 +2190,10 @@ export const fetchCompanyStats = async (
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
 
-      const activeOffices = allOffices.filter(off => new Date(off.createdAt) <= endOfMonth);
+      const activeOffices = allOffices.filter(off => off.createdAt && new Date(off.createdAt) <= endOfMonth);
       const companiesCount = activeOffices.length;
 
-      const seatsCount = allEmployees.filter(emp => new Date(emp.createdAt) <= endOfMonth).length;
+      const seatsCount = allEmployees.filter(emp => emp.createdAt && new Date(emp.createdAt) <= endOfMonth).length;
 
       // Growth History
       growthHistory.push({
@@ -2205,7 +2206,7 @@ export const fetchCompanyStats = async (
       let monthMRR = 0;
       activeOffices.forEach(off => {
         const planPrices = getPlanPrices(off.subscriptionPlan);
-        if (off.billingCycle === 'yearly') {
+        if ((off.billingCycle || 'monthly') === 'yearly') {
           monthMRR += planPrices.yearly / 12;
         } else {
           monthMRR += planPrices.monthly;
@@ -2226,11 +2227,11 @@ export const fetchCompanyStats = async (
     const recentOffices = await prisma.office.findMany({
       orderBy: { createdAt: 'desc' },
       take: 3
-    });
+    }).catch(() => []);
     const recentEmployees = await prisma.employee.findMany({
       orderBy: { createdAt: 'desc' },
       take: 3
-    });
+    }).catch(() => []);
     const recentComments = await prisma.comment.findMany({
       orderBy: { createdAt: 'desc' },
       take: 3,
@@ -2242,7 +2243,8 @@ export const fetchCompanyStats = async (
     }).catch(() => []);
 
     const formatRelativeTime = (date: Date) => {
-      const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+      if (!date) return 'Unknown';
+      const seconds = Math.floor((now.getTime() - new Date(date).getTime()) / 1000);
       if (seconds < 60) return 'Just now';
       const minutes = Math.floor(seconds / 60);
       if (minutes < 60) return `${minutes}m ago`;
@@ -2258,6 +2260,7 @@ export const fetchCompanyStats = async (
       description: string;
       type: 'success' | 'info' | 'warning';
       time: string;
+      timestamp: number;
     }
     const activities: ActivityItem[] = [];
 
@@ -2267,7 +2270,8 @@ export const fetchCompanyStats = async (
         title: 'New company onboarded',
         description: `Company "${off.name}" was onboarded successfully.`,
         type: 'success',
-        time: formatRelativeTime(off.createdAt)
+        time: formatRelativeTime(off.createdAt),
+        timestamp: new Date(off.createdAt || now).getTime()
       });
     });
 
@@ -2277,22 +2281,24 @@ export const fetchCompanyStats = async (
         title: 'New employee registered',
         description: `Employee ${emp.firstName} ${emp.lastName} was registered.`,
         type: 'info',
-        time: formatRelativeTime(emp.createdAt)
+        time: formatRelativeTime(emp.createdAt),
+        timestamp: new Date(emp.createdAt || now).getTime()
       });
     });
 
     recentComments.forEach(comm => {
-      const name = comm.author.profile?.fullName || comm.author.email.split('@')[0];
+      const name = comm.author?.profile?.fullName || comm.author?.email?.split('@')[0] || 'System User';
       activities.push({
         id: `comment-${comm.id}`,
         title: 'Comment added',
-        description: `${name} commented: "${comm.content.substring(0, 30)}${comm.content.length > 30 ? '...' : ''}"`,
+        description: `${name} commented: "${(comm.content || '').substring(0, 30)}${(comm.content || '').length > 30 ? '...' : ''}"`,
         type: 'warning',
-        time: formatRelativeTime(comm.createdAt)
+        time: formatRelativeTime(comm.createdAt),
+        timestamp: new Date(comm.createdAt || now).getTime()
       });
     });
 
-    activities.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    activities.sort((a, b) => b.timestamp - a.timestamp);
     const recentActivity = activities.slice(0, 5);
 
     // Fallback activity if empty database
@@ -2302,7 +2308,8 @@ export const fetchCompanyStats = async (
         title: 'Workspace initialized',
         description: 'Super admin workspace has been fully initialized.',
         type: 'info',
-        time: 'Just now'
+        time: 'Just now',
+        timestamp: now.getTime()
       });
     }
 

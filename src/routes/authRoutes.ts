@@ -270,8 +270,10 @@ router.post('/fcm-token', authMiddleware, registerFcmToken);
  *       500:
  *         description: Server error
  */
-router.post('/refresh', authMiddleware, refreshToken);
+router.post('/refresh', refreshToken);
 router.post('/logout', authMiddleware, logout);
 router.post('/logout-all', authMiddleware, logoutAll);
 
 export default router;
+
+

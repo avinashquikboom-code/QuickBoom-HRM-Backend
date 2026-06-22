@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../utils/db';
-import { signToken, signRefreshToken, signAccessToken, verifyRefreshToken, verifyToken } from '../utils/jwt';
+import { signToken, signRefreshToken, signAccessToken, verifyRefreshToken, verifyToken, UserJWTPayload } from '../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import userSessionService from '../services/userSessionService';
@@ -589,9 +589,30 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
-    // Fallback: legacy token refresh behavior
-    const user = req.user;
-    if (!user) {
+    // Fallback: legacy token refresh — read bearer token from Authorization header
+    // (authMiddleware is NOT applied to this route, so req.user is not populated)
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7)
+      : null;
+
+    if (!bearerToken) {
+      res.status(401).json({
+        success: false,
+        message: 'No token provided. Pass a refreshToken in the body or a Bearer token in Authorization.',
+      });
+      return;
+    }
+
+    let legacyUser: UserJWTPayload;
+    try {
+      // Try access-token secret first, then refresh-token secret
+      try {
+        legacyUser = verifyToken(bearerToken);
+      } catch {
+        legacyUser = verifyRefreshToken(bearerToken);
+      }
+    } catch {
       res.status(401).json({
         success: false,
         message: 'Invalid or expired authorization token.',
@@ -600,18 +621,18 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
     }
 
     const newToken = signAccessToken({
-      id: user.id,
-      email: user.email,
-      role: user.role,
+      id: legacyUser.id,
+      email: legacyUser.email,
+      role: legacyUser.role,
     });
 
     res.json({
       success: true,
       token: newToken,
       user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
+        id: legacyUser.id,
+        email: legacyUser.email,
+        role: legacyUser.role,
       },
     });
   } catch (error) {
