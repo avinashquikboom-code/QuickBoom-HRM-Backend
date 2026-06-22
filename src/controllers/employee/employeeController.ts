@@ -651,7 +651,7 @@ export const applyEmployeeLeave = async (
 
   console.log('=== EMPLOYEE LEAVE CREATION API CALLED ===');
   console.log('Request body:', { type, fromDate, toDate, reason });
-  console.log('User making request:', req.user?.email, 'Employee ID:', req.user?.employeeId);
+  console.log('User making request:', req.user?.email, 'User ID:', req.user?.id);
 
   if (!type || !fromDate || !toDate || !reason) {
     res.status(400).json({ success: false, message: 'All parameters (type, fromDate, toDate, reason) are required.' });
