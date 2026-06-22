@@ -397,3 +397,320 @@ No shortcuts.
 No temporary fixes.
 No mock implementations.
 No breaking changes.
+
+---
+
+# Common Issues & Debugging Rules
+
+Before changing code, always identify the root cause.
+
+Never assume the problem is authentication, tokens, Prisma, Flutter, or database without verification.
+
+=================================================
+API ERROR DEBUGGING
+===================
+
+Status Code Guide
+
+200
+
+* Success
+
+400
+
+* Validation Error
+
+401
+
+* Authentication Error
+* Invalid Token
+* Missing Token
+* Expired Token
+
+403
+
+* Authorization Error
+* Permission Denied
+* Role Restriction
+
+404
+
+* Resource Not Found
+
+409
+
+* Duplicate Data
+
+422
+
+* Business Logic Error
+
+429
+
+* Rate Limit
+
+500
+
+* Backend Error
+* Database Error
+* Prisma Error
+* Service Error
+* Null Reference Error
+* Relation Error
+
+=================================================
+500 ERROR INVESTIGATION
+=======================
+
+If API returns:
+
+500 Internal Server Error
+
+Do NOT assume token issue.
+
+Check:
+
+1. Backend Logs
+2. Service Layer
+3. Prisma Queries
+4. Database Relations
+5. Missing Tables
+6. Missing Columns
+7. Null Values
+8. Aggregation Queries
+9. Dashboard Calculations
+
+Always log the actual exception.
+
+Bad:
+
+catch(error){
+throw new Error("Something went wrong");
+}
+
+Good:
+
+catch(error){
+console.error(error);
+throw error;
+}
+
+=================================================
+AUTHENTICATION DEBUGGING
+========================
+
+If API returns:
+
+401 Unauthorized
+
+Check:
+
+* Access Token
+* Refresh Token
+* Token Expiration
+* Authorization Header
+* Secure Storage
+* Session Records
+
+Example:
+
+Authorization:
+Bearer <access_token>
+
+=================================================
+AUTHORIZATION DEBUGGING
+=======================
+
+If API returns:
+
+403 Forbidden
+
+Check:
+
+* User Role
+* Permissions
+* Company Access
+* Branch Access
+
+Example:
+
+Store Manager
+cannot access
+Store 2 data
+if assigned to
+Store 1
+
+=================================================
+PRISMA DEBUGGING
+================
+
+Before modifying schema:
+
+Verify:
+
+* Model Names
+* Relation Names
+* Foreign Keys
+* Nullable Fields
+* Enum Values
+
+Common Errors:
+
+Relation does not exist
+
+Column does not exist
+
+Table does not exist
+
+Unknown argument
+
+Invalid include
+
+Missing foreign key
+
+=================================================
+DATABASE DEBUGGING
+==================
+
+Verify:
+
+* Tables exist
+* Columns exist
+* Foreign keys exist
+* Relations exist
+* Seed data exists
+
+Never assume database contains data.
+
+Check counts first.
+
+=================================================
+SUPER ADMIN DASHBOARD DEBUGGING
+===============================
+
+If dashboard API fails:
+
+Check:
+
+* Company Count Query
+* Employee Count Query
+* Attendance Summary Query
+* Payroll Summary Query
+* Store Summary Query
+
+Most dashboard failures are caused by:
+
+* Missing relation
+* Null value
+* Empty database
+* Prisma query error
+
+=================================================
+NEXT.JS DEBUGGING
+=================
+
+Slow Page Load
+
+Check:
+
+* Multiple API Calls
+* Sequential Requests
+* Missing Loading States
+* Large Queries
+* Server Components
+
+Dashboard should not take:
+
+30+ seconds
+
+Target:
+
+Under 3 seconds
+
+=================================================
+FLUTTER DEBUGGING
+=================
+
+Build Failure
+
+Check:
+
+* Flutter Version
+* Gradle Version
+* Kotlin Version
+* Android SDK
+* Java Version
+
+Before changing code run:
+
+flutter clean
+
+flutter pub get
+
+flutter doctor
+
+=================================================
+GRADLE DEBUGGING
+================
+
+If error contains:
+
+NoSuchFileException
+
+Check:
+
+Gradle Cache Corruption
+
+Actions:
+
+Delete:
+
+~/.gradle/caches
+
+android/.gradle
+
+build
+
+Run:
+
+flutter clean
+
+flutter pub get
+
+=================================================
+API INTEGRATION DEBUGGING
+=========================
+
+Before blaming backend:
+
+Check:
+
+* API URL
+* Environment Variables
+* Authorization Header
+* Request Body
+* Query Parameters
+
+Verify API using Postman.
+
+=================================================
+PRODUCTION DEBUGGING RULE
+
+Before implementing a fix:
+
+1. Reproduce issue.
+2. Identify root cause.
+3. Verify logs.
+4. Verify database.
+5. Verify API response.
+6. Verify frontend request.
+7. Implement fix.
+8. Test regression.
+9. Verify existing functionality still works.
+
+Never implement blind fixes.
+
+Never guess.
+
+Always verify root cause first.
+
