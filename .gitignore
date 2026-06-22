@@ -13,3 +13,6 @@ frontend.env
 firebase-service-account.json
 quickboom-*-firebase-adminsdk-*.json
 deploy/deploy.env
+
+# Agent files
+AGENT.md
