@@ -162,6 +162,7 @@ export const getCurrentDistance = async (
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+    const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
 
     const isWithinRadius = !enableGeofence || (distance * 1000) <= office.maxPunchRadiusMeters; // Convert km to meters
 
@@ -173,6 +174,7 @@ export const getCurrentDistance = async (
         officeAddress: office.address,
         isWithinRadius,
         enableGeofence,
+        enablePunchOutGeofence,
         officeRadius: office.maxPunchRadiusMeters,
         coordinates: {
           current: {

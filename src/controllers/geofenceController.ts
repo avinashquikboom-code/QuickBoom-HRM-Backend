@@ -50,6 +50,7 @@ export const checkGeofence = async (
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+    const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
 
     res.json({
       success: true,
@@ -57,7 +58,8 @@ export const checkGeofence = async (
       result: {
         ...result,
         isWithinGeofence: enableGeofence ? result.isWithinGeofence : true,
-        enableGeofence
+        enableGeofence,
+        enablePunchOutGeofence
       }
     });
   } catch (error) {
@@ -134,6 +136,7 @@ export const getGeofenceStatus = async (
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+    const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
 
     const finalIsWithinGeofence = enableGeofence ? result.isWithinGeofence : true;
 
@@ -143,7 +146,8 @@ export const getGeofenceStatus = async (
       result: {
         ...result,
         isWithinGeofence: finalIsWithinGeofence,
-        enableGeofence
+        enableGeofence,
+        enablePunchOutGeofence
       }
     });
   } catch (error) {

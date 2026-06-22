@@ -108,16 +108,37 @@ export const downloadPayslip = async (
     const monthName = monthNames[payslip.month - 1] || 'Unknown';
     const periodLabel = `${monthName} ${payslip.year}`;
 
-    // Compute detailed salary components matching the UI model
+    // Fetch employee salary structure
+    const employeeWithSalary = await prisma.employee.findUnique({
+      where: { id: payslip.employeeId },
+      include: { salaryStructure: true }
+    });
+
+    const ss = employeeWithSalary?.salaryStructure;
+    const originalBasic = ss?.basicSalary || payslip.baseSalary || 45000;
+    
+    // Determine ratio (actual base salary divided by configured base salary)
+    const ratio = originalBasic > 0 ? (payslip.baseSalary / originalBasic) : 1.0;
+
     const basic = payslip.baseSalary;
-    const hra = Math.round(basic * 0.40);
-    const ta = Math.round(basic * 0.10);
-    const special = Math.max(0, payslip.allowance - hra - ta);
-    const grossEarnings = basic + hra + ta + special;
-    const pf = Math.round(basic * 0.12);
-    const pt = 200;
-    const tds = Math.max(0, payslip.deductions - pf - pt);
-    const totalDeductions = pf + pt + tds;
+    const hra = ss ? Math.round(ss.hra * ratio) : Math.round(basic * 0.40);
+    const ta = ss ? Math.round(ss.travelAllowance * ratio) : Math.round(basic * 0.10);
+    const medical = ss ? Math.round(ss.medicalAllowance * ratio) : 0;
+    const special = ss ? Math.round(ss.specialAllowance * ratio) : 0;
+    const incentive = ss?.incentive || 0;
+    const bonus = ss?.bonus || 0;
+
+    // Remaining allowance is distributed if there is a mismatch
+    const calculatedAllowance = hra + ta + medical + special + incentive + bonus;
+    const extraAllowance = Math.max(0, payslip.allowance - (calculatedAllowance - basic));
+    const finalSpecial = special + extraAllowance;
+
+    const grossEarnings = basic + payslip.allowance;
+
+    const pf = ss?.pfEnabled ? Math.round(basic * (ss.employeePfRate / 100)) : 0;
+    const esic = ss?.esicEnabled ? Math.round(grossEarnings * (ss.employeeEsicRate / 100)) : 0;
+    const otherDeductions = Math.max(0, payslip.deductions - pf - esic);
+    const totalDeductions = payslip.deductions;
 
     const docDefinition = {
       content: [
@@ -183,20 +204,20 @@ export const downloadPayslip = async (
               [
                 { text: 'House Rent Allowance (HRA)' },
                 { text: `Rs. ${hra.toLocaleString('en-IN')}`, alignment: 'right' },
-                { text: 'Professional Tax (PT)' },
-                { text: `Rs. ${pt.toLocaleString('en-IN')}`, alignment: 'right' }
+                { text: 'ESIC' },
+                { text: `Rs. ${esic.toLocaleString('en-IN')}`, alignment: 'right' }
               ],
               // Row 3
               [
-                { text: 'Travel Allowance (TA)' },
-                { text: `Rs. ${ta.toLocaleString('en-IN')}`, alignment: 'right' },
-                { text: 'Income Tax / TDS' },
-                { text: `Rs. ${tds.toLocaleString('en-IN')}`, alignment: 'right' }
+                { text: 'Allowances (Travel/Medical)' },
+                { text: `Rs. ${(ta + medical).toLocaleString('en-IN')}`, alignment: 'right' },
+                { text: 'Other Deductions' },
+                { text: `Rs. ${otherDeductions.toLocaleString('en-IN')}`, alignment: 'right' }
               ],
               // Row 4
               [
-                { text: 'Special Allowance' },
-                { text: `Rs. ${special.toLocaleString('en-IN')}`, alignment: 'right' },
+                { text: 'Special Allowance & Bonus' },
+                { text: `Rs. ${(finalSpecial + incentive + bonus).toLocaleString('en-IN')}`, alignment: 'right' },
                 { text: '' },
                 { text: '' }
               ],

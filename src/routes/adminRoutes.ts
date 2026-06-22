@@ -76,15 +76,51 @@ import {
   createAdminHoliday,
   deleteAdminHoliday,
 } from '../controllers/adminController';
+import {
+  fetchDesignations,
+  createDesignation,
+  updateDesignation,
+  deleteDesignation,
+} from '../controllers/designationController';
+import {
+  fetchRoles,
+  createRole,
+} from '../controllers/roleController';
 
 const router = Router();
 
 // Apply auth middleware to all admin routes
 router.use(authMiddleware);
 
-// Apply administrative role check to all admin routes
-const adminRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'];
-router.use(roleMiddleware(adminRoles));
+const adminOnlyRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'];
+const storeManagerAllowedRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
+
+// Designation Routes
+router.get('/designations', roleMiddleware(storeManagerAllowedRoles), fetchDesignations);
+router.post('/designations', roleMiddleware(adminOnlyRoles), createDesignation);
+router.put('/designations/:id', roleMiddleware(adminOnlyRoles), updateDesignation);
+router.delete('/designations/:id', roleMiddleware(adminOnlyRoles), deleteDesignation);
+
+// Role Routes
+router.get('/roles', roleMiddleware(storeManagerAllowedRoles), fetchRoles);
+router.post('/roles', roleMiddleware(adminOnlyRoles), createRole);
+
+// Store Manager / Admin Shared Routes
+router.get('/dashboard/stats', roleMiddleware(storeManagerAllowedRoles), fetchDashboardStats);
+router.get('/employees', roleMiddleware(storeManagerAllowedRoles), fetchEmployees);
+router.get('/attendance/today', roleMiddleware(storeManagerAllowedRoles), fetchTodayAttendance);
+router.get('/attendance/history', roleMiddleware(storeManagerAllowedRoles), fetchAttendanceHistory);
+router.get('/location/live', roleMiddleware(storeManagerAllowedRoles), fetchLiveLocations);
+router.get('/location/logs', roleMiddleware(storeManagerAllowedRoles), fetchLiveLocationLogs);
+router.get('/leaves', roleMiddleware(storeManagerAllowedRoles), fetchAdminLeaves);
+router.put('/leaves/:id', roleMiddleware(storeManagerAllowedRoles), updateAdminLeaveStatus);
+router.get('/reports', roleMiddleware(storeManagerAllowedRoles), fetchAdminReports);
+router.post('/reports/generate', roleMiddleware(storeManagerAllowedRoles), generateAdminReport);
+router.get('/reports/attendance-details', roleMiddleware(storeManagerAllowedRoles), fetchAttendanceReportDetails);
+router.get('/reports/attendance/download', roleMiddleware(storeManagerAllowedRoles), downloadAttendanceReport);
+
+// Apply administrative role check to all other admin routes
+router.use(roleMiddleware(adminOnlyRoles));
 
 /**
  * @swagger
@@ -148,7 +184,7 @@ router.delete('/users/:id', deletePlatformUser);
  *       500:
  *         description: Server error
  */
-router.get('/employees', fetchEmployees);
+
 
 /**
  * @swagger
@@ -317,8 +353,6 @@ router.put('/offices/assign-employee/:employeeId', assignEmployeeToOffice);
 router.post('/employees/assign', createAndAssignEmployee);
 
 // Attendance
-router.get('/attendance/today', fetchTodayAttendance);
-router.get('/attendance/history', fetchAttendanceHistory);
 
 // Comments
 router.get('/comments', fetchComments);
@@ -332,7 +366,6 @@ router.post('/profile/avatar', uploadAdminAvatar);
 router.delete('/profile/avatar', removeAdminAvatar);
 
 // Dashboards & Stats
-router.get('/dashboard/stats', fetchDashboardStats);
 router.get('/companies/stats', fetchCompanyStats); // Super Admin specific info
 
 // Subscriptions
@@ -345,15 +378,11 @@ router.get('/pricing-plans', fetchPricingPlans);
 router.put('/pricing-plans/:id', updatePricingPlan);
 
 // Telemetry Location Tracking
-router.get('/location/live', fetchLiveLocations);
-router.get('/location/logs', fetchLiveLocationLogs);
 router.post('/location/logs/clear', clearLiveLocationLogs);
 
 // Leave Management
-router.get('/leaves', fetchAdminLeaves);
 router.get('/leaves/balances', fetchAdminLeaveBalances);
 router.post('/leaves', createAdminLeaveRequest);
-router.put('/leaves/:id', updateAdminLeaveStatus);
 
 /**
  * @swagger
@@ -413,11 +442,7 @@ router.post('/payroll/slips/approve', approveSalarySlip);
 router.get('/analytics/overview', fetchAnalyticsOverview);
 
 // Reports Operations
-router.get('/reports', fetchAdminReports);
-router.post('/reports/generate', generateAdminReport);
 router.get('/reports/payroll-details', fetchPayrollReportDetails);
-router.get('/reports/attendance-details', fetchAttendanceReportDetails);
-router.get('/reports/attendance/download', downloadAttendanceReport);
 
 // Notifications Management
 router.get('/notifications', fetchAdminNotifications);

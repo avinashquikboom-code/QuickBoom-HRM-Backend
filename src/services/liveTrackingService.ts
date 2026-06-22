@@ -428,7 +428,7 @@ class LiveTrackingService {
   /**
    * Get live locations of all employees (HR/Admin only)
    */
-  async getLiveLocations(): Promise<any[]> {
+  async getLiveLocations(officeId?: number): Promise<any[]> {
     try {
       const liveLocations: any[] = [];
       
@@ -441,11 +441,14 @@ class LiveTrackingService {
             where: { id: session.employeeId },
             include: {
               user: { select: { email: true, profile: { select: { fullName: true } } } },
-              office: { select: { name: true, address: true } }
+              office: { select: { id: true, name: true, address: true } }
             }
           });
           
           if (employee) {
+            if (officeId !== undefined && employee.officeId !== officeId) {
+              continue;
+            }
             liveLocations.push({
               sessionId,
               employeeId: session.employeeId,

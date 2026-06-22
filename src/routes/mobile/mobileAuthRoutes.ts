@@ -5,7 +5,10 @@ import {
   mobileRefreshToken,
   getMobileProfile,
   changeMobilePassword,
-  updateMobileProfile
+  updateMobileProfile,
+  mobileLogoutAll,
+  uploadMobileAvatar,
+  removeMobileAvatar
 } from '../../controllers/mobile/mobileAuthController';
 import { forgotPassword as adminForgotPassword } from '../../controllers/adminController';
 
@@ -182,6 +185,7 @@ router.use(authMiddleware);
  *         description: Server error
  */
 router.post('/logout', mobileLogout);
+router.post('/logout-all', mobileLogoutAll);
 
 /**
  * @swagger
@@ -283,6 +287,8 @@ router.post('/logout', mobileLogout);
  */
 router.get('/profile', getMobileProfile);
 router.put('/profile', updateMobileProfile);
+router.post('/profile/avatar', uploadMobileAvatar);
+router.delete('/profile/avatar', removeMobileAvatar);
 router.put('/change-password', changeMobilePassword);
 
 /**

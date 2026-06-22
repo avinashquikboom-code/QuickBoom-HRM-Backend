@@ -21,6 +21,7 @@ model User {
   userPermission UserPermission?
   notifications  Notification[]
   fcmTokens      FCMToken[]
+  sessions       UserSession[]
 }
 
 model Profile {
@@ -70,6 +71,7 @@ model Office {
   workingDays          String[]     @default(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
   attendances          Attendance[]
   employees            Employee[]
+  shifts               Shift[]
 }
 
 model Department {
@@ -88,6 +90,10 @@ model Employee {
   firstName        String
   lastName         String
   designation      String?
+  mobileNumber     String?
+  joiningDate      DateTime?
+  reportingManagerId Int?
+  designationId    Int?
   status           String            @default("active")
   officeId         Int?
   departmentId     Int?
@@ -106,6 +112,11 @@ model Employee {
   payslips         Payslip[]
   documents        Document[]
   attendanceCorrections AttendanceCorrection[]
+  assets           Asset[]
+  salaryStructure  SalaryStructure?
+  designationRelation Designation?     @relation(fields: [designationId], references: [id])
+  reportingManager Employee?         @relation("ReportingHierarchy", fields: [reportingManagerId], references: [id])
+  subordinates     Employee[]        @relation("ReportingHierarchy")
 
   @@index([officeId])
   @@index([departmentId])
@@ -133,6 +144,7 @@ model Attendance {
   employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   office                Office?   @relation(fields: [officeId], references: [id])
   attendanceCorrections AttendanceCorrection[]
+  breakRecords          BreakRecord[]
 
   @@index([date])
   @@index([employeeId])
@@ -250,6 +262,8 @@ model Shift {
   graceMinutes Int               @default(15)
   breakMinutes Int               @default(60)
   color        String            @default("#3BA38B")
+  officeId     Int?
+  office       Office?           @relation(fields: [officeId], references: [id], onDelete: Cascade)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   assignments  ShiftAssignment[]
@@ -397,6 +411,9 @@ enum Role {
   HR
   PLATFORM_ADMIN
   EMPLOYEE
+  STORE_MANAGER
+  SALESMAN
+  HELPER
 }
 
 model Payslip {
@@ -435,4 +452,100 @@ model FCMToken {
 
   @@unique([userId, token])
 }
+
+model UserSession {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  token      String   @unique
+  deviceInfo String?
+  ipAddress  String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  employeeId Int?
+  branchId   Int?
+  ipAddress  String?
+  deviceInfo String?
+  action     String
+  timestamp  DateTime @default(now())
+}
+
+model Asset {
+  id           Int       @id @default(autoincrement())
+  name         String
+  code         String    @unique
+  type         String
+  status       String    @default("AVAILABLE")
+  employeeId   Int?
+  assignedDate DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  employee     Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+}
+
+model Project {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Designation {
+  id        Int        @id @default(autoincrement())
+  name      String     @unique
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  employees Employee[]
+}
+
+model CustomRole {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SalaryStructure {
+  id               Int      @id @default(autoincrement())
+  employeeId       Int      @unique
+  monthlySalary    Float    @default(0)
+  basicSalary      Float    @default(0)
+  hra              Float    @default(0)
+  medicalAllowance Float    @default(0)
+  travelAllowance  Float    @default(0)
+  specialAllowance Float    @default(0)
+  incentive        Float    @default(0)
+  bonus            Float    @default(0)
+  pfEnabled        Boolean  @default(false)
+  employeePfRate   Float    @default(12.0)
+  employerPfRate   Float    @default(12.0)
+  esicEnabled      Boolean  @default(false)
+  employeeEsicRate Float    @default(0.75)
+  employerEsicRate Float    @default(3.25)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model BreakRecord {
+  id           Int        @id @default(autoincrement())
+  attendanceId Int
+  startTime    DateTime
+  endTime      DateTime?
+  duration     Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+}
+
 

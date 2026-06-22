@@ -1,9 +1,11 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../utils/db';
-import { signToken, signRefreshToken } from '../utils/jwt';
+import { signToken, signRefreshToken, signAccessToken, verifyRefreshToken, verifyToken } from '../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
+import userSessionService from '../services/userSessionService';
+import auditLogService from '../services/auditLogService';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   const { email, password } = req.body;
@@ -72,10 +74,29 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 3. Generate JWT token (7 days expiration)
-    const token = signToken({
+    const token = signAccessToken({
       id: user.id,
       email: user.email,
       role: user.role,
+    });
+    const refreshToken = signRefreshToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
+    await userSessionService.createSession(user.id, refreshToken, deviceInfo, ipAddress);
+
+    // Audit Log
+    await auditLogService.log({
+      userId: user.id,
+      employeeId: user.employee?.id || undefined,
+      branchId: user.employee?.officeId || undefined,
+      ipAddress,
+      deviceInfo,
+      action: 'USER_LOGIN',
     });
 
     console.log('✅ [LOGIN] Token generated for:', email);
@@ -128,6 +149,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     res.json({
       success: true,
       token,
+      refreshToken,
       currentLoginLocation: loginLocation,
       user: {
         id: user.id,
@@ -440,11 +462,30 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
       }
     }
 
-    // Generate JWT token (7 days expiration)
-    const token = signToken({
+    // Generate JWT tokens
+    const token = signAccessToken({
       id: user.id,
       email: user.email,
       role: user.role,
+    });
+    const refreshToken = signRefreshToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
+    await userSessionService.createSession(user.id, refreshToken, deviceInfo, ipAddress);
+
+    // Audit Log
+    await auditLogService.log({
+      userId: user.id,
+      employeeId: user.employee?.id || undefined,
+      branchId: user.employee?.officeId || undefined,
+      ipAddress,
+      deviceInfo,
+      action: 'USER_LOGIN',
     });
 
     // Update last login metadata in user profile if exists
@@ -488,6 +529,7 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
     res.json({
       success: true,
       token,
+      refreshToken,
       currentLoginLocation: loginLocation,
       user: {
         id: user.id,
@@ -520,6 +562,34 @@ export const superAdminLogin = async (req: Request, res: Response): Promise<void
 
 export const refreshToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
+    const rToken = req.body.refreshToken;
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
+
+    if (rToken) {
+      const rotationResult = await userSessionService.rotateToken(rToken, deviceInfo, ipAddress);
+      if (!rotationResult) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid or expired refresh token.',
+          errorCode: 'INVALID_REFRESH_TOKEN'
+        });
+        return;
+      }
+      res.json({
+        success: true,
+        token: rotationResult.accessToken,
+        refreshToken: rotationResult.refreshToken,
+        user: {
+          id: rotationResult.payload.id,
+          email: rotationResult.payload.email,
+          role: rotationResult.payload.role,
+        },
+      });
+      return;
+    }
+
+    // Fallback: legacy token refresh behavior
     const user = req.user;
     if (!user) {
       res.status(401).json({
@@ -529,8 +599,7 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
-    // Generate new JWT token
-    const newToken = signToken({
+    const newToken = signAccessToken({
       id: user.id,
       email: user.email,
       role: user.role,
@@ -550,6 +619,67 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
     res.status(500).json({
       success: false,
       message: 'Failed to refresh token.',
+    });
+  }
+};
+
+export const logout = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const token = req.body.refreshToken || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+    if (token) {
+      await userSessionService.revokeSession(token);
+    }
+
+    if (req.user) {
+      const employee = await prisma.employee.findFirst({ where: { userId: req.user.id } });
+      await auditLogService.log({
+        userId: req.user.id,
+        employeeId: employee?.id || undefined,
+        branchId: employee?.officeId || undefined,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        deviceInfo: req.headers['user-agent'] || 'Unknown Device',
+        action: 'USER_LOGOUT',
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Logged out successfully.',
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to logout.',
+    });
+  }
+};
+
+export const logoutAll = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (req.user) {
+      await userSessionService.revokeAllSessions(req.user.id);
+
+      const employee = await prisma.employee.findFirst({ where: { userId: req.user.id } });
+      await auditLogService.log({
+        userId: req.user.id,
+        employeeId: employee?.id || undefined,
+        branchId: employee?.officeId || undefined,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        deviceInfo: req.headers['user-agent'] || 'Unknown Device',
+        action: 'USER_LOGOUT_ALL_DEVICES',
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Logged out from all devices.',
+    });
+  } catch (error) {
+    console.error('Logout all error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to logout from all devices.',
     });
   }
 };

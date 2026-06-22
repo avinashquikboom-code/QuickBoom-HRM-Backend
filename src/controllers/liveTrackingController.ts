@@ -232,17 +232,37 @@ export const getLiveLocations = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Check if user has HR or Admin role
-    if (req.user?.role !== 'HR' && req.user?.role !== 'ADMIN' && req.user?.role !== 'SUPER_ADMIN') {
+    // Check if user has HR or Admin or Store Manager role
+    if (
+      req.user?.role !== 'HR' &&
+      req.user?.role !== 'ADMIN' &&
+      req.user?.role !== 'SUPER_ADMIN' &&
+      req.user?.role !== 'STORE_MANAGER'
+    ) {
       res.status(403).json({
         success: false,
-        message: 'Access denied. HR/Admin access required.',
+        message: 'Access denied. HR/Admin/Store Manager access required.',
         errorCode: 'ACCESS_DENIED'
       });
       return;
     }
 
-    const liveLocations = await liveTrackingService.getLiveLocations();
+    let officeId: number | undefined;
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          locations: []
+        });
+        return;
+      }
+      officeId = storeManager.officeId;
+    }
+
+    const liveLocations = await liveTrackingService.getLiveLocations(officeId);
 
     res.json({
       success: true,
@@ -272,6 +292,24 @@ export const getCurrentLocation = async (
       // HR/Admin viewing another employee's location
       const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
       targetEmployeeId = parseInt(employeeIdStr);
+
+      // Perform store manager authorization check
+      if (req.user?.role === 'STORE_MANAGER') {
+        const storeManager = await prisma.employee.findFirst({
+          where: { userId: req.user.id }
+        });
+        const targetEmployee = await prisma.employee.findUnique({
+          where: { id: targetEmployeeId }
+        });
+        if (!storeManager || !storeManager.officeId || !targetEmployee || targetEmployee.officeId !== storeManager.officeId) {
+          res.status(403).json({
+            success: false,
+            message: 'Access denied. You can only view locations of your store employees.',
+            errorCode: 'ACCESS_DENIED'
+          });
+          return;
+        }
+      }
     } else {
       // Employee viewing their own location
       const employee = await prisma.employee.findFirst({
@@ -326,6 +364,25 @@ export const getRouteHistory = async (
 
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
     const targetEmployeeId = parseInt(employeeIdStr);
+
+    // Perform store manager authorization check
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      const targetEmployee = await prisma.employee.findUnique({
+        where: { id: targetEmployeeId }
+      });
+      if (!storeManager || !storeManager.officeId || !targetEmployee || targetEmployee.officeId !== storeManager.officeId) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only view route history of your store employees.',
+          errorCode: 'ACCESS_DENIED'
+        });
+        return;
+      }
+    }
+
     const startDateStr = Array.isArray(startDate) ? startDate[0] : startDate;
     const endDateStr = Array.isArray(endDate) ? endDate[0] : endDate;
     const start = new Date(startDateStr as string);
@@ -382,6 +439,25 @@ export const getGeofenceEvents = async (
 
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
     const targetEmployeeId = parseInt(employeeIdStr);
+
+    // Perform store manager authorization check
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      const targetEmployee = await prisma.employee.findUnique({
+        where: { id: targetEmployeeId }
+      });
+      if (!storeManager || !storeManager.officeId || !targetEmployee || targetEmployee.officeId !== storeManager.officeId) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only view geofence events of your store employees.',
+          errorCode: 'ACCESS_DENIED'
+        });
+        return;
+      }
+    }
+
     const limitNum = parseInt(limit, 10);
     const events = await liveTrackingService.getGeofenceEvents(
       targetEmployeeId,

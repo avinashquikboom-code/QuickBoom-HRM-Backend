@@ -4,6 +4,8 @@ import { prisma } from '../../utils/db';
 import { signToken, verifyToken, signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+import userSessionService from '../../services/userSessionService';
+import auditLogService from '../../services/auditLogService';
 
 // Mobile-specific login - simplified to email and password only
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
@@ -105,6 +107,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
           include: {
             office: true,
             department: true,
+            salaryStructure: true,
           },
         },
       },
@@ -136,6 +139,20 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       id: user.id,
       email: user.email,
       role: user.role,
+    });
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const deviceInfo = req.headers['user-agent'] || 'Mobile App';
+    await userSessionService.createSession(user.id, refreshToken, deviceInfo, ipAddress);
+
+    // Audit Log
+    await auditLogService.log({
+      userId: user.id,
+      employeeId: user.employee?.id || undefined,
+      branchId: user.employee?.officeId || undefined,
+      ipAddress,
+      deviceInfo,
+      action: 'MOBILE_USER_LOGIN',
     });
 
     console.log('[MOBILE_LOGIN] Token generation completed in:', Date.now() - tokenStart, 'ms');
@@ -202,6 +219,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
         designation: user.employee.designation,
         status: user.employee.status,
         department: user.employee.department,
+        salary: user.employee.salaryStructure ? user.employee.salaryStructure.monthlySalary : 0,
         office: user.employee.office ? {
           id: user.employee.office.id,
           name: user.employee.office.name,
@@ -247,6 +265,23 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
 // Mobile logout - simplified to just return success
 export const mobileLogout = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
+    const token = req.body.refreshToken || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+    if (token) {
+      await userSessionService.revokeSession(token);
+    }
+
+    if (req.user) {
+      const employee = await prisma.employee.findFirst({ where: { userId: req.user.id } });
+      await auditLogService.log({
+        userId: req.user.id,
+        employeeId: employee?.id || undefined,
+        branchId: employee?.officeId || undefined,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        deviceInfo: req.headers['user-agent'] || 'Mobile App',
+        action: 'MOBILE_USER_LOGOUT',
+      });
+    }
+
     res.json({
       success: true,
       message: 'Mobile logout successful',
@@ -275,48 +310,82 @@ export const mobileRefreshToken = async (req: AuthenticatedRequest, res: Respons
       });
       return;
     }
-    
-    let user;
-    try {
-      // Try verifying as a refresh token first (uses REFRESH_SECRET)
-      user = verifyRefreshToken(refreshToken);
-    } catch (error) {
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const deviceInfo = req.headers['user-agent'] || 'Mobile App';
+
+    const rotationResult = await userSessionService.rotateToken(refreshToken, deviceInfo, ipAddress);
+    if (!rotationResult) {
+      // Fallback: try verifying as a legacy access/refresh token to keep backward compatibility
       try {
-        // Fallback: try verifying as a legacy token/access token (uses JWT_SECRET)
-        user = verifyToken(refreshToken);
-      } catch (innerError) {
-        res.status(401).json({
-          success: false,
-          message: 'Invalid or expired refresh token',
-          errorCode: 'INVALID_REFRESH_TOKEN'
+        const legacyUser = verifyToken(refreshToken);
+        const newAccessToken = signAccessToken({
+          id: legacyUser.id,
+          email: legacyUser.email,
+          role: legacyUser.role,
+        });
+        const newRefreshToken = signRefreshToken({
+          id: legacyUser.id,
+          email: legacyUser.email,
+          role: legacyUser.role,
+        });
+        res.json({
+          success: true,
+          token: newAccessToken,
+          refreshToken: newRefreshToken,
+          expiresIn: '1h',
+          user: {
+            id: legacyUser.id,
+            email: legacyUser.email,
+            role: legacyUser.role,
+          }
         });
         return;
+      } catch (err) {
+        try {
+          const legacyUser = verifyRefreshToken(refreshToken);
+          const newAccessToken = signAccessToken({
+            id: legacyUser.id,
+            email: legacyUser.email,
+            role: legacyUser.role,
+          });
+          const newRefreshToken = signRefreshToken({
+            id: legacyUser.id,
+            email: legacyUser.email,
+            role: legacyUser.role,
+          });
+          res.json({
+            success: true,
+            token: newAccessToken,
+            refreshToken: newRefreshToken,
+            expiresIn: '1h',
+            user: {
+              id: legacyUser.id,
+              email: legacyUser.email,
+              role: legacyUser.role,
+            }
+          });
+          return;
+        } catch (innerError) {
+          res.status(401).json({
+            success: false,
+            message: 'Invalid or expired refresh token',
+            errorCode: 'INVALID_REFRESH_TOKEN'
+          });
+          return;
+        }
       }
     }
-    
-    // Generate new access token (1 hour)
-    const newAccessToken = signAccessToken({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    });
-
-    // Generate new refresh token (7 days)
-    const newRefreshToken = signRefreshToken({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    });
 
     res.json({
       success: true,
-      token: newAccessToken,
-      refreshToken: newRefreshToken,
+      token: rotationResult.accessToken,
+      refreshToken: rotationResult.refreshToken,
       expiresIn: '1h',
       user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
+        id: rotationResult.payload.id,
+        email: rotationResult.payload.email,
+        role: rotationResult.payload.role,
       }
     });
   } catch (error) {
@@ -340,6 +409,7 @@ export const getMobileProfile = async (req: AuthenticatedRequest, res: Response)
           include: {
             office: true,
             department: true,
+            salaryStructure: true,
           },
         },
       },
@@ -381,6 +451,7 @@ export const getMobileProfile = async (req: AuthenticatedRequest, res: Response)
         designation: user.employee.designation,
         status: user.employee.status,
         department: user.employee.department,
+        salary: user.employee.salaryStructure ? user.employee.salaryStructure.monthlySalary : 0,
         office: user.employee.office ? {
           id: user.employee.office.id,
           name: user.employee.office.name,
@@ -543,5 +614,114 @@ export const updateMobileProfile = async (
       message: 'Error updating profile.',
       errorCode: 'PROFILE_UPDATE_ERROR'
     });
+  }
+};
+
+export const mobileLogoutAll = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (req.user) {
+      await userSessionService.revokeAllSessions(req.user.id);
+      const employee = await prisma.employee.findFirst({ where: { userId: req.user.id } });
+      await auditLogService.log({
+        userId: req.user.id,
+        employeeId: employee?.id || undefined,
+        branchId: employee?.officeId || undefined,
+        ipAddress: req.ip || req.socket.remoteAddress,
+        deviceInfo: req.headers['user-agent'] || 'Mobile App',
+        action: 'MOBILE_USER_LOGOUT_ALL_DEVICES',
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Logged out from all devices successfully',
+    });
+  } catch (error) {
+    console.error('Mobile logout all error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error during mobile logout all',
+      errorCode: 'LOGOUT_ALL_ERROR'
+    });
+  }
+};
+
+export const uploadMobileAvatar = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { avatarUrl, imageBase64 } = req.body;
+
+  let urlToSave = avatarUrl;
+  if (imageBase64) {
+    urlToSave = imageBase64;
+  }
+
+  if (!urlToSave) {
+    res.status(400).json({ success: false, message: 'Avatar image is required.' });
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      include: { profile: true },
+    });
+
+    if (!user || !user.profile) {
+      res.status(404).json({ success: false, message: 'Profile not found.' });
+      return;
+    }
+
+    const updatedProfile = await prisma.profile.update({
+      where: { id: user.profile.id },
+      data: { avatarUrl: urlToSave },
+    });
+
+    res.json({
+      success: true,
+      message: 'Avatar uploaded successfully!',
+      profile: {
+        id: updatedProfile.id,
+        avatarUrl: updatedProfile.avatarUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Upload mobile avatar error:', error);
+    res.status(500).json({ success: false, message: 'Failed to upload avatar.' });
+  }
+};
+
+export const removeMobileAvatar = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      include: { profile: true },
+    });
+
+    if (!user || !user.profile) {
+      res.status(404).json({ success: false, message: 'Profile not found.' });
+      return;
+    }
+
+    const updatedProfile = await prisma.profile.update({
+      where: { id: user.profile.id },
+      data: { avatarUrl: '/favicon.svg' },
+    });
+
+    res.json({
+      success: true,
+      message: 'Avatar removed successfully!',
+      profile: {
+        id: updatedProfile.id,
+        avatarUrl: updatedProfile.avatarUrl,
+      },
+    });
+  } catch (error) {
+    console.error('Remove mobile avatar error:', error);
+    res.status(500).json({ success: false, message: 'Failed to remove avatar.' });
   }
 };

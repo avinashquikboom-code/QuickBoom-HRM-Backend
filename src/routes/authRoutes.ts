@@ -6,7 +6,9 @@ import {
   employeeLogin,
   hrLogin,
   superAdminLogin,
-  refreshToken
+  refreshToken,
+  logout,
+  logoutAll
 } from '../controllers/authController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
@@ -269,5 +271,7 @@ router.post('/fcm-token', authMiddleware, registerFcmToken);
  *         description: Server error
  */
 router.post('/refresh', authMiddleware, refreshToken);
+router.post('/logout', authMiddleware, logout);
+router.post('/logout-all', authMiddleware, logoutAll);
 
 export default router;

@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import PayrollAutomationService from '../services/payrollAutomationService';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -175,8 +176,28 @@ export const fetchEmployees = async (
     const limit = parseInt(req.query.limit as string) || 50;
     const skip = (page - 1) * limit;
 
+    let whereClause: Prisma.EmployeeWhereInput = {};
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          data: [],
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+        });
+        return;
+      }
+      whereClause.officeId = storeManager.officeId;
+    }
+
     const [employees, total] = await Promise.all([
       prisma.employee.findMany({
+        where: whereClause,
         select: {
           id: true,
           employeeCode: true,
@@ -215,7 +236,7 @@ export const fetchEmployees = async (
         skip,
         take: limit,
       }),
-      prisma.employee.count(),
+      prisma.employee.count({ where: whereClause }),
     ]);
 
     const mappedEmployees = employees.map((emp) => ({
@@ -246,7 +267,7 @@ export const fetchEmployees = async (
         : null,
       department: emp.department
         ? {
-            id: emp.department.id.toString(),
+            id: emp.department.id,
             name: emp.department.name,
             code: emp.department.code,
           }
@@ -347,10 +368,27 @@ export const createEmployee = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { userId, firstName, lastName, designation, status, officeId, departmentId, email, password, role } = req.body;
+  const {
+    userId,
+    firstName,
+    lastName,
+    designation,
+    status,
+    officeId,
+    departmentId,
+    email,
+    password,
+    role,
+    mobileNumber,
+    joiningDate,
+    reportingManagerId,
+    shiftId,
+    designationId,
+    salaryStructure
+  } = req.body;
 
-  if (!userId || !firstName) {
-    res.status(400).json({ success: false, message: 'userId and firstName are required.' });
+  if ((!userId && (!email || !password)) || !firstName) {
+    res.status(400).json({ success: false, message: 'userId (or email and password) and firstName are required.' });
     return;
   }
 
@@ -380,7 +418,7 @@ export const createEmployee = async (
             create: {
               email: email.trim().toLowerCase(),
               fullName: `${firstName} ${lastName || ''}`.trim(),
-              phone: '',
+              phone: mobileNumber || '',
               bio: '',
               clearanceLevel: dbRole === 'HR' || dbRole === 'ADMIN' ? 3 : 1,
               clearanceLabel: dbRole === 'HR' || dbRole === 'ADMIN' ? 'Level 3 (HR Lead)' : 'Level 1 (General)',
@@ -418,6 +456,20 @@ export const createEmployee = async (
       return;
     }
 
+    const parsedManagerId = reportingManagerId ? parseInt(reportingManagerId, 10) : null;
+    const parsedShiftId = shiftId ? parseInt(shiftId, 10) : null;
+    const parsedDesignationId = designationId ? parseInt(designationId, 10) : null;
+
+    let resolvedDesignation = designation || 'Employee';
+    if (parsedDesignationId) {
+      const dbDesignation = await prisma.designation.findUnique({
+        where: { id: parsedDesignationId }
+      });
+      if (dbDesignation) {
+        resolvedDesignation = dbDesignation.name;
+      }
+    }
+
     const employeeCode = `EMP${String(user.id).padStart(4, '0')}`;
     const newEmployee = await prisma.employee.create({
       data: {
@@ -425,10 +477,14 @@ export const createEmployee = async (
         employeeCode,
         firstName: firstName.trim(),
         lastName: (lastName || '').trim(),
-        designation: designation || 'Employee',
+        designation: resolvedDesignation,
         status: status || 'active',
         officeId: officeId ? parseInt(officeId, 10) : null,
         departmentId: departmentId ? parseInt(departmentId, 10) : null,
+        mobileNumber: mobileNumber || null,
+        joiningDate: joiningDate ? new Date(joiningDate) : null,
+        reportingManagerId: parsedManagerId,
+        designationId: parsedDesignationId,
       },
       include: {
         office: true,
@@ -450,6 +506,73 @@ export const createEmployee = async (
       console.error('Failed to create leave balance for employee:', leaveError);
     }
 
+    // Create Shift Assignment
+    if (parsedShiftId) {
+      try {
+        await prisma.shiftAssignment.create({
+          data: {
+            employeeId: newEmployee.id,
+            shiftId: parsedShiftId,
+            effectiveFrom: joiningDate ? new Date(joiningDate) : new Date(),
+          }
+        });
+        console.log(`✅ Shift assignment created for employee ${newEmployee.id} with shift ${parsedShiftId}`);
+      } catch (shiftError) {
+        console.error('Failed to create shift assignment for employee:', shiftError);
+      }
+    }
+
+    // Create Salary Structure
+    try {
+      const ssInput = salaryStructure || {};
+      const basicSalary = ssInput.basicSalary !== undefined ? Number(ssInput.basicSalary) : 0;
+      const hra = ssInput.hra !== undefined ? Number(ssInput.hra) : 0;
+      const medicalAllowance = ssInput.medicalAllowance !== undefined 
+        ? Number(ssInput.medicalAllowance) 
+        : (ssInput.medical !== undefined ? Number(ssInput.medical) : 0);
+      const travelAllowance = ssInput.travelAllowance !== undefined 
+        ? Number(ssInput.travelAllowance) 
+        : (ssInput.travel !== undefined ? Number(ssInput.travel) : 0);
+      const specialAllowance = ssInput.specialAllowance !== undefined 
+        ? Number(ssInput.specialAllowance) 
+        : (ssInput.special !== undefined ? Number(ssInput.special) : 0);
+      const incentive = ssInput.incentive !== undefined ? Number(ssInput.incentive) : 0;
+      const bonus = ssInput.bonus !== undefined ? Number(ssInput.bonus) : 0;
+      
+      const pfEnabled = ssInput.pfEnabled === true;
+      const employeePfRate = ssInput.employeePfRate !== undefined ? Number(ssInput.employeePfRate) : 12.0;
+      const employerPfRate = ssInput.employerPfRate !== undefined ? Number(ssInput.employerPfRate) : 12.0;
+      
+      const esicEnabled = ssInput.esicEnabled === true;
+      const employeeEsicRate = ssInput.employeeEsicRate !== undefined ? Number(ssInput.employeeEsicRate) : 0.75;
+      const employerEsicRate = ssInput.employerEsicRate !== undefined ? Number(ssInput.employerEsicRate) : 3.25;
+
+      const monthlySalary = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus;
+
+      await prisma.salaryStructure.create({
+        data: {
+          employeeId: newEmployee.id,
+          monthlySalary,
+          basicSalary,
+          hra,
+          medicalAllowance,
+          travelAllowance,
+          specialAllowance,
+          incentive,
+          bonus,
+          pfEnabled,
+          employeePfRate,
+          employerPfRate,
+          esicEnabled,
+          employeeEsicRate,
+          employerEsicRate
+        }
+      });
+      console.log(`✅ Salary structure created for employee ${newEmployee.id}`);
+    } catch (salaryError) {
+      console.error('Failed to create salary structure for employee:', salaryError);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Employee record created successfully.',
@@ -460,6 +583,10 @@ export const createEmployee = async (
         lastName: newEmployee.lastName,
         designation: newEmployee.designation,
         status: newEmployee.status,
+        mobileNumber: newEmployee.mobileNumber,
+        joiningDate: newEmployee.joiningDate?.toISOString() || null,
+        reportingManagerId: newEmployee.reportingManagerId?.toString() || null,
+        designationId: newEmployee.designationId?.toString() || null,
         officeId: newEmployee.officeId?.toString() || null,
         office: newEmployee.office
           ? { id: newEmployee.office.id.toString(), name: newEmployee.office.name }
@@ -468,7 +595,7 @@ export const createEmployee = async (
           ? { id: newEmployee.user.id, email: newEmployee.user.email, role: newEmployee.user.role, isActive: newEmployee.user.isActive }
           : null,
         department: newEmployee.department
-          ? { id: newEmployee.department.id.toString(), name: newEmployee.department.name, code: newEmployee.department.code }
+          ? { id: newEmployee.department.id, name: newEmployee.department.name, code: newEmployee.department.code }
           : null,
       },
     });
@@ -594,7 +721,7 @@ export const createAndAssignEmployee = async (
           : null,
         departmentId: resultEmployee.departmentId?.toString() || null,
         department: resultEmployee.department
-          ? { id: resultEmployee.department.id.toString(), name: resultEmployee.department.name, code: resultEmployee.department.code }
+          ? { id: resultEmployee.department.id, name: resultEmployee.department.name, code: resultEmployee.department.code }
           : null,
         user: resultEmployee.user
           ? { id: resultEmployee.user.id, email: resultEmployee.user.email, role: resultEmployee.user.role, isActive: resultEmployee.user.isActive }
@@ -626,7 +753,7 @@ export const fetchDepartments = async (
     });
 
     const mappedDepartments = departments.map((dept) => ({
-      id: dept.id.toString(),
+      id: dept.id,
       name: dept.name,
       code: dept.code,
       createdAt: dept.createdAt.toISOString(),
@@ -680,7 +807,7 @@ export const createDepartment = async (
       success: true,
       message: 'Department created successfully.',
       department: {
-        id: department.id.toString(),
+        id: department.id,
         name: department.name,
         code: department.code,
         createdAt: department.createdAt.toISOString(),
@@ -744,7 +871,7 @@ export const updateDepartment = async (
       success: true,
       message: 'Department updated successfully.',
       department: {
-        id: updated.id.toString(),
+        id: updated.id,
         name: updated.name,
         code: updated.code,
         createdAt: updated.createdAt.toISOString(),
@@ -1281,9 +1408,32 @@ export const fetchTodayAttendance = async (
   const skip = (pageNum - 1) * limitNum;
 
   try {
+    let whereClause: Prisma.AttendanceWhereInput = { date: todayStr };
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          date: todayStr,
+          count: 0,
+          total: 0,
+          page: pageNum,
+          limit: limitNum,
+          attendances: [],
+          attendanceDistribution: [],
+        });
+        return;
+      }
+      whereClause.employee = {
+        officeId: storeManager.officeId
+      };
+    }
+
     const [attendances, total] = await Promise.all([
       prisma.attendance.findMany({
-        where: { date: todayStr },
+        where: whereClause,
         select: {
           id: true,
           date: true,
@@ -1294,6 +1444,14 @@ export const fetchTodayAttendance = async (
           isOnBreak: true,
           breakStartTime: true,
           totalBreakSeconds: true,
+          breakRecords: {
+            select: {
+              id: true,
+              startTime: true,
+              endTime: true,
+              duration: true,
+            }
+          },
           employee: {
             select: {
               id: true,
@@ -1315,7 +1473,7 @@ export const fetchTodayAttendance = async (
         take: limitNum,
       }),
       prisma.attendance.count({
-        where: { date: todayStr },
+        where: whereClause,
       }),
     ]);
 
@@ -1342,6 +1500,7 @@ export const fetchTodayAttendance = async (
       isOnBreak: att.isOnBreak,
       breakStartTime: att.breakStartTime ? att.breakStartTime.toISOString() : null,
       totalBreakSeconds: att.totalBreakSeconds,
+      breakRecords: att.breakRecords || [],
     }));
 
     // Compute status distribution for pie chart
@@ -1405,6 +1564,27 @@ export const fetchAttendanceHistory = async (
   }
 
   try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          from: from || null,
+          to: to || null,
+          page: pageInt,
+          limit: limitInt,
+          total: 0,
+          records: [],
+        });
+        return;
+      }
+      whereClause.employee = {
+        officeId: storeManager.officeId
+      };
+    }
+
     const total = await prisma.attendance.count({ where: whereClause });
 
     const records = await prisma.attendance.findMany({
@@ -1419,6 +1599,14 @@ export const fetchAttendanceHistory = async (
         isOnBreak: true,
         breakStartTime: true,
         totalBreakSeconds: true,
+        breakRecords: {
+          select: {
+            id: true,
+            startTime: true,
+            endTime: true,
+            duration: true,
+          }
+        },
         employee: {
           select: {
             id: true,
@@ -1463,6 +1651,7 @@ export const fetchAttendanceHistory = async (
       isOnBreak: att.isOnBreak,
       breakStartTime: att.breakStartTime ? att.breakStartTime.toISOString() : null,
       totalBreakSeconds: att.totalBreakSeconds,
+      breakRecords: att.breakRecords || [],
     }));
 
     res.json({
@@ -1663,33 +1852,103 @@ export const fetchDashboardStats = async (
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   try {
-    // Run all queries in parallel for better performance
+    let officeId: number | undefined;
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          data: {
+            totalEmployees: 0,
+            presentToday: 0,
+            onLeave: 0,
+            absentToday: 0,
+            lateEmployees: 0,
+            employeesOnLeave: 0,
+            employeesOnField: 0,
+            activeLiveTrackingCount: 0,
+            newHires: 0,
+            subscriptionDistribution: [],
+            storeWiseEmployeeCount: [],
+            storeWiseAttendanceSummary: []
+          }
+        });
+        return;
+      }
+      officeId = storeManager.officeId;
+    }
+
+    // Run queries scoped to officeId if present
     const [
       totalEmployees,
       presentToday,
+      lateEmployees,
       onLeave,
       newHires,
       offices,
       pricingPlans,
     ] = await Promise.all([
-      prisma.employee.count(),
+      prisma.employee.count({
+        where: officeId ? { officeId } : {}
+      }),
       prisma.attendance.count({
         where: {
           date: todayStr,
           status: 'PRESENT',
+          ...(officeId ? { employee: { officeId } } : {})
+        },
+      }),
+      prisma.attendance.count({
+        where: {
+          date: todayStr,
+          status: 'LATE',
+          ...(officeId ? { employee: { officeId } } : {})
         },
       }),
       prisma.employee.count({
-        where: { status: 'on_leave' },
+        where: {
+          status: 'on_leave',
+          ...(officeId ? { officeId } : {})
+        },
       }),
       prisma.employee.count({
         where: {
           createdAt: { gte: thirtyDaysAgo },
+          ...(officeId ? { officeId } : {})
         },
       }),
-      prisma.office.findMany(),
+      officeId 
+        ? prisma.office.findMany({ where: { id: officeId } }) 
+        : prisma.office.findMany(),
       prisma.pricingPlan.findMany(),
     ]);
+
+    const absentToday = Math.max(0, totalEmployees - presentToday - lateEmployees - onLeave);
+
+    // Active Live Tracking Count
+    let activeLiveTrackingCount = 0;
+    try {
+      const liveTrackingService = (await import('../services/liveTrackingService')).default;
+      const liveLocations = await liveTrackingService.getLiveLocations(officeId);
+      activeLiveTrackingCount = liveLocations.length;
+    } catch (wsError) {
+      console.warn('⚠️ liveTrackingService call failed, falling back to database counts.');
+      // Fallback: check live locations in database
+      const dbLiveLocationsCount = await prisma.liveLocation.count({
+        where: officeId ? {
+          employeeId: {
+            in: (await prisma.employee.findMany({
+              where: { officeId },
+              select: { id: true }
+            })).map(emp => emp.id)
+          }
+        } : {}
+      });
+      activeLiveTrackingCount = dbLiveLocationsCount;
+    }
+    const employeesOnField = activeLiveTrackingCount;
 
     // Subscription plan distribution
     const planCounts: Record<string, number> = {};
@@ -1713,14 +1972,98 @@ export const fetchDashboardStats = async (
       })
     );
 
+    // Store Wise break down
+    let storeWiseEmployeeCount: any[] = [];
+    let storeWiseAttendanceSummary: any[] = [];
+
+    if (!officeId) {
+      // Global admin/HR: calculate breakdown for all stores
+      const counts = await prisma.employee.groupBy({
+        by: ['officeId'],
+        _count: { id: true },
+      });
+      
+      storeWiseEmployeeCount = offices.map(off => {
+        const match = counts.find(c => c.officeId === off.id);
+        return {
+          officeId: off.id,
+          officeName: off.name,
+          employeeCount: match?._count.id || 0
+        };
+      });
+
+      storeWiseAttendanceSummary = await Promise.all(
+        offices.map(async (off) => {
+          const total = storeWiseEmployeeCount.find(s => s.officeId === off.id)?.employeeCount || 0;
+          const present = await prisma.attendance.count({
+            where: {
+              date: todayStr,
+              status: 'PRESENT',
+              employee: { officeId: off.id }
+            }
+          });
+          const late = await prisma.attendance.count({
+            where: {
+              date: todayStr,
+              status: 'LATE',
+              employee: { officeId: off.id }
+            }
+          });
+          const leaves = await prisma.employee.count({
+            where: {
+              officeId: off.id,
+              status: 'on_leave'
+            }
+          });
+          const absent = Math.max(0, total - present - late - leaves);
+          
+          return {
+            officeId: off.id,
+            officeName: off.name,
+            totalEmployees: total,
+            present,
+            late,
+            absent,
+            onLeave: leaves
+          };
+        })
+      );
+    } else {
+      // Store Manager: only return their assigned store
+      const singleOffice = offices[0];
+      if (singleOffice) {
+        storeWiseEmployeeCount = [{
+          officeId: singleOffice.id,
+          officeName: singleOffice.name,
+          employeeCount: totalEmployees
+        }];
+        storeWiseAttendanceSummary = [{
+          officeId: singleOffice.id,
+          officeName: singleOffice.name,
+          totalEmployees,
+          present: presentToday,
+          late: lateEmployees,
+          absent: absentToday,
+          onLeave
+        }];
+      }
+    }
+
     res.json({
       success: true,
       data: {
         totalEmployees,
         presentToday,
+        absentToday,
+        lateEmployees,
         onLeave,
+        employeesOnLeave: onLeave,
+        employeesOnField,
+        activeLiveTrackingCount,
         newHires,
         subscriptionDistribution,
+        storeWiseEmployeeCount,
+        storeWiseAttendanceSummary
       },
     });
   } catch (error) {
@@ -2393,12 +2736,33 @@ export const fetchLiveLocations = async (
   res: Response
 ): Promise<void> => {
   try {
+    let officeId: number | undefined;
+    let employeeWhere: Prisma.EmployeeWhereInput = {
+      officeId: { not: null },
+      status: 'active'
+    };
+
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          count: 0,
+          pollIntervalSeconds: 15,
+          updatedAt: new Date().toISOString(),
+          locations: []
+        });
+        return;
+      }
+      officeId = storeManager.officeId;
+      employeeWhere.officeId = storeManager.officeId;
+    }
+
     // Get all employees with office assignments
     const employees = await prisma.employee.findMany({
-      where: {
-        officeId: { not: null },
-        status: 'active'
-      },
+      where: employeeWhere,
       include: {
         user: {
           include: {
@@ -2414,7 +2778,7 @@ export const fetchLiveLocations = async (
     let liveLocations: any[] = [];
     try {
       const liveTrackingService = (await import('../services/liveTrackingService')).default;
-      liveLocations = await liveTrackingService.getLiveLocations();
+      liveLocations = await liveTrackingService.getLiveLocations(officeId);
     } catch (serviceError) {
       console.warn('⚠️ LiveTrackingService call failed, falling back to database query:', serviceError);
       try {
@@ -2432,6 +2796,12 @@ export const fetchLiveLocations = async (
           battery: dbLoc.battery,
           isLocationEnabled: true
         }));
+        
+        // Filter by employees if store manager
+        if (officeId) {
+          const empIds = employees.map(e => e.id);
+          liveLocations = liveLocations.filter(loc => empIds.includes(loc.employeeId));
+        }
       } catch (dbError) {
         console.error('❌ Fallback database query failed:', dbError);
       }
@@ -2489,15 +2859,42 @@ export const fetchLiveLocationLogs = async (
     const limit = parseInt(req.query.limit as string) || 20;
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
+
+    let filteredLogs = telemetryLogs;
+
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          count: 0,
+          page,
+          limit,
+          totalPages: 0,
+          logs: []
+        });
+        return;
+      }
+
+      // Get all employees for this office
+      const officeEmployees = await prisma.employee.findMany({
+        where: { officeId: storeManager.officeId },
+        select: { id: true }
+      });
+      const employeeIds = officeEmployees.map(emp => emp.id);
+      filteredLogs = telemetryLogs.filter(log => employeeIds.includes(log.employeeId));
+    }
     
-    const paginatedLogs = telemetryLogs.slice(startIndex, endIndex);
+    const paginatedLogs = filteredLogs.slice(startIndex, endIndex);
     
     res.json({
       success: true,
-      count: telemetryLogs.length,
+      count: filteredLogs.length,
       page,
       limit,
-      totalPages: Math.ceil(telemetryLogs.length / limit),
+      totalPages: Math.ceil(filteredLogs.length / limit),
       logs: paginatedLogs
     });
   } catch (error) {
@@ -2510,6 +2907,14 @@ export const clearLiveLocationLogs = async (
   res: Response
 ): Promise<void> => {
   try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Store managers cannot clear global logs.'
+      });
+      return;
+    }
+
     telemetryLogs = [];
     res.json({
       success: true,
@@ -2544,13 +2949,32 @@ export const fetchAdminLeaves = async (
     whereClause.status = status as string;
   }
 
-  console.log('Where clause for query:', JSON.stringify(whereClause, null, 2));
-
   const pageNum = parseInt(page as string) || 1;
   const limitNum = parseInt(limit as string) || 20;
   const skip = (pageNum - 1) * limitNum;
 
   try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          count: 0,
+          page: pageNum,
+          limit: limitNum,
+          totalPages: 0,
+          leaves: [],
+        });
+        return;
+      }
+      whereClause.employee = {
+        officeId: storeManager.officeId
+      };
+    }
+
+    console.log('Where clause for query:', JSON.stringify(whereClause, null, 2));
     const [leaves, totalCount] = await Promise.all([
       prisma.leaveRequest.findMany({
         where: whereClause,
@@ -2644,6 +3068,16 @@ export const updateAdminLeaveStatus = async (
     if (!existingLeave) {
       res.status(404).json({ success: false, message: 'Leave request not found.' });
       return;
+    }
+
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId || existingLeave.employee.officeId !== storeManager.officeId) {
+        res.status(403).json({ success: false, message: 'Access denied. You can only manage leaves for your store employees.' });
+        return;
+      }
     }
 
     const user = await prisma.user.findUnique({
@@ -3813,25 +4247,16 @@ export const fetchSalarySlips = async (
 
     const payslipMap = new Map(existingPayslips.map((p: any) => [p.employeeId, p]));
 
-    const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        date: {
-          startsWith: monthStr,
-        },
-      },
-    });
+    const slips = await Promise.all(employees.map(async (emp) => {
+      let dbPayslip = payslipMap.get(emp.id);
 
-    const attendanceByEmployee: Record<number, any[]> = {};
-    attendances.forEach((att) => {
-      if (!attendanceByEmployee[att.employeeId]) {
-        attendanceByEmployee[att.employeeId] = [];
+      if (!dbPayslip) {
+        try {
+          dbPayslip = await PayrollAutomationService.calculateAndSaveSalary(emp.id, targetMonth, targetYear, 'Pending Approval');
+        } catch (e) {
+          console.error(`Failed to calculate salary for employee ${emp.id}:`, e);
+        }
       }
-      attendanceByEmployee[att.employeeId].push(att);
-    });
-
-    const slips = employees.map((emp) => {
-      const dbPayslip = payslipMap.get(emp.id);
 
       if (dbPayslip) {
         return {
@@ -3848,26 +4273,9 @@ export const fetchSalarySlips = async (
           allowance: dbPayslip.allowance,
           deductions: dbPayslip.deductions,
           netSalary: dbPayslip.netSalary,
-          status: 'Approved',
+          status: dbPayslip.status,
         };
       }
-
-      const empAtts = attendanceByEmployee[emp.id] || [];
-      const present = empAtts.filter((a) => a.status === 'PRESENT').length;
-      const late = empAtts.filter((a) => a.status === 'LATE').length;
-      const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
-      const totalDays = empAtts.length;
-      const presentDays = present + late + (halfDay * 0.5);
-      const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
-
-      const isSenior = emp.designation?.toLowerCase().includes('senior') || 
-                       emp.designation?.toLowerCase().includes('lead') || 
-                       emp.designation?.toLowerCase().includes('manager');
-      const defaultBase = isSenior ? 85000 : 45000;
-      const baseSalary = Math.round(defaultBase * salaryRatio);
-      const allowance = Math.round(baseSalary * 0.15);
-      const deductions = Math.round(baseSalary * 0.10);
-      const netSalary = baseSalary + allowance - deductions;
 
       return {
         id: emp.id,
@@ -3878,13 +4286,13 @@ export const fetchSalarySlips = async (
         designation: emp.designation || 'Associate',
         department: emp.department?.name || 'Operations',
         office: emp.office?.name || 'Headquarters',
-        baseSalary,
-        allowance,
-        deductions,
-        netSalary,
+        baseSalary: 45000,
+        allowance: 0,
+        deductions: 0,
+        netSalary: 45000,
         status: 'Pending Approval',
       };
-    });
+    }));
 
     res.json({
       success: true,
@@ -3919,7 +4327,6 @@ export const approveSalarySlip = async (
 
     const employee = await prisma.employee.findUnique({
       where: { id: empIdInt },
-      include: { office: true, department: true },
     });
 
     if (!employee) {
@@ -3927,76 +4334,7 @@ export const approveSalarySlip = async (
       return;
     }
 
-    const isSenior = employee.designation?.toLowerCase().includes('senior') || 
-                     employee.designation?.toLowerCase().includes('lead') || 
-                     employee.designation?.toLowerCase().includes('manager');
-
-    // Query attendance to compute ratio
-    const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
-    const empAtts = await prisma.attendance.findMany({
-      where: {
-        employeeId: empIdInt,
-        date: {
-          startsWith: monthStr,
-        },
-      },
-    });
-
-    const present = empAtts.filter((a) => a.status === 'PRESENT').length;
-    const late = empAtts.filter((a) => a.status === 'LATE').length;
-    const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
-    const totalDays = empAtts.length;
-    const presentDays = present + late + (halfDay * 0.5);
-    const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
-
-    const defaultBase = isSenior ? 85000 : 45000;
-    const baseSalary = Math.round(defaultBase * salaryRatio);
-    const allowance = Math.round(baseSalary * 0.15);
-    const deductions = Math.round(baseSalary * 0.10);
-    const netSalary = baseSalary + allowance - deductions;
-    const netInWords = numToWords(netSalary) + ' Rupees Only';
-
-    const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
-    const designation = employee.designation || 'Associate';
-    const department = employee.department?.name || 'Operations';
-    const officeName = employee.office?.name || 'Headquarters';
-
-    const payslip = await (prisma as any).payslip.upsert({
-      where: {
-        employeeId_month_year: {
-          employeeId: empIdInt,
-          month: targetMonth,
-          year: targetYear,
-        },
-      },
-      update: {
-        baseSalary,
-        allowance,
-        deductions,
-        netSalary,
-        netInWords,
-        employeeCode: employee.employeeCode,
-        employeeName,
-        designation,
-        department,
-        officeName,
-      },
-      create: {
-        employeeId: empIdInt,
-        month: targetMonth,
-        year: targetYear,
-        baseSalary,
-        allowance,
-        deductions,
-        netSalary,
-        netInWords,
-        employeeCode: employee.employeeCode,
-        employeeName,
-        designation,
-        department,
-        officeName,
-      },
-    });
+    const payslip = await PayrollAutomationService.calculateAndSaveSalary(empIdInt, targetMonth, targetYear, 'Approved');
 
     res.json({
       success: true,
@@ -4260,16 +4598,44 @@ export const fetchAttendanceReportDetails = async (
   const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
 
   try {
+    let employeeWhere: Prisma.EmployeeWhereInput = {};
+    let attendanceWhere: Prisma.AttendanceWhereInput = {
+      date: {
+        startsWith: targetMonth,
+      },
+    };
+
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.json({
+          success: true,
+          details: [],
+          trend: [],
+          stats: {
+            present: 0,
+            late: 0,
+            absent: 0,
+            halfDay: 0,
+            leave: 0,
+            rate: 0,
+          }
+        });
+        return;
+      }
+      employeeWhere.officeId = storeManager.officeId;
+      attendanceWhere.employee = { officeId: storeManager.officeId };
+    }
+
     const employees = await prisma.employee.findMany({
+      where: employeeWhere,
       include: { office: true, department: true },
     });
 
     const attendances = await prisma.attendance.findMany({
-      where: {
-        date: {
-          startsWith: targetMonth,
-        },
-      },
+      where: attendanceWhere,
     });
 
     const attendanceByEmployee: Record<number, typeof attendances> = {};
@@ -4363,22 +4729,45 @@ export const downloadAttendanceReport = async (
     const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
 
     // Role guard
-    const allowedRoles = ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN'];
+    const allowedRoles = ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
     if (!req.user?.role || !allowedRoles.includes(req.user.role)) {
       res.status(403).json({ success: false, message: 'Access denied' });
       return;
     }
 
+    let officeId: number | undefined;
+    if (req.user?.role === 'STORE_MANAGER') {
+      const storeManager = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (!storeManager || !storeManager.officeId) {
+        res.status(403).json({ success: false, message: 'Access denied. You do not have an assigned office.' });
+        return;
+      }
+      officeId = storeManager.officeId;
+    }
+
     let employees;
     if (employeeId) {
       // Specific employee report
-      employees = await prisma.employee.findMany({
-        where: { id: parseInt(employeeId as string) },
-        include: { office: true, department: true },
+      const targetEmpId = parseInt(employeeId as string, 10);
+      const targetEmp = await prisma.employee.findUnique({
+        where: { id: targetEmpId },
+        include: { office: true, department: true }
       });
+      if (!targetEmp) {
+        res.status(404).json({ success: false, message: 'Employee not found.' });
+        return;
+      }
+      if (officeId && targetEmp.officeId !== officeId) {
+        res.status(403).json({ success: false, message: 'Access denied. You can only view reports for your store employees.' });
+        return;
+      }
+      employees = [targetEmp];
     } else {
       // All employees report
       employees = await prisma.employee.findMany({
+        where: officeId ? { officeId } : {},
         include: { office: true, department: true },
         orderBy: { employeeCode: 'asc' },
       });
@@ -4707,12 +5096,13 @@ export const downloadAttendanceReport = async (
               ? {
                   table: {
                     headerRows: 1,
-                    widths: [75, 80, 80, 65, '*'],
+                    widths: [65, 75, 75, 45, 45, '*'],
                     body: [
                       [
                         { text: 'Date', style: 'colHeader' },
                         { text: 'Check In', style: 'colHeader' },
                         { text: 'Check Out', style: 'colHeader' },
+                        { text: 'Break', style: 'colHeader', alignment: 'center' },
                         { text: 'Status', style: 'colHeader', alignment: 'center' },
                         { text: 'Notes / Remarks', style: 'colHeader' },
                       ],
@@ -4720,6 +5110,7 @@ export const downloadAttendanceReport = async (
                         { text: formatDateStr(att.date), fontSize: 8, color: '#111827', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
                         { text: formatTime(att.checkIn), fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
                         { text: formatTime(att.checkOut), fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
+                        { text: att.totalBreakSeconds > 0 ? `${Math.floor(att.totalBreakSeconds / 60)}m` : '—', fontSize: 8, color: '#374151', alignment: 'center', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
                         {
                           text: att.status,
                           fontSize: 7,
@@ -4914,6 +5305,10 @@ export const fetchAdminSettings = async (
             autoMarkAbsent: true,
             absentThreshold: 240,
             enableGeofence: true,
+            enablePunchOutGeofence: false,
+            fullDayMinHours: 8,
+            halfDayMinHours: 4,
+            graceMinutes: 15,
           },
           leave: {
             casualLeavePerYear: 12,
@@ -4973,6 +5368,10 @@ export const fetchAdminSettings = async (
       autoMarkAbsent: rawAttendance.autoMarkAbsent !== undefined ? rawAttendance.autoMarkAbsent : true,
       absentThreshold: rawAttendance.absentThreshold !== undefined ? rawAttendance.absentThreshold : 240,
       enableGeofence: rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true,
+      enablePunchOutGeofence: rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false,
+      fullDayMinHours: rawAttendance.fullDayMinHours !== undefined ? rawAttendance.fullDayMinHours : 8,
+      halfDayMinHours: rawAttendance.halfDayMinHours !== undefined ? rawAttendance.halfDayMinHours : 4,
+      graceMinutes: rawAttendance.graceMinutes !== undefined ? rawAttendance.graceMinutes : 15,
     };
 
     const settings = {

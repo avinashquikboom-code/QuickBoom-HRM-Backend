@@ -5,6 +5,7 @@ import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import geofenceService from '../../services/geofenceService';
 import { Role } from '@prisma/client';
 const PdfPrinter = require('pdfmake');
+import auditLogService from '../../services/auditLogService';
 
 // Primary color for all PDF reports
 const PRIMARY_COLOR = '#3BA38B';
@@ -371,6 +372,16 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       }
     });
 
+    // Audit Log
+    await auditLogService.log({
+      userId: employee.userId || undefined,
+      employeeId: employee.id,
+      branchId: employee.officeId || undefined,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      deviceInfo: req.headers['user-agent'] || 'Mobile App',
+      action: 'ATTENDANCE_PUNCH_IN',
+    });
+
     console.log('✅ PUNCH IN SUCCESSFUL:', {
       attendanceId: attendance.id,
       checkInTime: attendance.checkIn?.toISOString() || 'not set',
@@ -482,6 +493,7 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+    const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
 
     // Get today's attendance record
     const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
@@ -555,7 +567,7 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
         ? distance <= maxRadius 
         : distance <= (maxRadius * 50); // 50x more lenient in development for testing
 
-      if (!enableGeofence) {
+      if (!enableGeofence || !enablePunchOutGeofence) {
         console.log('⚠️ Geofence validation is disabled in settings for punch out. Bypassing check.');
         punchLat = latitude;
         punchLon = longitude;
@@ -595,6 +607,26 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       }
     }
 
+    // Calculate total break time including current break if any
+    const totalBreakSec = attendance.totalBreakSeconds;
+    
+    // Work duration in milliseconds
+    const checkInTime = attendance.checkIn ? new Date(attendance.checkIn) : new Date();
+    const workDurationMs = punchOutTime.getTime() - checkInTime.getTime();
+    const netWorkHours = (workDurationMs / 1000 - totalBreakSec) / 3600;
+
+    const fullDayMinHoursSetting = rawAttendance.fullDayMinHours !== undefined ? Number(rawAttendance.fullDayMinHours) : 8;
+    const halfDayMinHoursSetting = rawAttendance.halfDayMinHours !== undefined ? Number(rawAttendance.halfDayMinHours) : 4;
+
+    let calculatedStatus = 'PRESENT';
+    if (netWorkHours < halfDayMinHoursSetting) {
+      calculatedStatus = 'ABSENT';
+    } else if (netWorkHours < fullDayMinHoursSetting) {
+      calculatedStatus = 'HALF_DAY';
+    } else {
+      calculatedStatus = attendance.status === 'LATE' ? 'LATE' : 'PRESENT';
+    }
+
     const updatedAttendance = await prisma.attendance.update({
       where: { id: attendance.id },
       data: {
@@ -602,7 +634,7 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
         latitude: punchLat,
         longitude: punchLon,
         notes: notes || attendance.notes,
-        status: 'PRESENT',
+        status: calculatedStatus,
         isFingerprintCheckOut: isFingerprint
       },
       include: {
@@ -624,6 +656,16 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
 
     const workHours = Math.floor(workDuration / (1000 * 60 * 60));
     const workMinutes = Math.floor((workDuration % (1000 * 60 * 60)) / (1000 * 60));
+
+    // Audit Log
+    await auditLogService.log({
+      userId: employee.userId || undefined,
+      employeeId: employee.id,
+      branchId: employee.officeId || undefined,
+      ipAddress: req.ip || req.socket.remoteAddress,
+      deviceInfo: req.headers['user-agent'] || 'Mobile App',
+      action: 'ATTENDANCE_PUNCH_OUT',
+    });
 
     console.log('✅ PUNCH OUT SUCCESSFUL:', {
       attendanceId: updatedAttendance.id,
@@ -913,6 +955,14 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
       }
     });
 
+    // Save multiple breaks in BreakRecord
+    await prisma.breakRecord.create({
+      data: {
+        attendanceId: attendance.id,
+        startTime: breakStartTime
+      }
+    });
+
     res.json({
       success: true,
       message: 'Break started successfully.',
@@ -1047,6 +1097,26 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
       }
     });
 
+    // Update active BreakRecord
+    const activeBreakRecord = await prisma.breakRecord.findFirst({
+      where: {
+        attendanceId: attendance.id,
+        endTime: null
+      },
+      orderBy: { startTime: 'desc' }
+    });
+
+    if (activeBreakRecord) {
+      const durationSec = Math.floor(breakDuration / 1000);
+      await prisma.breakRecord.update({
+        where: { id: activeBreakRecord.id },
+        data: {
+          endTime: breakEndTimeVar,
+          duration: durationSec
+        }
+      });
+    }
+
     const breakMinutes = Math.floor(breakDuration / (1000 * 60));
 
     res.json({
@@ -1110,7 +1180,8 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
         date: today
       },
       include: {
-        office: true
+        office: true,
+        breakRecords: true
       }
     });
 
@@ -1124,6 +1195,7 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
       isOnBreak: attendance?.isOnBreak || false,
       breakStartTime: attendance?.breakStartTime,
       totalBreakSeconds: attendance?.totalBreakSeconds || 0,
+      breakRecords: attendance?.breakRecords || [],
       notes: attendance?.notes || '',
       location: attendance ? {
         latitude: attendance.latitude,
@@ -1195,7 +1267,8 @@ export const getAttendanceHistory = async (req: AuthenticatedRequest, res: Respo
           ...dateFilter
         },
         include: {
-          office: true
+          office: true,
+          breakRecords: true
         },
         orderBy: {
           date: 'desc'
@@ -1211,7 +1284,7 @@ export const getAttendanceHistory = async (req: AuthenticatedRequest, res: Respo
       })
     ]);
 
-    const attendanceHistory = attendances.map((att: AttendanceWithOffice) => {
+    const attendanceHistory = attendances.map((att: any) => {
       const workDuration = att.checkIn && att.checkOut 
         ? att.checkOut.getTime() - att.checkIn.getTime()
         : 0;
@@ -1236,6 +1309,7 @@ export const getAttendanceHistory = async (req: AuthenticatedRequest, res: Respo
           minutes: breakMinutes,
           seconds: att.totalBreakSeconds || 0
         },
+        breakRecords: att.breakRecords || [],
         notes: att.notes,
         location: att.latitude && att.longitude ? {
           latitude: att.latitude,
