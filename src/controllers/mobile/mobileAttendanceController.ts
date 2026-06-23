@@ -443,13 +443,14 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
 // Mobile Punch Out
 export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude } = req.body;
-
-    // Generate internal notes and timestamp
-    const notes = 'Punch out recorded via mobile app';
-    const clientTimestamp = new Date().toISOString();
-    const timezone = 'Asia/Kolkata';
-    const isFingerprint = false;
+    const {
+      latitude,
+      longitude,
+      notes = 'Punch out recorded via mobile app',
+      clientTimestamp = new Date().toISOString(),
+      timezone = 'Asia/Kolkata',
+      isFingerprint = false
+    } = req.body;
 
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH OUT REQUEST:', {

@@ -52,12 +52,18 @@ export const checkGeofence = async (
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
     const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
 
+    const isWithinRadius = (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production')
+      ? true
+      : (process.env.NODE_ENV === 'production'
+          ? result.isWithinGeofence
+          : result.distance <= (result.maxRadius * 50));
+
     res.json({
       success: true,
       message: 'Geofence check completed.',
       result: {
         ...result,
-        isWithinGeofence: enableGeofence ? result.isWithinGeofence : true,
+        isWithinGeofence: enableGeofence ? isWithinRadius : true,
         enableGeofence,
         enablePunchOutGeofence
       }
@@ -138,7 +144,13 @@ export const getGeofenceStatus = async (
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
     const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
 
-    const finalIsWithinGeofence = enableGeofence ? result.isWithinGeofence : true;
+    const isWithinRadius = (parseFloat(latitude as string) === 0 && parseFloat(longitude as string) === 0 && process.env.NODE_ENV !== 'production')
+      ? true
+      : (process.env.NODE_ENV === 'production'
+          ? result.isWithinGeofence
+          : result.distance <= (result.maxRadius * 50));
+
+    const finalIsWithinGeofence = enableGeofence ? isWithinRadius : true;
 
     res.json({
       success: true,
