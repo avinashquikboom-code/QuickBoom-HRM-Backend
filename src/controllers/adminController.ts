@@ -384,7 +384,13 @@ export const createEmployee = async (
     reportingManagerId,
     shiftId,
     designationId,
-    salaryStructure
+    salaryStructure,
+    pfNumber,
+    esicNumber,
+    aadharNumber,
+    panNumber,
+    voterId,
+    passportNumber
   } = req.body;
 
   if ((!userId && (!email || !password)) || !firstName) {
@@ -425,6 +431,12 @@ export const createEmployee = async (
               timezone: 'Asia/Kolkata',
               timezoneLabel: '(GMT+5:30) Mumbai, New Delhi',
               lastLoginLocation: 'Admin Panel',
+              pfNumber: pfNumber || '',
+              esicNumber: esicNumber || '',
+              aadharNumber: aadharNumber || '',
+              panNumber: panNumber || '',
+              voterId: voterId || '',
+              passportNumber: passportNumber || '',
             },
           },
         },
@@ -445,6 +457,33 @@ export const createEmployee = async (
           message: 'User does not have a password set. Please provide email and password to enable mobile login.' 
         });
         return;
+      }
+
+      // Update PF/ESIC/ID numbers on profile for existing user if provided
+      if (pfNumber || esicNumber || aadharNumber || panNumber || voterId || passportNumber) {
+        await prisma.profile.upsert({
+          where: { userId: user.id },
+          update: {
+            ...(pfNumber !== undefined && { pfNumber }),
+            ...(esicNumber !== undefined && { esicNumber }),
+            ...(aadharNumber !== undefined && { aadharNumber }),
+            ...(panNumber !== undefined && { panNumber }),
+            ...(voterId !== undefined && { voterId }),
+            ...(passportNumber !== undefined && { passportNumber }),
+          },
+          create: {
+            userId: user.id,
+            email: user.email,
+            fullName: `${firstName} ${lastName || ''}`.trim(),
+            phone: mobileNumber || '',
+            pfNumber: pfNumber || '',
+            esicNumber: esicNumber || '',
+            aadharNumber: aadharNumber || '',
+            panNumber: panNumber || '',
+            voterId: voterId || '',
+            passportNumber: passportNumber || '',
+          }
+        }).catch(err => console.error('Failed to upsert user profile with PF/ESIC/ID numbers:', err));
       }
     }
 
