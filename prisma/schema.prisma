@@ -120,6 +120,7 @@ model Employee {
   designationRelation Designation?     @relation(fields: [designationId], references: [id])
   reportingManager Employee?         @relation("ReportingHierarchy", fields: [reportingManagerId], references: [id])
   subordinates     Employee[]        @relation("ReportingHierarchy")
+  wallet           Wallet?
 
   @@index([officeId])
   @@index([departmentId])
@@ -551,4 +552,59 @@ model BreakRecord {
   attendance   Attendance @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
 }
 
+model Wallet {
+  id                Int      @id @default(autoincrement())
+  employeeId        Int      @unique
+  availableBalance  Float    @default(0)
+  advanceLimit      Float    @default(0)
+  pendingClaims     Float    @default(0)
+  cardNumber        String?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  transactions      WalletTransaction[]
+  advances          SalaryAdvance[]
+
+  @@index([employeeId])
+}
+
+model WalletTransaction {
+  id          Int      @id @default(autoincrement())
+  walletId    Int
+  title       String
+  category    String
+  amount      Float
+  date        DateTime
+  status      String   @default("PENDING")
+  isCredit    Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([date])
+  @@index([status])
+}
+
+model SalaryAdvance {
+  id          Int      @id @default(autoincrement())
+  walletId    Int
+  amount      Float
+  months      Int
+  reason      String
+  status      String   @default("PENDING")
+  requestedOn DateTime @default(now())
+  reviewedBy  String?
+  reviewNote  String?
+  reviewedAt  DateTime?
+  approvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([status])
+}
 

@@ -1384,3 +1384,197 @@ export const fetchEmployeeDocuments = async (
     res.status(500).json({ success: false, message: 'Failed to fetch documents.' });
   }
 };
+
+// ==========================================
+// Wallet Management
+// ==========================================
+
+export const fetchEmployeeWallet = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await getEmployeeFromRequest(req);
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // Get or create wallet
+    let wallet = await prisma.wallet.findUnique({
+      where: { employeeId: employee.id },
+      include: {
+        transactions: {
+          orderBy: { date: 'desc' },
+          take: 10,
+        },
+      },
+    });
+
+    // If wallet doesn't exist, create one
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          employeeId: employee.id,
+          availableBalance: 0,
+          advanceLimit: 25000,
+          pendingClaims: 0,
+          cardNumber: `QB-${employee.employeeCode.replace(/\D/g, '')}-XXXX`,
+        },
+        include: {
+          transactions: {
+            orderBy: { date: 'desc' },
+            take: 10,
+          },
+        },
+      });
+    }
+
+    // Get salary structure
+    const salaryStructure = await prisma.salaryStructure.findUnique({
+      where: { employeeId: employee.id },
+    });
+
+    res.json({
+      success: true,
+      wallet: {
+        id: wallet.id.toString(),
+        availableBalance: wallet.availableBalance,
+        advanceLimit: wallet.advanceLimit,
+        pendingClaims: wallet.pendingClaims,
+        cardNumber: wallet.cardNumber,
+        isActive: wallet.isActive,
+        transactions: wallet.transactions.map(tx => ({
+          id: tx.id.toString(),
+          title: tx.title,
+          category: tx.category,
+          amount: tx.amount,
+          date: tx.date.toISOString(),
+          status: tx.status,
+          isCredit: tx.isCredit,
+          description: tx.description,
+        })),
+        salary: salaryStructure ? {
+          monthlySalary: salaryStructure.monthlySalary,
+          basicSalary: salaryStructure.basicSalary,
+          hra: salaryStructure.hra,
+          medicalAllowance: salaryStructure.medicalAllowance,
+          travelAllowance: salaryStructure.travelAllowance,
+          specialAllowance: salaryStructure.specialAllowance,
+          incentive: salaryStructure.incentive,
+          bonus: salaryStructure.bonus,
+        } : null,
+      },
+    });
+  } catch (error) {
+    console.error('Fetch wallet error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch wallet data.' });
+  }
+};
+
+export const requestSalaryAdvance = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { amount, months, reason } = req.body;
+    const employee = await getEmployeeFromRequest(req);
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // Get or create wallet
+    let wallet = await prisma.wallet.findUnique({
+      where: { employeeId: employee.id },
+    });
+
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          employeeId: employee.id,
+          availableBalance: 0,
+          advanceLimit: 25000,
+          pendingClaims: 0,
+          cardNumber: `QB-${employee.employeeCode.replace(/\D/g, '')}-XXXX`,
+        },
+      });
+    }
+
+    // Validate advance limit
+    if (amount > wallet.advanceLimit) {
+      res.status(400).json({ success: false, message: 'Amount exceeds advance limit.' });
+      return;
+    }
+
+    // Create salary advance request
+    const advance = await prisma.salaryAdvance.create({
+      data: {
+        walletId: wallet.id,
+        amount,
+        months,
+        reason,
+        status: 'PENDING',
+      },
+    });
+
+    // Create transaction record
+    await prisma.walletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        title: 'Salary Advance Request',
+        category: 'Advance',
+        amount,
+        date: new Date(),
+        status: 'Processing',
+        isCredit: false,
+        description: reason,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Salary advance request submitted successfully.',
+      advance: {
+        id: advance.id.toString(),
+        amount: advance.amount,
+        months: advance.months,
+        status: advance.status,
+        requestedOn: advance.requestedOn.toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Request salary advance error:', error);
+    res.status(500).json({ success: false, message: 'Failed to submit advance request.' });
+  }
+};
+
+export const fetchBankDetails = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await getEmployeeFromRequest(req);
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // For now, return placeholder bank details
+    // In a real implementation, this would come from a BankDetails model
+    res.json({
+      success: true,
+      bankDetails: {
+        bankName: 'HDFC Bank',
+        accountNumber: '50100234567890',
+        ifscCode: 'HDFC0001234',
+        accountHolder: `${employee.firstName} ${employee.lastName}`,
+        branch: 'Mumbai Main Branch',
+      },
+    });
+  } catch (error) {
+    console.error('Fetch bank details error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch bank details.' });
+  }
+};

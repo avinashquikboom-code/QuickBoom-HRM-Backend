@@ -26,6 +26,9 @@ import {
   fetchEmployeeDashboardStats,
   fetchEmployeeHolidays,
   fetchEmployeeDocuments,
+  fetchEmployeeWallet,
+  requestSalaryAdvance,
+  fetchBankDetails,
 } from '../../controllers/employee/employeeController';
 
 const router = Router();
@@ -392,5 +395,10 @@ router.put('/tasks/:id', updateEmployeeTaskStatus);
 router.get('/notifications', fetchEmployeeNotifications);
 router.put('/notifications/:id/read', markEmployeeNotificationRead);
 router.put('/notifications/read-all', markAllEmployeeNotificationsRead);
+
+// Wallet Management
+router.get('/wallet', fetchEmployeeWallet);
+router.post('/wallet/advance', requestSalaryAdvance);
+router.get('/wallet/bank-details', fetchBankDetails);
 
 export default router;
