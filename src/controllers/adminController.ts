@@ -4,6 +4,7 @@ import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcrypt';
 import PayrollAutomationService from '../services/payrollAutomationService';
+import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -509,7 +510,8 @@ export const createEmployee = async (
       }
     }
 
-    const employeeCode = `EMP${String(user.id).padStart(4, '0')}`;
+    // Generate employee code based on role
+    const employeeCode = await generateEmployeeCode(user.role);
     const newEmployee = await prisma.employee.create({
       data: {
         userId: user.id,
@@ -712,7 +714,8 @@ export const createAndAssignEmployee = async (
     // Auto-create employee record if user doesn't have one
     let resultEmployee;
     if (!user.employee) {
-      const employeeCode = `EMP${String(user.id).padStart(4, '0')}`;
+      // Generate employee code based on role
+      const employeeCode = await generateEmployeeCode(user.role);
       const emailName = user.email.split('@')[0];
       const fallbackName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
 
@@ -1123,10 +1126,13 @@ export const createOffice = async (
   }
 
   try {
+    // Generate office code if not provided
+    const officeCode = code ? code.trim() : await generateOfficeCode();
+    
     const newOffice = await prisma.office.create({
       data: {
         name: name.trim(),
-        code: code ? code.trim() : null,
+        code: officeCode,
         address: address.trim(),
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),

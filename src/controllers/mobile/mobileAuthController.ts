@@ -7,42 +7,81 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import userSessionService from '../../services/userSessionService';
 import auditLogService from '../../services/auditLogService';
 
-// Mobile-specific login - simplified to email and password only
+// Mobile-specific login - simplified to email/employee ID and password only
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   const { email, password } = req.body;
 
   console.log('[MOBILE_LOGIN] Request received at:', new Date().toISOString());
-  console.log('[MOBILE_LOGIN] Email:', email);
+  console.log('[MOBILE_LOGIN] Identifier:', email);
 
   if (!email || !password) {
     console.log('[MOBILE_LOGIN] Missing credentials');
     res.status(400).json({
       success: false,
-      message: 'Email and password are required.',
+      message: 'Email/Employee ID and password are required.',
       errorCode: 'MISSING_CREDENTIALS'
     });
     return;
   }
 
   try {
-    const normalizedEmail = email.trim().toLowerCase();
+    const identifier = email.trim();
     console.log('[MOBILE_LOGIN] Phase 1: Fetching user auth data...');
     const phase1Start = Date.now();
 
-    // Phase 1: minimal fetch for credential verification (avoids heavy JOINs on failed attempts)
-    const userAuth = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-      select: {
-        id: true,
-        email: true,
-        password: true,
-        role: true,
-        isActive: true,
-        profile: { select: { id: true } },
-        employee: { select: { id: true, officeId: true } },
-      },
-    });
+    let userAuth;
+
+    if (identifier.includes('@')) {
+      // Login with email
+      const normalizedEmail = identifier.toLowerCase();
+      userAuth = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: {
+          id: true,
+          email: true,
+          password: true,
+          role: true,
+          isActive: true,
+          profile: { select: { id: true } },
+          employee: { select: { id: true, officeId: true } },
+        },
+      });
+    } else {
+      // Login with employee code (e.g., EMP001, SALP0001, etc.)
+      const employee = await prisma.employee.findUnique({
+        where: { employeeCode: identifier.toUpperCase() },
+        select: {
+          id: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              password: true,
+              role: true,
+              isActive: true,
+              profile: { select: { id: true } },
+            },
+          },
+          officeId: true,
+        },
+      });
+
+      if (employee && employee.user) {
+        userAuth = {
+          id: employee.user.id,
+          email: employee.user.email,
+          password: employee.user.password,
+          role: employee.user.role,
+          isActive: employee.user.isActive,
+          profile: employee.user.profile,
+          employee: {
+            id: employee.id,
+            officeId: employee.officeId,
+          },
+        };
+      }
+    }
 
     console.log('[MOBILE_LOGIN] Phase 1 completed in:', Date.now() - phase1Start, 'ms');
 

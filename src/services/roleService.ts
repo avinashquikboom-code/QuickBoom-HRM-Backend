@@ -37,6 +37,55 @@ class RoleService {
       data: { name: normalized },
     });
   }
+
+  async updateRole(id: string, name: string) {
+    const normalized = name.trim();
+    const roleId = parseInt(id, 10);
+
+    if (isNaN(roleId)) {
+      throw new Error('Invalid role ID.');
+    }
+
+    // Check if it's a system role
+    if (Object.values(Role).some((r) => r === normalized.toUpperCase())) {
+      throw new Error('Cannot modify built-in system roles.');
+    }
+
+    // Check if the role exists and is custom
+    const existingRole = await prisma.customRole.findUnique({
+      where: { id: roleId },
+    });
+
+    if (!existingRole) {
+      throw new Error('Role not found or is a system role.');
+    }
+
+    return prisma.customRole.update({
+      where: { id: roleId },
+      data: { name: normalized },
+    });
+  }
+
+  async deleteRole(id: string) {
+    const roleId = parseInt(id, 10);
+
+    if (isNaN(roleId)) {
+      throw new Error('Invalid role ID.');
+    }
+
+    // Check if the role exists and is custom
+    const existingRole = await prisma.customRole.findUnique({
+      where: { id: roleId },
+    });
+
+    if (!existingRole) {
+      throw new Error('Role not found or is a system role.');
+    }
+
+    await prisma.customRole.delete({
+      where: { id: roleId },
+    });
+  }
 }
 
 export default new RoleService();

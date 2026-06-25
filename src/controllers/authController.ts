@@ -13,21 +13,22 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   if (!email || !password) {
     res.status(400).json({
       success: false,
-      message: 'Email and password are required.',
+      message: 'Email/Employee ID and password are required.',
     });
     return;
   }
 
   try {
-    console.log('🔐 [LOGIN] Attempt for email:', email);
+    console.log('🔐 [LOGIN] Attempt for identifier:', email);
     
     // 1. Fetch user with basic relations (skip FCM tokens for now)
-    const identifier = email.trim().toLowerCase();
+    const identifier = email.trim();
     let user;
 
     if (identifier.includes('@')) {
+      // Login with email
       user = await prisma.user.findUnique({
-        where: { email: identifier },
+        where: { email: identifier.toLowerCase() },
         include: {
           profile: true,
           employee: {
@@ -37,6 +38,24 @@ export const login = async (req: Request, res: Response): Promise<void> => {
           },
         },
       });
+    } else {
+      // Login with employee code (e.g., EMP001, SALP0001, etc.)
+      const employee = await prisma.employee.findUnique({
+        where: { employeeCode: identifier.toUpperCase() },
+        include: {
+          user: {
+            include: {
+              profile: true,
+            },
+          },
+          office: true,
+        },
+      });
+
+      if (employee && employee.user) {
+        user = employee.user;
+        user.employee = employee;
+      }
     }
 
     if (!user || !user.isActive) {

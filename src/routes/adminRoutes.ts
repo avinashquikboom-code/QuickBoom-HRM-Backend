@@ -85,7 +85,23 @@ import {
 import {
   fetchRoles,
   createRole,
+  updateRole,
+  deleteRole,
 } from '../controllers/roleController';
+import {
+  fetchBranches,
+  fetchBranchById,
+  createBranch,
+  updateBranch,
+  deleteBranch,
+} from '../controllers/branchController';
+import {
+  fetchStores,
+  fetchStoreById,
+  createStore,
+  updateStore,
+  deleteStore,
+} from '../controllers/storeController';
 
 const router = Router();
 
@@ -104,6 +120,22 @@ router.delete('/designations/:id', roleMiddleware(adminOnlyRoles), deleteDesigna
 // Role Routes
 router.get('/roles', roleMiddleware(storeManagerAllowedRoles), fetchRoles);
 router.post('/roles', roleMiddleware(adminOnlyRoles), createRole);
+router.put('/roles/:id', roleMiddleware(adminOnlyRoles), updateRole);
+router.delete('/roles/:id', roleMiddleware(adminOnlyRoles), deleteRole);
+
+// Branch Routes
+router.get('/branches', roleMiddleware(storeManagerAllowedRoles), fetchBranches);
+router.get('/branches/:id', roleMiddleware(storeManagerAllowedRoles), fetchBranchById);
+router.post('/branches', roleMiddleware(adminOnlyRoles), createBranch);
+router.put('/branches/:id', roleMiddleware(adminOnlyRoles), updateBranch);
+router.delete('/branches/:id', roleMiddleware(adminOnlyRoles), deleteBranch);
+
+// Store Routes
+router.get('/stores', roleMiddleware(storeManagerAllowedRoles), fetchStores);
+router.get('/stores/:id', roleMiddleware(storeManagerAllowedRoles), fetchStoreById);
+router.post('/stores', roleMiddleware(adminOnlyRoles), createStore);
+router.put('/stores/:id', roleMiddleware(adminOnlyRoles), updateStore);
+router.delete('/stores/:id', roleMiddleware(adminOnlyRoles), deleteStore);
 
 // Store Manager / Admin Shared Routes
 router.get('/dashboard/stats', roleMiddleware(storeManagerAllowedRoles), fetchDashboardStats);

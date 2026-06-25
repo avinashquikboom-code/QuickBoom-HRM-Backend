@@ -100,11 +100,13 @@ model Employee {
   status           String            @default("active")
   officeId         Int?
   departmentId     Int?
+  storeId          Int?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   attendances      Attendance[]
   department       Department?       @relation(fields: [departmentId], references: [id])
   office           Office?           @relation(fields: [officeId], references: [id])
+  store            Store?            @relation(fields: [storeId], references: [id])
   user             User?             @relation(fields: [userId], references: [id])
   expenses         Expense[]
   leaveRequests    LeaveRequest[]
@@ -124,6 +126,7 @@ model Employee {
 
   @@index([officeId])
   @@index([departmentId])
+  @@index([storeId])
   @@index([status])
 }
 
@@ -517,6 +520,42 @@ model CustomRole {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Branch {
+  id          Int       @id @default(autoincrement())
+  name        String
+  code        String?   @unique
+  address     String?
+  city        String?
+  state       String?
+  country     String    @default("India")
+  pincode     String?
+  phone       String?
+  email       String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  stores      Store[]
+}
+
+model Store {
+  id          Int       @id @default(autoincrement())
+  name        String
+  code        String?   @unique
+  address     String?
+  city        String?
+  state       String?
+  country     String    @default("India")
+  pincode     String?
+  phone       String?
+  email       String?
+  branchId    Int?
+  branch      Branch?   @relation(fields: [branchId], references: [id])
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  employees   Employee[]
 }
 
 model SalaryStructure {
