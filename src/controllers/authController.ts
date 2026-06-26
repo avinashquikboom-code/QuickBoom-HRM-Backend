@@ -23,11 +23,16 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     
     // 1. Fetch user with basic relations (skip FCM tokens for now)
     const identifier = email.trim();
-    let user;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let user: any = null;
+    
+    // Track employee separately for employee-code login path
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let employeeRecord: any = null;
 
     if (identifier.includes('@')) {
       // Login with email
-      user = await prisma.user.findUnique({
+      const userWithEmployee = await prisma.user.findUnique({
         where: { email: identifier.toLowerCase() },
         include: {
           profile: true,
@@ -38,6 +43,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
           },
         },
       });
+      user = userWithEmployee;
+      employeeRecord = userWithEmployee?.employee ?? null;
     } else {
       // Login with employee code (e.g., EMP001, SALP0001, etc.)
       const employee = await prisma.employee.findUnique({
@@ -54,7 +61,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
       if (employee && employee.user) {
         user = employee.user;
-        user.employee = employee;
+        employeeRecord = employee;
       }
     }
 
@@ -82,7 +89,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     // 2.5. Check office/branch allotment for employees
     if (user.role === Role.EMPLOYEE) {
-      if (!user.employee || !user.employee.officeId) {
+      if (!employeeRecord || !employeeRecord.officeId) {
         res.status(403).json({
           success: false,
           message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
@@ -111,8 +118,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     // Audit Log
     await auditLogService.log({
       userId: user.id,
-      employeeId: user.employee?.id || undefined,
-      branchId: user.employee?.officeId || undefined,
+      employeeId: employeeRecord?.id || undefined,
+      branchId: employeeRecord?.officeId || undefined,
       ipAddress,
       deviceInfo,
       action: 'USER_LOGIN',
