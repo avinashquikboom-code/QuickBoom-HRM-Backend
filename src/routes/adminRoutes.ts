@@ -6,6 +6,7 @@ import {
   updateUserStatus,
   deletePlatformUser,
   fetchEmployees,
+  updateEmployee,
   deleteEmployee,
   createEmployee,
   createAndAssignEmployee,
@@ -184,9 +185,9 @@ router.use(roleMiddleware(adminOnlyRoles));
  *         description: Server error
  */
 // Users
-router.get('/users', fetchPlatformUsers);
-router.put('/users/:id/status', updateUserStatus);
-router.delete('/users/:id', deletePlatformUser);
+router.get('/users', roleMiddleware(adminOnlyRoles), fetchPlatformUsers);
+router.put('/users/:id/status', roleMiddleware(adminOnlyRoles), updateUserStatus);
+router.delete('/users/:id', roleMiddleware(adminOnlyRoles), deletePlatformUser);
 
 
 /**
@@ -250,7 +251,8 @@ router.delete('/users/:id', deletePlatformUser);
  *       500:
  *         description: Server error
  */
-router.delete('/employees/:id', deleteEmployee);
+router.put('/employees/:id', roleMiddleware(adminOnlyRoles), updateEmployee);
+router.delete('/employees/:id', roleMiddleware(adminOnlyRoles), deleteEmployee);
 
 /**
  * @swagger

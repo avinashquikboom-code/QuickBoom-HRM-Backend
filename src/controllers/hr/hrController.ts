@@ -1038,13 +1038,13 @@ export const fetchHRPayrollStats = async (
     const employeeCount = await prisma.employee.count();
     const activeEmployees = await prisma.employee.count({ where: { status: 'active' } });
     
-    // Calculate total monthly payroll
+    // Calculate total monthly payroll from salary structures
     const employees = await prisma.employee.findMany({
-      include: { user: { include: { profile: true } } },
+      include: { salaryStructure: true },
     });
     
     const totalMonthlyPayroll = employees.reduce((sum, emp) => {
-      const salary = emp.user?.profile?.clearanceLevel ?? 65000;
+      const salary = emp.salaryStructure?.monthlySalary || 0;
       return sum + salary;
     }, 0);
 

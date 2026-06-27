@@ -74,6 +74,7 @@ export const fetchPlatformUsers = async (
     });
   } catch (error) {
     console.error('Fetch users error:', error);
+    console.error('Error details:', error instanceof Error ? error.message : String(error));
     res.status(500).json({ success: false, message: 'Failed to load users.' });
   }
 };
@@ -318,6 +319,110 @@ export const fetchEmployees = async (
   }
 };
 
+export const updateEmployee = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { firstName, lastName, designation, status, officeId, departmentId, shiftId, workMode, shiftType } = req.body;
+
+    if (!id) {
+      res.status(400).json({ success: false, message: 'Employee ID is required.' });
+      return;
+    }
+
+    // Handle string | string[] type for id parameter
+    const idString = Array.isArray(id) ? id[0] : id;
+
+    // Convert string ID to integer for Prisma
+    const employeeId = parseInt(idString, 10);
+    if (isNaN(employeeId)) {
+      res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
+      return;
+    }
+
+    // Check if employee exists
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      include: { user: true },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    // Update employee data
+    const updateData: any = {};
+    if (firstName !== undefined) updateData.firstName = firstName;
+    if (lastName !== undefined) updateData.lastName = lastName;
+    if (designation !== undefined) updateData.designation = designation;
+    if (status !== undefined) updateData.status = status;
+    if (officeId !== undefined) {
+      if (officeId) {
+        updateData.office = { connect: { id: parseInt(officeId) } };
+      } else {
+        updateData.office = { disconnect: true };
+      }
+    }
+    if (departmentId !== undefined) {
+      if (departmentId) {
+        updateData.department = { connect: { id: parseInt(departmentId) } };
+      } else {
+        updateData.department = { disconnect: true };
+      }
+    }
+    if (workMode !== undefined) updateData.workModeId = workMode.toUpperCase();
+    if (shiftType !== undefined) updateData.shiftTypeId = shiftType.toUpperCase();
+
+    const updatedEmployee = await prisma.employee.update({
+      where: { id: employeeId },
+      data: updateData,
+      include: {
+        user: true,
+        office: true,
+        department: true,
+      },
+    });
+
+    // Handle shift assignment if provided
+    if (shiftId) {
+      // Update or create shift assignment
+      const existingAssignment = await prisma.shiftAssignment.findFirst({
+        where: {
+          employeeId: employeeId,
+          effectiveTo: null,
+        },
+      });
+
+      if (existingAssignment) {
+        await prisma.shiftAssignment.update({
+          where: { id: existingAssignment.id },
+          data: { shiftId: parseInt(shiftId) },
+        });
+      } else {
+        await prisma.shiftAssignment.create({
+          data: {
+            employeeId: employeeId,
+            shiftId: parseInt(shiftId),
+            effectiveFrom: new Date(),
+          },
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Employee updated successfully.',
+      employee: updatedEmployee,
+    });
+  } catch (error: any) {
+    console.error('Update employee error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update employee.' });
+  }
+};
+
 export const deleteEmployee = async (
   req: AuthenticatedRequest,
   res: Response
@@ -349,6 +454,19 @@ export const deleteEmployee = async (
     if (!employee) {
       res.status(404).json({ success: false, message: 'Employee not found.' });
       return;
+    }
+
+    // Role-based authorization: HR cannot delete other HR users
+    // Only SUPER_ADMIN and ADMIN can delete HR users
+    if (employee.user && employee.user.role === 'HR') {
+      const requesterRole = req.user?.role;
+      if (requesterRole !== 'SUPER_ADMIN' && requesterRole !== 'ADMIN') {
+        res.status(403).json({ 
+          success: false, 
+          message: 'Only Super Admin and Admin can delete HR users.' 
+        });
+        return;
+      }
     }
 
     // Delete the employee (this will cascade delete related records due to Prisma schema)
