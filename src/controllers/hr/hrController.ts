@@ -1338,8 +1338,8 @@ export const createHREmployee = async (
       return;
     }
 
-    // Generate employee code
-    const employeeCode = `EMP${String(user.id).padStart(4, '0')}`;
+    // Generate employee code - use REPM format for HR roles
+    const employeeCode = user.role === 'HR' ? `REPM${String(user.id).padStart(4, '0')}` : `EMP${String(user.id).padStart(4, '0')}`;
 
     // Create employee record
     const newEmployee = await prisma.employee.create({
