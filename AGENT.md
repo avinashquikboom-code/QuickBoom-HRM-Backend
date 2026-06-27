@@ -201,6 +201,7 @@ Required:
 * Secure Logout
 * Session Management
 * Device Tracking
+* Secure password hashing using the project's security service (`hashPassword`) for all user accounts, including bootstrapping/default profiles.
 
 Never expose:
 
@@ -208,6 +209,10 @@ Never expose:
 * JWT Secrets
 * Refresh Tokens
 * Database Credentials
+
+Never use:
+
+* Hardcoded or plain-text default passwords in code or database during user creation/bootstrapping (both in Admin Panel and Backend). Always generate a secure random temporary password and hash it before saving.
 
 ---
 

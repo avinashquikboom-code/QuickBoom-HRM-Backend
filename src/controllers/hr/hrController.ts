@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
+import securityService from '../../services/securityService';
 
 // ==========================================
 // HR Dashboard Stats
@@ -1343,12 +1344,13 @@ export const createHREmployee = async (
     let user = await prisma.user.findUnique({ where: { email } });
     
     if (!user) {
-      // Create new user
-      const defaultPassword = 'Temp123!@#'; // You might want to generate a random password
+      // Create new user with a hashed secure random password
+      const tempPassword = securityService.generateSecureToken(16);
+      const hashedPassword = await securityService.hashPassword(tempPassword);
       user = await prisma.user.create({
         data: {
           email,
-          password: defaultPassword, // In production, hash this password
+          password: hashedPassword,
           role: 'EMPLOYEE',
           isActive: true,
         },
