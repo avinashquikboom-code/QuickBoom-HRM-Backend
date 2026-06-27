@@ -98,6 +98,8 @@ model Employee {
   reportingManagerId Int?
   designationId    Int?
   status           String            @default("active")
+  workModeId       String            @default("OFFICE")
+  shiftTypeId      String            @default("MORNING")
   officeId         Int?
   departmentId     Int?
   storeId          Int?
@@ -280,6 +282,8 @@ model ShiftAssignment {
   id            Int       @id @default(autoincrement())
   employeeId    Int
   shiftId       Int
+  workModeId    String    @default("OFFICE")
+  shiftTypeId   String    @default("MORNING")
   effectiveFrom DateTime
   effectiveTo   DateTime?
   createdAt     DateTime  @default(now())

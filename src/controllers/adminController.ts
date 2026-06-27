@@ -232,6 +232,18 @@ export const fetchEmployees = async (
               code: true,
             },
           },
+          workModeId: true,
+          shiftTypeId: true,
+          shiftAssignments: {
+            where: {
+              effectiveTo: null
+            },
+            orderBy: { effectiveFrom: 'desc' },
+            take: 1,
+            include: {
+              shift: true
+            }
+          },
         },
         orderBy: { employeeCode: 'asc' },
         skip,
@@ -247,6 +259,19 @@ export const fetchEmployees = async (
       lastName: emp.lastName,
       designation: emp.designation,
       status: emp.status,
+      workMode: emp.workModeId,
+      shiftType: emp.shiftTypeId,
+      workModeId: emp.workModeId,
+      shiftTypeId: emp.shiftTypeId,
+      shift: emp.shiftAssignments?.[0]?.shift
+        ? {
+            id: emp.shiftAssignments[0].shift.id.toString(),
+            name: emp.shiftAssignments[0].shift.name,
+            startTime: emp.shiftAssignments[0].shift.startTime,
+            endTime: emp.shiftAssignments[0].shift.endTime,
+            color: emp.shiftAssignments[0].shift.color,
+          }
+        : null,
       officeId: emp.officeId?.toString() || null,
       office: emp.office
         ? {
@@ -391,7 +416,9 @@ export const createEmployee = async (
     aadharNumber,
     panNumber,
     voterId,
-    passportNumber
+    passportNumber,
+    workModeId,
+    shiftTypeId
   } = req.body;
 
   if ((!userId && (!email || !password)) || !firstName) {
@@ -520,6 +547,8 @@ export const createEmployee = async (
         lastName: (lastName || '').trim(),
         designation: resolvedDesignation,
         status: status || 'active',
+        workModeId: workModeId || 'OFFICE',
+        shiftTypeId: shiftTypeId || 'MORNING',
         officeId: officeId ? parseInt(officeId, 10) : null,
         departmentId: departmentId ? parseInt(departmentId, 10) : null,
         mobileNumber: mobileNumber || null,
@@ -554,6 +583,8 @@ export const createEmployee = async (
           data: {
             employeeId: newEmployee.id,
             shiftId: parsedShiftId,
+            workModeId: workModeId || 'OFFICE',
+            shiftTypeId: shiftTypeId || 'MORNING',
             effectiveFrom: joiningDate ? new Date(joiningDate) : new Date(),
           }
         });
@@ -6077,7 +6108,7 @@ export const assignShiftToEmployee = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { employeeId, shiftId, effectiveFrom, effectiveTo } = req.body;
+  const { employeeId, shiftId, effectiveFrom, effectiveTo, workModeId, shiftTypeId } = req.body;
 
   if (!employeeId || !shiftId || !effectiveFrom) {
     res.status(400).json({ success: false, message: 'Employee ID, shift ID, and effective date are required.' });
@@ -6105,6 +6136,9 @@ export const assignShiftToEmployee = async (
       return;
     }
 
+    const finalWorkModeId = workModeId || employee.workModeId;
+    const finalShiftTypeId = shiftTypeId || employee.shiftTypeId;
+
     // End any existing active assignments for this employee
     await prisma.shiftAssignment.updateMany({
       where: {
@@ -6112,7 +6146,7 @@ export const assignShiftToEmployee = async (
         effectiveTo: null
       },
       data: {
-        effectiveTo: new Date()
+        effectiveTo: new Date(effectiveFrom)
       }
     });
 
@@ -6121,6 +6155,8 @@ export const assignShiftToEmployee = async (
       data: {
         employeeId: parseInt(employeeId),
         shiftId: parseInt(shiftId),
+        workModeId: finalWorkModeId,
+        shiftTypeId: finalShiftTypeId,
         effectiveFrom: new Date(effectiveFrom),
         effectiveTo: effectiveTo ? new Date(effectiveTo) : null
       },
@@ -6134,6 +6170,15 @@ export const assignShiftToEmployee = async (
             employeeCode: true
           }
         }
+      }
+    });
+
+    // Sync Employee model current state
+    await prisma.employee.update({
+      where: { id: parseInt(employeeId) },
+      data: {
+        workModeId: finalWorkModeId,
+        shiftTypeId: finalShiftTypeId
       }
     });
 

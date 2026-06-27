@@ -373,6 +373,16 @@ export const fetchHREmployees = async (
           department: { select: { name: true } },
           office: { select: { name: true } },
           user: { select: { email: true, isActive: true } },
+          shiftAssignments: {
+            where: {
+              effectiveTo: null
+            },
+            orderBy: { effectiveFrom: 'desc' },
+            take: 1,
+            include: {
+              shift: true
+            }
+          },
           _count: {
             select: {
               leaveRequests: true,
@@ -396,6 +406,19 @@ export const fetchHREmployees = async (
         fullName: `${emp.firstName} ${emp.lastName}`,
         designation: emp.designation || 'Employee',
         status: emp.status,
+        workMode: emp.workModeId,
+        shiftType: emp.shiftTypeId,
+        workModeId: emp.workModeId,
+        shiftTypeId: emp.shiftTypeId,
+        shift: emp.shiftAssignments?.[0]?.shift
+          ? {
+              id: emp.shiftAssignments[0].shift.id.toString(),
+              name: emp.shiftAssignments[0].shift.name,
+              startTime: emp.shiftAssignments[0].shift.startTime,
+              endTime: emp.shiftAssignments[0].shift.endTime,
+              color: emp.shiftAssignments[0].shift.color,
+            }
+          : null,
         department: emp.department?.name || 'Unassigned',
         office: emp.office?.name || 'Remote',
         email: emp.user?.email || null,
@@ -1303,7 +1326,11 @@ export const createHREmployee = async (
     esicNumber = '',
     isHandicapped = false,
     currentAddress = '',
-    permanentAddress = ''
+    permanentAddress = '',
+    workModeId,
+    shiftTypeId,
+    shiftId,
+    effectiveFrom
   } = req.body;
 
   if (!email || !firstName) {
@@ -1350,6 +1377,8 @@ export const createHREmployee = async (
         lastName: (lastName || '').trim(),
         designation: designation || 'Employee',
         status,
+        workModeId: workModeId || 'OFFICE',
+        shiftTypeId: shiftTypeId || 'MORNING',
         officeId: officeId ? parseInt(officeId, 10) : null,
         departmentId: departmentId ? parseInt(departmentId, 10) : null,
       },
@@ -1380,6 +1409,33 @@ export const createHREmployee = async (
       },
     });
 
+    // Create Shift Assignment
+    const parsedShiftId = shiftId ? parseInt(shiftId, 10) : null;
+    if (parsedShiftId) {
+      await prisma.shiftAssignment.create({
+        data: {
+          employeeId: newEmployee.id,
+          shiftId: parsedShiftId,
+          workModeId: workModeId || 'OFFICE',
+          shiftTypeId: shiftTypeId || 'MORNING',
+          effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
+        }
+      });
+    } else {
+      const defaultShift = await prisma.shift.findFirst();
+      if (defaultShift) {
+        await prisma.shiftAssignment.create({
+          data: {
+            employeeId: newEmployee.id,
+            shiftId: defaultShift.id,
+            workModeId: workModeId || 'OFFICE',
+            shiftTypeId: shiftTypeId || 'MORNING',
+            effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
+          }
+        });
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: 'Employee created successfully.',
@@ -1391,6 +1447,10 @@ export const createHREmployee = async (
         fullName: `${newEmployee.firstName} ${newEmployee.lastName || ''}`.trim(),
         designation: newEmployee.designation,
         status: newEmployee.status,
+        workMode: newEmployee.workModeId,
+        shiftType: newEmployee.shiftTypeId,
+        workModeId: newEmployee.workModeId,
+        shiftTypeId: newEmployee.shiftTypeId,
         email: newEmployee.user?.email || '',
         phone,
         aadharNumber,
@@ -1428,7 +1488,11 @@ export const updateHREmployee = async (
     esicNumber,
     isHandicapped,
     currentAddress,
-    permanentAddress
+    permanentAddress,
+    workModeId,
+    shiftTypeId,
+    shiftId,
+    effectiveFrom
   } = req.body;
 
   if (!id) {
@@ -1438,6 +1502,44 @@ export const updateHREmployee = async (
 
   try {
     const employeeId = parseInt(id as string, 10);
+
+    // Manage Shift & Work Mode Assignment History
+    const activeAssignment = await prisma.shiftAssignment.findFirst({
+      where: { employeeId: employeeId, effectiveTo: null },
+      orderBy: { effectiveFrom: 'desc' }
+    });
+
+    const parsedShiftId = shiftId ? parseInt(shiftId, 10) : undefined;
+    const finalShiftId = parsedShiftId !== undefined ? parsedShiftId : (activeAssignment?.shiftId || null);
+    const finalWorkModeId = workModeId !== undefined ? workModeId : (activeAssignment?.workModeId || 'OFFICE');
+    const finalShiftTypeId = shiftTypeId !== undefined ? shiftTypeId : (activeAssignment?.shiftTypeId || 'MORNING');
+
+    const hasChanges = !activeAssignment || 
+      activeAssignment.shiftId !== finalShiftId || 
+      activeAssignment.workModeId !== finalWorkModeId || 
+      activeAssignment.shiftTypeId !== finalShiftTypeId;
+
+    if (hasChanges) {
+      const assignmentEffectiveFrom = effectiveFrom ? new Date(effectiveFrom) : new Date();
+      if (activeAssignment) {
+        await prisma.shiftAssignment.update({
+          where: { id: activeAssignment.id },
+          data: { effectiveTo: assignmentEffectiveFrom }
+        });
+      }
+
+      if (finalShiftId) {
+        await prisma.shiftAssignment.create({
+          data: {
+            employeeId: employeeId,
+            shiftId: finalShiftId,
+            workModeId: finalWorkModeId,
+            shiftTypeId: finalShiftTypeId,
+            effectiveFrom: assignmentEffectiveFrom,
+          }
+        });
+      }
+    }
     
     const updatedEmployee = await prisma.employee.update({
       where: { id: employeeId },
@@ -1446,6 +1548,8 @@ export const updateHREmployee = async (
         lastName: lastName?.trim(),
         designation,
         status,
+        workModeId: finalWorkModeId,
+        shiftTypeId: finalShiftTypeId,
         officeId: officeId ? parseInt(officeId, 10) : null,
         departmentId: departmentId ? parseInt(departmentId, 10) : null,
       },
@@ -1491,6 +1595,10 @@ export const updateHREmployee = async (
         fullName: `${updatedEmployee.firstName} ${updatedEmployee.lastName || ''}`.trim(),
         designation: updatedEmployee.designation,
         status: updatedEmployee.status,
+        workMode: updatedEmployee.workModeId,
+        shiftType: updatedEmployee.shiftTypeId,
+        workModeId: updatedEmployee.workModeId,
+        shiftTypeId: updatedEmployee.shiftTypeId,
         email: updatedEmployee.user?.email || '',
         phone,
         aadharNumber,
