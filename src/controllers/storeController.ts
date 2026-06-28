@@ -8,18 +8,8 @@ export const fetchStores = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { branchId } = req.query;
-    
     const stores = await prisma.store.findMany({
-      where: branchId ? { branchId: parseInt(branchId as string, 10) } : undefined,
       include: {
-        branch: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-          },
-        },
         _count: {
           select: {
             employees: true,
@@ -55,16 +45,6 @@ export const fetchStoreById = async (
     const store = await prisma.store.findUnique({
       where: { id: storeId },
       include: {
-        branch: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            address: true,
-            city: true,
-            state: true,
-          },
-        },
         employees: {
           where: { status: 'active' },
           select: {
@@ -99,22 +79,11 @@ export const createStore = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { name, code, address, city, state, country, pincode, phone, email, branchId } = req.body;
+    const { name, code, address, city, state, country, pincode, phone, email } = req.body;
 
     if (!name || name.trim() === '') {
       res.status(400).json({ success: false, message: 'Store name is required.' });
       return;
-    }
-
-    // If branchId is provided, verify it exists
-    if (branchId) {
-      const branch = await prisma.branch.findUnique({
-        where: { id: parseInt(branchId, 10) },
-      });
-      if (!branch) {
-        res.status(400).json({ success: false, message: 'Branch not found.' });
-        return;
-      }
     }
 
     // Generate store code if not provided
@@ -131,7 +100,6 @@ export const createStore = async (
         pincode: pincode?.trim() || null,
         phone: phone?.trim() || null,
         email: email?.trim() || null,
-        branchId: branchId ? parseInt(branchId, 10) : null,
       },
     });
 
@@ -146,10 +114,6 @@ export const createStore = async (
       res.status(400).json({ success: false, message: 'Store code already exists.' });
       return;
     }
-    if (error.code === 'P2003') {
-      res.status(400).json({ success: false, message: 'Invalid branch ID.' });
-      return;
-    }
     res.status(500).json({ success: false, message: 'Failed to create store.' });
   }
 };
@@ -160,7 +124,7 @@ export const updateStore = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, code, address, city, state, country, pincode, phone, email, branchId, isActive } = req.body;
+    const { name, code, address, city, state, country, pincode, phone, email, isActive } = req.body;
 
     const storeId = parseInt(id as string, 10);
     if (isNaN(storeId)) {
@@ -171,17 +135,6 @@ export const updateStore = async (
     if (!name || name.trim() === '') {
       res.status(400).json({ success: false, message: 'Store name is required.' });
       return;
-    }
-
-    // If branchId is provided, verify it exists
-    if (branchId) {
-      const branch = await prisma.branch.findUnique({
-        where: { id: parseInt(branchId, 10) },
-      });
-      if (!branch) {
-        res.status(400).json({ success: false, message: 'Branch not found.' });
-        return;
-      }
     }
 
     const store = await prisma.store.update({
@@ -196,7 +149,6 @@ export const updateStore = async (
         pincode: pincode?.trim() || null,
         phone: phone?.trim() || null,
         email: email?.trim() || null,
-        branchId: branchId ? parseInt(branchId, 10) : null,
         isActive: isActive !== undefined ? isActive : true,
       },
     });
@@ -214,10 +166,6 @@ export const updateStore = async (
     }
     if (error.code === 'P2002') {
       res.status(400).json({ success: false, message: 'Store code already exists.' });
-      return;
-    }
-    if (error.code === 'P2003') {
-      res.status(400).json({ success: false, message: 'Invalid branch ID.' });
       return;
     }
     res.status(500).json({ success: false, message: 'Failed to update store.' });

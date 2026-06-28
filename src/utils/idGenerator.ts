@@ -104,42 +104,7 @@ export async function generateOfficeCode(): Promise<string> {
   return `${prefix}${paddedNumber}`;
 }
 
-/**
- * Generate branch code
- * BR001, BR002, etc.
- */
-export async function generateBranchCode(): Promise<string> {
-  const prefix = 'BR';
-  
-  const existingBranches = await prisma.branch.findMany({
-    where: {
-      code: {
-        startsWith: prefix,
-      },
-    },
-    select: {
-      code: true,
-    },
-    orderBy: {
-      code: 'desc',
-    },
-    take: 1,
-  });
 
-  let nextNumber = 1;
-  
-  if (existingBranches.length > 0) {
-    const lastCode = existingBranches[0].code || '';
-    const lastNumber = parseInt(lastCode.replace(prefix, ''), 10);
-    if (!isNaN(lastNumber)) {
-      nextNumber = lastNumber + 1;
-    }
-  }
-
-  const paddedNumber = nextNumber.toString().padStart(3, '0');
-  
-  return `${prefix}${paddedNumber}`;
-}
 
 /**
  * Generate store code

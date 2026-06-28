@@ -89,13 +89,7 @@ import {
   updateRole,
   deleteRole,
 } from '../controllers/roleController';
-import {
-  fetchBranches,
-  fetchBranchById,
-  createBranch,
-  updateBranch,
-  deleteBranch,
-} from '../controllers/branchController';
+
 import {
   fetchStores,
   fetchStoreById,
@@ -124,12 +118,7 @@ router.post('/roles', roleMiddleware(adminOnlyRoles), createRole);
 router.put('/roles/:id', roleMiddleware(adminOnlyRoles), updateRole);
 router.delete('/roles/:id', roleMiddleware(adminOnlyRoles), deleteRole);
 
-// Branch Routes
-router.get('/branches', roleMiddleware(storeManagerAllowedRoles), fetchBranches);
-router.get('/branches/:id', roleMiddleware(storeManagerAllowedRoles), fetchBranchById);
-router.post('/branches', roleMiddleware(adminOnlyRoles), createBranch);
-router.put('/branches/:id', roleMiddleware(adminOnlyRoles), updateBranch);
-router.delete('/branches/:id', roleMiddleware(adminOnlyRoles), deleteBranch);
+
 
 // Store Routes
 router.get('/stores', roleMiddleware(storeManagerAllowedRoles), fetchStores);
