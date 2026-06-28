@@ -97,6 +97,7 @@ import {
   updateStore,
   deleteStore,
 } from '../controllers/storeController';
+import { fetchWorkModes } from '../controllers/workModeController';
 
 const router = Router();
 
@@ -126,6 +127,9 @@ router.get('/stores/:id', roleMiddleware(storeManagerAllowedRoles), fetchStoreBy
 router.post('/stores', roleMiddleware(adminOnlyRoles), createStore);
 router.put('/stores/:id', roleMiddleware(adminOnlyRoles), updateStore);
 router.delete('/stores/:id', roleMiddleware(adminOnlyRoles), deleteStore);
+
+// WorkMode Routes
+router.get('/work-modes', roleMiddleware(storeManagerAllowedRoles), fetchWorkModes);
 
 // Store Manager / Admin Shared Routes
 router.get('/dashboard/stats', roleMiddleware(storeManagerAllowedRoles), fetchDashboardStats);

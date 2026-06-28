@@ -31,6 +31,7 @@ import {
   sendNotification,
   broadcastAnnouncement,
 } from '../../controllers/hr/hrNotificationController';
+import { fetchWorkModes } from '../../controllers/workModeController';
 
 const router = express.Router();
 
@@ -79,6 +80,7 @@ router.use(roleMiddleware([Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.HR, Role.
 router.get('/stats', fetchHRStats);
 router.get('/departments', fetchDepartmentOverview);
 router.get('/leaves', fetchLeaveOverview);
+router.get('/work-modes', fetchWorkModes);
 /**
  * @swagger
  * /api/hr/employees:

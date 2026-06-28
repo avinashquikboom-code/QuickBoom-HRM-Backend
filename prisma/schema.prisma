@@ -100,6 +100,7 @@ model Employee {
   designationId    Int?
   status           String            @default("active")
   workModeId       String            @default("OFFICE")
+  workMode         WorkMode?         @relation(fields: [workModeId], references: [id])
   shiftTypeId      String            @default("MORNING")
   officeId         Int?
   departmentId     Int?
@@ -290,6 +291,7 @@ model ShiftAssignment {
   employeeId    Int
   shiftId       Int
   workModeId    String    @default("OFFICE")
+  workMode      WorkMode? @relation(fields: [workModeId], references: [id])
   shiftTypeId   String    @default("MORNING")
   effectiveFrom DateTime
   effectiveTo   DateTime?
@@ -829,5 +831,14 @@ model CommissionAdjustment {
   @@index([transactionId])
   @@index([employeeId])
   @@index([status])
+}
+
+model WorkMode {
+  id               String            @id // e.g. "OFFICE", "REMOTE", "HYBRID"
+  name             String            // Display name e.g. "Office", "Remote", "Hybrid"
+  employees        Employee[]
+  shiftAssignments ShiftAssignment[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 }
 
