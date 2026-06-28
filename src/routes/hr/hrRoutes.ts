@@ -80,6 +80,25 @@ router.use(roleMiddleware([Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.HR, Role.
 router.get('/stats', fetchHRStats);
 router.get('/departments', fetchDepartmentOverview);
 router.get('/leaves', fetchLeaveOverview);
+
+/**
+ * @swagger
+ * /api/hr/work-modes:
+ *   get:
+ *     summary: Fetch all available work modes
+ *     tags: [HR - Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Work modes retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ *       500:
+ *         description: Server error
+ */
 router.get('/work-modes', fetchWorkModes);
 /**
  * @swagger

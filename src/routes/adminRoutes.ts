@@ -129,6 +129,24 @@ router.put('/stores/:id', roleMiddleware(adminOnlyRoles), updateStore);
 router.delete('/stores/:id', roleMiddleware(adminOnlyRoles), deleteStore);
 
 // WorkMode Routes
+/**
+ * @swagger
+ * /api/admin/work-modes:
+ *   get:
+ *     summary: Fetch all available work modes
+ *     tags: [Admin - WorkModes]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Work modes retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ *       500:
+ *         description: Server error
+ */
 router.get('/work-modes', roleMiddleware(storeManagerAllowedRoles), fetchWorkModes);
 
 // Store Manager / Admin Shared Routes
