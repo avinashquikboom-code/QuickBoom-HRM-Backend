@@ -84,6 +84,7 @@ model Department {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   employees Employee[]
+  commissionPolicies CommissionPolicy[] @relation("CommissionPolicies")
 }
 
 model Employee {
@@ -125,6 +126,10 @@ model Employee {
   reportingManager Employee?         @relation("ReportingHierarchy", fields: [reportingManagerId], references: [id])
   subordinates     Employee[]        @relation("ReportingHierarchy")
   wallet           Wallet?
+  commissionPolicies CommissionPolicy[] @relation("CommissionPolicies")
+  commissionTransactions CommissionTransaction[] @relation("CommissionTransactions")
+  commissionTargets CommissionTarget[] @relation("CommissionTargets")
+  commissionSettlements CommissionSettlement[] @relation("CommissionSettlements")
 
   @@index([officeId])
   @@index([departmentId])
@@ -272,6 +277,8 @@ model Shift {
   breakMinutes Int               @default(60)
   color        String            @default("#3BA38B")
   officeId     Int?
+  roleId       Int?
+  departmentId Int?
   office       Office?           @relation(fields: [officeId], references: [id], onDelete: Cascade)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
@@ -516,6 +523,7 @@ model Designation {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   employees Employee[]
+  commissionPolicies CommissionPolicy[] @relation("CommissionPolicies")
 }
 
 model CustomRole {
@@ -526,22 +534,6 @@ model CustomRole {
   updatedAt DateTime @updatedAt
 }
 
-model Branch {
-  id          Int       @id @default(autoincrement())
-  name        String
-  code        String?   @unique
-  address     String?
-  city        String?
-  state       String?
-  country     String    @default("India")
-  pincode     String?
-  phone       String?
-  email       String?
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  stores      Store[]
-}
 
 model Store {
   id          Int       @id @default(autoincrement())
@@ -554,12 +546,13 @@ model Store {
   pincode     String?
   phone       String?
   email       String?
-  branchId    Int?
-  branch      Branch?   @relation(fields: [branchId], references: [id])
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   employees   Employee[]
+  commissionPolicies CommissionPolicy[] @relation("CommissionPolicies")
+  commissionTransactions CommissionTransaction[] @relation("CommissionTransactions")
+  commissionTargets CommissionTarget[] @relation("CommissionTargets")
 }
 
 model SalaryStructure {
@@ -648,6 +641,193 @@ model SalaryAdvance {
   wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([walletId])
+  @@index([status])
+}
+
+// Commission Management Module
+
+model CommissionPolicy {
+  id                Int      @id @default(autoincrement())
+  name              String
+  description       String?
+  commissionType    String   @default("PERCENTAGE") // PERCENTAGE, FIXED, NONE
+  commissionValue   Float
+  priority          Int      @default(0) // 0=Head Office, 1=Store, 2=Employee
+  effectiveFrom     DateTime @default(now())
+  effectiveTo       DateTime?
+  isActive          Boolean  @default(true)
+  
+  // Scope fields
+  storeId           Int?
+  employeeId        Int?
+  departmentId      Int?
+  designationId     Int?
+  roleId            String?
+  
+  // Product/Category/Brand specific
+  productId         Int?
+  categoryId        Int?
+  brandId           Int?
+  
+  // Target & Bonus
+  targetAmount      Float?
+  targetBonus       Float?
+  monthlyBonus      Float?
+  quarterlyBonus    Float?
+  yearlyBonus       Float?
+  maxCommission     Float?
+  minTarget         Float?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  store             Store?   @relation("CommissionPolicies", fields: [storeId], references: [id])
+  employee          Employee? @relation("CommissionPolicies", fields: [employeeId], references: [id])
+  department        Department? @relation("CommissionPolicies", fields: [departmentId], references: [id])
+  designation       Designation? @relation("CommissionPolicies", fields: [designationId], references: [id])
+  transactions      CommissionTransaction[]
+  targets           CommissionTarget[]
+  
+  @@index([storeId])
+  @@index([employeeId])
+  @@index([isActive])
+  @@index([effectiveFrom])
+}
+
+model CommissionTransaction {
+  id                Int      @id @default(autoincrement())
+  billId            String?
+  invoiceNumber     String?
+  employeeId        Int
+  storeId           Int?
+  saleAmount        Float
+  commissionType    String   // PERCENTAGE, FIXED
+  commissionPercent Float?
+  commissionAmount  Float
+  status            String   @default("PENDING") // PENDING, APPROVED, REJECTED, PAID
+  approvedBy        Int?
+  approvedAt        DateTime?
+  payrollId         Int?
+  paidAt            DateTime?
+  notes             String?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  employee          Employee @relation("CommissionTransactions", fields: [employeeId], references: [id])
+  store             Store?   @relation("CommissionTransactions", fields: [storeId], references: [id])
+  policy            CommissionPolicy? @relation(fields: [policyId], references: [id])
+  policyId          Int?
+  history           CommissionHistory[]
+  adjustments       CommissionAdjustment[]
+  
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([payrollId])
+}
+
+model CommissionHistory {
+  id                Int      @id @default(autoincrement())
+  transactionId     Int
+  employeeId        Int
+  action            String   // CREATED, APPROVED, REJECTED, PAID, ADJUSTED
+  previousStatus    String?
+  newStatus         String?
+  previousAmount    Float?
+  newAmount         Float?
+  reason            String?
+  performedBy       Int?
+  performedAt       DateTime @default(now())
+  
+  // Relations
+  transaction       CommissionTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  
+  @@index([transactionId])
+  @@index([employeeId])
+  @@index([action])
+  @@index([performedAt])
+}
+
+model CommissionTarget {
+  id                Int      @id @default(autoincrement())
+  policyId          Int
+  employeeId        Int?
+  storeId           Int?
+  targetType        String   // MONTHLY, QUARTERLY, YEARLY
+  targetAmount      Float
+  achievedAmount    Float    @default(0)
+  progressPercent   Float    @default(0)
+  startDate         DateTime
+  endDate           DateTime
+  status            String   @default("ACTIVE") // ACTIVE, ACHIEVED, MISSED, CANCELLED
+  bonusAmount       Float?
+  bonusPaid         Boolean  @default(false)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  policy            CommissionPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  employee          Employee? @relation("CommissionTargets", fields: [employeeId], references: [id])
+  store             Store?   @relation("CommissionTargets", fields: [storeId], references: [id])
+  
+  @@index([policyId])
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+}
+
+model CommissionSettlement {
+  id                Int      @id @default(autoincrement())
+  employeeId        Int
+  settlementDate    DateTime
+  totalCommission   Float
+  totalBonus        Float
+  totalDeduction    Float    @default(0)
+  netAmount         Float
+  status            String   @default("PENDING") // PENDING, PROCESSED, PAID
+  payrollId         Int?
+  processedBy       Int?
+  processedAt       DateTime?
+  notes             String?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  employee          Employee @relation("CommissionSettlements", fields: [employeeId], references: [id])
+  
+  @@index([employeeId])
+  @@index([settlementDate])
+  @@index([status])
+  @@index([payrollId])
+}
+
+model CommissionAdjustment {
+  id                Int      @id @default(autoincrement())
+  transactionId     Int
+  employeeId        Int
+  adjustmentType    String   // INCREASE, DECREASE
+  adjustmentAmount  Float
+  reason            String
+  approvedBy        Int?
+  approvedAt        DateTime?
+  status            String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  transaction       CommissionTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  
+  @@index([transactionId])
+  @@index([employeeId])
   @@index([status])
 }
 
