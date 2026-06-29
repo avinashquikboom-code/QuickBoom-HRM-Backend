@@ -107,7 +107,7 @@ async function main() {
   // A. Super Admin User
   const superAdminUser = await prisma.user.create({
     data: {
-      email: 'admin@hr.com',
+      email: 'admin@hrm.com',
       password: adminPasswordHash,
       role: Role.SUPER_ADMIN,
       isActive: true,
