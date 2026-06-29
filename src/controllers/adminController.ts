@@ -361,16 +361,16 @@ export const updateEmployee = async (
     if (status !== undefined) updateData.status = status;
     if (officeId !== undefined) {
       if (officeId) {
-        updateData.office = { connect: { id: parseInt(officeId) } };
+        updateData.officeId = parseInt(officeId);
       } else {
-        updateData.office = { disconnect: true };
+        updateData.officeId = null;
       }
     }
     if (departmentId !== undefined) {
       if (departmentId) {
-        updateData.department = { connect: { id: parseInt(departmentId) } };
+        updateData.departmentId = parseInt(departmentId);
       } else {
-        updateData.department = { disconnect: true };
+        updateData.departmentId = null;
       }
     }
     if (workMode !== undefined) updateData.workModeId = workMode.toUpperCase();

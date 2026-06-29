@@ -97,6 +97,30 @@ import {
   updateStore,
   deleteStore,
 } from '../controllers/storeController';
+import {
+  fetchBranches,
+  fetchBranchById,
+  createBranch,
+  updateBranch,
+  deleteBranch,
+} from '../controllers/branchController';
+import {
+  getCommissionDashboard,
+  createCommissionPolicy,
+  getCommissionPolicies,
+  getCommissionPolicyById,
+  updateCommissionPolicy,
+  deleteCommissionPolicy,
+  createCommissionTransaction,
+  getCommissionTransactions,
+  approveCommissionTransaction,
+  rejectCommissionTransaction,
+  createCommissionTarget,
+  getCommissionTargets,
+  updateCommissionTarget,
+  calculateCommission,
+  createCommissionSettlement,
+} from '../controllers/commissionController';
 import { fetchWorkModes } from '../controllers/workModeController';
 
 const router = Router();
@@ -127,6 +151,30 @@ router.get('/stores/:id', roleMiddleware(storeManagerAllowedRoles), fetchStoreBy
 router.post('/stores', roleMiddleware(adminOnlyRoles), createStore);
 router.put('/stores/:id', roleMiddleware(adminOnlyRoles), updateStore);
 router.delete('/stores/:id', roleMiddleware(adminOnlyRoles), deleteStore);
+
+// Branch Routes
+router.get('/branches', roleMiddleware(storeManagerAllowedRoles), fetchBranches);
+router.get('/branches/:id', roleMiddleware(storeManagerAllowedRoles), fetchBranchById);
+router.post('/branches', roleMiddleware(adminOnlyRoles), createBranch);
+router.put('/branches/:id', roleMiddleware(adminOnlyRoles), updateBranch);
+router.delete('/branches/:id', roleMiddleware(adminOnlyRoles), deleteBranch);
+
+// Commission Routes
+router.get('/commission/dashboard', roleMiddleware(storeManagerAllowedRoles), getCommissionDashboard);
+router.get('/commission/policies', roleMiddleware(storeManagerAllowedRoles), getCommissionPolicies);
+router.get('/commission/policies/:id', roleMiddleware(storeManagerAllowedRoles), getCommissionPolicyById);
+router.post('/commission/policies', roleMiddleware(adminOnlyRoles), createCommissionPolicy);
+router.put('/commission/policies/:id', roleMiddleware(adminOnlyRoles), updateCommissionPolicy);
+router.delete('/commission/policies/:id', roleMiddleware(adminOnlyRoles), deleteCommissionPolicy);
+router.get('/commission/transactions', roleMiddleware(storeManagerAllowedRoles), getCommissionTransactions);
+router.post('/commission/transactions', roleMiddleware(storeManagerAllowedRoles), createCommissionTransaction);
+router.put('/commission/transactions/:id/approve', roleMiddleware(adminOnlyRoles), approveCommissionTransaction);
+router.put('/commission/transactions/:id/reject', roleMiddleware(adminOnlyRoles), rejectCommissionTransaction);
+router.get('/commission/targets', roleMiddleware(storeManagerAllowedRoles), getCommissionTargets);
+router.post('/commission/targets', roleMiddleware(adminOnlyRoles), createCommissionTarget);
+router.put('/commission/targets/:id', roleMiddleware(adminOnlyRoles), updateCommissionTarget);
+router.post('/commission/calculate', roleMiddleware(storeManagerAllowedRoles), calculateCommission);
+router.post('/commission/settlements', roleMiddleware(adminOnlyRoles), createCommissionSettlement);
 
 // WorkMode Routes
 /**

@@ -8,8 +8,20 @@ export const fetchStores = async (
   res: Response
 ): Promise<void> => {
   try {
+    const { branchId } = req.query;
+    
+    const where = branchId ? { branchId: parseInt(branchId as string) } : {};
+    
     const stores = await prisma.store.findMany({
+      where,
       include: {
+        branch: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
         _count: {
           select: {
             employees: true,

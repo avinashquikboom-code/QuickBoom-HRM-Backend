@@ -537,6 +537,25 @@ model CustomRole {
 }
 
 
+model Branch {
+  id          Int       @id @default(autoincrement())
+  name        String
+  code        String?   @unique
+  address     String?
+  city        String?
+  state       String?
+  country     String    @default("India")
+  pincode     String?
+  phone       String?
+  email       String?
+  latitude    Float?
+  longitude   Float?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  stores      Store[]
+}
+
 model Store {
   id          Int       @id @default(autoincrement())
   name        String
@@ -548,10 +567,12 @@ model Store {
   pincode     String?
   phone       String?
   email       String?
+  branchId    Int?
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   employees   Employee[]
+  branch      Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   commissionPolicies CommissionPolicy[] @relation("CommissionPolicies")
   commissionTransactions CommissionTransaction[] @relation("CommissionTransactions")
   commissionTargets CommissionTarget[] @relation("CommissionTargets")
