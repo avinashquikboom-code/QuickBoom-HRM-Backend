@@ -94,9 +94,9 @@ router.get('/my-report/download', downloadMyLeaveReport);
  */
 router.get('/report/download', downloadLeaveReport);
 
-// HR Leave Management Routes (require HR role)
-router.get('/hr/requests', roleMiddleware([Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), fetchHRLeaveRequests);
-router.post('/hr/:id/approve', roleMiddleware([Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), approveLeaveRequest);
-router.post('/hr/:id/reject', roleMiddleware([Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), rejectLeaveRequest);
+// HR/Store Manager Leave Management Routes (require HR or Store Manager role)
+router.get('/hr/requests', roleMiddleware([Role.STORE_MANAGER, Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), fetchHRLeaveRequests);
+router.post('/hr/:id/approve', roleMiddleware([Role.STORE_MANAGER, Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), approveLeaveRequest);
+router.post('/hr/:id/reject', roleMiddleware([Role.STORE_MANAGER, Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]), rejectLeaveRequest);
 
 export default router;

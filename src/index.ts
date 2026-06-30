@@ -26,6 +26,11 @@ import mobileDistanceRoutes from './routes/mobile/mobileDistanceRoutes';
 import mobileComprehensiveAttendanceRoutes from './routes/mobile/mobileComprehensiveAttendanceRoutes';
 import mobileNotificationRoutes from './routes/mobile/mobileNotificationRoutes';
 import upcomingRoutes from './routes/mobile/upcomingRoutes';
+import mobileCommissionRoutes from './routes/mobile/mobileCommissionRoutes';
+import mobileTaskRoutes from './routes/mobile/mobileTaskRoutes';
+import mobileStoreRoutes from './routes/mobile/mobileStoreRoutes';
+import mobileDocumentRoutes from './routes/mobile/mobileDocumentRoutes';
+import mobileHolidayRoutes from './routes/mobile/mobileHolidayRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
 import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoutes';
@@ -172,6 +177,11 @@ app.use('/api/mobile/leave-balance', mobileLeaveBalanceRoutes);
 app.use('/api/mobile/distance', mobileDistanceRoutes);
 app.use('/api/mobile/attendance/comprehensive', mobileComprehensiveAttendanceRoutes);
 app.use('/api/mobile/dashboard', upcomingRoutes);
+app.use('/api/mobile/commission', mobileCommissionRoutes);
+app.use('/api/mobile/tasks', mobileTaskRoutes);
+app.use('/api/mobile/store', mobileStoreRoutes);
+app.use('/api/mobile/documents', mobileDocumentRoutes);
+app.use('/api/mobile/holidays', mobileHolidayRoutes);
 
 const host = process.env.HOST || '0.0.0.0';
 

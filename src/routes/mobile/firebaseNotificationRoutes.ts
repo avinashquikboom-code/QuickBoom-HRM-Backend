@@ -95,9 +95,9 @@ router.post('/public-send-test', (req, res) => {
 // Apply auth middleware to protect all other Firebase notification routes
 router.use(authMiddleware);
 
-// Restrict access to HR and Admin roles for most operations
-const adminRoles = ['HR', 'ADMIN', 'SUPER_ADMIN'];
-router.use(roleMiddleware(adminRoles));
+// Restrict access to mobile roles for FCM operations (Store Manager, Salesman, Helper)
+const mobileRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER'];
+router.use(roleMiddleware(mobileRoles));
 
 /**
  * @swagger

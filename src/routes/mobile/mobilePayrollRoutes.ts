@@ -8,8 +8,8 @@ const router = Router();
 // Apply auth middleware to protect all mobile payroll routes
 router.use(authMiddleware);
 
-// Restrict access to employees, HR, and admins
-const allowedRoles = ['EMPLOYEE', 'HR', 'SUPER_ADMIN', 'ADMIN'];
+// Restrict access to mobile roles only (Store Manager, Salesman, Helper)
+const allowedRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER'];
 router.use(roleMiddleware(allowedRoles));
 
 /**

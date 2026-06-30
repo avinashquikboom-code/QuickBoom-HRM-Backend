@@ -111,27 +111,26 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
     }
 
     console.log('[MOBILE_LOGIN] Phase 3: Role validation...');
-    const mobileCompatibleRoles = ['EMPLOYEE' as Role, 'HR' as Role, 'ADMIN' as Role, 'PLATFORM_ADMIN' as Role, 'SUPER_ADMIN' as Role];
+    const mobileCompatibleRoles = ['STORE_MANAGER' as Role, 'SALESMAN' as Role, 'HELPER' as Role];
     if (!mobileCompatibleRoles.includes(userAuth.role)) {
       console.log('[MOBILE_LOGIN] Incompatible role:', userAuth.role);
       res.status(403).json({
         success: false,
-        message: 'Mobile access not available for this role.',
+        message: 'Mobile access not available for this role. Only Store Manager, Salesman, and Helper can access the mobile application.',
         errorCode: 'MOBILE_ACCESS_DENIED'
       });
       return;
     }
 
-    if (userAuth.role === Role.EMPLOYEE) {
-      if (!userAuth.employee || !userAuth.employee.officeId) {
-        console.log('[MOBILE_LOGIN] Office not allotted for employee');
-        res.status(403).json({
-          success: false,
-          message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
-          errorCode: 'OFFICE_NOT_ALLOTTED'
-        });
-        return;
-      }
+    // Ensure employee has office/store assigned
+    if (!userAuth.employee || !userAuth.employee.officeId) {
+      console.log('[MOBILE_LOGIN] Office not allotted for employee');
+      res.status(403).json({
+        success: false,
+        message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
+        errorCode: 'OFFICE_NOT_ALLOTTED'
+      });
+      return;
     }
 
     console.log('[MOBILE_LOGIN] Phase 4: Loading full profile data...');

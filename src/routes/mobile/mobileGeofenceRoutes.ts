@@ -13,9 +13,9 @@ const router = Router();
 // Apply auth middleware to protect all mobile geofence routes
 router.use(authMiddleware);
 
-// Restrict access to employees and HR managers
-const employeeRoles = ['EMPLOYEE', 'HR', 'SUPER_ADMIN', 'ADMIN'];
-router.use(roleMiddleware(employeeRoles));
+// Restrict access to mobile roles only (Store Manager, Salesman, Helper)
+const mobileRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER'];
+router.use(roleMiddleware(mobileRoles));
 
 /**
  * @swagger

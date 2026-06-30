@@ -16,11 +16,11 @@ const router = Router();
 // Apply authentication middleware to all routes
 router.use(authMiddleware);
 
-// GET /api/mobile/leave-balance/me - Get own leave balance
-router.get('/me', getMyLeaveBalance);
+// GET /api/mobile/leave-balance/me - Get own leave balance (mobile roles)
+router.get('/me', roleMiddleware([Role.STORE_MANAGER, Role.SALESMAN, Role.HELPER]), getMyLeaveBalance);
 
-// HR routes - require HR role
-router.use(roleMiddleware([Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]));
+// Management routes - require Store Manager or HR role
+router.use(roleMiddleware([Role.STORE_MANAGER, Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]));
 
 // GET /api/mobile/leave-balance/all - Get all employees' leave balances
 router.get('/all', getAllEmployeesLeaveBalances);
