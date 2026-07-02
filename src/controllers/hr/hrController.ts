@@ -1367,6 +1367,17 @@ export const createHREmployee = async (
       return;
     }
 
+     // Resolve designationId from designation name
+    let designationIdVal: number | null = null;
+    if (designation) {
+      const dbDesignation = await prisma.designation.findFirst({
+        where: { name: { equals: designation, mode: 'insensitive' } }
+      });
+      if (dbDesignation) {
+        designationIdVal = dbDesignation.id;
+      }
+    }
+
     // Generate employee code - use REPM format for HR roles
     const employeeCode = user.role === 'HR' ? `REPM${String(user.id).padStart(4, '0')}` : `EMP${String(user.id).padStart(4, '0')}`;
 
@@ -1378,6 +1389,7 @@ export const createHREmployee = async (
         firstName: firstName.trim(),
         lastName: (lastName || '').trim(),
         designation: designation || 'Employee',
+        designationId: designationIdVal,
         status,
         workModeId: workModeId || 'OFFICE',
         shiftTypeId: shiftTypeId || 'MORNING',
@@ -1543,12 +1555,24 @@ export const updateHREmployee = async (
       }
     }
     
+    // Resolve designationId from designation name
+    let designationIdVal: number | null = null;
+    if (designation) {
+      const dbDesignation = await prisma.designation.findFirst({
+        where: { name: { equals: designation, mode: 'insensitive' } }
+      });
+      if (dbDesignation) {
+        designationIdVal = dbDesignation.id;
+      }
+    }
+    
     const updatedEmployee = await prisma.employee.update({
       where: { id: employeeId },
       data: {
         firstName: firstName?.trim(),
         lastName: lastName?.trim(),
         designation,
+        designationId: designationIdVal,
         status,
         workModeId: finalWorkModeId,
         shiftTypeId: finalShiftTypeId,
