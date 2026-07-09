@@ -32,7 +32,9 @@ import mobileStoreRoutes from './routes/mobile/mobileStoreRoutes';
 import mobileDocumentRoutes from './routes/mobile/mobileDocumentRoutes';
 import mobileHolidayRoutes from './routes/mobile/mobileHolidayRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
+import policyRoutes from './routes/policyRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
+import attendanceGenerationPolicyRoutes from './routes/attendanceGenerationPolicyRoutes';
 import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoutes';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
@@ -109,6 +111,8 @@ app.use('/api/hr', hrRoutes);
 app.use('/api/leave-balance', leaveBalanceRoutes);
 app.use('/api/realtime/leave', realtimeLeaveRoutes);
 app.use('/api/attendance', comprehensiveAttendanceRoutes);
+app.use('/api', attendanceGenerationPolicyRoutes);
+app.use('/api', policyRoutes);
 
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {

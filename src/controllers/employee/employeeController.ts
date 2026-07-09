@@ -1456,6 +1456,7 @@ export const fetchEmployeeWallet = async (
         })),
         salary: salaryStructure ? {
           monthlySalary: salaryStructure.monthlySalary,
+          grossSalary: salaryStructure.grossSalary,
           basicSalary: salaryStructure.basicSalary,
           hra: salaryStructure.hra,
           medicalAllowance: salaryStructure.medicalAllowance,
@@ -1561,16 +1562,16 @@ export const fetchBankDetails = async (
       return;
     }
 
-    // For now, return placeholder bank details
-    // In a real implementation, this would come from a BankDetails model
+    // Fetch real bank details from the employee record
     res.json({
       success: true,
       bankDetails: {
-        bankName: 'HDFC Bank',
-        accountNumber: '50100234567890',
-        ifscCode: 'HDFC0001234',
+        bankName: employee.bankName || null,
+        accountNumber: employee.accountNumber || null,
+        ifscCode: employee.ifscCode || null,
+        accountType: employee.accountType || null,
+        branchName: employee.branchName || null,
         accountHolder: `${employee.firstName} ${employee.lastName}`,
-        branch: 'Mumbai Main Branch',
       },
     });
   } catch (error) {

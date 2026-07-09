@@ -75,6 +75,7 @@ model Office {
   attendances          Attendance[]
   employees            Employee[]
   shifts               Shift[]
+  policies             DeductionPolicy[]
 }
 
 model Department {
@@ -85,6 +86,7 @@ model Department {
   updatedAt DateTime   @updatedAt
   employees Employee[]
   commissionPolicies CommissionPolicy[] @relation("CommissionPolicies")
+  policies  DeductionPolicy[]
 }
 
 model Employee {
@@ -105,12 +107,20 @@ model Employee {
   officeId         Int?
   departmentId     Int?
   storeId          Int?
+  branchId         Int?
+  // Bank Details
+  bankName         String?
+  accountNumber    String?
+  ifscCode         String?
+  accountType      String?           @default("Savings")
+  branchName       String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   attendances      Attendance[]
   department       Department?       @relation(fields: [departmentId], references: [id])
   office           Office?           @relation(fields: [officeId], references: [id])
   store            Store?            @relation(fields: [storeId], references: [id])
+  branch           Branch?           @relation("BranchEmployees", fields: [branchId], references: [id])
   user             User?             @relation(fields: [userId], references: [id])
   expenses         Expense[]
   leaveRequests    LeaveRequest[]
@@ -554,6 +564,10 @@ model Branch {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   stores      Store[]
+  policies    DeductionPolicy[]
+  employees   Employee[]           @relation("BranchEmployees")
+
+  @@index([isActive])
 }
 
 model Store {
@@ -582,6 +596,7 @@ model SalaryStructure {
   id               Int      @id @default(autoincrement())
   employeeId       Int      @unique
   monthlySalary    Float    @default(0)
+  grossSalary      Float    @default(0)
   basicSalary      Float    @default(0)
   hra              Float    @default(0)
   medicalAllowance Float    @default(0)
@@ -861,5 +876,68 @@ model WorkMode {
   shiftAssignments ShiftAssignment[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+}
+
+
+model DeductionPolicy {
+  id                Int      @id @default(autoincrement())
+  name              String
+  type              String   // LATE_MARK, LEAVE, ABSENT
+  deductionType     String   // FIXED_AMOUNT, PERCENTAGE, PER_DAY
+  deductionValue    Float
+  maxDeduction      Float?   // Maximum deduction amount per month
+  applicableDays    String[] // Days this policy applies to (e.g., ["Monday", "Tuesday"])
+  branchId          Int?
+  departmentId      Int?
+  officeId          Int?
+  isActive          Boolean  @default(true)
+  effectiveFrom     DateTime @default(now())
+  effectiveTo       DateTime?
+  description       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  createdBy         String?
+  
+  branch            Branch?  @relation(fields: [branchId], references: [id])
+  department        Department? @relation(fields: [departmentId], references: [id])
+  office            Office? @relation(fields: [officeId], references: [id])
+
+  @@index([type])
+  @@index([branchId])
+  @@index([departmentId])
+  @@index([officeId])
+  @@index([isActive])
+}
+
+model AttendanceGenerationPolicy {
+  id                                Int      @id @default(autoincrement())
+  isEnabled                         Boolean  @default(false)
+  generationMode                    String   @default("MONTHLY") // DAILY, WEEKLY, MONTHLY
+  autoGenerateCurrentMonth          Boolean  @default(true)
+  autoGenerateFutureMonths          Boolean  @default(false)
+  numberOfFutureMonths              Int      @default(1)
+  payrollCutoffDate                 Int      @default(25) // Day of month (1-31)
+  attendanceFreezeDate             Int      @default(28) // Day of month (1-31)
+  autoGenerateWeeklyOffs            Boolean  @default(true)
+  autoApplyHolidays                 Boolean  @default(true)
+  autoApplyShiftCalendar            Boolean  @default(true)
+  autoMarkAbsentAfterWorkingHours   Boolean  @default(false)
+  autoApplyHalfDayRules            Boolean  @default(true)
+  autoApplyLateMarkRules           Boolean  @default(true)
+  autoApplyEarlyExitRules           Boolean  @default(true)
+  branchId                          Int?
+  departmentId                      Int?
+  officeId                          Int?
+  effectiveFrom                     DateTime @default(now())
+  effectiveTo                       DateTime?
+  description                       String?
+  createdAt                         DateTime @default(now())
+  updatedAt                         DateTime @updatedAt
+  createdBy                         String?
+
+  @@index([isEnabled])
+  @@index([branchId])
+  @@index([departmentId])
+  @@index([officeId])
 }
 

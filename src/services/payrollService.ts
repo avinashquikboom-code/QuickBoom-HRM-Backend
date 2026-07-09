@@ -79,9 +79,15 @@ class PayrollService {
       // Get attendance data for the month
       const attendanceData = await this.getAttendanceData(employeeId, month, year);
 
-      // Calculate base components
-      const baseSalary = salaryStructure.baseSalary;
-      const allowance = salaryStructure.hra + salaryStructure.da + salaryStructure.conveyance + salaryStructure.medical + salaryStructure.special;
+      // Calculate salary based on present days
+      // Formula: (baseSalary / workingDays) * presentDays
+      const dailySalary = salaryStructure.baseSalary / attendanceData.workingDays;
+      const calculatedBaseSalary = dailySalary * attendanceData.presentDays;
+
+      // Calculate allowance (pro-rated based on present days)
+      const totalAllowance = salaryStructure.hra + salaryStructure.da + salaryStructure.conveyance + salaryStructure.medical + salaryStructure.special;
+      const dailyAllowance = totalAllowance / attendanceData.workingDays;
+      const calculatedAllowance = dailyAllowance * attendanceData.presentDays;
       
       // Calculate overtime
       const overtime = this.calculateOvertime(attendanceData, salaryStructure);
@@ -90,10 +96,16 @@ class PayrollService {
       const bonus = await this.calculateBonus(employeeId, month, year);
       
       // Calculate gross salary
-      const grossSalary = baseSalary + allowance + overtime + bonus;
+      const grossSalary = calculatedBaseSalary + calculatedAllowance + overtime + bonus;
       
-      // Calculate deductions
-      const deductions = this.calculateDeductions(grossSalary, salaryStructure, attendanceData);
+      // Calculate statutory deductions
+      const statutoryDeductions = this.calculateDeductions(grossSalary, salaryStructure, attendanceData);
+      
+      // Calculate policy-based deductions (late marks, leaves, absences)
+      const policyDeductions = await this.applyPolicyDeductions(employeeId, attendanceData, grossSalary);
+      
+      // Total deductions
+      const deductions = statutoryDeductions + policyDeductions;
       
       // Calculate net salary
       const netSalary = grossSalary - deductions;
@@ -102,8 +114,8 @@ class PayrollService {
         employeeId,
         month,
         year,
-        baseSalary,
-        allowance,
+        baseSalary: calculatedBaseSalary,
+        allowance: calculatedAllowance,
         deductions,
         overtime,
         bonus,
@@ -358,19 +370,64 @@ class PayrollService {
         }
       });
 
-      const workingDays = new Date(year, month, 0).getDate();
+      // Get holidays for the month
+      const holidays = await prisma.holiday.findMany({
+        where: {
+          date: {
+            gte: startDate.toISOString(),
+            lte: endDate.toISOString()
+          }
+        }
+      });
+
+      // Get employee's office to calculate actual working days
+      const employee = await prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: { office: true }
+      });
+
+      const office = employee?.office;
+      const workingDaysInMonth = office?.workingDays?.length || 5; // Default to 5 days
+      const totalDaysInMonth = new Date(year, month, 0).getDate();
+      
+      // Calculate actual working days (excluding weekends and holidays)
+      let actualWorkingDays = 0;
+      for (let day = 1; day <= totalDaysInMonth; day++) {
+        const date = new Date(year, month - 1, day);
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+        const isWorkingDay = office?.workingDays?.includes(dayName) || false;
+        const isHoliday = holidays.some(h => new Date(h.date).toDateString() === date.toDateString());
+        
+        if (isWorkingDay && !isHoliday) {
+          actualWorkingDays++;
+        }
+      }
+
       const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
       const absentDays = attendance.filter(a => a.status === 'ABSENT').length;
       const leaveDays = attendance.filter(a => a.status === 'LEAVE').length;
+      
+      // Count late marks (check-in after office start time)
+      const officeStartTime = office?.workingHoursStart || '09:00';
+      const lateMarks = attendance.filter(a => {
+        if (a.checkIn && a.status === 'PRESENT') {
+          const checkInTime = new Date(a.checkIn).toTimeString().slice(0, 5);
+          return checkInTime > officeStartTime;
+        }
+        return false;
+      }).length;
       
       // Calculate overtime hours (placeholder)
       const overtimeHours = 0;
 
       return {
-        workingDays,
+        workingDays: actualWorkingDays,
+        totalDaysInMonth,
         presentDays,
         absentDays,
         leaveDays,
+        lateMarks,
+        holidays: holidays.length,
         overtimeHours
       };
     } catch (error) {
@@ -406,6 +463,114 @@ class PayrollService {
     deductions += absentDays * dailySalary * 0.5; // 50% deduction for absent days
 
     return deductions;
+  }
+
+  private async applyPolicyDeductions(employeeId: number, attendanceData: any, grossSalary: number): Promise<number> {
+    try {
+      // Get applicable policies for the employee
+      const employee = await prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: {
+          branch: true,
+          department: true,
+          office: true
+        }
+      });
+
+      if (!employee) return 0;
+
+      const policies = await prisma.deductionPolicy.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { branchId: employee.branchId },
+            { departmentId: employee.departmentId },
+            { officeId: employee.officeId },
+            { branchId: null, departmentId: null, officeId: null } // Global policies
+          ]
+        }
+      });
+
+      let policyDeductions = 0;
+
+      for (const policy of policies) {
+        const deduction = await this.calculatePolicyDeduction(policy, attendanceData, grossSalary);
+        policyDeductions += deduction;
+      }
+
+      return policyDeductions;
+    } catch (error) {
+      console.error('Apply policy deductions error:', error);
+      return 0;
+    }
+  }
+
+  private async calculatePolicyDeduction(policy: any, attendanceData: any, grossSalary: number): Promise<number> {
+    let deduction = 0;
+
+    switch (policy.type) {
+      case 'LATE_MARK':
+        deduction = this.calculateLateMarkDeduction(policy, attendanceData.lateMarks, grossSalary);
+        break;
+      case 'LEAVE':
+        deduction = this.calculateLeaveDeduction(policy, attendanceData.leaveDays, grossSalary);
+        break;
+      case 'ABSENT':
+        deduction = this.calculateAbsentDeduction(policy, attendanceData.absentDays, grossSalary);
+        break;
+    }
+
+    // Apply max deduction if set
+    if (policy.maxDeduction && deduction > policy.maxDeduction) {
+      deduction = policy.maxDeduction;
+    }
+
+    return deduction;
+  }
+
+  private calculateLateMarkDeduction(policy: any, lateMarks: number, grossSalary: number): number {
+    const { deductionType, deductionValue } = policy;
+
+    switch (deductionType) {
+      case 'FIXED_AMOUNT':
+        return lateMarks * deductionValue;
+      case 'PERCENTAGE':
+        return grossSalary * (deductionValue / 100);
+      case 'PER_DAY':
+        return lateMarks * deductionValue;
+      default:
+        return 0;
+    }
+  }
+
+  private calculateLeaveDeduction(policy: any, leaveDays: number, grossSalary: number): number {
+    const { deductionType, deductionValue } = policy;
+
+    switch (deductionType) {
+      case 'FIXED_AMOUNT':
+        return leaveDays * deductionValue;
+      case 'PERCENTAGE':
+        return grossSalary * (deductionValue / 100);
+      case 'PER_DAY':
+        return leaveDays * deductionValue;
+      default:
+        return 0;
+    }
+  }
+
+  private calculateAbsentDeduction(policy: any, absentDays: number, grossSalary: number): number {
+    const { deductionType, deductionValue } = policy;
+
+    switch (deductionType) {
+      case 'FIXED_AMOUNT':
+        return absentDays * deductionValue;
+      case 'PERCENTAGE':
+        return grossSalary * (deductionValue / 100);
+      case 'PER_DAY':
+        return absentDays * deductionValue;
+      default:
+        return 0;
+    }
   }
 
   private async savePayslip(calculation: PayrollCalculation): Promise<void> {

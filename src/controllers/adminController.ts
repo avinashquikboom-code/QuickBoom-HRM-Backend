@@ -738,11 +738,13 @@ export const createEmployee = async (
       const employerEsicRate = ssInput.employerEsicRate !== undefined ? Number(ssInput.employerEsicRate) : 3.25;
 
       const monthlySalary = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus;
+      const grossSalary = monthlySalary; // Gross salary is the total before deductions
 
       await prisma.salaryStructure.create({
         data: {
           employeeId: newEmployee.id,
           monthlySalary,
+          grossSalary,
           basicSalary,
           hra,
           medicalAllowance,

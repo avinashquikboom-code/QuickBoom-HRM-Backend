@@ -1975,3 +1975,85 @@ export const fetchAllEmployeesAttendance = async (
     res.status(500).json({ success: false, message: 'Failed to load attendance data.' });
   }
 };
+
+// Get monthly work schedule for employee
+export const getMonthlyWorkSchedule = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { month, year } = req.query;
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+      include: {
+        shift: true,
+        shiftType: true,
+        office: true,
+      },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    // Default to current month if not provided
+    const now = new Date();
+    const targetMonth = month ? parseInt(month as string) : now.getMonth() + 1;
+    const targetYear = year ? parseInt(year as string) : now.getFullYear();
+
+    // Get all days in the month
+    const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+    const schedule = [];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(targetYear, targetMonth - 1, day);
+      const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, etc.
+
+      // Check if it's a weekend (Saturday = 6, Sunday = 0)
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+      // Get shift details if available
+      let shiftDetails = null;
+      if (employee.shift && !isWeekend) {
+        shiftDetails = {
+          id: employee.shift.id,
+          name: employee.shift.name,
+          startTime: employee.shift.startTime,
+          endTime: employee.shift.endTime,
+          shiftType: employee.shiftType ? {
+            id: employee.shiftType.id,
+            name: employee.shiftType.name,
+          } : null,
+        };
+      }
+
+      schedule.push({
+        date: date.toISOString().split('T')[0],
+        dayOfWeek: dayOfWeek,
+        isWeekend: isWeekend,
+        shift: shiftDetails,
+        office: employee.office ? {
+          id: employee.office.id,
+          name: employee.office.name,
+          address: employee.office.address,
+        } : null,
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        month: targetMonth,
+        year: targetYear,
+        employee: {
+          id: employee.id,
+          employeeCode: employee.employeeCode,
+          name: `${employee.firstName} ${employee.lastName}`,
+          designation: employee.designation,
+        },
+        schedule: schedule,
+      },
+    });
+  } catch (error) {
+    console.error('Get monthly work schedule error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch work schedule.' });
+  }
+};

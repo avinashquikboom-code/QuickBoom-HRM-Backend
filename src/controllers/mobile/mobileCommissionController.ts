@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
+import { Role } from '@prisma/client';
 
 // Get commission dashboard stats for logged-in user
 export const getMobileCommissionDashboard = async (
@@ -8,6 +9,15 @@ export const getMobileCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
+    // Only Salesman can access commission
+    if (req.user?.role !== Role.SALESMAN) {
+      res.status(403).json({
+        success: false,
+        message: 'Commission data is only available for Salesman role.'
+      });
+      return;
+    }
+
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: { store: true }
@@ -129,6 +139,15 @@ export const getMobileCommissionTransactions = async (
   res: Response
 ): Promise<void> => {
   try {
+    // Only Salesman can access commission
+    if (req.user?.role !== Role.SALESMAN) {
+      res.status(403).json({
+        success: false,
+        message: 'Commission data is only available for Salesman role.'
+      });
+      return;
+    }
+
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id }
     });
@@ -244,6 +263,15 @@ export const getMobileCommissionSettlements = async (
   res: Response
 ): Promise<void> => {
   try {
+    // Only Salesman can access commission
+    if (req.user?.role !== Role.SALESMAN) {
+      res.status(403).json({
+        success: false,
+        message: 'Commission data is only available for Salesman role.'
+      });
+      return;
+    }
+
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id }
     });

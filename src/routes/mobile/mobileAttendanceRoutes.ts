@@ -12,7 +12,8 @@ import {
   downloadMyAttendanceReport,
   downloadAttendanceReport,
   requestAttendanceCorrection,
-  fetchAllEmployeesAttendance
+  fetchAllEmployeesAttendance,
+  getMonthlyWorkSchedule
 } from '../../controllers/mobile/mobileAttendanceController';
 
 const router = Router();
@@ -735,5 +736,69 @@ router.post('/correction', requestAttendanceCorrection);
  *         description: Server error
  */
 router.get('/all', fetchAllEmployeesAttendance);
+
+/**
+ * @swagger
+ * /api/mobile/attendance/schedule/monthly:
+ *   get:
+ *     summary: Get monthly work schedule for employee (Mobile)
+ *     tags: [Mobile - Attendance]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: month
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 12
+ *         description: Month number (1-12), defaults to current month
+ *       - in: query
+ *         name: year
+ *         schema:
+ *           type: integer
+ *         description: Year, defaults to current year
+ *     responses:
+ *       200:
+ *         description: Monthly work schedule retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     month:
+ *                       type: integer
+ *                     year:
+ *                       type: integer
+ *                     employee:
+ *                       type: object
+ *                     schedule:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           date:
+ *                             type: string
+ *                           dayOfWeek:
+ *                             type: integer
+ *                           isWeekend:
+ *                             type: boolean
+ *                           shift:
+ *                             type: object
+ *                           office:
+ *                             type: object
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Employee not found
+ *       500:
+ *         description: Server error
+ */
+router.get('/schedule/monthly', getMonthlyWorkSchedule);
 
 export default router;
