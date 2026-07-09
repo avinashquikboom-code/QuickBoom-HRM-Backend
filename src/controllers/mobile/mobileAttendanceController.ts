@@ -1983,8 +1983,20 @@ export const getMonthlyWorkSchedule = async (req: AuthenticatedRequest, res: Res
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: {
-        shift: true,
-        shiftType: true,
+        shiftAssignments: {
+          include: {
+            shift: true,
+          },
+          where: {
+            effectiveFrom: { lte: new Date() },
+            OR: [
+              { effectiveTo: null },
+              { effectiveTo: { gte: new Date() } },
+            ],
+          },
+          orderBy: { effectiveFrom: 'desc' },
+          take: 1,
+        },
         office: true,
       },
     });
@@ -2011,17 +2023,21 @@ export const getMonthlyWorkSchedule = async (req: AuthenticatedRequest, res: Res
       const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
       // Get shift details if available
-      let shiftDetails = null;
-      if (employee.shift && !isWeekend) {
+      let shiftDetails: {
+        id: number;
+        name: string;
+        startTime: string;
+        endTime: string;
+        shiftType: string | null;
+      } | null = null;
+      const currentShiftAssignment = employee.shiftAssignments && employee.shiftAssignments.length > 0 ? employee.shiftAssignments[0] : null;
+      if (currentShiftAssignment?.shift && !isWeekend) {
         shiftDetails = {
-          id: employee.shift.id,
-          name: employee.shift.name,
-          startTime: employee.shift.startTime,
-          endTime: employee.shift.endTime,
-          shiftType: employee.shiftType ? {
-            id: employee.shiftType.id,
-            name: employee.shiftType.name,
-          } : null,
+          id: currentShiftAssignment.shift.id,
+          name: currentShiftAssignment.shift.name,
+          startTime: currentShiftAssignment.shift.startTime,
+          endTime: currentShiftAssignment.shift.endTime,
+          shiftType: employee.shiftTypeId || null,
         };
       }
 
