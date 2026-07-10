@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "SalaryStructure" ADD COLUMN "grossSalary" DOUBLE PRECISION NOT NULL DEFAULT 0;

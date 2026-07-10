@@ -292,10 +292,20 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
   } catch (error) {
     const totalTime = Date.now() - startTime;
     console.error('[MOBILE_LOGIN] Error after', totalTime, 'ms:', error);
+    
+    // Include error details in development mode for debugging
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    
     res.status(500).json({
       success: false,
       message: 'Internal server error during mobile login.',
-      errorCode: 'SERVER_ERROR'
+      errorCode: 'SERVER_ERROR',
+      ...(isDevelopment && {
+        details: errorMessage,
+        stack: errorStack
+      })
     });
   }
 };
