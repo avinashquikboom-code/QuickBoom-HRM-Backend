@@ -91,7 +91,7 @@ export const createStore = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { name, code, address, city, state, country, pincode, phone, email } = req.body;
+    const { name, code, address, city, state, country, pincode, phone, email, maxPunchRadiusMeters, branchId } = req.body;
 
     if (!name || name.trim() === '') {
       res.status(400).json({ success: false, message: 'Store name is required.' });
@@ -112,6 +112,8 @@ export const createStore = async (
         pincode: pincode?.trim() || null,
         phone: phone?.trim() || null,
         email: email?.trim() || null,
+        maxPunchRadiusMeters: maxPunchRadiusMeters ? parseFloat(maxPunchRadiusMeters) : 50.0,
+        branchId: branchId ? parseInt(branchId as string, 10) : null,
       },
     });
 
@@ -136,7 +138,7 @@ export const updateStore = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, code, address, city, state, country, pincode, phone, email, isActive } = req.body;
+    const { name, code, address, city, state, country, pincode, phone, email, isActive, maxPunchRadiusMeters, branchId } = req.body;
 
     const storeId = parseInt(id as string, 10);
     if (isNaN(storeId)) {
@@ -162,6 +164,8 @@ export const updateStore = async (
         phone: phone?.trim() || null,
         email: email?.trim() || null,
         isActive: isActive !== undefined ? isActive : true,
+        maxPunchRadiusMeters: maxPunchRadiusMeters !== undefined && maxPunchRadiusMeters !== null && maxPunchRadiusMeters !== '' ? parseFloat(maxPunchRadiusMeters as string) : undefined,
+        branchId: branchId !== undefined ? (branchId ? parseInt(branchId as string, 10) : null) : undefined,
       },
     });
 

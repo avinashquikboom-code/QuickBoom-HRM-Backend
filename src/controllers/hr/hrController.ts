@@ -1336,7 +1336,10 @@ export const createHREmployee = async (
     accountNumber,
     ifscCode,
     accountType,
-    branchName
+    branchName,
+    storeId,
+    branchId,
+    customPunchRadius
   } = req.body;
 
   if (!email || !firstName) {
@@ -1405,6 +1408,9 @@ export const createHREmployee = async (
         ifscCode: ifscCode || null,
         accountType: accountType || 'Savings',
         branchName: branchName || null,
+        storeId: storeId ? parseInt(storeId, 10) : null,
+        branchId: branchId ? parseInt(branchId, 10) : null,
+        customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
       },
       include: {
         office: true,
@@ -1522,7 +1528,10 @@ export const updateHREmployee = async (
     accountNumber,
     ifscCode,
     accountType,
-    branchName
+    branchName,
+    storeId,
+    branchId,
+    customPunchRadius
   } = req.body;
 
   if (!id) {
@@ -1604,6 +1613,9 @@ export const updateHREmployee = async (
         ...(ifscCode !== undefined && { ifscCode: ifscCode || null }),
         ...(accountType !== undefined && { accountType: accountType || 'Savings' }),
         ...(branchName !== undefined && { branchName: branchName || null }),
+        ...(storeId !== undefined && { storeId: storeId ? parseInt(storeId, 10) : null }),
+        ...(branchId !== undefined && { branchId: branchId ? parseInt(branchId, 10) : null }),
+        ...(customPunchRadius !== undefined && { customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null }),
       },
       include: {
         office: true,

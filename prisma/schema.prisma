@@ -114,6 +114,7 @@ model Employee {
   ifscCode         String?
   accountType      String?           @default("Savings")
   branchName       String?
+  customPunchRadius Float?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   attendances      Attendance[]
@@ -560,6 +561,7 @@ model Branch {
   email       String?
   latitude    Float?
   longitude   Float?
+  maxPunchRadiusMeters Float? @default(50.0)
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -582,6 +584,7 @@ model Store {
   phone       String?
   email       String?
   branchId    Int?
+  maxPunchRadiusMeters Float? @default(50.0)
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

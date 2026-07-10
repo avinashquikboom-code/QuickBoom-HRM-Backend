@@ -46,83 +46,132 @@ class GeofenceService {
   }
 
   /**
-   * Check if user is within any office geofence
+   * Check if user is within any office, store, or branch geofence
    */
-  async checkGeofence(userLat: number, userLon: number, employeeOfficeId?: number): Promise<GeofenceResult> {
+  async checkGeofence(userLat: number, userLon: number, employeeId?: number, officeId?: number): Promise<GeofenceResult> {
     try {
-      // Get all active offices or specific office if provided
-      const offices = await prisma.office.findMany({
-        where: {
-          ...(employeeOfficeId ? { id: employeeOfficeId } : {}),
-          isActive: true
-        },
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          address: true,
-          latitude: true,
-          longitude: true,
-          idealRadiusMeters: true,
-          maxPunchRadiusMeters: true,
-          isActive: true
+      // Find the employee with their office, store, and branch relations
+      const employee = employeeId ? await prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: {
+          office: true,
+          store: { include: { branch: true } },
+          branch: true
         }
-      });
+      }) : null;
 
-      if (offices.length === 0) {
-        throw new Error('No active offices found');
+      const geofences: Array<{
+        type: 'office' | 'store' | 'branch';
+        id: number;
+        name: string;
+        latitude: number;
+        longitude: number;
+        maxRadius: number;
+      }> = [];
+
+      if (officeId) {
+        const office = await prisma.office.findUnique({
+          where: { id: officeId }
+        });
+        if (office && office.isActive) {
+          geofences.push({
+            type: 'office',
+            id: office.id,
+            name: office.name,
+            latitude: office.latitude,
+            longitude: office.longitude,
+            maxRadius: (employee && employee.customPunchRadius) || office.maxPunchRadiusMeters || 50.0
+          });
+        }
       }
 
-      // If employee has specific office, check only that office
-      if (employeeOfficeId) {
-        const office = offices[0];
-        const distance = this.calculateDistance(userLat, userLon, office.latitude, office.longitude);
-        const isWithin = distance <= office.maxPunchRadiusMeters;
-
-        return {
-          isWithinGeofence: isWithin,
-          distance,
-          officeId: office.id,
-          officeName: office.name,
-          maxRadius: office.maxPunchRadiusMeters,
-          coordinates: {
-            userLat,
-            userLon,
-            officeLat: office.latitude,
-            officeLon: office.longitude
-          }
-        };
-      }
-
-      // Check all offices and find the closest one
-      let closestOffice: OfficeGeofence | null = null;
-      let minDistance = Infinity;
-      let isWithinAnyGeofence = false;
-
-      for (const office of offices) {
-        const distance = this.calculateDistance(userLat, userLon, office.latitude, office.longitude);
+      if (employee) {
+        if (!officeId && employee.office && employee.office.isActive) {
+          geofences.push({
+            type: 'office',
+            id: employee.office.id,
+            name: employee.office.name,
+            latitude: employee.office.latitude,
+            longitude: employee.office.longitude,
+            maxRadius: employee.customPunchRadius || employee.office.maxPunchRadiusMeters || 50.0
+          });
+        }
         
+        if (employee.store && employee.store.isActive && employee.store.branch && employee.store.branch.isActive) {
+          if (employee.store.branch.latitude !== null && employee.store.branch.longitude !== null) {
+            geofences.push({
+              type: 'store',
+              id: employee.store.id,
+              name: `Store: ${employee.store.name}`,
+              latitude: employee.store.branch.latitude,
+              longitude: employee.store.branch.longitude,
+              maxRadius: employee.customPunchRadius || employee.store.maxPunchRadiusMeters || employee.store.branch.maxPunchRadiusMeters || 50.0
+            });
+          }
+        }
+        
+        if (employee.branch && employee.branch.isActive) {
+          if (employee.branch.latitude !== null && employee.branch.longitude !== null) {
+            geofences.push({
+              type: 'branch',
+              id: employee.branch.id,
+              name: `Branch: ${employee.branch.name}`,
+              latitude: employee.branch.latitude,
+              longitude: employee.branch.longitude,
+              maxRadius: employee.customPunchRadius || employee.branch.maxPunchRadiusMeters || 50.0
+            });
+          }
+        }
+      }
+
+      // If no specific employee/office geofences found, fall back to checking all active offices
+      if (geofences.length === 0) {
+        const activeOffices = await prisma.office.findMany({
+          where: { isActive: true }
+        });
+        for (const office of activeOffices) {
+          geofences.push({
+            type: 'office',
+            id: office.id,
+            name: office.name,
+            latitude: office.latitude,
+            longitude: office.longitude,
+            maxRadius: office.maxPunchRadiusMeters
+          });
+        }
+      }
+
+      if (geofences.length === 0) {
+        throw new Error('No active office, store, or branch geofences found');
+      }
+
+      // Check all available geofences and find the closest one
+      let closestGeofence = geofences[0];
+      let minDistance = Infinity;
+      let isWithinGeofence = false;
+
+      for (const gf of geofences) {
+        const distance = this.calculateDistance(userLat, userLon, gf.latitude, gf.longitude);
         if (distance < minDistance) {
           minDistance = distance;
-          closestOffice = office;
+          closestGeofence = gf;
         }
-
-        if (distance <= office.maxPunchRadiusMeters) {
-          isWithinAnyGeofence = true;
+        if (distance <= gf.maxRadius) {
+          isWithinGeofence = true;
         }
       }
 
       return {
-        isWithinGeofence: isWithinAnyGeofence,
+        isWithinGeofence,
         distance: minDistance,
-        officeId: closestOffice?.id,
-        officeName: closestOffice?.name,
-        maxRadius: closestOffice?.maxPunchRadiusMeters || 0,
+        officeId: closestGeofence.type === 'office' ? closestGeofence.id : undefined,
+        officeName: closestGeofence.name,
+        maxRadius: closestGeofence.maxRadius,
         coordinates: {
           userLat,
           userLon,
-          officeLat: closestOffice?.latitude || 0,
-          officeLon: closestOffice?.longitude || 0
+          officeLat: closestGeofence.latitude,
+          officeLon: closestGeofence.longitude
         }
       };
     } catch (error) {

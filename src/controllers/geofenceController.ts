@@ -41,7 +41,8 @@ export const checkGeofence = async (
     const result = await geofenceService.checkGeofence(
       latitude,
       longitude,
-      officeId || employee.officeId
+      employee.id,
+      officeId ? parseInt(officeId, 10) : undefined
     );
 
     // Fetch enableGeofence from settings
@@ -133,7 +134,7 @@ export const getGeofenceStatus = async (
     const result = await geofenceService.checkGeofence(
       parseFloat(latitude as string),
       parseFloat(longitude as string),
-      employee.officeId || undefined
+      employee.id
     );
 
     // Fetch enableGeofence from settings

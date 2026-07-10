@@ -93,7 +93,7 @@ export const createBranch = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { name, code, address, city, state, country, pincode, phone, email, officeId, latitude, longitude } = req.body;
+    const { name, code, address, city, state, country, pincode, phone, email, officeId, latitude, longitude, maxPunchRadiusMeters } = req.body;
 
     if (!name || name.trim() === '') {
       res.status(400).json({ success: false, message: 'Branch name is required.' });
@@ -116,6 +116,7 @@ export const createBranch = async (
         email: email?.trim() || null,
         latitude: latitude ? parseFloat(latitude) : null,
         longitude: longitude ? parseFloat(longitude) : null,
+        maxPunchRadiusMeters: maxPunchRadiusMeters ? parseFloat(maxPunchRadiusMeters) : 50.0,
       },
     });
 
@@ -140,7 +141,7 @@ export const updateBranch = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, code, address, city, state, country, pincode, phone, email, isActive, latitude, longitude } = req.body;
+    const { name, code, address, city, state, country, pincode, phone, email, isActive, latitude, longitude, maxPunchRadiusMeters } = req.body;
 
     const branchId = parseInt(id as string, 10);
     if (isNaN(branchId)) {
@@ -148,27 +149,30 @@ export const updateBranch = async (
       return;
     }
 
-    if (!name || name.trim() === '') {
-      res.status(400).json({ success: false, message: 'Branch name is required.' });
-      return;
+    const updateData: any = {};
+    if (name !== undefined) {
+      if (!name || name.trim() === '') {
+        res.status(400).json({ success: false, message: 'Branch name is required.' });
+        return;
+      }
+      updateData.name = name.trim();
     }
+    if (code !== undefined) updateData.code = code?.trim() || null;
+    if (address !== undefined) updateData.address = address?.trim() || null;
+    if (city !== undefined) updateData.city = city?.trim() || null;
+    if (state !== undefined) updateData.state = state?.trim() || null;
+    if (country !== undefined) updateData.country = country?.trim() || 'India';
+    if (pincode !== undefined) updateData.pincode = pincode?.trim() || null;
+    if (phone !== undefined) updateData.phone = phone?.trim() || null;
+    if (email !== undefined) updateData.email = email?.trim() || null;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    if (latitude !== undefined) updateData.latitude = latitude !== null && latitude !== '' ? parseFloat(latitude as string) : null;
+    if (longitude !== undefined) updateData.longitude = longitude !== null && longitude !== '' ? parseFloat(longitude as string) : null;
+    if (maxPunchRadiusMeters !== undefined) updateData.maxPunchRadiusMeters = maxPunchRadiusMeters !== null && maxPunchRadiusMeters !== '' ? parseFloat(maxPunchRadiusMeters as string) : 50.0;
 
     const branch = await prisma.branch.update({
       where: { id: branchId },
-      data: {
-        name: name.trim(),
-        code: code?.trim() || null,
-        address: address?.trim() || null,
-        city: city?.trim() || null,
-        state: state?.trim() || null,
-        country: country?.trim() || 'India',
-        pincode: pincode?.trim() || null,
-        phone: phone?.trim() || null,
-        email: email?.trim() || null,
-        isActive: isActive !== undefined ? isActive : true,
-        latitude: latitude ? parseFloat(latitude) : null,
-        longitude: longitude ? parseFloat(longitude) : null,
-      },
+      data: updateData,
     });
 
     res.json({

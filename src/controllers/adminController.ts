@@ -339,7 +339,10 @@ export const updateEmployee = async (
       accountNumber,
       ifscCode,
       accountType,
-      branchName
+      branchName,
+      storeId,
+      branchId,
+      customPunchRadius
     } = req.body;
 
     if (!id) {
@@ -395,6 +398,9 @@ export const updateEmployee = async (
     if (ifscCode !== undefined) updateData.ifscCode = ifscCode || null;
     if (accountType !== undefined) updateData.accountType = accountType || 'Savings';
     if (branchName !== undefined) updateData.branchName = branchName || null;
+    if (storeId !== undefined) updateData.storeId = storeId ? parseInt(storeId) : null;
+    if (branchId !== undefined) updateData.branchId = branchId ? parseInt(branchId) : null;
+    if (customPunchRadius !== undefined) updateData.customPunchRadius = customPunchRadius ? parseFloat(customPunchRadius) : null;
 
     const updatedEmployee = await prisma.employee.update({
       where: { id: employeeId },
@@ -561,7 +567,10 @@ export const createEmployee = async (
     accountNumber,
     ifscCode,
     accountType,
-    branchName
+    branchName,
+    storeId,
+    branchId,
+    customPunchRadius
   } = req.body;
 
   if ((!userId && (!email || !password)) || !firstName) {
@@ -703,6 +712,9 @@ export const createEmployee = async (
         ifscCode: ifscCode || null,
         accountType: accountType || 'Savings',
         branchName: branchName || null,
+        storeId: storeId ? parseInt(storeId, 10) : null,
+        branchId: branchId ? parseInt(branchId, 10) : null,
+        customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
       },
       include: {
         office: true,

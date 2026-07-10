@@ -245,72 +245,48 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     // Enhanced debugging for geofence
     console.log('📍 Geofence Debug Info:', {
       userLocation: { latitude, longitude },
-      officeLocation: {
-        latitude: employee.office.latitude,
-        longitude: employee.office.longitude,
-        maxRadius: employee.office.maxPunchRadiusMeters
-      },
       environment: process.env.NODE_ENV
     });
     
-    // Handle null/undefined location values or missing office coordinates
-    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined ||
-        !employee.office.latitude || !employee.office.longitude) {
-      console.log('⚠️ Location coordinates are null/undefined or office coordinates missing. Using office location as fallback.');
-      punchLat = employee.office.latitude || 0;
-      punchLon = employee.office.longitude || 0;
-    } else if (latitude === 0 && longitude === 0) {
-      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing and mocking with office location.');
-      punchLat = employee.office.latitude;
-      punchLon = employee.office.longitude;
-    } else {
-      const distance = calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude);
-      const maxRadius = employee.office.maxPunchRadiusMeters || 25; // Default to 25m if not set
-      
-      console.log('📏 Distance Calculation:', {
-        distance: Math.round(distance),
-        maxRadius: maxRadius,
-        isWithinRadius: distance <= maxRadius
-      });
-      
-      // Bypass geofence check for development/testing or if radius is too small
-      const isWithinRadius = process.env.NODE_ENV === 'production' 
-        ? distance <= maxRadius 
-        : distance <= (maxRadius * 50); // 50x more lenient in development for testing
-
-      if (!enableGeofence) {
-        console.log('⚠️ Geofence validation is disabled in settings. Bypassing check.');
-      } else if (!isWithinRadius) {
-        console.log('❌ Geofence check failed:', {
-          distance: Math.round(distance),
-          maxRadius: maxRadius,
-          environment: process.env.NODE_ENV
-        });
+    if (enableGeofence) {
+      if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+        console.log('⚠️ Location coordinates are null/undefined. Using office location as fallback.');
+        punchLat = employee.office.latitude || 0;
+        punchLon = employee.office.longitude || 0;
+      } else if (latitude === 0 && longitude === 0) {
+        console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check.');
+        punchLat = employee.office.latitude || 0;
+        punchLon = employee.office.longitude || 0;
+      } else {
+        const geofenceResult = await geofenceService.checkGeofence(latitude, longitude, employee.id);
         
-        // In development, allow punch in even if outside geofence with a warning
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('⚠️ Development mode: Allowing punch in despite geofence failure for testing');
-          punchLat = latitude;
-          punchLon = longitude;
-        } else {
+        console.log('📏 Geofence Service Result:', {
+          isWithinGeofence: geofenceResult.isWithinGeofence,
+          distance: Math.round(geofenceResult.distance),
+          maxRadius: geofenceResult.maxRadius,
+          officeName: geofenceResult.officeName
+        });
+
+        const isWithinRadius = process.env.NODE_ENV === 'production' 
+          ? geofenceResult.isWithinGeofence 
+          : geofenceResult.distance <= (geofenceResult.maxRadius * 50); // 50x more lenient in development
+
+        if (!isWithinRadius) {
           res.status(400).json({
             success: false,
-            message: `Location is outside the allowed geofence. Distance: ${Math.round(distance)}m, Max allowed: ${maxRadius}m`,
+            message: `Location is outside the allowed geofence. Distance: ${Math.round(geofenceResult.distance)}m, Max allowed: ${geofenceResult.maxRadius}m`,
             errorCode: 'OUTSIDE_GEOFENCE',
             data: {
-              distance: Math.round(distance),
-              maxRadius: maxRadius,
-              userLocation: { latitude, longitude },
-              officeLocation: {
-                latitude: employee.office.latitude,
-                longitude: employee.office.longitude
-              }
+              distance: Math.round(geofenceResult.distance),
+              maxRadius: geofenceResult.maxRadius,
+              userLocation: { latitude, longitude }
             }
           });
           return;
         }
-      } else {
-        console.log('✅ Geofence check passed');
+        
+        punchLat = latitude;
+        punchLon = longitude;
       }
     }
     
@@ -535,77 +511,53 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     // Enhanced debugging for geofence
     console.log('📍 Punch Out Geofence Debug Info:', {
       userLocation: { latitude, longitude },
-      officeLocation: {
-        latitude: employee.office?.latitude,
-        longitude: employee.office?.longitude,
-        maxRadius: employee.office?.maxPunchRadiusMeters
-      },
       environment: process.env.NODE_ENV
     });
     
-    // Handle null/undefined location values or missing office coordinates for punch out
-    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined ||
-        !employee.office?.latitude || !employee.office?.longitude) {
-      console.log('⚠️ Location coordinates are null/undefined or office coordinates missing for punch out. Using punch-in location as fallback.');
-      punchLat = attendance.latitude || employee.office?.latitude || 0;
-      punchLon = attendance.longitude || employee.office?.longitude || 0;
-    } else if (latitude === 0 && longitude === 0) {
-      console.log('⚠️ Simulator location (0.0) detected for punch out. Bypassing geofence check.');
-      punchLat = attendance.latitude || employee.office?.latitude || 0;
-      punchLon = attendance.longitude || employee.office?.longitude || 0;
-    } else {
-      const distance = calculateDistance(latitude, longitude, employee.office?.latitude || 0, employee.office?.longitude || 0);
-      const maxRadius = employee.office?.maxPunchRadiusMeters || 25; // Default to 25m if not set
-      
-      console.log('📏 Punch Out Distance Calculation:', {
-        distance: Math.round(distance),
-        maxRadius: maxRadius,
-        isWithinRadius: distance <= maxRadius
-      });
-      
-      // Bypass geofence check for development/testing or if radius is too small
-      const isWithinRadius = process.env.NODE_ENV === 'production' 
-        ? distance <= maxRadius 
-        : distance <= (maxRadius * 50); // 50x more lenient in development for testing
-
-      if (!enableGeofence || !enablePunchOutGeofence) {
-        console.log('⚠️ Geofence validation is disabled in settings for punch out. Bypassing check.');
-        punchLat = latitude;
-        punchLon = longitude;
-      } else if (!isWithinRadius) {
-        console.log('❌ Punch Out Geofence check failed:', {
-          distance: Math.round(distance),
-          maxRadius: maxRadius,
-          environment: process.env.NODE_ENV
-        });
+    if (enableGeofence && enablePunchOutGeofence) {
+      if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+        console.log('⚠️ Location coordinates are null/undefined for punch out. Using punch-in location as fallback.');
+        punchLat = attendance.latitude || (employee.office ? employee.office.latitude : 0);
+        punchLon = attendance.longitude || (employee.office ? employee.office.longitude : 0);
+      } else if (latitude === 0 && longitude === 0) {
+        console.log('⚠️ Simulator location (0.0) detected for punch out. Bypassing geofence check.');
+        punchLat = attendance.latitude || (employee.office ? employee.office.latitude : 0);
+        punchLon = attendance.longitude || (employee.office ? employee.office.longitude : 0);
+      } else {
+        const geofenceResult = await geofenceService.checkGeofence(latitude, longitude, employee.id);
         
-        // In development, allow punch out even if outside geofence with a warning
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('⚠️ Development mode: Allowing punch out despite geofence failure for testing');
-          punchLat = latitude;
-          punchLon = longitude;
-        } else {
+        console.log('📏 Geofence Service Result for Punch Out:', {
+          isWithinGeofence: geofenceResult.isWithinGeofence,
+          distance: Math.round(geofenceResult.distance),
+          maxRadius: geofenceResult.maxRadius,
+          officeName: geofenceResult.officeName
+        });
+
+        const isWithinRadius = process.env.NODE_ENV === 'production' 
+          ? geofenceResult.isWithinGeofence 
+          : geofenceResult.distance <= (geofenceResult.maxRadius * 50); // 50x more lenient in development
+
+        if (!isWithinRadius) {
           res.status(400).json({
             success: false,
-            message: `Location is outside the allowed geofence for punch out. Distance: ${Math.round(distance)}m, Max allowed: ${maxRadius}m`,
+            message: `Location is outside the allowed geofence for punch out. Distance: ${Math.round(geofenceResult.distance)}m, Max allowed: ${geofenceResult.maxRadius}m`,
             errorCode: 'OUTSIDE_GEOFENCE',
             data: {
-              distance: Math.round(distance),
-              maxRadius: maxRadius,
-              userLocation: { latitude, longitude },
-              officeLocation: {
-                latitude: employee.office?.latitude || 0,
-                longitude: employee.office?.longitude || 0
-              }
+              distance: Math.round(geofenceResult.distance),
+              maxRadius: geofenceResult.maxRadius,
+              userLocation: { latitude, longitude }
             }
           });
           return;
         }
-      } else {
+        
         punchLat = latitude;
         punchLon = longitude;
-        console.log('✅ Punch Out Geofence check passed');
       }
+    } else {
+      console.log('⚠️ Geofence validation is disabled for punch out. Bypassing check.');
+      punchLat = latitude || attendance.latitude || 0;
+      punchLon = longitude || attendance.longitude || 0;
     }
 
     // Calculate total break time including current break if any
