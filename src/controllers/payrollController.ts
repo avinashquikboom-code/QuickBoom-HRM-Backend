@@ -580,3 +580,247 @@ export const getPayrollDashboard = async (
     });
   }
 };
+
+// Admin-specific endpoints for frontend
+export const getAdminPayrollStats = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { month, year } = req.query as { month?: string, year?: string };
+    
+    const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
+    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+
+    const stats = await payrollService.getPayrollStats(targetMonth, targetYear);
+    
+    // Transform to match frontend expectations
+    const transformedStats = {
+      mtdVolume: stats.summary?.total_net_salary || 0,
+      disbursed: stats.summary?.total_net_salary || 0,
+      pending: stats.summary?.total_net_salary || 0,
+      errors: 0
+    };
+
+    // Get trend data for last 5 months
+    const trendData = [];
+    for (let i = 4; i >= 0; i--) {
+      const trendMonth = new Date();
+      trendMonth.setMonth(trendMonth.getMonth() - i);
+      const m = trendMonth.getMonth() + 1;
+      const y = trendMonth.getFullYear();
+      const monthStats = await payrollService.getPayrollStats(m, y);
+      trendData.push({
+        name: trendMonth.toLocaleDateString('en-US', { month: 'short' }),
+        amount: monthStats.summary?.total_net_salary || 0,
+        trend: 0
+      });
+    }
+
+    res.json({
+      success: true,
+      stats: transformedStats,
+      trend: trendData
+    });
+  } catch (error) {
+    console.error('Get admin payroll stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get admin payroll stats.',
+      errorCode: 'GET_ADMIN_PAYROLL_STATS_ERROR'
+    });
+  }
+};
+
+export const getAdminPayrollRuns = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { limit = '50' } = req.query as { limit: string };
+    const limitNum = parseInt(limit);
+
+    const runs = await payrollService.getPayrollRuns(limitNum);
+    
+    // Transform to match frontend expectations
+    const transformedRuns = runs.map(run => ({
+      id: run.id,
+      company: 'System Generated',
+      employees: run.totalEmployees,
+      totalAmount: `₹${run.totalAmount.toLocaleString('en-IN')}`,
+      status: run.status,
+      date: new Date(run.startedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+    }));
+
+    res.json({
+      success: true,
+      runs: transformedRuns
+    });
+  } catch (error) {
+    console.error('Get admin payroll runs error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get admin payroll runs.',
+      errorCode: 'GET_ADMIN_PAYROLL_RUNS_ERROR'
+    });
+  }
+};
+
+export const getAdminPayrollSlips = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { month } = req.query as { month?: string };
+    
+    if (!month) {
+      res.status(400).json({
+        success: false,
+        message: 'Month parameter is required.',
+        errorCode: 'MISSING_MONTH'
+      });
+      return;
+    }
+
+    const [year, monthNum] = month.split('-').map(Number);
+    
+    const slips = await prisma.payslip.findMany({
+      where: {
+        month: monthNum,
+        year: year
+      },
+      include: {
+        employee: {
+          include: {
+            department: true,
+            office: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Transform to match frontend expectations
+    const transformedSlips = slips.map(slip => ({
+      id: slip.employeeId,
+      employeeCode: slip.employee.employeeCode,
+      name: `${slip.employee.firstName} ${slip.employee.lastName}`,
+      designation: slip.employee.designation || 'Employee',
+      department: slip.employee.department?.name || 'General',
+      office: slip.employee.office?.name || 'Main Office',
+      baseSalary: slip.baseSalary,
+      netSalary: slip.netSalary,
+      allowance: slip.allowance,
+      deductions: slip.deductions,
+      status: slip.status === 'Approved' ? 'Approved' : 'Pending Approval'
+    }));
+
+    res.json({
+      success: true,
+      slips: transformedSlips
+    });
+  } catch (error) {
+    console.error('Get admin payroll slips error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get admin payroll slips.',
+      errorCode: 'GET_ADMIN_PAYROLL_SLIPS_ERROR'
+    });
+  }
+};
+
+export const approveAdminPayslip = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { employeeId, month, year } = req.body;
+
+    if (!employeeId || !month || !year) {
+      res.status(400).json({
+        success: false,
+        message: 'Employee ID, month, and year are required.',
+        errorCode: 'MISSING_REQUIRED_FIELDS'
+      });
+      return;
+    }
+
+    // Update payslip status
+    const payslip = await prisma.payslip.updateMany({
+      where: {
+        employeeId: parseInt(employeeId),
+        month: parseInt(month),
+        year: parseInt(year)
+      },
+      data: {
+        status: 'Approved',
+        updatedAt: new Date()
+      }
+    });
+
+    if (payslip.count === 0) {
+      res.status(404).json({
+        success: false,
+        message: 'Payslip not found.',
+        errorCode: 'PAYSLIP_NOT_FOUND'
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: 'Salary slip approved and generated successfully!'
+    });
+  } catch (error) {
+    console.error('Approve admin payslip error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to approve salary slip.',
+      errorCode: 'APPROVE_ADMIN_PAYSLIP_ERROR'
+    });
+  }
+};
+
+export const bulkDisbursePayroll = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    // Get all approved payslips for current month
+    const currentMonth = new Date().getMonth() + 1;
+    const currentYear = new Date().getFullYear();
+
+    const approvedPayslips = await prisma.payslip.findMany({
+      where: {
+        month: currentMonth,
+        year: currentYear,
+        status: 'Approved'
+      }
+    });
+
+    // Update status to Paid
+    await prisma.payslip.updateMany({
+      where: {
+        month: currentMonth,
+        year: currentYear,
+        status: 'Approved'
+      },
+      data: {
+        status: 'Paid',
+        updatedAt: new Date()
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Disbursement completed successfully! Processed ${approvedPayslips.length} payslips.`
+    });
+  } catch (error) {
+    console.error('Bulk disburse payroll error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process bulk disbursement.',
+      errorCode: 'BULK_DISBURSE_PAYROLL_ERROR'
+    });
+  }
+};

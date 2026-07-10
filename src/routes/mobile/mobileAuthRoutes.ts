@@ -8,7 +8,8 @@ import {
   updateMobileProfile,
   mobileLogoutAll,
   uploadMobileAvatar,
-  removeMobileAvatar
+  removeMobileAvatar,
+  fetchMobileDepartments
 } from '../../controllers/mobile/mobileAuthController';
 import { forgotPassword as adminForgotPassword } from '../../controllers/adminController';
 
@@ -287,6 +288,7 @@ router.post('/logout-all', mobileLogoutAll);
  */
 router.get('/profile', getMobileProfile);
 router.put('/profile', updateMobileProfile);
+router.get('/departments', fetchMobileDepartments);
 router.post('/profile/avatar', uploadMobileAvatar);
 router.delete('/profile/avatar', removeMobileAvatar);
 router.put('/change-password', changeMobilePassword);

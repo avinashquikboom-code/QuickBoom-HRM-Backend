@@ -499,6 +499,9 @@ export const getMobileProfile = async (req: AuthenticatedRequest, res: Response)
         designation: user.employee.designation,
         status: user.employee.status,
         department: user.employee.department,
+        departmentId: user.employee.departmentId,
+        shiftTypeId: user.employee.shiftTypeId,
+        workModeId: user.employee.workModeId,
         salary: user.employee.salaryStructure ? user.employee.salaryStructure.monthlySalary : 0,
         office: user.employee.office ? {
           id: user.employee.office.id,
@@ -601,11 +604,14 @@ export const updateMobileProfile = async (
       isHandicapped,
       currentAddress,
       permanentAddress,
+      departmentId,
+      shiftTypeId,
+      workModeId,
     } = req.body;
 
     const user = await prisma.user.findUnique({
       where: { id: req.user?.id },
-      include: { profile: true },
+      include: { profile: true, employee: true },
     });
 
     if (!user) {
@@ -635,6 +641,24 @@ export const updateMobileProfile = async (
         ...(permanentAddress !== undefined && { permanentAddress }),
       },
     });
+
+    // Update employee-level department/shift/work mode if provided
+    if (user.employee) {
+      const employeeUpdateData: any = {};
+      if (departmentId !== undefined) {
+        const parsedDepartmentId = parseInt(departmentId as string, 10);
+        employeeUpdateData.departmentId = isNaN(parsedDepartmentId) ? null : parsedDepartmentId;
+      }
+      if (shiftTypeId !== undefined) employeeUpdateData.shiftTypeId = shiftTypeId;
+      if (workModeId !== undefined) employeeUpdateData.workModeId = workModeId;
+
+      if (Object.keys(employeeUpdateData).length > 0) {
+        await prisma.employee.update({
+          where: { id: user.employee.id },
+          data: employeeUpdateData,
+        });
+      }
+    }
 
     res.json({
       success: true,
@@ -771,5 +795,34 @@ export const removeMobileAvatar = async (
   } catch (error) {
     console.error('Remove mobile avatar error:', error);
     res.status(500).json({ success: false, message: 'Failed to remove avatar.' });
+  }
+};
+
+// Fetch all departments for mobile profile selection
+export const fetchMobileDepartments = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const departments = await prisma.department.findMany({
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      departments,
+    });
+  } catch (error) {
+    console.error('Fetch mobile departments error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch departments.',
+      errorCode: 'DEPARTMENTS_FETCH_ERROR',
+    });
   }
 };

@@ -1506,11 +1506,17 @@ export const updateHREmployee = async (
     workModeId,
     shiftTypeId,
     shiftId,
-    effectiveFrom
+    effectiveFrom,
+    password
   } = req.body;
 
   if (!id) {
     res.status(400).json({ success: false, message: 'Employee ID is required.' });
+    return;
+  }
+
+  if (password !== undefined && password !== null && String(password).trim() !== '' && String(password).trim().length < 6) {
+    res.status(400).json({ success: false, message: 'Password must be at least 6 characters long.' });
     return;
   }
 
@@ -1608,6 +1614,15 @@ export const updateHREmployee = async (
         where: { userId: updatedEmployee.userId },
         data: profileUpdateData,
       });
+
+      // Update password if HR provided a new one
+      if (password !== undefined && password !== null && String(password).trim() !== '') {
+        const hashedPassword = await securityService.hashPassword(password.trim());
+        await prisma.user.update({
+          where: { id: updatedEmployee.userId },
+          data: { password: hashedPassword },
+        });
+      }
     }
 
     res.json({
