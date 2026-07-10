@@ -16,8 +16,8 @@ const router = Router();
 // Apply authentication middleware to all routes
 router.use(authMiddleware);
 
-// GET /api/mobile/leave-balance/me - Get own leave balance (mobile roles)
-router.get('/me', roleMiddleware([Role.STORE_MANAGER, Role.SALESMAN, Role.HELPER]), getMyLeaveBalance);
+// GET /api/mobile/leave-balance/me - Get own leave balance (allow all roles)
+router.get('/me', roleMiddleware([Role.STORE_MANAGER, Role.SALESMAN, Role.HELPER, Role.EMPLOYEE, Role.HR, Role.SUPER_ADMIN, Role.ADMIN]), getMyLeaveBalance);
 
 // Management routes - require Store Manager or HR role
 router.use(roleMiddleware([Role.STORE_MANAGER, Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]));

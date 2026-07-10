@@ -1331,7 +1331,12 @@ export const createHREmployee = async (
     workModeId,
     shiftTypeId,
     shiftId,
-    effectiveFrom
+    effectiveFrom,
+    bankName,
+    accountNumber,
+    ifscCode,
+    accountType,
+    branchName
   } = req.body;
 
   if (!email || !firstName) {
@@ -1395,6 +1400,11 @@ export const createHREmployee = async (
         shiftTypeId: shiftTypeId || 'MORNING',
         officeId: officeId ? parseInt(officeId, 10) : null,
         departmentId: departmentId ? parseInt(departmentId, 10) : null,
+        bankName: bankName || null,
+        accountNumber: accountNumber || null,
+        ifscCode: ifscCode || null,
+        accountType: accountType || 'Savings',
+        branchName: branchName || null,
       },
       include: {
         office: true,
@@ -1507,7 +1517,12 @@ export const updateHREmployee = async (
     shiftTypeId,
     shiftId,
     effectiveFrom,
-    password
+    password,
+    bankName,
+    accountNumber,
+    ifscCode,
+    accountType,
+    branchName
   } = req.body;
 
   if (!id) {
@@ -1584,6 +1599,11 @@ export const updateHREmployee = async (
         shiftTypeId: finalShiftTypeId,
         officeId: officeId ? parseInt(officeId, 10) : null,
         departmentId: departmentId ? parseInt(departmentId, 10) : null,
+        ...(bankName !== undefined && { bankName: bankName || null }),
+        ...(accountNumber !== undefined && { accountNumber: accountNumber || null }),
+        ...(ifscCode !== undefined && { ifscCode: ifscCode || null }),
+        ...(accountType !== undefined && { accountType: accountType || 'Savings' }),
+        ...(branchName !== undefined && { branchName: branchName || null }),
       },
       include: {
         office: true,

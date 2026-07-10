@@ -325,7 +325,22 @@ export const updateEmployee = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { firstName, lastName, designation, status, officeId, departmentId, shiftId, workMode, shiftType } = req.body;
+    const { 
+      firstName, 
+      lastName, 
+      designation, 
+      status, 
+      officeId, 
+      departmentId, 
+      shiftId, 
+      workMode, 
+      shiftType,
+      bankName,
+      accountNumber,
+      ifscCode,
+      accountType,
+      branchName
+    } = req.body;
 
     if (!id) {
       res.status(400).json({ success: false, message: 'Employee ID is required.' });
@@ -375,6 +390,11 @@ export const updateEmployee = async (
     }
     if (workMode !== undefined) updateData.workModeId = workMode.toUpperCase();
     if (shiftType !== undefined) updateData.shiftTypeId = shiftType.toUpperCase();
+    if (bankName !== undefined) updateData.bankName = bankName || null;
+    if (accountNumber !== undefined) updateData.accountNumber = accountNumber || null;
+    if (ifscCode !== undefined) updateData.ifscCode = ifscCode || null;
+    if (accountType !== undefined) updateData.accountType = accountType || 'Savings';
+    if (branchName !== undefined) updateData.branchName = branchName || null;
 
     const updatedEmployee = await prisma.employee.update({
       where: { id: employeeId },
@@ -536,7 +556,12 @@ export const createEmployee = async (
     voterId,
     passportNumber,
     workModeId,
-    shiftTypeId
+    shiftTypeId,
+    bankName,
+    accountNumber,
+    ifscCode,
+    accountType,
+    branchName
   } = req.body;
 
   if ((!userId && (!email || !password)) || !firstName) {
@@ -673,6 +698,11 @@ export const createEmployee = async (
         joiningDate: joiningDate ? new Date(joiningDate) : null,
         reportingManagerId: parsedManagerId,
         designationId: parsedDesignationId,
+        bankName: bankName || null,
+        accountNumber: accountNumber || null,
+        ifscCode: ifscCode || null,
+        accountType: accountType || 'Savings',
+        branchName: branchName || null,
       },
       include: {
         office: true,

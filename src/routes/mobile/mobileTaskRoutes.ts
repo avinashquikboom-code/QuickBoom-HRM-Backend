@@ -15,8 +15,8 @@ const router = Router();
 // Apply auth middleware to protect all mobile task routes
 router.use(authMiddleware);
 
-// Restrict access to mobile roles (Store Manager, Salesman, Helper)
-const mobileRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER'];
+// Restrict access to mobile roles (Store Manager, Salesman, Helper, Employee, HR, Admins)
+const mobileRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER', 'EMPLOYEE', 'HR', 'SUPER_ADMIN', 'ADMIN'];
 router.use(roleMiddleware(mobileRoles));
 
 /**
