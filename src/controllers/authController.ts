@@ -199,7 +199,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     } else {
       res.status(500).json({
         success: false,
-        message: 'Internal server error during login.',
+        message: error.message || 'Internal server error during login.',
+        error: error.stack,
+        code: error.code
       });
     }
   }
@@ -568,7 +570,10 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
     console.error('Role-specific login error:', error, error?.code, error?.meta);
     res.status(500).json({
       success: false,
-      message: 'Internal server error during login.',
+      message: error.message || 'Internal server error during login.',
+      error: error.stack,
+      code: error.code,
+      meta: error.meta
     });
   }
 };

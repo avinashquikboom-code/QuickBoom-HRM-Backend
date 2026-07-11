@@ -152,7 +152,7 @@ app.get('/scalar-docs', (req, res) => {
         // Initialize Scalar API Reference
         ScalarApiReference.create({
           spec: {
-            url: '/api-docs.json'
+            url: '/api-docs/swagger.json'
           },
           configuration: {
             baseServerURL: 'http://69.62.80.20:3000',
