@@ -185,8 +185,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       },
     });
   } catch (error: any) {
-    console.error('❌ [LOGIN] Error:', error.message);
-    
+    console.error('❌ [LOGIN] Error:', error);
+
     // Handle specific database errors
     if (error.message?.includes('FCMToken') || error.code === 'P2021') {
       console.log('🔧 [LOGIN] FCM Token schema issue detected, using fallback...');
@@ -565,7 +565,7 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
       },
     });
   } catch (error: any) {
-    console.error('Role-specific login error:', error);
+    console.error('Role-specific login error:', error, error?.code, error?.meta);
     res.status(500).json({
       success: false,
       message: 'Internal server error during login.',
