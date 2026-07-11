@@ -1,6 +1,5 @@
 import { prisma } from '../utils/db';
-// @ts-ignore - WebSocket service is imported dynamically
-const { webSocketService } = require('../..');
+const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface LeaveAllocation {
   id: number;
@@ -335,7 +334,7 @@ class LeaveManagementService {
 
       // Broadcast real-time update
       try {
-        await webSocketService.broadcastNotification(leaveRequest.employeeId, {
+        await getWebSocketInstance().broadcastNotification(leaveRequest.employeeId, {
           title: 'Leave Auto-Approved',
           body: `Your leave request has been auto-approved.`,
           type: 'leave_auto_approved',

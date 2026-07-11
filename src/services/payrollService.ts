@@ -1,6 +1,5 @@
 import { prisma } from '../utils/db';
-// @ts-ignore - WebSocket service is imported dynamically
-const { webSocketService } = require('../..');
+const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
   employeeId: number;
@@ -189,7 +188,7 @@ class PayrollService {
 
       // Broadcast completion
       try {
-        await webSocketService.broadcastNotification(0, {
+        await getWebSocketInstance().broadcastNotification(0, {
           title: 'Payroll Run Completed',
           body: `Payroll run for ${month}/${year} has been completed. Processed ${processedCount}/${employeeIds.length} employees.`,
           type: 'payroll_run_completed',
@@ -637,7 +636,7 @@ class PayrollService {
 
         // Broadcast real-time update
         try {
-          await webSocketService.broadcastNotification(employeeId, {
+          await getWebSocketInstance().broadcastNotification(employeeId, {
             title: 'Payslip Generated',
             body: `Your payslip for ${calculation.month}/${calculation.year} is now available.`,
             type: 'payslip_generated',
