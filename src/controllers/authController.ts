@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { prisma } from '../utils/db';
 import { signToken, signRefreshToken, signAccessToken, verifyRefreshToken, verifyToken, UserJWTPayload } from '../utils/jwt';
 import { Role } from '@prisma/client';

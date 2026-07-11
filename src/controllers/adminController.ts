@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 const PdfPrinter = require('pdfmake');

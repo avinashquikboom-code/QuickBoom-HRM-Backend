@@ -1,6 +1,6 @@
 import { prisma } from '../utils/db';
 import { Role } from '@prisma/client';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 async function seedSafe() {
   try {
