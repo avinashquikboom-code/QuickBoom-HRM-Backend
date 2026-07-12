@@ -639,6 +639,8 @@ interface GroupedReport {
   periodEnd: string;
   employeeId: number;
   employeeName: string;
+  employeeCode: string;
+  branchName: string;
   totalSales: number;
   totalCredits: number;
   netSales: number;
@@ -707,7 +709,11 @@ export const fetchCommissionReport = async (
         },
       },
       include: {
-        employee: true,
+        employee: {
+          include: {
+            branch: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'asc',
@@ -720,6 +726,8 @@ export const fetchCommissionReport = async (
         periodEnd: string;
         employeeId: number;
         employeeName: string;
+        employeeCode: string;
+        branchName: string;
         sales: number;
         credits: number;
         commissionAmount: number;
@@ -766,8 +774,12 @@ export const fetchCommissionReport = async (
       const { start, end } = getPeriodBoundaries(tx.createdAt, groupBy);
       const empId = tx.employeeId;
       let empName = 'Employee';
+      let empCode = '';
+      let branchName = '';
       if (tx.employee) {
         empName = `${tx.employee.firstName || ''} ${tx.employee.lastName || ''}`.trim() || 'Employee';
+        empCode = tx.employee.employeeCode || '';
+        branchName = tx.employee.branch?.name || '';
       }
 
       const key = `${empId}_${start}`;
@@ -777,6 +789,8 @@ export const fetchCommissionReport = async (
           periodEnd: end,
           employeeId: empId,
           employeeName: empName,
+          employeeCode: empCode,
+          branchName: branchName,
           sales: 0,
           credits: 0,
           commissionAmount: 0,
@@ -811,6 +825,8 @@ export const fetchCommissionReport = async (
         periodEnd: g.periodEnd,
         employeeId: g.employeeId,
         employeeName: g.employeeName,
+        employeeCode: g.employeeCode,
+        branchName: g.branchName,
         totalSales: Number(g.sales.toFixed(2)),
         totalCredits: Number(g.credits.toFixed(2)),
         netSales: Number(netSales.toFixed(2)),
