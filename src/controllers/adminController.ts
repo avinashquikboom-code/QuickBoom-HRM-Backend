@@ -207,6 +207,7 @@ export const fetchEmployees = async (
         where: whereClause,
         select: {
           id: true,
+          employeeID: true,
           employeeCode: true,
           firstName: true,
           lastName: true,
@@ -272,7 +273,7 @@ export const fetchEmployees = async (
     ]);
 
     const mappedEmployees = employees.map((emp) => ({
-      id: emp.id.toString(),
+      id: (emp.employeeID || emp.id.toString()).toLowerCase(),
       employeeCode: emp.employeeCode,
       firstName: emp.firstName,
       lastName: emp.lastName,
@@ -757,11 +758,17 @@ export const createEmployee = async (
       }
     }
 
-    const existingEmployee = await prisma.employee.findUnique({
-      where: { userId: user.id },
+    let employeeRecord = await prisma.employee.findFirst({
+      where: {
+        OR: [
+          { userId: user.id },
+          mobileNumber ? { mobileNumber } : { id: -1 }
+        ]
+      }
     });
-    if (existingEmployee) {
-      res.status(400).json({ success: false, message: 'Employee record already exists for this user.' });
+
+    if (employeeRecord && employeeRecord.userId && employeeRecord.userId !== user.id) {
+      res.status(400).json({ success: false, message: 'Employee record already exists for another user.' });
       return;
     }
 
@@ -779,41 +786,94 @@ export const createEmployee = async (
       }
     }
 
-    // Generate employee code based on role
-    const employeeCode = await generateEmployeeCode(user.role);
-    const newEmployee = await prisma.employee.create({
-      data: {
-        userId: user.id,
-        employeeCode,
-        firstName: firstName.trim(),
-        lastName: (lastName || '').trim(),
-        designation: resolvedDesignation,
-        status: status || 'active',
-        workModeId: workModeId || 'OFFICE',
-        shiftTypeId: shiftTypeId || 'MORNING',
-        officeId: officeId ? parseInt(officeId, 10) : null,
-        departmentId: departmentId ? parseInt(departmentId, 10) : null,
-        mobileNumber: mobileNumber || null,
-        joiningDate: joiningDate ? new Date(joiningDate) : null,
-        reportingManagerId: parsedManagerId,
-        designationId: parsedDesignationId,
-        bankName: bankName || null,
-        accountNumber: accountNumber || null,
-        ifscCode: ifscCode || null,
-        accountType: accountType || 'Savings',
-        branchName: branchName || null,
-        storeId: storeId ? parseInt(storeId, 10) : null,
-        customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
-        commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
-          ? null
-          : parseFloat(commissionPercentage),
-      },
-      include: {
-        office: true,
-        user: true,
-        department: true,
-      },
-    });
+    let newEmployee;
+    if (employeeRecord) {
+      const employeeCode = employeeRecord.employeeCode;
+      const guid = employeeRecord.employeeID || `local-${employeeCode.toLowerCase()}`;
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { employeeID: guid }
+      });
+
+      newEmployee = await prisma.employee.update({
+        where: { id: employeeRecord.id },
+        data: {
+          userId: user.id,
+          employeeID: guid,
+          firstName: firstName.trim(),
+          lastName: (lastName || '').trim(),
+          designation: resolvedDesignation,
+          status: status || 'active',
+          workModeId: workModeId || 'OFFICE',
+          shiftTypeId: shiftTypeId || 'MORNING',
+          officeId: officeId ? parseInt(officeId, 10) : employeeRecord.officeId,
+          departmentId: departmentId ? parseInt(departmentId, 10) : employeeRecord.departmentId,
+          mobileNumber: mobileNumber || employeeRecord.mobileNumber,
+          joiningDate: joiningDate ? new Date(joiningDate) : employeeRecord.joiningDate,
+          reportingManagerId: parsedManagerId || employeeRecord.reportingManagerId,
+          designationId: parsedDesignationId || employeeRecord.designationId,
+          bankName: bankName || employeeRecord.bankName,
+          accountNumber: accountNumber || employeeRecord.accountNumber,
+          ifscCode: ifscCode || employeeRecord.ifscCode,
+          accountType: accountType || employeeRecord.accountType,
+          branchName: branchName || employeeRecord.branchName,
+          storeId: storeId ? parseInt(storeId, 10) : employeeRecord.storeId,
+          customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : employeeRecord.customPunchRadius,
+          commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
+            ? employeeRecord.commissionPercentage
+            : parseFloat(commissionPercentage),
+        },
+        include: {
+          office: true,
+          user: true,
+          department: true,
+        },
+      });
+    } else {
+      const employeeCode = await generateEmployeeCode(user.role);
+      const guid = `local-${employeeCode.toLowerCase()}`;
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { employeeID: guid }
+      });
+
+      newEmployee = await prisma.employee.create({
+        data: {
+          userId: user.id,
+          employeeID: guid,
+          employeeCode,
+          firstName: firstName.trim(),
+          lastName: (lastName || '').trim(),
+          designation: resolvedDesignation,
+          status: status || 'active',
+          workModeId: workModeId || 'OFFICE',
+          shiftTypeId: shiftTypeId || 'MORNING',
+          officeId: officeId ? parseInt(officeId, 10) : null,
+          departmentId: departmentId ? parseInt(departmentId, 10) : null,
+          mobileNumber: mobileNumber || null,
+          joiningDate: joiningDate ? new Date(joiningDate) : null,
+          reportingManagerId: parsedManagerId,
+          designationId: parsedDesignationId,
+          bankName: bankName || null,
+          accountNumber: accountNumber || null,
+          ifscCode: ifscCode || null,
+          accountType: accountType || 'Savings',
+          branchName: branchName || null,
+          storeId: storeId ? parseInt(storeId, 10) : null,
+          customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
+          commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
+            ? null
+            : parseFloat(commissionPercentage),
+        },
+        include: {
+          office: true,
+          user: true,
+          department: true,
+        },
+      });
+    }
 
     // Create leave balance for the new employee
     try {
@@ -5975,6 +6035,94 @@ export const resetEmployeePassword = async (
     });
   } catch (error) {
     console.error('Reset employee password error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reset password.' });
+  }
+};
+
+export const resetEmployeePasswordByGUID = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { employeeId } = req.params;
+  const { newPassword, isTemporary = false } = req.body;
+
+  if (!employeeId || typeof employeeId !== 'string') {
+    res.status(400).json({ success: false, message: 'Employee ID is required.' });
+    return;
+  }
+
+  if (!newPassword || typeof newPassword !== 'string') {
+    res.status(400).json({ success: false, message: 'New password is required.' });
+    return;
+  }
+
+  if (newPassword.length < 6) {
+    res.status(400).json({ success: false, message: 'Password must be at least 6 characters long.' });
+    return;
+  }
+
+  try {
+    const guid = employeeId.trim().toLowerCase();
+
+    // Look up the employee by GUID (employeeID column)
+    const employee = await prisma.employee.findUnique({
+      where: { employeeID: guid }
+    });
+
+    if (!employee || !employee.userId) {
+      res.status(404).json({ success: false, message: 'Employee has not registered yet' });
+      return;
+    }
+
+    const userIdInt = employee.userId;
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { id: userIdInt }
+    });
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'Employee has not registered yet' });
+      return;
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update user password
+    await prisma.user.update({
+      where: { id: userIdInt },
+      data: { 
+        password: hashedPassword,
+        updatedAt: new Date()
+      }
+    });
+
+    // Trigger push notification to employee (fire-and-forget, never awaited)
+    pushNotificationService.sendPush(
+      [userIdInt],
+      'Password Reset',
+      'Your password has been reset by an administrator.',
+      {
+        screen: 'profile',
+        id: userIdInt.toString()
+      }
+    ).catch(err => console.error('Failed to send password reset push:', err));
+
+    // Log the password reset action
+    console.log(`Password reset for employee GUID ${guid} (user ${user.email}) by ${req.user?.email}`);
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully.',
+      data: {
+        userId: userIdInt,
+        email: user.email,
+        isTemporary
+      }
+    });
+  } catch (error) {
+    console.error('Reset employee password by GUID error:', error);
     res.status(500).json({ success: false, message: 'Failed to reset password.' });
   }
 };

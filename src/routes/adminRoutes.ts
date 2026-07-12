@@ -65,6 +65,7 @@ import {
   getAdminLeaveBalanceStats,
   bulkUpdateAdminLeaveBalances,
   resetEmployeePassword,
+  resetEmployeePasswordByGUID,
   changeOwnPassword,
   sendNotificationToDepartment,
   sendNotificationToRole,
@@ -548,6 +549,7 @@ router.post('/leave-balances/bulk-update', bulkUpdateAdminLeaveBalances);
 
 // Password Management
 router.put('/users/:userId/reset-password', resetEmployeePassword);
+router.put('/employees/:employeeId/reset-password', resetEmployeePasswordByGUID);
 router.put('/change-password', changeOwnPassword);
 
 /**

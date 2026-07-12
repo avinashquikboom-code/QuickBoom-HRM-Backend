@@ -124,10 +124,13 @@ export async function syncHopkidEmployees(): Promise<void> {
           where: { name: emp.branchName }
         });
         if (!store) {
+          const baseCode = emp.branchName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase();
+          const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
+          const storeCode = `${baseCode.substring(0, 8)}_${randomSuffix}`;
           store = await prisma.store.create({
             data: {
               name: emp.branchName,
-              code: emp.branchName.substring(0, 10),
+              code: storeCode,
             }
           });
         }
@@ -138,10 +141,13 @@ export async function syncHopkidEmployees(): Promise<void> {
           where: { name: emp.branchName }
         });
         if (!office) {
+          const baseCode = emp.branchName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase();
+          const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
+          const officeCode = `${baseCode.substring(0, 8)}_${randomSuffix}`;
           office = await prisma.office.create({
             data: {
               name: emp.branchName,
-              code: emp.branchName.substring(0, 10),
+              code: officeCode,
               address: store.address || '',
               latitude: store.latitude || 0.0,
               longitude: store.longitude || 0.0,
@@ -158,11 +164,13 @@ export async function syncHopkidEmployees(): Promise<void> {
       const joiningDate = emp.dateofJoining ? new Date(emp.dateofJoining) : null;
       const status = emp.isActive ? 'active' : 'inactive';
       const commissionPercentage = emp.commissionPercentage || 1.00;
+      const employeeID = emp.employeeID ? emp.employeeID.toLowerCase() : null;
 
       // Upsert the Employee by employeeCode
       await prisma.employee.upsert({
         where: { employeeCode: emp.employeeCode },
         update: {
+          employeeID,
           firstName,
           lastName,
           mobileNumber,
@@ -173,6 +181,7 @@ export async function syncHopkidEmployees(): Promise<void> {
           officeId: localOfficeId,
         },
         create: {
+          employeeID,
           employeeCode: emp.employeeCode,
           firstName,
           lastName,
