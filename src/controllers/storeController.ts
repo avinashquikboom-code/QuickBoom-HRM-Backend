@@ -8,20 +8,8 @@ export const fetchStores = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { branchId } = req.query;
-    
-    const where = branchId ? { branchId: parseInt(branchId as string) } : {};
-    
     const stores = await prisma.store.findMany({
-      where,
       include: {
-        branch: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-          },
-        },
         _count: {
           select: {
             employees: true,
@@ -91,7 +79,7 @@ export const createStore = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { name, code, address, country, pincode, maxPunchRadiusMeters, branchId, latitude, longitude } = req.body;
+    const { name, code, address, country, pincode, maxPunchRadiusMeters, latitude, longitude } = req.body;
 
     if (!name || name.trim() === '') {
       res.status(400).json({ success: false, message: 'Store name is required.' });
@@ -109,7 +97,6 @@ export const createStore = async (
         country: country?.trim() || 'India',
         pincode: pincode?.trim() || null,
         maxPunchRadiusMeters: maxPunchRadiusMeters ? parseFloat(maxPunchRadiusMeters) : 50.0,
-        branchId: branchId ? parseInt(branchId as string, 10) : null,
         latitude: latitude !== undefined && latitude !== null && latitude !== '' ? parseFloat(latitude as string) : null,
         longitude: longitude !== undefined && longitude !== null && longitude !== '' ? parseFloat(longitude as string) : null,
       },
@@ -136,7 +123,7 @@ export const updateStore = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, code, address, country, pincode, isActive, maxPunchRadiusMeters, branchId, latitude, longitude } = req.body;
+    const { name, code, address, country, pincode, isActive, maxPunchRadiusMeters, latitude, longitude } = req.body;
 
     const storeId = parseInt(id as string, 10);
     if (isNaN(storeId)) {
@@ -159,7 +146,6 @@ export const updateStore = async (
         pincode: pincode?.trim() || null,
         isActive: isActive !== undefined ? isActive : true,
         maxPunchRadiusMeters: maxPunchRadiusMeters !== undefined && maxPunchRadiusMeters !== null && maxPunchRadiusMeters !== '' ? parseFloat(maxPunchRadiusMeters as string) : undefined,
-        branchId: branchId !== undefined ? (branchId ? parseInt(branchId as string, 10) : null) : undefined,
         latitude: latitude !== undefined ? (latitude !== null && latitude !== '' ? parseFloat(latitude as string) : null) : undefined,
         longitude: longitude !== undefined ? (longitude !== null && longitude !== '' ? parseFloat(longitude as string) : null) : undefined,
       },

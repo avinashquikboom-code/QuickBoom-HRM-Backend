@@ -231,15 +231,7 @@ export const fetchEmployees = async (
             select: {
               id: true,
               name: true,
-              branchId: true,
-              branch: {
-                select: { id: true, name: true },
-              },
             },
-          },
-          branchId: true,
-          branch: {
-            select: { id: true, name: true },
           },
           departmentId: true,
           commissionPercentage: true,
@@ -316,16 +308,12 @@ export const fetchEmployees = async (
         ? {
             id: emp.store.id.toString(),
             name: emp.store.name,
-            branchId: emp.store.branchId?.toString() || null,
-            branch: emp.store.branch
-              ? { id: emp.store.branch.id.toString(), name: emp.store.branch.name }
-              : null,
+            branchId: null,
+            branch: null,
           }
         : null,
-      branchId: emp.branchId?.toString() || null,
-      branch: emp.branch
-        ? { id: emp.branch.id.toString(), name: emp.branch.name }
-        : null,
+      branchId: null,
+      branch: null,
       departmentId: emp.departmentId?.toString() || null,
       commissionPercentage: emp.commissionPercentage || 0,
       user: emp.user
@@ -386,7 +374,6 @@ export const updateEmployee = async (
       accountType,
       branchName,
       storeId,
-      branchId,
       customPunchRadius,
       commissionPercentage
     } = req.body;
@@ -445,7 +432,6 @@ export const updateEmployee = async (
     if (accountType !== undefined) updateData.accountType = accountType || 'Savings';
     if (branchName !== undefined) updateData.branchName = branchName || null;
     if (storeId !== undefined) updateData.storeId = storeId ? parseInt(storeId) : null;
-    if (branchId !== undefined) updateData.branchId = branchId ? parseInt(branchId) : null;
     if (customPunchRadius !== undefined) updateData.customPunchRadius = customPunchRadius ? parseFloat(customPunchRadius) : null;
     if (commissionPercentage !== undefined) {
       updateData.commissionPercentage = (commissionPercentage === null || commissionPercentage === '')
@@ -636,7 +622,6 @@ export const createEmployee = async (
     accountType,
     branchName,
     storeId,
-    branchId,
     customPunchRadius,
     commissionPercentage
   } = req.body;
@@ -781,7 +766,6 @@ export const createEmployee = async (
         accountType: accountType || 'Savings',
         branchName: branchName || null,
         storeId: storeId ? parseInt(storeId, 10) : null,
-        branchId: branchId ? parseInt(branchId, 10) : null,
         customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
         commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
           ? null

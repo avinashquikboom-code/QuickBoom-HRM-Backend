@@ -717,7 +717,7 @@ export const fetchCommissionReport = async (
       include: {
         employee: {
           include: {
-            branch: true,
+            store: true,
           },
         },
       },
@@ -785,7 +785,7 @@ export const fetchCommissionReport = async (
       if (tx.employee) {
         empName = `${tx.employee.firstName || ''} ${tx.employee.lastName || ''}`.trim() || 'Employee';
         empCode = tx.employee.employeeCode || '';
-        branchName = tx.employee.branch?.name || '';
+        branchName = tx.employee.store?.name || '';
       }
 
       const key = `${empId}_${start}`;

@@ -55,8 +55,7 @@ class GeofenceService {
         where: { id: employeeId },
         include: {
           office: true,
-          store: { include: { branch: true } },
-          branch: true
+          store: true
         }
       }) : null;
 
@@ -97,28 +96,15 @@ class GeofenceService {
           });
         }
         
-        if (employee.store && employee.store.isActive && employee.store.branch && employee.store.branch.isActive) {
-          if (employee.store.branch.latitude !== null && employee.store.branch.longitude !== null) {
+        if (employee.store && employee.store.isActive) {
+          if (employee.store.latitude !== null && employee.store.longitude !== null) {
             geofences.push({
               type: 'store',
               id: employee.store.id,
               name: `Store: ${employee.store.name}`,
-              latitude: employee.store.branch.latitude,
-              longitude: employee.store.branch.longitude,
-              maxRadius: employee.customPunchRadius || employee.store.maxPunchRadiusMeters || employee.store.branch.maxPunchRadiusMeters || 50.0
-            });
-          }
-        }
-        
-        if (employee.branch && employee.branch.isActive) {
-          if (employee.branch.latitude !== null && employee.branch.longitude !== null) {
-            geofences.push({
-              type: 'branch',
-              id: employee.branch.id,
-              name: `Branch: ${employee.branch.name}`,
-              latitude: employee.branch.latitude,
-              longitude: employee.branch.longitude,
-              maxRadius: employee.customPunchRadius || employee.branch.maxPunchRadiusMeters || 50.0
+              latitude: employee.store.latitude,
+              longitude: employee.store.longitude,
+              maxRadius: employee.customPunchRadius || employee.store.maxPunchRadiusMeters || 50.0
             });
           }
         }

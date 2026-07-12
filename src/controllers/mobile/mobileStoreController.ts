@@ -20,11 +20,7 @@ export const getMobileStoreDetails = async (
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: {
-        store: {
-          include: {
-            branch: true
-          }
-        }
+        store: true
       }
     });
 
@@ -60,14 +56,14 @@ export const getMobileStoreDetails = async (
         country: employee.store!.country,
         pincode: employee.store!.pincode,
         isActive: employee.store!.isActive,
-        branch: employee.store!.branch ? {
-          id: employee.store!.branch.id,
-          name: employee.store!.branch.name,
-          code: employee.store!.branch.code,
-          address: employee.store!.branch.address,
-          city: employee.store!.branch.city,
-          state: employee.store!.branch.state,
-        } : null,
+        branch: {
+          id: employee.store!.id,
+          name: employee.store!.name,
+          code: employee.store!.code || '',
+          address: employee.store!.address || '',
+          city: '',
+          state: '',
+        },
         stats: {
           totalEmployees: employeeCount,
           todayPresent: todayAttendance,
