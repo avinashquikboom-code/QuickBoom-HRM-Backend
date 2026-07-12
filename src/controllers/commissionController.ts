@@ -11,7 +11,21 @@ export const getCommissionDashboard = async (
     const { employeeId, storeId, startDate, endDate } = req.query;
 
     const whereClause: any = {};
-    if (employeeId) whereClause.employeeId = parseInt(employeeId as string);
+    if (employeeId) {
+      const parsedId = parseInt(employeeId as string, 10);
+      if (!isNaN(parsedId)) {
+        whereClause.employeeId = parsedId;
+      } else {
+        const employee = await prisma.employee.findFirst({
+          where: { employeeCode: employeeId as string }
+        });
+        if (employee) {
+          whereClause.employeeId = employee.id;
+        } else {
+          whereClause.employeeId = -1;
+        }
+      }
+    }
     if (storeId) whereClause.storeId = parseInt(storeId as string);
     if (startDate && endDate) {
       whereClause.createdAt = {
@@ -141,7 +155,7 @@ export const createCommissionPolicy = async (
         employee: true,
         store: true,
         department: true,
-        designationRelation: true,
+        designation: true,
       },
     });
 
@@ -174,7 +188,7 @@ export const getCommissionPolicies = async (
         employee: true,
         store: true,
         department: true,
-        designationRelation: true,
+        designation: true,
       },
       orderBy: { priority: 'asc' },
     });
@@ -199,7 +213,7 @@ export const getCommissionPolicyById = async (
         employee: true,
         store: true,
         department: true,
-        designationRelation: true,
+        designation: true,
       },
     });
 
@@ -231,7 +245,7 @@ export const updateCommissionPolicy = async (
         employee: true,
         store: true,
         department: true,
-        designationRelation: true,
+        designation: true,
       },
     });
 
@@ -299,7 +313,21 @@ export const getCommissionTransactions = async (
     const { employeeId, storeId, status, startDate, endDate } = req.query;
 
     const whereClause: any = {};
-    if (employeeId) whereClause.employeeId = parseInt(employeeId as string);
+    if (employeeId) {
+      const parsedId = parseInt(employeeId as string, 10);
+      if (!isNaN(parsedId)) {
+        whereClause.employeeId = parsedId;
+      } else {
+        const employee = await prisma.employee.findFirst({
+          where: { employeeCode: employeeId as string }
+        });
+        if (employee) {
+          whereClause.employeeId = employee.id;
+        } else {
+          whereClause.employeeId = -1;
+        }
+      }
+    }
     if (storeId) whereClause.storeId = parseInt(storeId as string);
     if (status) whereClause.status = status;
     if (startDate && endDate) {
@@ -655,7 +683,19 @@ export const fetchCommissionReport = async (
       }
       targetEmployeeId = employee.id;
     } else if (req.query.employeeId) {
-      targetEmployeeId = parseInt(req.query.employeeId as string, 10);
+      const parsedId = parseInt(req.query.employeeId as string, 10);
+      if (!isNaN(parsedId)) {
+        targetEmployeeId = parsedId;
+      } else {
+        const employee = await prisma.employee.findFirst({
+          where: { employeeCode: req.query.employeeId as string }
+        });
+        if (employee) {
+          targetEmployeeId = employee.id;
+        } else {
+          targetEmployeeId = -1;
+        }
+      }
     }
 
     const transactions = await prisma.commissionTransaction.findMany({
