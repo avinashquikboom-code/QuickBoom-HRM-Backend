@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { syncHopkidEmployees } from '../utils/employeeSync';
 import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 const PdfPrinter = require('pdfmake');
@@ -174,6 +175,9 @@ export const fetchEmployees = async (
   res: Response
 ): Promise<void> => {
   try {
+    // Sync external Hopkid employees to keep DB up to date
+    await syncHopkidEmployees();
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
     const skip = (page - 1) * limit;

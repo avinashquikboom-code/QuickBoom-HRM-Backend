@@ -1,12 +1,16 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import { syncHopkidEmployees } from '../utils/employeeSync';
 
 export const getEmployeeList = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
+    // Run the sync to keep the local database up to date
+    await syncHopkidEmployees();
+
     const response = await fetch('https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList', {
       method: 'GET',
       headers: {

@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
+import { syncHopkidEmployees } from '../../utils/employeeSync';
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 import securityService from '../../services/securityService';
@@ -325,6 +326,9 @@ export const fetchHREmployees = async (
   res: Response
 ): Promise<void> => {
   console.log('👥 [HR EMPLOYEES] Fetch employee list started');
+  
+  // Sync external Hopkid employees to keep DB up to date
+  await syncHopkidEmployees().catch(err => console.error('Error syncing Hopkid employees in fetchHREmployees:', err));
   console.log('👥 [HR EMPLOYEES] User:', req.user?.email, 'Role:', req.user?.role);
   
   const {
