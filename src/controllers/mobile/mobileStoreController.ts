@@ -3,6 +3,36 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import { Role } from '@prisma/client';
 
+// GET /api/mobile/store/all — returns all active stores (for salesman transaction form dropdown)
+export const getAllMobileStores = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const stores = await prisma.store.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        address: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json({
+      success: true,
+      data: stores,
+    });
+  } catch (error) {
+    console.error('Get all mobile stores error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch stores.',
+    });
+  }
+};
+
 // Get store details for logged-in Store Manager
 export const getMobileStoreDetails = async (
   req: AuthenticatedRequest,

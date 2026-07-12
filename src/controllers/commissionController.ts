@@ -681,7 +681,9 @@ export const fetchCommissionReport = async (
     }
 
     let targetEmployeeId: number | undefined;
-    if (req.user?.role === 'EMPLOYEE') {
+    // For all mobile-authenticated users (not HR/Admin), scope report to their own records
+    const mobileRoles = ['EMPLOYEE', 'SALESMAN', 'STORE_MANAGER', 'HELPER'];
+    if (req.user?.role && mobileRoles.includes(req.user.role)) {
       const employee = await prisma.employee.findUnique({
         where: { userId: req.user.id },
       });

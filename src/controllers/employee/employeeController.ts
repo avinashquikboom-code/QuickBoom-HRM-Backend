@@ -1409,13 +1409,17 @@ export const fetchEmployeeWallet = async (
 
     // If wallet doesn't exist, create one
     if (!wallet) {
+      const last4Phone = employee.mobileNumber
+        ? employee.mobileNumber.replace(/\D/g, '').slice(-4)
+        : '0000';
+      const cardNumber = `HK-${employee.employeeCode}-${last4Phone}`;
       wallet = await prisma.wallet.create({
         data: {
           employeeId: employee.id,
           availableBalance: 0,
           advanceLimit: 25000,
           pendingClaims: 0,
-          cardNumber: `QB-${employee.employeeCode.replace(/\D/g, '')}-XXXX`,
+          cardNumber,
         },
         include: {
           transactions: {
@@ -1488,13 +1492,16 @@ export const requestSalaryAdvance = async (
     });
 
     if (!wallet) {
+      const last4Phone = employee.mobileNumber
+        ? employee.mobileNumber.replace(/\D/g, '').slice(-4)
+        : '0000';
       wallet = await prisma.wallet.create({
         data: {
           employeeId: employee.id,
           availableBalance: 0,
           advanceLimit: 25000,
           pendingClaims: 0,
-          cardNumber: `QB-${employee.employeeCode.replace(/\D/g, '')}-XXXX`,
+          cardNumber: `HK-${employee.employeeCode}-${last4Phone}`,
         },
       });
     }

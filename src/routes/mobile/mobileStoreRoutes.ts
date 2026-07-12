@@ -3,6 +3,7 @@ import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
 import { Role } from '@prisma/client';
 import {
+  getAllMobileStores,
   getMobileStoreDetails,
   getMobileStoreEmployees,
   getMobileStoreReports
@@ -33,6 +34,9 @@ router.use(authMiddleware);
  *       500:
  *         description: Server error
  */
+// GET /api/mobile/store/all — all active stores (any authenticated role)
+router.get('/all', getAllMobileStores);
+
 router.get('/', roleMiddleware([Role.STORE_MANAGER]), getMobileStoreDetails);
 
 /**
