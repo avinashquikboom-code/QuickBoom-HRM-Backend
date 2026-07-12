@@ -38,6 +38,7 @@ export async function syncHopkidEmployees(): Promise<void> {
       if (!emp.employeeCode) continue;
 
       let localStoreId: number | null = null;
+      let localOfficeId: number | null = null;
 
       if (emp.branchName) {
         // Find or create Store
@@ -53,6 +54,24 @@ export async function syncHopkidEmployees(): Promise<void> {
           });
         }
         localStoreId = store.id;
+
+        // ALSO find/create matching Office so mobile geofencing works!
+        let office = await prisma.office.findFirst({
+          where: { name: emp.branchName }
+        });
+        if (!office) {
+          office = await prisma.office.create({
+            data: {
+              name: emp.branchName,
+              code: emp.branchName.substring(0, 10),
+              address: store.address || '',
+              latitude: store.latitude || 0.0,
+              longitude: store.longitude || 0.0,
+              maxPunchRadiusMeters: store.maxPunchRadiusMeters || 50.0,
+            }
+          });
+        }
+        localOfficeId = office.id;
       }
 
       const firstName = emp.employeeName ? emp.employeeName.split(' ')[0] : 'Employee';
@@ -73,6 +92,7 @@ export async function syncHopkidEmployees(): Promise<void> {
           status,
           commissionPercentage,
           storeId: localStoreId,
+          officeId: localOfficeId,
         },
         create: {
           employeeCode: emp.employeeCode,
@@ -83,6 +103,7 @@ export async function syncHopkidEmployees(): Promise<void> {
           status,
           commissionPercentage,
           storeId: localStoreId,
+          officeId: localOfficeId,
         }
       });
       syncCount++;

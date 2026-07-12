@@ -431,7 +431,43 @@ export const updateEmployee = async (
     if (ifscCode !== undefined) updateData.ifscCode = ifscCode || null;
     if (accountType !== undefined) updateData.accountType = accountType || 'Savings';
     if (branchName !== undefined) updateData.branchName = branchName || null;
-    if (storeId !== undefined) updateData.storeId = storeId ? parseInt(storeId) : null;
+    if (storeId !== undefined) {
+      const parsedStoreId = storeId ? parseInt(storeId) : null;
+      updateData.storeId = parsedStoreId;
+      if (parsedStoreId) {
+        const storeObj = await prisma.store.findUnique({ where: { id: parsedStoreId } });
+        if (storeObj) {
+          let officeObj = await prisma.office.findFirst({ where: { name: storeObj.name } });
+          if (!officeObj) {
+            officeObj = await prisma.office.create({
+              data: {
+                name: storeObj.name,
+                code: storeObj.code,
+                address: storeObj.address || '',
+                latitude: storeObj.latitude || 0.0,
+                longitude: storeObj.longitude || 0.0,
+                maxPunchRadiusMeters: storeObj.maxPunchRadiusMeters || 50.0,
+              }
+            });
+          } else {
+            await prisma.office.update({
+              where: { id: officeObj.id },
+              data: {
+                latitude: storeObj.latitude || 0.0,
+                longitude: storeObj.longitude || 0.0,
+                maxPunchRadiusMeters: storeObj.maxPunchRadiusMeters || 50.0,
+                address: storeObj.address || '',
+              }
+            });
+          }
+          updateData.officeId = officeObj.id;
+        } else {
+          updateData.officeId = null;
+        }
+      } else {
+        updateData.officeId = null;
+      }
+    }
     if (customPunchRadius !== undefined) updateData.customPunchRadius = customPunchRadius ? parseFloat(customPunchRadius) : null;
     if (commissionPercentage !== undefined) {
       updateData.commissionPercentage = (commissionPercentage === null || commissionPercentage === '')
