@@ -220,7 +220,21 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 };
 
 export const register = async (req: Request, res: Response): Promise<void> => {
-  const { email, password, role, firstName, lastName, departmentId, officeId, designation } = req.body;
+  const { 
+    email, 
+    password, 
+    role, 
+    firstName, 
+    lastName, 
+    departmentId, 
+    officeId, 
+    designation,
+    bankName,
+    accountNumber,
+    ifscCode,
+    accountType,
+    branchName
+  } = req.body;
 
   if (!email || !password || !role) {
     res.status(400).json({
@@ -325,6 +339,11 @@ export const register = async (req: Request, res: Response): Promise<void> => {
             status: 'active',
             departmentId: departmentId ? parseInt(departmentId) : null,
             officeId: officeId ? parseInt(officeId) : null,
+            bankName: bankName || null,
+            accountNumber: accountNumber || null,
+            ifscCode: ifscCode || null,
+            accountType: accountType || 'Savings',
+            branchName: branchName || null,
           },
         });
 

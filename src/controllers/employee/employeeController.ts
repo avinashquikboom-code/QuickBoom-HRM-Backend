@@ -1582,3 +1582,45 @@ export const fetchBankDetails = async (
     res.status(500).json({ success: false, message: 'Failed to fetch bank details.' });
   }
 };
+
+export const updateBankDetails = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await getEmployeeFromRequest(req);
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    const { bankName, accountNumber, ifscCode, accountType, branchName } = req.body;
+
+    const updatedEmployee = await prisma.employee.update({
+      where: { id: employee.id },
+      data: {
+        bankName: bankName !== undefined ? bankName : employee.bankName,
+        accountNumber: accountNumber !== undefined ? accountNumber : employee.accountNumber,
+        ifscCode: ifscCode !== undefined ? ifscCode : employee.ifscCode,
+        accountType: accountType !== undefined ? accountType : employee.accountType,
+        branchName: branchName !== undefined ? branchName : employee.branchName,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Bank details updated successfully.',
+      bankDetails: {
+        bankName: updatedEmployee.bankName,
+        accountNumber: updatedEmployee.accountNumber,
+        ifscCode: updatedEmployee.ifscCode,
+        accountType: updatedEmployee.accountType,
+        branchName: updatedEmployee.branchName,
+        accountHolder: `${updatedEmployee.firstName} ${updatedEmployee.lastName}`,
+      },
+    });
+  } catch (error) {
+    console.error('Update bank details error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update bank details.' });
+  }
+};
