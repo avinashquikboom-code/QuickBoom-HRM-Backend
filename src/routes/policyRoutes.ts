@@ -7,8 +7,6 @@ import {
   updateDeductionPolicy,
   deleteDeductionPolicy,
   getApplicablePoliciesForEmployee,
-  getAllBranches,
-  createBranch,
 } from '../controllers/policyController';
 
 const router = Router();
@@ -21,10 +19,5 @@ router.get('/policies/:id', authenticate, getDeductionPolicyById);
 router.put('/policies/:id', authenticate, updateDeductionPolicy);
 router.delete('/policies/:id', authenticate, deleteDeductionPolicy);
 router.get('/policies/employee/:employeeId/applicable', authenticate, getApplicablePoliciesForEmployee);
-
-// ─── Branch Routes ────────────────────────────────────────────────────────────
-
-router.get('/branches', authenticate, getAllBranches);
-router.post('/branches', authenticate, createBranch);
 
 export default router;

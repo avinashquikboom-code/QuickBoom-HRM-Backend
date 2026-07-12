@@ -8,7 +8,7 @@ export const getCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { employeeId, storeId, branchId, startDate, endDate } = req.query;
+    const { employeeId, storeId, startDate, endDate } = req.query;
 
     const whereClause: any = {};
     if (employeeId) {
@@ -29,16 +29,6 @@ export const getCommissionDashboard = async (
     
     if (storeId) {
       whereClause.storeId = parseInt(storeId as string, 10);
-    } else if (branchId) {
-      const parsedBranchId = parseInt(branchId as string, 10);
-      if (!isNaN(parsedBranchId)) {
-        const branchStores = await prisma.store.findMany({
-          where: { branchId: parsedBranchId },
-          select: { id: true }
-        });
-        const storeIds = branchStores.map(s => s.id);
-        whereClause.storeId = { in: storeIds };
-      }
     }
     if (startDate && endDate) {
       whereClause.createdAt = {
@@ -323,7 +313,7 @@ export const getCommissionTransactions = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { employeeId, storeId, branchId, status, startDate, endDate } = req.query;
+    const { employeeId, storeId, status, startDate, endDate } = req.query;
 
     const whereClause: any = {};
     if (employeeId) {
@@ -344,16 +334,6 @@ export const getCommissionTransactions = async (
     
     if (storeId) {
       whereClause.storeId = parseInt(storeId as string, 10);
-    } else if (branchId) {
-      const parsedBranchId = parseInt(branchId as string, 10);
-      if (!isNaN(parsedBranchId)) {
-        const branchStores = await prisma.store.findMany({
-          where: { branchId: parsedBranchId },
-          select: { id: true }
-        });
-        const storeIds = branchStores.map(s => s.id);
-        whereClause.storeId = { in: storeIds };
-      }
     }
     if (status) whereClause.status = status;
     if (startDate && endDate) {

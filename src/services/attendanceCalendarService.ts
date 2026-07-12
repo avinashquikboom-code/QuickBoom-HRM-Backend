@@ -3,7 +3,6 @@ import { prisma } from '../utils/db';
 interface CalendarGenerationConfig {
   month: number;
   year: number;
-  branchId?: number;
   departmentId?: number;
   officeId?: number;
 }
@@ -19,19 +18,19 @@ interface GeneratedAttendance {
 
 class AttendanceCalendarService {
   async generateCalendar(config: CalendarGenerationConfig): Promise<GeneratedAttendance[]> {
-    const { month, year, branchId, departmentId, officeId } = config;
+    const { month, year, departmentId, officeId } = config;
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
     const totalDays = endDate.getDate();
 
     // Get employees based on filters
-    const employees = await this.getEmployees(branchId, departmentId, officeId);
+    const employees = await this.getEmployees(departmentId, officeId);
     
     // Get holidays for the month
     const holidays = await this.getHolidays(month, year);
     
     // Get offices for weekly off configuration
-    const offices = await this.getOffices(branchId, departmentId, officeId);
+    const offices = await this.getOffices(departmentId, officeId);
     
     const generatedAttendance: GeneratedAttendance[] = [];
 
@@ -86,9 +85,8 @@ class AttendanceCalendarService {
     return generatedAttendance;
   }
 
-  private async getEmployees(branchId?: number, departmentId?: number, officeId?: number) {
+  private async getEmployees(departmentId?: number, officeId?: number) {
     const where: any = { status: 'active' };
-    if (branchId) where.branchId = branchId;
     if (departmentId) where.departmentId = departmentId;
     if (officeId) where.officeId = officeId;
 
@@ -114,7 +112,7 @@ class AttendanceCalendarService {
     });
   }
 
-  private async getOffices(branchId?: number, departmentId?: number, officeId?: number) {
+  private async getOffices(departmentId?: number, officeId?: number) {
     const where: any = { isActive: true };
     if (officeId) where.id = officeId;
     
@@ -183,7 +181,6 @@ class AttendanceCalendarService {
       const result = await this.generateCalendar({
         month,
         year,
-        branchId: policy.branchId || undefined,
         departmentId: policy.departmentId || undefined,
         officeId: policy.officeId || undefined
       });

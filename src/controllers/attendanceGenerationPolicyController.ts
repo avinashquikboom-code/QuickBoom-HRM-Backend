@@ -27,7 +27,6 @@ export const createAttendanceGenerationPolicy = async (
       autoApplyHalfDayRules,
       autoApplyLateMarkRules,
       autoApplyEarlyExitRules,
-      branchId,
       departmentId,
       officeId,
       effectiveFrom,
@@ -51,7 +50,6 @@ export const createAttendanceGenerationPolicy = async (
         autoApplyHalfDayRules: autoApplyHalfDayRules ?? true,
         autoApplyLateMarkRules: autoApplyLateMarkRules ?? true,
         autoApplyEarlyExitRules: autoApplyEarlyExitRules ?? true,
-        branchId: branchId ? parseInt(branchId) : null,
         departmentId: departmentId ? parseInt(departmentId) : null,
         officeId: officeId ? parseInt(officeId) : null,
         effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
@@ -81,9 +79,8 @@ export const getAllAttendanceGenerationPolicies = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { isEnabled, branchId, departmentId, officeId } = req.query as {
+    const { isEnabled, departmentId, officeId } = req.query as {
       isEnabled?: string;
-      branchId?: string;
       departmentId?: string;
       officeId?: string;
     };
@@ -91,7 +88,6 @@ export const getAllAttendanceGenerationPolicies = async (
     const where: any = {};
     
     if (isEnabled !== undefined) where.isEnabled = isEnabled === 'true';
-    if (branchId) where.branchId = parseInt(branchId);
     if (departmentId) where.departmentId = parseInt(departmentId);
     if (officeId) where.officeId = parseInt(officeId);
 
@@ -172,7 +168,6 @@ export const updateAttendanceGenerationPolicy = async (
       autoApplyHalfDayRules,
       autoApplyLateMarkRules,
       autoApplyEarlyExitRules,
-      branchId,
       departmentId,
       officeId,
       effectiveFrom,
@@ -196,7 +191,6 @@ export const updateAttendanceGenerationPolicy = async (
     if (autoApplyHalfDayRules !== undefined) updateData.autoApplyHalfDayRules = autoApplyHalfDayRules;
     if (autoApplyLateMarkRules !== undefined) updateData.autoApplyLateMarkRules = autoApplyLateMarkRules;
     if (autoApplyEarlyExitRules !== undefined) updateData.autoApplyEarlyExitRules = autoApplyEarlyExitRules;
-    if (branchId !== undefined) updateData.branchId = branchId ? parseInt(branchId) : null;
     if (departmentId !== undefined) updateData.departmentId = departmentId ? parseInt(departmentId) : null;
     if (officeId !== undefined) updateData.officeId = officeId ? parseInt(officeId) : null;
     if (effectiveFrom !== undefined) updateData.effectiveFrom = effectiveFrom ? new Date(effectiveFrom) : null;
@@ -279,12 +273,11 @@ export const generateCalendarForMonth = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { month, year, branchId, departmentId, officeId } = req.query;
+    const { month, year, departmentId, officeId } = req.query;
 
     const results = await attendanceCalendarService.generateCalendar({
       month: parseInt(month as string),
       year: parseInt(year as string),
-      branchId: branchId ? parseInt(branchId as string) : undefined,
       departmentId: departmentId ? parseInt(departmentId as string) : undefined,
       officeId: officeId ? parseInt(officeId as string) : undefined
     });

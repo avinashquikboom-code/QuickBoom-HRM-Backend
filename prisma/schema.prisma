@@ -107,7 +107,6 @@ model Employee {
   officeId         Int?
   departmentId     Int?
   storeId          Int?
-  branchId         Int?
   // Bank Details
   bankName         String?
   accountNumber    String?
@@ -122,7 +121,6 @@ model Employee {
   department       Department?       @relation(fields: [departmentId], references: [id])
   office           Office?           @relation(fields: [officeId], references: [id])
   store            Store?            @relation(fields: [storeId], references: [id])
-  branch           Branch?           @relation("BranchEmployees", fields: [branchId], references: [id])
   user             User?             @relation(fields: [userId], references: [id])
   expenses         Expense[]
   leaveRequests    LeaveRequest[]
@@ -549,30 +547,6 @@ model CustomRole {
 }
 
 
-model Branch {
-  id          Int       @id @default(autoincrement())
-  name        String
-  code        String?   @unique
-  address     String?
-  city        String?
-  state       String?
-  country     String    @default("India")
-  pincode     String?
-  phone       String?
-  email       String?
-  latitude    Float?
-  longitude   Float?
-  maxPunchRadiusMeters Float? @default(50.0)
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  stores      Store[]
-  policies    DeductionPolicy[]
-  employees   Employee[]           @relation("BranchEmployees")
-
-  @@index([isActive])
-}
-
 model Store {
   id          Int       @id @default(autoincrement())
   name        String
@@ -580,7 +554,6 @@ model Store {
   address     String?
   country     String    @default("India")
   pincode     String?
-  branchId    Int?
   maxPunchRadiusMeters Float? @default(50.0)
   latitude    Float?
   longitude   Float?
@@ -588,7 +561,6 @@ model Store {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   employees   Employee[]
-  branch      Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   commissionPolicies CommissionPolicy[] @relation("CommissionPolicies")
   commissionTransactions CommissionTransaction[] @relation("CommissionTransactions")
   commissionTargets CommissionTarget[] @relation("CommissionTargets")
@@ -889,7 +861,6 @@ model DeductionPolicy {
   deductionValue    Float
   maxDeduction      Float?   // Maximum deduction amount per month
   applicableDays    String[] // Days this policy applies to (e.g., ["Monday", "Tuesday"])
-  branchId          Int?
   departmentId      Int?
   officeId          Int?
   isActive          Boolean  @default(true)
@@ -900,12 +871,10 @@ model DeductionPolicy {
   updatedAt         DateTime @updatedAt
   createdBy         String?
   
-  branch            Branch?  @relation(fields: [branchId], references: [id])
   department        Department? @relation(fields: [departmentId], references: [id])
   office            Office? @relation(fields: [officeId], references: [id])
 
   @@index([type])
-  @@index([branchId])
   @@index([departmentId])
   @@index([officeId])
   @@index([isActive])
@@ -927,7 +896,6 @@ model AttendanceGenerationPolicy {
   autoApplyHalfDayRules            Boolean  @default(true)
   autoApplyLateMarkRules           Boolean  @default(true)
   autoApplyEarlyExitRules           Boolean  @default(true)
-  branchId                          Int?
   departmentId                      Int?
   officeId                          Int?
   effectiveFrom                     DateTime @default(now())
@@ -938,7 +906,6 @@ model AttendanceGenerationPolicy {
   createdBy                         String?
 
   @@index([isEnabled])
-  @@index([branchId])
   @@index([departmentId])
   @@index([officeId])
 }

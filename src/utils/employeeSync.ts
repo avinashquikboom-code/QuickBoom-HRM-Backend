@@ -38,23 +38,8 @@ export async function syncHopkidEmployees(): Promise<void> {
       if (!emp.employeeCode) continue;
 
       let localStoreId: number | null = null;
-      let localBranchId: number | null = null;
 
       if (emp.branchName) {
-        // Find or create Branch
-        let branch = await prisma.branch.findFirst({
-          where: { name: emp.branchName }
-        });
-        if (!branch) {
-          branch = await prisma.branch.create({
-            data: {
-              name: emp.branchName,
-              code: emp.branchName.substring(0, 10),
-            }
-          });
-        }
-        localBranchId = branch.id;
-
         // Find or create Store
         let store = await prisma.store.findFirst({
           where: { name: emp.branchName }
@@ -64,7 +49,6 @@ export async function syncHopkidEmployees(): Promise<void> {
             data: {
               name: emp.branchName,
               code: emp.branchName.substring(0, 10),
-              branchId: localBranchId,
             }
           });
         }
@@ -89,7 +73,6 @@ export async function syncHopkidEmployees(): Promise<void> {
           status,
           commissionPercentage,
           storeId: localStoreId,
-          branchId: localBranchId,
         },
         create: {
           employeeCode: emp.employeeCode,
@@ -100,7 +83,6 @@ export async function syncHopkidEmployees(): Promise<void> {
           status,
           commissionPercentage,
           storeId: localStoreId,
-          branchId: localBranchId,
         }
       });
       syncCount++;

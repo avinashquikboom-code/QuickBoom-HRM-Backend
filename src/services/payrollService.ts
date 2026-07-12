@@ -482,10 +482,9 @@ class PayrollService {
         where: {
           isActive: true,
           OR: [
-            { branchId: employee.branchId },
             { departmentId: employee.departmentId },
             { officeId: employee.officeId },
-            { branchId: null, departmentId: null, officeId: null } // Global policies
+            { departmentId: null, officeId: null } // Global policies
           ]
         }
       });

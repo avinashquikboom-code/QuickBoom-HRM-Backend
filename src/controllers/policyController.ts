@@ -18,7 +18,6 @@ export const createDeductionPolicy = async (
       deductionValue,
       maxDeduction,
       applicableDays,
-      branchId,
       departmentId,
       officeId,
       effectiveFrom,
@@ -43,7 +42,6 @@ export const createDeductionPolicy = async (
         deductionValue: parseFloat(deductionValue),
         maxDeduction: maxDeduction ? parseFloat(maxDeduction) : null,
         applicableDays: applicableDays || [],
-        branchId: branchId ? parseInt(branchId) : null,
         departmentId: departmentId ? parseInt(departmentId) : null,
         officeId: officeId ? parseInt(officeId) : null,
         effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
@@ -73,9 +71,8 @@ export const getAllDeductionPolicies = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { type, branchId, departmentId, officeId, isActive } = req.query as {
+    const { type, departmentId, officeId, isActive } = req.query as {
       type?: string;
-      branchId?: string;
       departmentId?: string;
       officeId?: string;
       isActive?: string;
@@ -84,7 +81,6 @@ export const getAllDeductionPolicies = async (
     const where: any = {};
     
     if (type) where.type = type;
-    if (branchId) where.branchId = parseInt(branchId);
     if (departmentId) where.departmentId = parseInt(departmentId);
     if (officeId) where.officeId = parseInt(officeId);
     if (isActive !== undefined) where.isActive = isActive === 'true';
@@ -92,9 +88,6 @@ export const getAllDeductionPolicies = async (
     const policies = await prisma.deductionPolicy.findMany({
       where,
       include: {
-        branch: {
-          select: { id: true, name: true, code: true }
-        },
         department: {
           select: { id: true, name: true, code: true }
         },
@@ -130,9 +123,6 @@ export const getDeductionPolicyById = async (
     const policy = await prisma.deductionPolicy.findUnique({
       where: { id: parseInt(idStr) },
       include: {
-        branch: {
-          select: { id: true, name: true, code: true }
-        },
         department: {
           select: { id: true, name: true, code: true }
         },
@@ -180,7 +170,6 @@ export const updateDeductionPolicy = async (
       deductionValue,
       maxDeduction,
       applicableDays,
-      branchId,
       departmentId,
       officeId,
       isActive,
@@ -197,7 +186,6 @@ export const updateDeductionPolicy = async (
     if (deductionValue !== undefined) updateData.deductionValue = parseFloat(deductionValue);
     if (maxDeduction !== undefined) updateData.maxDeduction = maxDeduction ? parseFloat(maxDeduction) : null;
     if (applicableDays !== undefined) updateData.applicableDays = applicableDays;
-    if (branchId !== undefined) updateData.branchId = branchId ? parseInt(branchId) : null;
     if (departmentId !== undefined) updateData.departmentId = departmentId ? parseInt(departmentId) : null;
     if (officeId !== undefined) updateData.officeId = officeId ? parseInt(officeId) : null;
     if (isActive !== undefined) updateData.isActive = isActive;
@@ -262,7 +250,6 @@ export const getApplicablePoliciesForEmployee = async (
     const employee = await prisma.employee.findUnique({
       where: { id: parseInt(employeeIdStr) },
       include: {
-        branch: true,
         department: true,
         office: true
       }
@@ -281,10 +268,9 @@ export const getApplicablePoliciesForEmployee = async (
       where: {
         isActive: true,
         OR: [
-          { branchId: employee.branchId },
           { departmentId: employee.departmentId },
           { officeId: employee.officeId },
-          { branchId: null, departmentId: null, officeId: null } // Global policies
+          { departmentId: null, officeId: null } // Global policies
         ]
       },
       orderBy: { createdAt: 'desc' }
@@ -300,69 +286,6 @@ export const getApplicablePoliciesForEmployee = async (
       success: false,
       message: 'Failed to get applicable policies',
       errorCode: 'GET_APPLICABLE_POLICIES_ERROR'
-    });
-  }
-};
-
-export const getAllBranches = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const branches = await prisma.branch.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' }
-    });
-
-    res.json({
-      success: true,
-      branches
-    });
-  } catch (error) {
-    console.error('Get branches error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get branches',
-      errorCode: 'GET_BRANCHES_ERROR'
-    });
-  }
-};
-
-export const createBranch = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const { name, code, region } = req.body;
-
-    if (!name) {
-      res.status(400).json({
-        success: false,
-        message: 'Branch name is required',
-        errorCode: 'MISSING_BRANCH_NAME'
-      });
-      return;
-    }
-
-    const branch = await prisma.branch.create({
-      data: {
-        name,
-        code,
-        region
-      }
-    });
-
-    res.json({
-      success: true,
-      message: 'Branch created successfully',
-      branch
-    });
-  } catch (error) {
-    console.error('Create branch error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create branch',
-      errorCode: 'CREATE_BRANCH_ERROR'
     });
   }
 };
