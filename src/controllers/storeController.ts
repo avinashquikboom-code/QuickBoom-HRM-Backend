@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { generateStoreCode } from '../utils/idGenerator';
+import { syncStoresAndOffices } from '../utils/employeeSync';
 
 export const fetchStores = async (
   req: AuthenticatedRequest,
@@ -102,6 +103,8 @@ export const createStore = async (
       },
     });
 
+    await syncStoresAndOffices().catch(err => console.error('Failed to sync offices on createStore:', err));
+
     res.status(201).json({
       success: true,
       message: 'Store created successfully.',
@@ -151,6 +154,8 @@ export const updateStore = async (
       },
     });
 
+    await syncStoresAndOffices().catch(err => console.error('Failed to sync offices on updateStore:', err));
+
     res.json({
       success: true,
       message: 'Store updated successfully.',
@@ -194,6 +199,22 @@ export const deleteStore = async (
         message: 'Cannot delete store with assigned employees. Please reassign or delete employees first.' 
       });
       return;
+    }
+
+    const store = await prisma.store.findUnique({
+      where: { id: storeId }
+    });
+
+    if (store) {
+      // Delete matching office
+      await prisma.office.deleteMany({
+        where: {
+          OR: [
+            { code: store.code || undefined },
+            { name: store.name }
+          ]
+        }
+      }).catch(err => console.error('Failed to delete matching office on deleteStore:', err));
     }
 
     await prisma.store.delete({
