@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
+import { pushNotificationService } from '../../services/pushNotificationService';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -756,23 +757,18 @@ export const applyEmployeeLeave = async (
 
           // 3. Send Firebase Push Notifications
           try {
-            const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
-            for (const adminUser of adminUsers) {
-              try {
-                await firebaseNotificationService.sendNotificationToUser(
-                  adminUser.id,
-                  title,
-                  body,
-                  {
-                    click_action: 'FLUTTER_NOTIFICATION_CLICK',
-                    type: 'leave_request',
-                    leaveId: leave.id.toString()
-                  }
-                );
-              } catch (userPushError) {
-                // Silently skip users with no active tokens
+            const adminUserIds = adminUsers.map(u => u.id);
+            const pushTitle = 'New Leave Application';
+            const pushBody = `New leave request from ${employeeName}`;
+            pushNotificationService.sendPush(
+              adminUserIds,
+              pushTitle,
+              pushBody,
+              {
+                screen: 'leave_requests',
+                id: leave.id.toString()
               }
-            }
+            ).catch(err => console.error('Failed to send leave submit push notification:', err));
           } catch (pushError) {
             console.error('Failed to send FCM push notifications for leave request:', pushError);
           }

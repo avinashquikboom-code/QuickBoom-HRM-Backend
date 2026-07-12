@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { Prisma } from '@prisma/client';
+import { pushNotificationService } from '../../services/pushNotificationService';
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import leaveBalanceService from '../../services/leaveBalanceService';
 const PdfPrinter = require('pdfmake');
@@ -224,25 +225,18 @@ export const applyLeave = async (
 
       // Send Firebase Push Notifications to HR/Admin users
       try {
-        const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
-        const title = 'New Leave Application';
-        const body = `${employee.firstName} ${employee.lastName} requested for ${type.toLowerCase()} leave from ${fromDate} to ${toDate}`;
-        for (const hrUser of hrUsers) {
-          try {
-            await firebaseNotificationService.sendNotificationToUser(
-              hrUser.id,
-              title,
-              body,
-              {
-                click_action: 'FLUTTER_NOTIFICATION_CLICK',
-                type: 'leave_request',
-                leaveId: leaveRequest.id.toString()
-              }
-            );
-          } catch (userPushError) {
-            // Silently ignore users with no tokens
+        const hrUserIds = hrUsers.map(u => u.id);
+        const pushTitle = 'New Leave Application';
+        const pushBody = `New leave request from ${employee.firstName} ${employee.lastName}`;
+        pushNotificationService.sendPush(
+          hrUserIds,
+          pushTitle,
+          pushBody,
+          {
+            screen: 'leave_requests',
+            id: leaveRequest.id.toString()
           }
-        }
+        ).catch(err => console.error('Failed to send mobile HR push notification:', err));
       } catch (pushError) {
         console.error('Failed to send FCM push notifications for leave request:', pushError);
       }
@@ -683,17 +677,15 @@ export const approveLeaveRequest = async (
     // Send Firebase Push Notification to Employee
     if (existingLeave.employee.userId) {
       try {
-        const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
-        await firebaseNotificationService.sendNotificationToUser(
-          existingLeave.employee.userId,
+        pushNotificationService.sendPush(
+          [existingLeave.employee.userId],
           'Leave Request Approved',
-          `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
+          `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved.`,
           {
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-            type: 'leave_approved',
-            leaveId: leave.id.toString()
+            screen: 'leave',
+            id: leave.id.toString()
           }
-        );
+        ).catch(err => console.error('Failed to send leave approved push:', err));
       } catch (pushError) {
         console.error('Failed to send FCM push notification to employee on leave approval:', pushError);
       }
@@ -808,17 +800,15 @@ export const rejectLeaveRequest = async (
     // Send Firebase Push Notification to Employee
     if (existingLeave.employee.userId) {
       try {
-        const { firebaseNotificationService } = require('../../services/firebaseNotificationService');
-        await firebaseNotificationService.sendNotificationToUser(
-          existingLeave.employee.userId,
+        pushNotificationService.sendPush(
+          [existingLeave.employee.userId],
           'Leave Request Rejected',
           `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. Reason: ${reviewNote}`,
           {
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-            type: 'leave_rejected',
-            leaveId: leave.id.toString()
+            screen: 'leave',
+            id: leave.id.toString()
           }
-        );
+        ).catch(err => console.error('Failed to send leave rejected push:', err));
       } catch (pushError) {
         console.error('Failed to send FCM push notification to employee on leave rejection:', pushError);
       }

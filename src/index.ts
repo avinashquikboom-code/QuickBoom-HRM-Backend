@@ -42,6 +42,7 @@ import policyRoutes from './routes/policyRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
 import attendanceGenerationPolicyRoutes from './routes/attendanceGenerationPolicyRoutes';
 import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoutes';
+import deviceRoutes from './routes/deviceRoutes';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 import { setWebSocketInstance } from './utils/websocketSingleton';
@@ -123,6 +124,7 @@ app.use('/api/realtime/leave', realtimeLeaveRoutes);
 app.use('/api/attendance', comprehensiveAttendanceRoutes);
 app.use('/api', attendanceGenerationPolicyRoutes);
 app.use('/api', policyRoutes);
+app.use('/api/devices', deviceRoutes);
 
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {

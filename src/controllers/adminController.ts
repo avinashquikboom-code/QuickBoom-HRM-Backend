@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { pushNotificationService } from '../services/pushNotificationService';
 import { syncHopkidEmployees } from '../utils/employeeSync';
 import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
@@ -5948,6 +5949,17 @@ export const resetEmployeePassword = async (
         updatedAt: new Date()
       }
     });
+
+    // Trigger push notification to employee (fire-and-forget, never awaited)
+    pushNotificationService.sendPush(
+      [userIdInt],
+      'Password Reset',
+      'Your password has been reset by an administrator.',
+      {
+        screen: 'profile',
+        id: userIdInt.toString()
+      }
+    ).catch(err => console.error('Failed to send password reset push:', err));
 
     // Log the password reset action
     console.log(`Password reset for user ${user.email} by ${req.user?.email}`);
