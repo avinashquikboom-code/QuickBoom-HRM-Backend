@@ -57,12 +57,8 @@ export const getMobileStoreDetails = async (
         name: employee.store!.name,
         code: employee.store!.code,
         address: employee.store!.address,
-        city: employee.store!.city,
-        state: employee.store!.state,
         country: employee.store!.country,
         pincode: employee.store!.pincode,
-        phone: employee.store!.phone,
-        email: employee.store!.email,
         isActive: employee.store!.isActive,
         branch: employee.store!.branch ? {
           id: employee.store!.branch.id,

@@ -605,3 +605,189 @@ export const createCommissionSettlement = async (
     res.status(500).json({ success: false, message: 'Failed to create commission settlement.' });
   }
 };
+
+interface GroupedReport {
+  periodStart: string;
+  periodEnd: string;
+  employeeId: number;
+  employeeName: string;
+  totalSales: number;
+  totalCredits: number;
+  netSales: number;
+  commissionRate: number;
+  commissionAmount: number;
+}
+
+export const fetchCommissionReport = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const fromStr = req.query.from as string;
+    const toStr = req.query.to as string;
+    const groupBy = ((req.query.groupBy as string) || 'day').toLowerCase();
+
+    if (groupBy !== 'day' && groupBy !== 'week' && groupBy !== 'month') {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid groupBy parameter. Must be day, week, or month.',
+      });
+      return;
+    }
+
+    let gteDate: Date | undefined;
+    let lteDate: Date | undefined;
+    if (fromStr) {
+      gteDate = new Date(`${fromStr}T00:00:00+05:30`);
+    }
+    if (toStr) {
+      lteDate = new Date(`${toStr}T23:59:59.999+05:30`);
+    }
+
+    let targetEmployeeId: number | undefined;
+    if (req.user?.role === 'EMPLOYEE') {
+      const employee = await prisma.employee.findUnique({
+        where: { userId: req.user.id },
+      });
+      if (!employee) {
+        res.json({ success: true, data: [] });
+        return;
+      }
+      targetEmployeeId = employee.id;
+    } else if (req.query.employeeId) {
+      targetEmployeeId = parseInt(req.query.employeeId as string, 10);
+    }
+
+    const transactions = await prisma.commissionTransaction.findMany({
+      where: {
+        employeeId: targetEmployeeId,
+        createdAt: {
+          gte: gteDate,
+          lte: lteDate,
+        },
+      },
+      include: {
+        employee: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    const groups: {
+      [key: string]: {
+        periodStart: string;
+        periodEnd: string;
+        employeeId: number;
+        employeeName: string;
+        sales: number;
+        credits: number;
+        commissionAmount: number;
+        rates: number[];
+      };
+    } = {};
+
+    const formatDateString = (d: Date) => {
+      return d.toISOString().split('T')[0];
+    };
+
+    const getPeriodBoundaries = (date: Date, type: string) => {
+      const istDate = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
+
+      if (type === 'day') {
+        const start = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate()));
+        return {
+          start: formatDateString(start),
+          end: formatDateString(start),
+        };
+      } else if (type === 'week') {
+        const utcDay = istDate.getUTCDay();
+        const dayDiff = utcDay === 0 ? -6 : 1 - utcDay;
+
+        const monday = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate() + dayDiff));
+        const sunday = new Date(monday);
+        sunday.setUTCDate(monday.getUTCDate() + 6);
+
+        return {
+          start: formatDateString(monday),
+          end: formatDateString(sunday),
+        };
+      } else {
+        const firstDay = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), 1));
+        const lastDay = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth() + 1, 0));
+        return {
+          start: formatDateString(firstDay),
+          end: formatDateString(lastDay),
+        };
+      }
+    };
+
+    for (const tx of transactions) {
+      const { start, end } = getPeriodBoundaries(tx.createdAt, groupBy);
+      const empId = tx.employeeId;
+      let empName = 'Employee';
+      if (tx.employee) {
+        empName = `${tx.employee.firstName || ''} ${tx.employee.lastName || ''}`.trim() || 'Employee';
+      }
+
+      const key = `${empId}_${start}`;
+      if (!groups[key]) {
+        groups[key] = {
+          periodStart: start,
+          periodEnd: end,
+          employeeId: empId,
+          employeeName: empName,
+          sales: 0,
+          credits: 0,
+          commissionAmount: 0,
+          rates: [],
+        };
+      }
+
+      const amount = tx.saleAmount;
+      if (amount > 0) {
+        groups[key].sales += amount;
+      } else {
+        groups[key].credits += Math.abs(amount);
+      }
+
+      groups[key].commissionAmount += tx.commissionAmount;
+      if (tx.commissionPercent !== null && tx.commissionPercent !== undefined) {
+        groups[key].rates.push(tx.commissionPercent);
+      }
+    }
+
+    const report: GroupedReport[] = Object.values(groups).map((g) => {
+      const netSales = g.sales - g.credits;
+      let commissionRate = 0;
+      if (g.rates.length > 0) {
+        commissionRate = g.rates.reduce((sum, val) => sum + val, 0) / g.rates.length;
+      } else if (netSales > 0) {
+        commissionRate = (g.commissionAmount / netSales) * 100;
+      }
+
+      return {
+        periodStart: g.periodStart,
+        periodEnd: g.periodEnd,
+        employeeId: g.employeeId,
+        employeeName: g.employeeName,
+        totalSales: Number(g.sales.toFixed(2)),
+        totalCredits: Number(g.credits.toFixed(2)),
+        netSales: Number(netSales.toFixed(2)),
+        commissionRate: Number(commissionRate.toFixed(2)),
+        commissionAmount: Number(g.commissionAmount.toFixed(2)),
+      };
+    });
+
+    res.json({
+      success: true,
+      data: report,
+    });
+  } catch (error: any) {
+    console.error('Fetch commission report error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate commission report.',
+    });
+  }
+};

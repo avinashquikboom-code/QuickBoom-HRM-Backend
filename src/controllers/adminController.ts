@@ -206,6 +206,10 @@ export const fetchEmployees = async (
           firstName: true,
           lastName: true,
           designation: true,
+          designationId: true,
+          designationRelation: {
+            select: { id: true, name: true },
+          },
           status: true,
           officeId: true,
           office: {
@@ -218,6 +222,23 @@ export const fetchEmployees = async (
               maxPunchRadiusMeters: true,
             },
           },
+          storeId: true,
+          store: {
+            select: {
+              id: true,
+              name: true,
+              branchId: true,
+              branch: {
+                select: { id: true, name: true },
+              },
+            },
+          },
+          branchId: true,
+          branch: {
+            select: { id: true, name: true },
+          },
+          departmentId: true,
+          commissionPercentage: true,
           user: {
             select: {
               id: true,
@@ -259,6 +280,8 @@ export const fetchEmployees = async (
       firstName: emp.firstName,
       lastName: emp.lastName,
       designation: emp.designation,
+      designationId: emp.designationId,
+      designationRelation: emp.designationRelation ?? null,
       status: emp.status,
       workMode: emp.workModeId,
       shiftType: emp.shiftTypeId,
@@ -284,6 +307,23 @@ export const fetchEmployees = async (
             maxPunchRadiusMeters: emp.office.maxPunchRadiusMeters,
           }
         : null,
+      storeId: emp.storeId?.toString() || null,
+      store: emp.store
+        ? {
+            id: emp.store.id.toString(),
+            name: emp.store.name,
+            branchId: emp.store.branchId?.toString() || null,
+            branch: emp.store.branch
+              ? { id: emp.store.branch.id.toString(), name: emp.store.branch.name }
+              : null,
+          }
+        : null,
+      branchId: emp.branchId?.toString() || null,
+      branch: emp.branch
+        ? { id: emp.branch.id.toString(), name: emp.branch.name }
+        : null,
+      departmentId: emp.departmentId?.toString() || null,
+      commissionPercentage: emp.commissionPercentage || 0,
       user: emp.user
         ? {
             id: emp.user.id,
@@ -329,6 +369,7 @@ export const updateEmployee = async (
       firstName, 
       lastName, 
       designation, 
+      designationId,
       status, 
       officeId, 
       departmentId, 
@@ -342,7 +383,8 @@ export const updateEmployee = async (
       branchName,
       storeId,
       branchId,
-      customPunchRadius
+      customPunchRadius,
+      commissionPercentage
     } = req.body;
 
     if (!id) {
@@ -401,6 +443,27 @@ export const updateEmployee = async (
     if (storeId !== undefined) updateData.storeId = storeId ? parseInt(storeId) : null;
     if (branchId !== undefined) updateData.branchId = branchId ? parseInt(branchId) : null;
     if (customPunchRadius !== undefined) updateData.customPunchRadius = customPunchRadius ? parseFloat(customPunchRadius) : null;
+    if (commissionPercentage !== undefined) {
+      updateData.commissionPercentage = (commissionPercentage === null || commissionPercentage === '')
+        ? null
+        : parseFloat(commissionPercentage);
+    }
+
+    // Handle designationId — also sync the designation string from the DB
+    if (designationId !== undefined) {
+      if (designationId) {
+        const parsedDesignationId = parseInt(designationId);
+        updateData.designationId = parsedDesignationId;
+        const designationRecord = await prisma.designation.findUnique({
+          where: { id: parsedDesignationId },
+        });
+        if (designationRecord) {
+          updateData.designation = designationRecord.name;
+        }
+      } else {
+        updateData.designationId = null;
+      }
+    }
 
     const updatedEmployee = await prisma.employee.update({
       where: { id: employeeId },
@@ -570,7 +633,8 @@ export const createEmployee = async (
     branchName,
     storeId,
     branchId,
-    customPunchRadius
+    customPunchRadius,
+    commissionPercentage
   } = req.body;
 
   if ((!userId && (!email || !password)) || !firstName) {
@@ -715,6 +779,9 @@ export const createEmployee = async (
         storeId: storeId ? parseInt(storeId, 10) : null,
         branchId: branchId ? parseInt(branchId, 10) : null,
         customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
+        commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
+          ? null
+          : parseFloat(commissionPercentage),
       },
       include: {
         office: true,

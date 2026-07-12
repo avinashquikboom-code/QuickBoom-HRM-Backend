@@ -87,6 +87,18 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     console.log('✅ [LOGIN] Password verified for:', email);
 
+    // 2.2. Enforce that only SUPER_ADMIN and HR roles can log in via this portal (admin panel)
+    const allowedAdminRoles = [Role.SUPER_ADMIN, Role.HR];
+    if (!allowedAdminRoles.includes(user.role)) {
+      console.log('❌ [LOGIN] Role not allowed for admin panel:', user.role);
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Only Super Admin and HR can log in to the Admin Panel.',
+        errorCode: 'ROLE_MISMATCH'
+      });
+      return;
+    }
+
     // 2.5. Check office/branch allotment for employees
     if (user.role === Role.EMPLOYEE) {
       if (!employeeRecord || !employeeRecord.officeId) {
@@ -584,11 +596,13 @@ export const employeeLogin = async (req: Request, res: Response): Promise<void> 
 };
 
 export const hrLogin = async (req: Request, res: Response): Promise<void> => {
-  await authenticateRoleLogin(req, res, [Role.HR, Role.PLATFORM_ADMIN]);
+  // HR login endpoint: only the HR role is permitted (used by mobile HR tab)
+  await authenticateRoleLogin(req, res, [Role.HR]);
 };
 
 export const superAdminLogin = async (req: Request, res: Response): Promise<void> => {
-  await authenticateRoleLogin(req, res, [Role.SUPER_ADMIN, Role.ADMIN]);
+  // Super Admin login endpoint: only the SUPER_ADMIN role is permitted
+  await authenticateRoleLogin(req, res, [Role.SUPER_ADMIN]);
 };
 
 export const refreshToken = async (req: AuthenticatedRequest, res: Response): Promise<void> => {

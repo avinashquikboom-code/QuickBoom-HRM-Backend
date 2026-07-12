@@ -115,6 +115,7 @@ model Employee {
   accountType      String?           @default("Savings")
   branchName       String?
   customPunchRadius Float?
+  commissionPercentage Float?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   attendances      Attendance[]
@@ -577,14 +578,12 @@ model Store {
   name        String
   code        String?   @unique
   address     String?
-  city        String?
-  state       String?
   country     String    @default("India")
   pincode     String?
-  phone       String?
-  email       String?
   branchId    Int?
   maxPunchRadiusMeters Float? @default(50.0)
+  latitude    Float?
+  longitude   Float?
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

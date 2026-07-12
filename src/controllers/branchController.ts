@@ -120,6 +120,16 @@ export const createBranch = async (
       },
     });
 
+    if (officeId) {
+      const storeId = parseInt(officeId as string, 10);
+      if (!isNaN(storeId)) {
+        await prisma.store.update({
+          where: { id: storeId },
+          data: { branchId: branch.id },
+        });
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: 'Branch created successfully.',
@@ -141,7 +151,7 @@ export const updateBranch = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const { name, code, address, city, state, country, pincode, phone, email, isActive, latitude, longitude, maxPunchRadiusMeters } = req.body;
+    const { name, code, address, city, state, country, pincode, phone, email, isActive, latitude, longitude, maxPunchRadiusMeters, officeId } = req.body;
 
     const branchId = parseInt(id as string, 10);
     if (isNaN(branchId)) {
@@ -174,6 +184,25 @@ export const updateBranch = async (
       where: { id: branchId },
       data: updateData,
     });
+
+    if (officeId !== undefined) {
+      // Unlink any store currently linked to this branch
+      await prisma.store.updateMany({
+        where: { branchId: branchId },
+        data: { branchId: null },
+      });
+
+      // Link the new store if specified
+      if (officeId) {
+        const storeId = parseInt(officeId as string, 10);
+        if (!isNaN(storeId) && storeId !== 0) {
+          await prisma.store.update({
+            where: { id: storeId },
+            data: { branchId: branchId },
+          });
+        }
+      }
+    }
 
     res.json({
       success: true,

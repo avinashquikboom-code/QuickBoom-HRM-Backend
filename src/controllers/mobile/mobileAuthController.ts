@@ -111,19 +111,20 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
     }
 
     console.log('[MOBILE_LOGIN] Phase 3: Role validation...');
-    const mobileCompatibleRoles = ['STORE_MANAGER' as Role, 'SALESMAN' as Role, 'HELPER' as Role, 'EMPLOYEE' as Role, 'HR' as Role];
+    // Mobile application: only HR and EMPLOYEE roles are permitted
+    const mobileCompatibleRoles: Role[] = [Role.HR, Role.EMPLOYEE];
     if (!mobileCompatibleRoles.includes(userAuth.role)) {
       console.log('[MOBILE_LOGIN] Incompatible role:', userAuth.role);
       res.status(403).json({
         success: false,
-        message: 'Mobile access not available for this role. Only Employees, Store Managers, Salesmen, Helpers, and HRs can access the mobile application.',
+        message: 'Access denied. Only HR and Employee roles can access the mobile application.',
         errorCode: 'MOBILE_ACCESS_DENIED'
       });
       return;
     }
 
-    // Ensure employee has office/store assigned (bypassed for HR)
-    if (userAuth.role !== ('HR' as Role) && (!userAuth.employee || !userAuth.employee.officeId)) {
+    // Ensure employee has office assigned (bypassed for HR)
+    if (userAuth.role !== Role.HR && (!userAuth.employee || !userAuth.employee.officeId)) {
       console.log('[MOBILE_LOGIN] Office not allotted for employee');
       res.status(403).json({
         success: false,
