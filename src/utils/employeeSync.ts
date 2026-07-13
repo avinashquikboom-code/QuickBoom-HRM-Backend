@@ -167,32 +167,51 @@ export async function syncHopkidEmployees(): Promise<void> {
       const employeeID = emp.employeeID ? emp.employeeID.toLowerCase() : null;
 
       // Upsert the Employee by employeeCode
-      await prisma.employee.upsert({
+      // Check if employee already exists locally
+      const existingEmployee = await prisma.employee.findUnique({
         where: { employeeCode: emp.employeeCode },
-        update: {
-          employeeID,
-          firstName,
-          lastName,
-          mobileNumber,
-          joiningDate,
-          status,
-          commissionPercentage,
-          storeId: localStoreId,
-          officeId: localOfficeId,
-        },
-        create: {
-          employeeID,
-          employeeCode: emp.employeeCode,
-          firstName,
-          lastName,
-          mobileNumber,
-          joiningDate,
-          status,
-          commissionPercentage,
-          storeId: localStoreId,
-          officeId: localOfficeId,
-        }
       });
+
+      if (existingEmployee) {
+        if (existingEmployee.source === 'MANUAL') {
+          console.log(`⚠️ [syncHopkidEmployees] Skipped manual employee: Code ${emp.employeeCode} (${existingEmployee.firstName} ${existingEmployee.lastName})`);
+          continue;
+        }
+
+        // Update existing HopKid employee
+        await prisma.employee.update({
+          where: { id: existingEmployee.id },
+          data: {
+            employeeID,
+            firstName,
+            lastName,
+            mobileNumber,
+            joiningDate,
+            status,
+            commissionPercentage,
+            storeId: localStoreId,
+            officeId: localOfficeId,
+            source: 'HOPKID',
+          },
+        });
+      } else {
+        // Create new HopKid employee
+        await prisma.employee.create({
+          data: {
+            employeeID,
+            employeeCode: emp.employeeCode,
+            firstName,
+            lastName,
+            mobileNumber,
+            joiningDate,
+            status,
+            commissionPercentage,
+            storeId: localStoreId,
+            officeId: localOfficeId,
+            source: 'HOPKID',
+          },
+        });
+      }
       syncCount++;
     }
     console.log(`✅ [syncHopkidEmployees] Sync completed successfully! Synchronized ${syncCount} employees.`);

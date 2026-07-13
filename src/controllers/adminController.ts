@@ -670,6 +670,22 @@ export const createEmployee = async (
   }
 
   try {
+    // Duplicate check for mobileNumber
+    if (mobileNumber) {
+      const existingMobile = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { mobileNumber: mobileNumber.trim() },
+            { mobileNumber }
+          ]
+        }
+      });
+      if (existingMobile) {
+        res.status(400).json({ success: false, message: 'Employee with this mobile number already exists.' });
+        return;
+      }
+    }
+
     let user;
     
     // If email and password are provided, create a new user
@@ -832,7 +848,8 @@ export const createEmployee = async (
       });
     } else {
       const employeeCode = await generateEmployeeCode(user.role);
-      const guid = `local-${employeeCode.toLowerCase()}`;
+      const { randomUUID } = require('crypto');
+      const guid = randomUUID().toLowerCase();
 
       await prisma.user.update({
         where: { id: user.id },
@@ -866,6 +883,7 @@ export const createEmployee = async (
           commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
             ? null
             : parseFloat(commissionPercentage),
+          source: 'MANUAL',
         },
         include: {
           office: true,

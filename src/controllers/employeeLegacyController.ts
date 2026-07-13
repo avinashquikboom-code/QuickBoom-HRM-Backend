@@ -26,8 +26,52 @@ export const getEmployeeList = async (
     const result = await response.json();
     const dataList = result.data || [];
 
+    // Fetch manual employees from local database
+    const manualEmployees = await prisma.employee.findMany({
+      where: { source: 'MANUAL' },
+      include: {
+        store: true,
+        user: true,
+        salaryStructure: true,
+      },
+    });
+
+    // Map manual employees to the shape returned by the external HopKid API
+    const manualDataList = manualEmployees.map((emp) => ({
+      employeeID: emp.employeeID || `local-${emp.id}`,
+      employeeCode: emp.employeeCode,
+      employeeName: `${emp.firstName} ${emp.lastName || ''}`.trim(),
+      gender: null,
+      dateofBirth: null,
+      dateofJoining: emp.joiningDate ? emp.joiningDate.toISOString() : null,
+      pinCode: null,
+      address: '',
+      branchName: emp.store?.name || 'Remote',
+      mobileNo: emp.mobileNumber || '',
+      email: emp.user?.email || null,
+      salary: emp.salaryStructure?.grossSalary || 0.0,
+      commissionPercentage: emp.commissionPercentage || 0.0,
+      companyId: '',
+      branchId: '',
+      isActive: emp.status === 'active',
+      createdBy: 'HR',
+      createdOn: emp.createdAt.toISOString(),
+      updatedBy: 'HR',
+      updatedOn: emp.updatedAt.toISOString(),
+      branchId2: emp.storeId ? emp.storeId.toString() : '',
+      source: 'MANUAL',
+    }));
+
+    // Tag external data list with HOPKID source and union with manual data list
+    const taggedHopkidData = dataList.map((emp: any) => ({
+      ...emp,
+      source: 'HOPKID',
+    }));
+
+    const combinedData = [...taggedHopkidData, ...manualDataList];
+
     // Map external API response format to the structure expected by legacy local consumers
-    const mappedEmployees = dataList.map((emp: any) => ({
+    const mappedEmployees = combinedData.map((emp: any) => ({
       id: emp.employeeID,
       employeeCode: emp.employeeCode || '',
       firstName: emp.employeeName ? emp.employeeName.split(' ')[0] : '',
@@ -42,12 +86,13 @@ export const getEmployeeList = async (
       storeName: emp.branchName || null,
       departmentId: null,
       departmentName: null,
+      source: emp.source,
     }));
 
     res.json({
       success: true,
       message: result.message || '',
-      data: dataList,
+      data: combinedData,
       employees: mappedEmployees,
     });
   } catch (error: any) {

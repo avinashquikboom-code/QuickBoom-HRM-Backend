@@ -118,6 +118,7 @@ model Employee {
   branchName       String?
   customPunchRadius Float?
   commissionPercentage Float?
+  source           String            @default("HOPKID")
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   attendances      Attendance[]

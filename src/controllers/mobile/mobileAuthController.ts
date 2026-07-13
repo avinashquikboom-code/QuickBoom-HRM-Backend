@@ -44,13 +44,19 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
           role: true,
           isActive: true,
           profile: { select: { id: true } },
-          employee: { select: { id: true, officeId: true } },
+          employee: { select: { id: true, officeId: true, storeId: true } },
         },
       });
     } else {
-      // Login with employee code (e.g., EMP001, SALP0001, etc.)
-      const employee = await prisma.employee.findUnique({
-        where: { employeeCode: identifier.toUpperCase() },
+      // Login with employee code or mobile number
+      const employee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { employeeCode: identifier.toUpperCase() },
+            { mobileNumber: identifier },
+            { mobileNumber: identifier.replace(/\D/g, '') }
+          ]
+        },
         select: {
           id: true,
           user: {
@@ -64,6 +70,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
             },
           },
           officeId: true,
+          storeId: true,
         },
       });
 
@@ -78,6 +85,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
           employee: {
             id: employee.id,
             officeId: employee.officeId,
+            storeId: employee.storeId,
           },
         };
       }
@@ -123,10 +131,10 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    // Ensure EMPLOYEE role has office assigned (store roles use storeId, HR has no location check)
+    // Ensure EMPLOYEE role has office or store assigned (store roles use storeId, HR has no location check)
     const needsOfficeCheck = userAuth.role === Role.EMPLOYEE;
-    if (needsOfficeCheck && (!userAuth.employee || !userAuth.employee.officeId)) {
-      console.log('[MOBILE_LOGIN] Office not allotted for employee');
+    if (needsOfficeCheck && (!userAuth.employee || (!userAuth.employee.officeId && !userAuth.employee.storeId))) {
+      console.log('[MOBILE_LOGIN] Office/store not allotted for employee');
       res.status(403).json({
         success: false,
         message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',

@@ -67,6 +67,10 @@ export const addSales = async (
       } else if (policy.commissionType === 'FIXED') {
         commissionAmount = policy.commissionValue;
       }
+    } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
+      commissionType = 'PERCENTAGE';
+      commissionPercent = employee.commissionPercentage;
+      commissionAmount = (Number(saleAmount) * employee.commissionPercentage) / 100;
     }
 
     // Create the transaction

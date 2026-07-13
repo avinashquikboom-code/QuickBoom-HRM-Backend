@@ -433,6 +433,7 @@ export const fetchHREmployees = async (
         taskCount: emp._count.assignedTasks,
         attendanceCount: emp._count.attendances,
         joinedAt: emp.createdAt.toISOString(),
+        source: emp.source || 'HOPKID',
       };
       console.log(`👥 [HR EMPLOYEES] Mapped employee:`, result);
       return result;
@@ -1341,6 +1342,22 @@ export const createHREmployee = async (
   }
 
   try {
+    // Duplicate check for phone/mobileNumber
+    if (phone) {
+      const existingPhone = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { mobileNumber: phone.trim() },
+            { mobileNumber: phone }
+          ]
+        }
+      });
+      if (existingPhone) {
+        res.status(400).json({ success: false, message: 'Employee with this mobile number already exists.' });
+        return;
+      }
+    }
+
     // Check if user already exists
     let user = await prisma.user.findUnique({ where: { email } });
     
@@ -1382,10 +1399,20 @@ export const createHREmployee = async (
     // Generate employee code - use REPM format for HR roles
     const employeeCode = user.role === 'HR' ? `REPM${String(user.id).padStart(4, '0')}` : `EMP${String(user.id).padStart(4, '0')}`;
 
+    const { randomUUID } = require('crypto');
+    const guid = randomUUID().toLowerCase();
+
+    // Update user with employeeID
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { employeeID: guid }
+    });
+
     // Create employee record
     const newEmployee = await prisma.employee.create({
       data: {
         userId: user.id,
+        employeeID: guid,
         employeeCode,
         firstName: firstName.trim(),
         lastName: (lastName || '').trim(),
@@ -1403,6 +1430,7 @@ export const createHREmployee = async (
         branchName: branchName || null,
         storeId: storeId ? parseInt(storeId, 10) : null,
         customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
+        source: 'MANUAL',
       },
       include: {
         office: true,

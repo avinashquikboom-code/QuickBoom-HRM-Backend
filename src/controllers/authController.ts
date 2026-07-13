@@ -458,13 +458,21 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
           employee: {
             include: {
               office: true,
+              store: true,
             },
           },
         },
       });
     } else {
-      const employee = await prisma.employee.findUnique({
-        where: { employeeCode: identifier },
+      const employee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { employeeCode: identifier.toUpperCase() },
+            { employeeCode: identifier },
+            { mobileNumber: identifier },
+            { mobileNumber: identifier.replace(/\D/g, '') }
+          ]
+        },
         include: {
           user: {
             include: {
@@ -472,6 +480,7 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
               employee: {
                 include: {
                   office: true,
+                  store: true,
                 },
               },
             },
@@ -511,7 +520,7 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
 
     // Check office/branch allotment for employees
     if (user.role === Role.EMPLOYEE) {
-      if (!user.employee || !user.employee.officeId) {
+      if (!user.employee || (!user.employee.officeId && !user.employee.storeId)) {
         res.status(403).json({
           success: false,
           message: 'Your office or branch has not been allotted yet. Please contact your HR administrator.',
