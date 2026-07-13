@@ -265,7 +265,7 @@ export const fetchEmployees = async (
             }
           },
         },
-        orderBy: { employeeCode: 'asc' },
+        orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
