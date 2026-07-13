@@ -12,6 +12,26 @@ const PdfPrinter = require('pdfmake');
 // Primary color for all PDF reports
 const PRIMARY_COLOR = '#14B8A6';
 
+/**
+ * Resolves an Employee's integer primary-key id from any of:
+ *   - A plain integer string:   "42"
+ *   - A GUID (employeeID):      "a8f52ed2-eddb-4a86-b132-c4965a4dbce6"
+ *   - A legacy local-* string:  "local-hr001"
+ */
+async function resolveEmployeeDbId(idParam: string): Promise<number | null> {
+  const trimmed = idParam.trim();
+  const asInt = parseInt(trimmed, 10);
+  if (!isNaN(asInt) && asInt.toString() === trimmed) {
+    const emp = await prisma.employee.findUnique({ where: { id: asInt }, select: { id: true } });
+    return emp?.id ?? null;
+  }
+  const emp = await prisma.employee.findFirst({
+    where: { employeeID: { equals: trimmed, mode: 'insensitive' } },
+    select: { id: true },
+  });
+  return emp?.id ?? null;
+}
+
 // ==========================================
 // 1. User Management
 // ==========================================
@@ -217,6 +237,7 @@ export const fetchEmployees = async (
             select: { id: true, name: true },
           },
           status: true,
+          source: true,
           officeId: true,
           office: {
             select: {
@@ -273,7 +294,10 @@ export const fetchEmployees = async (
     ]);
 
     const mappedEmployees = employees.map((emp) => ({
-      id: (emp.employeeID || emp.id.toString()).toLowerCase(),
+      // Use the integer DB id as the canonical identifier for edit/delete routes.
+      // The employeeID (GUID) is exposed separately for reference.
+      id: emp.id,
+      employeeID: emp.employeeID,
       employeeCode: emp.employeeCode,
       firstName: emp.firstName,
       lastName: emp.lastName,
@@ -281,6 +305,7 @@ export const fetchEmployees = async (
       designationId: emp.designationId,
       designationRelation: emp.designationRelation ?? null,
       status: emp.status,
+      source: emp.source ?? 'MANUAL',
       workMode: emp.workModeId,
       shiftType: emp.shiftTypeId,
       workModeId: emp.workModeId,
@@ -388,9 +413,9 @@ export const updateEmployee = async (
     // Handle string | string[] type for id parameter
     const idString = Array.isArray(id) ? id[0] : id;
 
-    // Convert string ID to integer for Prisma
-    const employeeId = parseInt(idString, 10);
-    if (isNaN(employeeId)) {
+    // Resolve integer DB id — accepts plain integers, GUIDs, or legacy local-* IDs
+    const employeeId = await resolveEmployeeDbId(idString);
+    if (employeeId === null) {
       res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
       return;
     }
@@ -555,9 +580,9 @@ export const deleteEmployee = async (
     // Handle string | string[] type for id parameter
     const idString = Array.isArray(id) ? id[0] : id;
 
-    // Convert string ID to integer for Prisma
-    const employeeId = parseInt(idString, 10);
-    if (isNaN(employeeId)) {
+    // Resolve integer DB id — accepts plain integers, GUIDs, or legacy local-* IDs
+    const employeeId = await resolveEmployeeDbId(idString);
+    if (employeeId === null) {
       res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
       return;
     }
@@ -1707,8 +1732,9 @@ export const assignEmployeeToOffice = async (
   const { employeeId } = req.params;
   const { officeId } = req.body;
 
-  const empIdInt = parseInt(employeeId as string, 10);
-  if (isNaN(empIdInt)) {
+  // Resolve integer DB id — accepts plain integers, GUIDs, or legacy local-* IDs
+  const empIdInt = await resolveEmployeeDbId(employeeId as string);
+  if (empIdInt === null) {
     res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
     return;
   }
@@ -4134,8 +4160,9 @@ export const createAdminLeaveRequest = async (
   }
 
   try {
-    const empIdInt = parseInt(employeeId, 10);
-    if (isNaN(empIdInt)) {
+    // Resolve integer DB id — accepts plain integers, GUIDs, or legacy local-* IDs
+    const empIdInt = await resolveEmployeeDbId(String(employeeId));
+    if (empIdInt === null) {
       res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
       return;
     }
@@ -5897,8 +5924,9 @@ export const updateAdminEmployeeLeaveBalance = async (
   const { employeeId } = req.params;
   const { casualTotal, sickTotal, earnedTotal, fiscalYear } = req.body;
   
-  const employeeIdInt = parseInt(employeeId as string, 10);
-  if (isNaN(employeeIdInt)) {
+  // Resolve integer DB id — accepts plain integers, GUIDs, or legacy local-* IDs
+  const employeeIdInt = await resolveEmployeeDbId(employeeId as string);
+  if (employeeIdInt === null) {
     res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
     return;
   }
