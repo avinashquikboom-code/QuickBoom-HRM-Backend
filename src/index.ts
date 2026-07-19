@@ -43,6 +43,10 @@ import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
 import attendanceGenerationPolicyRoutes from './routes/attendanceGenerationPolicyRoutes';
 import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoutes';
 import deviceRoutes from './routes/deviceRoutes';
+import breakRoutes from './routes/breakRoutes';
+import shiftRequestRoutes from './routes/shiftRequestRoutes';
+import locationTrackingRoutes from './routes/locationTrackingRoutes';
+import { authenticateToken } from './middlewares/authMiddleware';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
 import { setWebSocketInstance } from './utils/websocketSingleton';
@@ -125,6 +129,9 @@ app.use('/api/attendance', comprehensiveAttendanceRoutes);
 app.use('/api', attendanceGenerationPolicyRoutes);
 app.use('/api', policyRoutes);
 app.use('/api/devices', deviceRoutes);
+app.use('/api/breaks', breakRoutes);
+app.use('/api', shiftRequestRoutes);
+app.use('/api/mobile/location', locationTrackingRoutes);
 
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {
@@ -198,8 +205,27 @@ app.use('/api/mobile/dashboard', upcomingRoutes);
 app.use('/api/mobile/commission', mobileCommissionRoutes);
 app.use('/api/mobile/tasks', mobileTaskRoutes);
 app.use('/api/mobile/store', mobileStoreRoutes);
-app.use('/api/mobile/documents', mobileDocumentRoutes);
 app.use('/api/mobile/holidays', mobileHolidayRoutes);
+
+app.get('/api/holidays', authenticateToken, async (req, res) => {
+  try {
+    const holidays = await prisma.holiday.findMany({
+      orderBy: { date: 'asc' }
+    });
+    res.json({
+      success: true,
+      holidays: holidays.map(h => ({
+        name: h.name,
+        date: h.date.toISOString().split('T')[0],
+        isPublic: h.isPublic
+      })),
+      sundaysAreHolidays: true
+    });
+  } catch (error) {
+    console.error('Fetch holidays error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch holidays.' });
+  }
+});
 
 const host = process.env.HOST || '0.0.0.0';
 

@@ -648,10 +648,10 @@ export const applyEmployeeLeave = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { type, fromDate, toDate, reason } = req.body;
+  const { type, fromDate, toDate, reason, leaveCategory = 'PLANNED' } = req.body;
 
   console.log('=== EMPLOYEE LEAVE CREATION API CALLED ===');
-  console.log('Request body:', { type, fromDate, toDate, reason });
+  console.log('Request body:', { type, fromDate, toDate, reason, leaveCategory });
   console.log('User making request:', req.user?.email, 'User ID:', req.user?.id);
 
   if (!type || !fromDate || !toDate || !reason) {
@@ -669,6 +669,31 @@ export const applyEmployeeLeave = async (
 
     console.log('Creating leave request for employee:', employee.id, employee.firstName, employee.lastName);
 
+    let deductionApplied = false;
+    if (leaveCategory === 'UNPLANNED') {
+      const holidays = await prisma.holiday.findMany();
+      const festivalDates = new Set(holidays.map(h => h.date.toISOString().split('T')[0]));
+      
+      const start = new Date(fromDate);
+      const end = new Date(toDate);
+      
+      const isSundayOrFestival = (date: Date): boolean => {
+        if (date.getDay() === 0) return true;
+        const dateStr = date.toISOString().split('T')[0];
+        return festivalDates.has(dateStr);
+      };
+
+      const dayBefore = new Date(start);
+      dayBefore.setDate(dayBefore.getDate() - 1);
+
+      const dayAfter = new Date(end);
+      dayAfter.setDate(dayAfter.getDate() + 1);
+
+      if (isSundayOrFestival(dayBefore) || isSundayOrFestival(dayAfter)) {
+        deductionApplied = true;
+      }
+    }
+
     const leave = await prisma.leaveRequest.create({
       data: {
         employeeId: employee.id,
@@ -677,6 +702,8 @@ export const applyEmployeeLeave = async (
         toDate: new Date(toDate),
         reason: reason.trim(),
         status: 'PENDING',
+        leaveCategory: leaveCategory.toUpperCase(),
+        deductionApplied,
       },
     });
 

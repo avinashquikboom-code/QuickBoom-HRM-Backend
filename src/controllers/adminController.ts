@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { Prisma } from '@prisma/client';
+import ExcelJS from 'exceljs';
 import bcrypt from 'bcryptjs';
 import { pushNotificationService } from '../services/pushNotificationService';
 import { syncHopkidEmployees } from '../utils/employeeSync';
@@ -199,9 +200,10 @@ export const fetchEmployees = async (
     // Sync external Hopkid employees to keep DB up to date
     await syncHopkidEmployees();
 
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 50;
-    const skip = (page - 1) * limit;
+    const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const skip = page && limit ? (page - 1) * limit : undefined;
+    const search = (req.query.search as string) || '';
 
     let whereClause: Prisma.EmployeeWhereInput = {};
     if (req.user?.role === 'STORE_MANAGER') {
@@ -211,15 +213,30 @@ export const fetchEmployees = async (
       if (!storeManager || !storeManager.officeId) {
         res.json({
           success: true,
-          data: [],
+          employees: [],
           total: 0,
-          page,
-          limit,
+          page: page || 1,
+          limit: limit || 10,
           totalPages: 0,
+          count: 0,
+          registeredCount: 0,
+          activeCount: 0
         });
         return;
       }
       whereClause.officeId = storeManager.officeId;
+    }
+
+    if (search) {
+      whereClause.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { employeeCode: { contains: search, mode: 'insensitive' } },
+        { designation: { contains: search, mode: 'insensitive' } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+        { office: { name: { contains: search, mode: 'insensitive' } } },
+        { store: { name: { contains: search, mode: 'insensitive' } } },
+      ];
     }
 
     const [employees, total] = await Promise.all([
@@ -287,8 +304,8 @@ export const fetchEmployees = async (
           },
         },
         orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
+        ...(skip !== undefined ? { skip } : {}),
+        ...(limit !== undefined ? { take: limit } : {}),
       }),
       prisma.employee.count({ where: whereClause }),
     ]);
@@ -361,15 +378,38 @@ export const fetchEmployees = async (
     }));
 
     const count = total;
-    const registeredCount = mappedEmployees.filter((e) => e.user !== null).length;
+    const registeredCount = await prisma.employee.count({
+      where: {
+        ...whereClause,
+        userId: { not: null }
+      }
+    });
+    const activeCount = await prisma.employee.count({
+      where: {
+        ...whereClause,
+        status: 'active'
+      }
+    });
+    const assignedCount = await prisma.employee.count({
+      where: {
+        ...whereClause,
+        OR: [
+          { officeId: { not: null } },
+          { storeId: { not: null } }
+        ]
+      }
+    });
 
     res.json({
       success: true,
       count,
       total,
-      page,
-      limit,
+      page: page || 1,
+      limit: limit || mappedEmployees.length,
+      totalPages: limit ? Math.ceil(total / limit) : 1,
       registeredCount,
+      activeCount,
+      assignedCount,
       employees: mappedEmployees,
     });
   } catch (error) {
@@ -6805,6 +6845,650 @@ export const deleteAdminHoliday = async (
   } catch (error) {
     console.error('Delete holiday error:', error);
     res.status(500).json({ success: false, message: 'Failed to delete holiday.' });
+  }
+};
+
+export const fetchLiveDashboardStats = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const today = new Date();
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // 1. Fetch all active employees
+    const activeEmployees = await prisma.employee.findMany({
+      where: { status: 'active' },
+      include: {
+        office: true,
+        user: true,
+        shiftAssignments: {
+          where: { effectiveTo: null },
+          include: { shift: true }
+        }
+      }
+    });
+
+    // 2. Fetch today's attendance records
+    const todayStr = today.toISOString().slice(0, 10);
+    const todayAttendance = await prisma.attendance.findMany({
+      where: {
+        date: todayStr
+      }
+    });
+
+    // 3. Fetch approved leaves today
+    const todayLeaves = await prisma.leaveRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        fromDate: { lte: endOfDay },
+        toDate: { gte: startOfDay }
+      }
+    });
+
+    // 4. Fetch active breaks today
+    const activeBreaks = await prisma.break.findMany({
+      where: {
+        endAt: null
+      },
+      include: {
+        employee: {
+          include: { office: true }
+        }
+      }
+    });
+
+    // 5. Fetch count of pending leaves and shift requests
+    const pendingLeaves = await prisma.leaveRequest.count({
+      where: { status: 'PENDING' }
+    });
+
+    const pendingShiftRequests = await prisma.shiftRequest.count({
+      where: { status: 'PENDING' }
+    });
+
+    // Map sets for easy lookup
+    const attMap = new Map(todayAttendance.map(a => [a.employeeId, a]));
+    const leaveSet = new Set(todayLeaves.map(l => l.employeeId));
+    const breakMap = new Map(activeBreaks.map(b => [b.employeeId, b]));
+
+    // Lists of employees per category
+    const presentEmployees: any[] = [];
+    const absentEmployees: any[] = [];
+    const onLeaveEmployees: any[] = [];
+    const lateEmployees: any[] = [];
+    const breakGroups = {
+      lunch: [] as any[],
+      tea: [] as any[],
+      personal: [] as any[],
+      meeting: [] as any[]
+    };
+
+    // Calculate branchWise counts map: officeId -> { branchName, present, absent, onBreak }
+    const branchMap = new Map<number, { branch: string; present: number; absent: number; onBreak: number }>();
+
+    for (const emp of activeEmployees) {
+      const officeId = emp.officeId;
+      const officeName = emp.office?.name || 'Unassigned';
+
+      if (officeId && !branchMap.has(officeId)) {
+        branchMap.set(officeId, { branch: officeName, present: 0, absent: 0, onBreak: 0 });
+      }
+
+      const branchStats = officeId ? branchMap.get(officeId) : null;
+
+      const hasAtt = attMap.get(emp.id);
+      const isOnLeave = leaveSet.has(emp.id);
+      const activeBreak = breakMap.get(emp.id);
+
+      const empData = {
+        id: emp.id,
+        firstName: emp.firstName,
+        lastName: emp.lastName,
+        employeeCode: emp.employeeCode,
+        designation: emp.designation,
+        officeName
+      };
+
+      if (isOnLeave) {
+        onLeaveEmployees.push(empData);
+        // Leave counts as absent for branch stats if they aren't punched-in
+        if (!hasAtt && branchStats) {
+          branchStats.absent += 1;
+        }
+      } else if (hasAtt) {
+        presentEmployees.push(empData);
+        if (branchStats) {
+          branchStats.present += 1;
+        }
+
+        // Determine if late check-in
+        let isLate = false;
+        if (hasAtt.notes?.includes('LATE')) {
+          isLate = true;
+        } else if (hasAtt.checkIn) {
+          const shift = emp.shiftAssignments?.[0]?.shift;
+          if (shift && shift.startTime) {
+            const [sHour, sMin] = shift.startTime.split(':').map(Number);
+            const checkInDate = new Date(hasAtt.checkIn);
+            const shiftStartDate = new Date(checkInDate);
+            shiftStartDate.setHours(sHour, sMin, 0, 0);
+            
+            const graceMinutes = 15;
+            const lateThreshold = new Date(shiftStartDate.getTime() + graceMinutes * 60 * 1000);
+            if (checkInDate > lateThreshold) {
+              isLate = true;
+            }
+          }
+        }
+
+        if (isLate) {
+          lateEmployees.push(empData);
+        }
+
+        if (activeBreak) {
+          if (branchStats) {
+            branchStats.onBreak += 1;
+          }
+          const breakType = activeBreak.type.toLowerCase();
+          const breakItem = {
+            ...empData,
+            breakType: activeBreak.type,
+            startAt: activeBreak.startAt
+          };
+          if (breakType === 'lunch') breakGroups.lunch.push(breakItem);
+          else if (breakType === 'tea') breakGroups.tea.push(breakItem);
+          else if (breakType === 'personal') breakGroups.personal.push(breakItem);
+          else if (breakType === 'meeting') breakGroups.meeting.push(breakItem);
+        }
+      } else {
+        absentEmployees.push(empData);
+        if (branchStats) {
+          branchStats.absent += 1;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        present: presentEmployees.length,
+        absent: absentEmployees.length,
+        onLeave: onLeaveEmployees.length,
+        late: lateEmployees.length,
+        breaks: {
+          lunch: breakGroups.lunch.length,
+          tea: breakGroups.tea.length,
+          personal: breakGroups.personal.length,
+          meeting: breakGroups.meeting.length
+        },
+        pendingLeaves,
+        pendingShiftRequests,
+        branchWise: Array.from(branchMap.values()),
+        details: {
+          present: presentEmployees,
+          absent: absentEmployees,
+          onLeave: onLeaveEmployees,
+          late: lateEmployees,
+          breaks: {
+            lunch: breakGroups.lunch,
+            tea: breakGroups.tea,
+            personal: breakGroups.personal,
+            meeting: breakGroups.meeting
+          }
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Fetch live dashboard stats error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load live stats.' });
+  }
+};
+
+export const fetchUpcomingLeaves = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+
+    const startOfToday = new Date(today);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const endOfTomorrow = new Date(tomorrow);
+    endOfTomorrow.setHours(23, 59, 59, 999);
+
+    const upcomingLeaves = await prisma.leaveRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        fromDate: { lte: endOfTomorrow },
+        toDate: { gte: startOfToday }
+      },
+      include: {
+        employee: {
+          include: { office: true }
+        }
+      },
+      orderBy: { fromDate: 'asc' }
+    });
+
+    const formattedLeaves = upcomingLeaves.map((l) => ({
+      id: l.id.toString(),
+      employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : 'Unknown',
+      branch: l.employee?.office?.name || 'Unassigned',
+      type: l.type,
+      dates: `${l.fromDate.toISOString().split('T')[0]} to ${l.toDate.toISOString().split('T')[0]}`
+    }));
+
+    res.json({ success: true, leaves: formattedLeaves });
+  } catch (error) {
+    console.error('Fetch upcoming leaves error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load upcoming leaves.' });
+  }
+};
+
+export const toggleLeaveDeduction = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const { deductionApplied, reason } = req.body;
+
+  const leaveId = parseInt(String(id), 10);
+  if (isNaN(leaveId)) {
+    res.status(400).json({ success: false, message: 'Invalid leave request ID.' });
+    return;
+  }
+
+  if (deductionApplied === undefined) {
+    res.status(400).json({ success: false, message: 'Deduction status is required.' });
+    return;
+  }
+
+  try {
+    const existing = await prisma.leaveRequest.findUnique({
+      where: { id: leaveId }
+    });
+
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Leave request not found.' });
+      return;
+    }
+
+    const updated = await prisma.leaveRequest.update({
+      where: { id: leaveId },
+      data: {
+        deductionApplied: !!deductionApplied
+      }
+    });
+
+    await prisma.comment.create({
+      data: {
+        entityType: 'LEAVE_REQUEST',
+        entityId: String(id),
+        content: `Deduction status toggled to: ${!!deductionApplied} by ${req.user?.email || 'HR'}. Reason: ${reason || 'None provided'}`,
+        authorId: req.user?.id || 1
+      }
+    });
+
+    res.json({ success: true, message: 'Leave request deduction status updated.', data: updated });
+  } catch (error) {
+    console.error('Toggle leave deduction error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update deduction status.' });
+  }
+};
+
+export const fetchLocationAlerts = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const alerts = await prisma.locationHistory.findMany({
+      where: {
+        isOutside: true
+      },
+      include: {
+        employee: {
+          include: { office: true }
+        }
+      },
+      orderBy: { at: 'desc' },
+      take: 100
+    });
+
+    const formatted = alerts.map((a) => ({
+      id: a.id,
+      employeeId: a.employeeId,
+      employeeName: a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : 'Unknown',
+      branch: a.employee?.office?.name || 'Unassigned',
+      latitude: a.latitude,
+      longitude: a.longitude,
+      at: a.at,
+      fenceCoordinates: a.employee?.office ? {
+        latitude: a.employee.office.latitude,
+        longitude: a.employee.office.longitude,
+        radius: a.employee.office.maxPunchRadiusMeters
+      } : null
+    }));
+
+    res.json({ success: true, alerts: formatted });
+  } catch (error) {
+    console.error('Fetch location alerts error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load location alerts.' });
+  }
+};
+
+export const fetchLocationHistory = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { employeeId, date } = req.query;
+  if (!employeeId) {
+    res.status(400).json({ success: false, message: 'Employee ID is required.' });
+    return;
+  }
+
+  const empId = parseInt(typeof employeeId === 'string' ? employeeId : String(employeeId), 10);
+  if (isNaN(empId)) {
+    res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
+    return;
+  }
+
+  try {
+    const dateStr = typeof date === 'string' ? date : undefined;
+    const startOfDate = dateStr ? new Date(dateStr) : new Date();
+    startOfDate.setHours(0, 0, 0, 0);
+
+    const endOfDate = new Date(startOfDate);
+    endOfDate.setHours(23, 59, 59, 999);
+
+    const history = await prisma.locationHistory.findMany({
+      where: {
+        employeeId: empId,
+        at: {
+          gte: startOfDate,
+          lte: endOfDate
+        }
+      },
+      orderBy: { at: 'asc' }
+    });
+
+    res.json({ success: true, history });
+  } catch (error) {
+    console.error('Fetch location history error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load location history.' });
+  }
+};
+
+export const exportReport = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { type } = req.params as { type: string };
+  const { format, month, branchId } = req.query;
+
+  const formatStr = typeof format === 'string' ? format : 'pdf';
+  const monthStrQuery = typeof month === 'string' ? month : undefined;
+  const branchIdStr = typeof branchId === 'string' ? branchId : undefined;
+
+  const targetMonthStr = monthStrQuery || new Date().toISOString().slice(0, 7);
+  const targetFormat = formatStr.toLowerCase();
+  const targetBranchId = branchIdStr ? parseInt(branchIdStr, 10) : undefined;
+
+  try {
+    let targetYear = new Date().getFullYear();
+    let targetMonthVal = new Date().getMonth() + 1;
+
+    if (targetMonthStr && targetMonthStr.includes('-')) {
+      const parts = targetMonthStr.split('-');
+      targetYear = parseInt(parts[0], 10);
+      targetMonthVal = parseInt(parts[1], 10);
+    }
+
+    const employeeWhere: Prisma.EmployeeWhereInput = {};
+    if (targetBranchId && !isNaN(targetBranchId)) {
+      employeeWhere.officeId = targetBranchId;
+    }
+    const employees = await prisma.employee.findMany({
+      where: employeeWhere,
+      include: { office: true, department: true }
+    });
+
+    const monthStr = `${targetYear}-${String(targetMonthVal).padStart(2, '0')}`;
+    
+    if (type.toLowerCase() === 'payroll') {
+      const existingPayslips = await (prisma as any).payslip.findMany({
+        where: {
+          month: targetMonthVal,
+          year: targetYear
+        }
+      }) as any[];
+      const payslipMap = new Map(existingPayslips.map((p: any) => [p.employeeId, p]));
+
+      const attendances = await prisma.attendance.findMany({
+        where: {
+          date: { startsWith: monthStr }
+        }
+      });
+      const attendanceByEmployee: Record<number, any[]> = {};
+      attendances.forEach((att) => {
+        if (!attendanceByEmployee[att.employeeId]) {
+          attendanceByEmployee[att.employeeId] = [];
+        }
+        attendanceByEmployee[att.employeeId].push(att);
+      });
+
+      const slips = employees.map((emp) => {
+        const dbPayslip = payslipMap.get(emp.id);
+        if (dbPayslip) {
+          return {
+            code: emp.employeeCode,
+            name: `${emp.firstName} ${emp.lastName}`,
+            designation: dbPayslip.designation,
+            department: dbPayslip.department,
+            branch: dbPayslip.officeName,
+            baseSalary: dbPayslip.baseSalary,
+            allowance: dbPayslip.allowance,
+            deductions: dbPayslip.deductions,
+            netSalary: dbPayslip.netSalary,
+            status: 'Approved'
+          };
+        }
+
+        const empAtts = attendanceByEmployee[emp.id] || [];
+        const present = empAtts.filter((a) => a.status === 'PRESENT').length;
+        const late = empAtts.filter((a) => a.status === 'LATE').length;
+        const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+        const totalDays = empAtts.length;
+        const presentDays = present + late + (halfDay * 0.5);
+        const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
+
+        const isSenior = emp.designation?.toLowerCase().includes('senior') || 
+                         emp.designation?.toLowerCase().includes('lead') || 
+                         emp.designation?.toLowerCase().includes('manager');
+        const defaultBase = isSenior ? 85000 : 45000;
+        const baseSalary = Math.round(defaultBase * salaryRatio);
+        const allowance = Math.round(baseSalary * 0.15);
+        const deductions = Math.round(baseSalary * 0.10);
+        const netSalary = baseSalary + allowance - deductions;
+
+        return {
+          code: emp.employeeCode,
+          name: `${emp.firstName} ${emp.lastName}`,
+          designation: emp.designation || 'Associate',
+          department: emp.department?.name || 'Operations',
+          branch: emp.office?.name || 'Headquarters',
+          baseSalary,
+          allowance,
+          deductions,
+          netSalary,
+          status: 'Pending Approval'
+        };
+      });
+
+      if (targetFormat === 'xlsx') {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Payroll Report');
+
+        worksheet.columns = [
+          { header: 'Employee Code', key: 'code', width: 15 },
+          { header: 'Employee Name', key: 'name', width: 25 },
+          { header: 'Designation', key: 'designation', width: 20 },
+          { header: 'Department', key: 'department', width: 20 },
+          { header: 'Branch', key: 'branch', width: 20 },
+          { header: 'Base Salary (₹)', key: 'baseSalary', width: 15 },
+          { header: 'Allowance (₹)', key: 'allowance', width: 15 },
+          { header: 'Deductions (₹)', key: 'deductions', width: 15 },
+          { header: 'Net Payout (₹)', key: 'netSalary', width: 15 },
+          { header: 'Status', key: 'status', width: 15 }
+        ];
+
+        slips.forEach(s => worksheet.addRow(s));
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=Payroll_Report_${monthStr}.xlsx`);
+        await workbook.xlsx.write(res);
+        res.end();
+      } else {
+        const docDefinition = {
+          content: [
+            { text: `Payroll Report — ${monthStr}`, style: 'header', margin: [0, 0, 0, 10] },
+            {
+              table: {
+                headerRows: 1,
+                body: [
+                  ['Code', 'Name', 'Branch', 'Dept', 'Base (₹)', 'Net (₹)', 'Status'],
+                  ...slips.map(s => [s.code, s.name, s.branch, s.department, s.baseSalary, s.netSalary, s.status])
+                ]
+              }
+            }
+          ],
+          styles: {
+            header: { fontSize: 18, bold: true }
+          }
+        };
+
+        const fonts = {
+          Roboto: {
+            normal: 'Helvetica',
+            bold: 'Helvetica-Bold',
+            italics: 'Helvetica-Oblique',
+            bolditalics: 'Helvetica-BoldOblique',
+          },
+        };
+        const printer = new PdfPrinter(fonts);
+        const pdfDoc = printer.createPdfKitDocument(docDefinition);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=Payroll_Report_${monthStr}.pdf`);
+        pdfDoc.pipe(res);
+        pdfDoc.end();
+      }
+    } else {
+      const attendances = await prisma.attendance.findMany({
+        where: {
+          employeeId: { in: employees.map(emp => emp.id) },
+          date: { startsWith: monthStr }
+        }
+      });
+
+      const attendanceByEmployee: Record<number, any[]> = {};
+      attendances.forEach((att) => {
+        if (!attendanceByEmployee[att.employeeId]) {
+          attendanceByEmployee[att.employeeId] = [];
+        }
+        attendanceByEmployee[att.employeeId].push(att);
+      });
+
+      const records = employees.map((emp) => {
+        const empAtts = attendanceByEmployee[emp.id] || [];
+        const present = empAtts.filter((a) => a.status === 'PRESENT').length;
+        const late = empAtts.filter((a) => a.status === 'LATE').length;
+        const absent = empAtts.filter((a) => a.status === 'ABSENT').length;
+        const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+        const leave = empAtts.filter((a) => a.status === 'LEAVE').length;
+        const totalDays = empAtts.length;
+        const attendanceRate = totalDays > 0 
+          ? Math.round(((present + late + halfDay * 0.5) / totalDays) * 100)
+          : 100;
+
+        return {
+          code: emp.employeeCode,
+          name: `${emp.firstName} ${emp.lastName}`,
+          branch: emp.office?.name || 'Headquarters',
+          department: emp.department?.name || 'Operations',
+          present,
+          late,
+          absent,
+          leave,
+          rate: `${attendanceRate}%`
+        };
+      });
+
+      if (targetFormat === 'xlsx') {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Attendance Report');
+
+        worksheet.columns = [
+          { header: 'Employee Code', key: 'code', width: 15 },
+          { header: 'Employee Name', key: 'name', width: 25 },
+          { header: 'Branch', key: 'branch', width: 20 },
+          { header: 'Department', key: 'department', width: 20 },
+          { header: 'Present Days', key: 'present', width: 12 },
+          { header: 'Late Clock-ins', key: 'late', width: 12 },
+          { header: 'Absent Count', key: 'absent', width: 12 },
+          { header: 'Leaves Taken', key: 'leave', width: 12 },
+          { header: 'Attendance Rate', key: 'rate', width: 15 }
+        ];
+
+        records.forEach(r => worksheet.addRow(r));
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${monthStr}.xlsx`);
+        await workbook.xlsx.write(res);
+        res.end();
+      } else {
+        const docDefinition = {
+          content: [
+            { text: `Attendance Report — ${monthStr}`, style: 'header', margin: [0, 0, 0, 10] },
+            {
+              table: {
+                headerRows: 1,
+                body: [
+                  ['Code', 'Name', 'Branch', 'Dept', 'Present', 'Late', 'Absent', 'Leave', 'Rate'],
+                  ...records.map(r => [r.code, r.name, r.branch, r.department, r.present, r.late, r.absent, r.leave, r.rate])
+                ]
+              }
+            }
+          ],
+          styles: {
+            header: { fontSize: 18, bold: true }
+          }
+        };
+
+        const fonts = {
+          Roboto: {
+            normal: 'Helvetica',
+            bold: 'Helvetica-Bold',
+            italics: 'Helvetica-Oblique',
+            bolditalics: 'Helvetica-BoldOblique',
+          },
+        };
+        const printer = new PdfPrinter(fonts);
+        const pdfDoc = printer.createPdfKitDocument(docDefinition);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${monthStr}.pdf`);
+        pdfDoc.pipe(res);
+        pdfDoc.end();
+      }
+    }
+  } catch (error) {
+    console.error('Export report error:', error);
+    res.status(500).json({ success: false, message: 'Failed to export report.' });
   }
 };
 

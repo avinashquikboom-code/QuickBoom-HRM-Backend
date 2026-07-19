@@ -77,6 +77,12 @@ import {
   fetchAdminHolidays,
   createAdminHoliday,
   deleteAdminHoliday,
+  fetchLiveDashboardStats,
+  fetchUpcomingLeaves,
+  toggleLeaveDeduction,
+  fetchLocationAlerts,
+  fetchLocationHistory,
+  exportReport,
 } from '../controllers/adminController';
 import {
   fetchDesignations,
@@ -84,6 +90,10 @@ import {
   updateDesignation,
   deleteDesignation,
 } from '../controllers/designationController';
+import {
+  fetchAdminShiftRequests,
+  decideShiftRequest,
+} from '../controllers/shiftRequestController';
 import {
   fetchRoles,
   createRole,
@@ -200,6 +210,12 @@ router.get('/reports', roleMiddleware(storeManagerAllowedRoles), fetchAdminRepor
 router.post('/reports/generate', roleMiddleware(storeManagerAllowedRoles), generateAdminReport);
 router.get('/reports/attendance-details', roleMiddleware(storeManagerAllowedRoles), fetchAttendanceReportDetails);
 router.get('/reports/attendance/download', roleMiddleware(storeManagerAllowedRoles), downloadAttendanceReport);
+router.get('/dashboard/live', roleMiddleware(adminOnlyRoles), fetchLiveDashboardStats);
+router.get('/leaves/upcoming', roleMiddleware(adminOnlyRoles), fetchUpcomingLeaves);
+router.put('/leaves/:id/deduction', roleMiddleware(adminOnlyRoles), toggleLeaveDeduction);
+router.get('/location/alerts', roleMiddleware(adminOnlyRoles), fetchLocationAlerts);
+router.get('/location/history', roleMiddleware(adminOnlyRoles), fetchLocationHistory);
+router.get('/reports/:type/export', roleMiddleware(adminOnlyRoles), exportReport);
 
 // Apply administrative role check to all other admin routes
 router.use(roleMiddleware(adminOnlyRoles));
@@ -639,6 +655,8 @@ router.post('/shifts', createShift);
 router.put('/shifts/:id', updateShift);
 router.delete('/shifts/:id', deleteShift);
 router.post('/shifts/assign', assignShiftToEmployee);
+router.get('/shift-requests', fetchAdminShiftRequests);
+router.patch('/shift-requests/:id', decideShiftRequest);
 
 /**
  * @swagger

@@ -110,7 +110,7 @@ export const applyLeave = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { type, fromDate, toDate, reason } = req.body;
+    const { type, fromDate, toDate, reason, leaveCategory = 'PLANNED' } = req.body;
 
     if (!type || !fromDate || !toDate || !reason) {
       res.status(400).json({ success: false, message: 'All fields are required' });
@@ -153,6 +153,31 @@ export const applyLeave = async (
       return;
     }
 
+    let deductionApplied = false;
+    if (leaveCategory === 'UNPLANNED') {
+      const holidays = await prisma.holiday.findMany();
+      const festivalDates = new Set(holidays.map(h => h.date.toISOString().split('T')[0]));
+      
+      const start = new Date(fromDate);
+      const end = new Date(toDate);
+      
+      const isSundayOrFestival = (date: Date): boolean => {
+        if (date.getDay() === 0) return true;
+        const dateStr = date.toISOString().split('T')[0];
+        return festivalDates.has(dateStr);
+      };
+
+      const dayBefore = new Date(start);
+      dayBefore.setDate(dayBefore.getDate() - 1);
+
+      const dayAfter = new Date(end);
+      dayAfter.setDate(dayAfter.getDate() + 1);
+
+      if (isSundayOrFestival(dayBefore) || isSundayOrFestival(dayAfter)) {
+        deductionApplied = true;
+      }
+    }
+
     const leaveRequest = await prisma.leaveRequest.create({
       data: {
         employeeId: employee.id,
@@ -162,6 +187,8 @@ export const applyLeave = async (
         reason: reason.trim(),
         status: 'PENDING',
         appliedOn: new Date(),
+        leaveCategory: leaveCategory.toUpperCase(),
+        deductionApplied,
       },
     });
 

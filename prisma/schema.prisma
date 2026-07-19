@@ -145,6 +145,11 @@ model Employee {
   commissionTransactions CommissionTransaction[] @relation("CommissionTransactions")
   commissionTargets CommissionTarget[] @relation("CommissionTargets")
   commissionSettlements CommissionSettlement[] @relation("CommissionSettlements")
+  breaks           Break[]
+  shiftRequests    ShiftRequest[]
+  locationHistory  LocationHistory[]
+  branch           Branch?           @relation(fields: [branchId], references: [id])
+  branchId         Int?
 
   @@index([officeId])
   @@index([departmentId])
@@ -218,8 +223,10 @@ model LeaveRequest {
   reviewNote String?
   reviewedAt DateTime?
   createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  updatedAt        DateTime @updatedAt
+  leaveCategory    String   @default("PLANNED")
+  deductionApplied Boolean  @default(false)
+  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
   @@index([status])
@@ -925,4 +932,48 @@ model Device {
 
   @@map("devices")
 }
+
+model Break {
+  id         Int       @id @default(autoincrement())
+  employeeId Int
+  type       String    // LUNCH, TEA, PERSONAL, MEETING
+  startAt    DateTime
+  endAt      DateTime?
+  date       String    // YYYY-MM-DD
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model ShiftRequest {
+  id             Int       @id @default(autoincrement())
+  employeeId     Int
+  currentShift   String
+  requestedShift String
+  reason         String
+  status         String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt      DateTime  @default(now())
+  decidedAt      DateTime?
+  decidedBy      Int?
+  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+model Branch {
+  id           Int        @id @default(autoincrement())
+  name         String
+  latitude     Float
+  longitude    Float
+  radiusMeters Float
+  employees    Employee[]
+}
+
+model LocationHistory {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  latitude   Float
+  longitude  Float
+  isOutside  Boolean  @default(false)
+  at         DateTime
+  createdAt  DateTime @default(now())
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
 
