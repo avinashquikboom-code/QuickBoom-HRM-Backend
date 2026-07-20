@@ -12,6 +12,25 @@ export const authMiddleware = async (
   res: Response,
   next: NextFunction
 ): Promise<void> => {
+  const publicPaths = [
+    '/api/mobile/auth/login',
+    '/api/mobile/auth/refresh',
+    '/api/mobile/auth/forgot-password',
+    '/api/auth/login',
+    '/api/auth/employee/login',
+    '/api/auth/hr/login',
+    '/api/auth/super-admin/login',
+    '/api/auth/refresh',
+    '/api/health',
+    '/api-docs/swagger.json',
+  ];
+
+  const requestPath = req.path;
+  if (publicPaths.some(p => requestPath === p || requestPath.startsWith(p))) {
+    next();
+    return;
+  }
+
   const authHeader = req.headers.authorization;
   let token = '';
   if (authHeader && authHeader.startsWith('Bearer ')) {
