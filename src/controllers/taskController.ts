@@ -29,6 +29,19 @@ async function notifyEmployee(
       select: { userId: true },
     });
     if (!employee?.userId) return;
+
+    // Create in-app notification first
+    await prisma.notification.create({
+      data: {
+        userId: employee.userId,
+        title,
+        body,
+        isRead: false,
+        actionType: 'TASK_ASSIGNED',
+      }
+    }).catch(() => {});
+
+    // Send push notification
     pushNotificationService.sendPush([employee.userId], title, body, {}).catch(() => {});
   } catch {
     // fire-and-forget — never throw

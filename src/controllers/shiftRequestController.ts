@@ -2,6 +2,8 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
+import { pushNotificationService } from '../services/pushNotificationService';
+
 
 // GET /api/shifts
 export const getShifts = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -242,21 +244,27 @@ export const decideShiftRequest = async (
 
     try {
       if (request.employee.userId) {
-        const user = await prisma.user.findUnique({
-          where: { id: request.employee.userId },
-          include: { fcmTokens: { where: { isActive: true } } }
+        // Create in-app notification row
+        await prisma.notification.create({
+          data: {
+            userId: request.employee.userId,
+            title: `Shift Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
+            body: `Your shift change request has been ${status.toLowerCase()}.${note ? ` Reason: ${note}` : ''}`,
+            isRead: false,
+            actionType: 'SHIFT_CHANGE',
+          }
         });
-        if (user && user.fcmTokens.length > 0) {
-          await firebaseNotificationService.sendNotificationToUser(
-            user.id,
-            'Shift Request Decided',
-            `Your shift change request has been ${status.toLowerCase()}.${note ? ` Reason: ${note}` : ''}`,
-            {
-              type: 'shift_change',
-              status: status
-            }
-          );
-        }
+
+        // Send push notification via standard pushNotificationService
+        pushNotificationService.sendPush(
+          [request.employee.userId],
+          `Shift Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
+          `Your shift change request has been ${status.toLowerCase()}.${note ? ` Reason: ${note}` : ''}`,
+          {
+            click_action: 'SHIFT_CHANGE',
+            status: status
+          }
+        ).catch(err => console.error('Failed to send shift request push:', err));
       }
     } catch (fcmError) {
       console.error('Failed to send FCM notification for shift request decision:', fcmError);

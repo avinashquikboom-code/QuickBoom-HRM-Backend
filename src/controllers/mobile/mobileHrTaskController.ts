@@ -340,8 +340,18 @@ export const createHrTaskMobile = async (
       }),
     ]);
 
-    // FCM fire-and-forget
+    // Fire-and-forget notifications (in-app and FCM)
     if (emp.userId) {
+      prisma.notification.create({
+        data: {
+          userId: emp.userId,
+          title: '📋 New Task Assigned',
+          body: `You have been assigned: ${task.title}`,
+          isRead: false,
+          actionType: 'TASK_ASSIGNED',
+        }
+      }).catch(() => {});
+
       pushNotificationService
         .sendPush([emp.userId], '📋 New Task Assigned', `You have been assigned: ${task.title}`, {})
         .catch(() => {});
