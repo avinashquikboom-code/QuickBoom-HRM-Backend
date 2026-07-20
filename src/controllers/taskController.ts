@@ -59,7 +59,7 @@ async function resolveAssigneeName(employeeId: string): Promise<string> {
 }
 
 /** Resolve display name from User.id */
-async function resolveActorName(userId: string): Promise<string> {
+async function resolveActorName(userId: number): Promise<string> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { email: true, profile: { select: { fullName: true } } as any },

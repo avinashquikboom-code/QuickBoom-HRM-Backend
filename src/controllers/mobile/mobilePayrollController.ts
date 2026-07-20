@@ -64,9 +64,9 @@ export const downloadPayslip = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const payslipId = id as string;
+    const payslipId = parseInt(id as string, 10);
 
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(payslipId)) {
+    if (isNaN(payslipId)) {
       res.status(400).json({
         success: false,
         message: 'Invalid payslip ID.'

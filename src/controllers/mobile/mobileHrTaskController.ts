@@ -45,7 +45,7 @@ function fromFlutterStatus(s: string | undefined): HrTaskStatus | null {
 }
 
 /** Resolve display name of an HR user from User.id */
-async function resolveUserName(userId: string): Promise<string> {
+async function resolveUserName(userId: number): Promise<string> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { email: true, profile: { select: { fullName: true } } },

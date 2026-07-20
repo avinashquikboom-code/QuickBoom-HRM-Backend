@@ -5,7 +5,7 @@ class UserSessionService {
   /**
    * Create a new session for a user login
    */
-  async createSession(userId: string, token: string, deviceInfo?: string, ipAddress?: string) {
+  async createSession(userId: number, token: string, deviceInfo?: string, ipAddress?: string) {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
 
@@ -85,7 +85,7 @@ class UserSessionService {
   /**
    * Revoke all sessions for a user
    */
-  async revokeAllSessions(userId: string) {
+  async revokeAllSessions(userId: number) {
     return prisma.userSession.updateMany({
       where: { userId },
       data: { isActive: false },
@@ -95,7 +95,7 @@ class UserSessionService {
   /**
    * Get active sessions for a user
    */
-  async getActiveSessions(userId: string) {
+  async getActiveSessions(userId: number) {
     return prisma.userSession.findMany({
       where: {
         userId,

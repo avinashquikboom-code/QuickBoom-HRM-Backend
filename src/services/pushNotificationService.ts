@@ -17,7 +17,7 @@ export class PushNotificationService {
    * Never blocks the request path. Logs failures.
    */
   async sendPush(
-    userIds: string[],
+    userIds: number[],
     title: string,
     body: string,
     data?: Record<string, string>

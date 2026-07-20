@@ -42,8 +42,8 @@ export const createDeductionPolicy = async (
         deductionValue: parseFloat(deductionValue),
         maxDeduction: maxDeduction ? parseFloat(maxDeduction) : null,
         applicableDays: applicableDays || [],
-        departmentId: departmentId ? departmentId : null,
-        officeId: officeId ? officeId : null,
+        departmentId: departmentId ? parseInt(departmentId) : null,
+        officeId: officeId ? parseInt(officeId) : null,
         effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
         effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
         description,
@@ -81,8 +81,8 @@ export const getAllDeductionPolicies = async (
     const where: any = {};
     
     if (type) where.type = type;
-    if (departmentId) where.departmentId = departmentId;
-    if (officeId) where.officeId = officeId;
+    if (departmentId) where.departmentId = parseInt(departmentId);
+    if (officeId) where.officeId = parseInt(officeId);
     if (isActive !== undefined) where.isActive = isActive === 'true';
 
     const policies = await prisma.deductionPolicy.findMany({
@@ -121,7 +121,7 @@ export const getDeductionPolicyById = async (
     const idStr = Array.isArray(id) ? id[0] : id;
 
     const policy = await prisma.deductionPolicy.findUnique({
-      where: { id: idStr },
+      where: { id: parseInt(idStr) },
       include: {
         department: {
           select: { id: true, name: true, code: true }
@@ -186,15 +186,15 @@ export const updateDeductionPolicy = async (
     if (deductionValue !== undefined) updateData.deductionValue = parseFloat(deductionValue);
     if (maxDeduction !== undefined) updateData.maxDeduction = maxDeduction ? parseFloat(maxDeduction) : null;
     if (applicableDays !== undefined) updateData.applicableDays = applicableDays;
-    if (departmentId !== undefined) updateData.departmentId = departmentId ? departmentId : null;
-    if (officeId !== undefined) updateData.officeId = officeId ? officeId : null;
+    if (departmentId !== undefined) updateData.departmentId = departmentId ? parseInt(departmentId) : null;
+    if (officeId !== undefined) updateData.officeId = officeId ? parseInt(officeId) : null;
     if (isActive !== undefined) updateData.isActive = isActive;
     if (effectiveFrom !== undefined) updateData.effectiveFrom = effectiveFrom ? new Date(effectiveFrom) : null;
     if (effectiveTo !== undefined) updateData.effectiveTo = effectiveTo ? new Date(effectiveTo) : null;
     if (description !== undefined) updateData.description = description;
 
     const policy = await prisma.deductionPolicy.update({
-      where: { id: idStr },
+      where: { id: parseInt(idStr) },
       data: updateData
     });
 
@@ -222,7 +222,7 @@ export const deleteDeductionPolicy = async (
     const idStr = Array.isArray(id) ? id[0] : id;
 
     await prisma.deductionPolicy.delete({
-      where: { id: idStr }
+      where: { id: parseInt(idStr) }
     });
 
     res.json({
@@ -248,7 +248,7 @@ export const getApplicablePoliciesForEmployee = async (
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
 
     const employee = await prisma.employee.findUnique({
-      where: { id: employeeIdStr },
+      where: { id: parseInt(employeeIdStr) },
       include: {
         department: true,
         office: true

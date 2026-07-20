@@ -320,7 +320,7 @@ export const fetchSalarySlipCommission = async (
   try {
     const { payrollId } = req.params;
     const payrollIdString = Array.isArray(payrollId) ? payrollId[0] : payrollId;
-    const parsedPayrollId = payrollIdString;
+    const parsedPayrollId = parseInt(payrollIdString, 10);
 
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id }

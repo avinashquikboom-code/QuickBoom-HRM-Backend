@@ -27,8 +27,8 @@ export const createEmployeeLeaveBalance = async (
     const createdBy = req.user?.email || 'Admin';
 
     const leaveBalance = await leaveBalanceService.createOrUpdateLeaveBalance({
-      employeeId: employeeId,
-      departmentId: departmentId ? departmentId : undefined,
+      employeeId: parseInt(employeeId),
+      departmentId: departmentId ? parseInt(departmentId) : undefined,
       fiscalYear,
       casualTotal: casualTotal ? parseInt(casualTotal) : undefined,
       sickTotal: sickTotal ? parseInt(sickTotal) : undefined,
@@ -38,9 +38,9 @@ export const createEmployeeLeaveBalance = async (
 
     // Broadcast real-time leave balance update
     try {
-      await getWebSocketInstance().broadcastLeaveBalanceUpdate(employeeId, {
+      await getWebSocketInstance().broadcastLeaveBalanceUpdate(parseInt(employeeId), {
         type: 'LEAVE_BALANCE_UPDATED',
-        employeeId: employeeId,
+        employeeId: parseInt(employeeId),
         fiscalYear,
         leaveBalance,
         updatedBy: createdBy,
@@ -73,12 +73,12 @@ export const getEmployeeLeaveBalance = async (
     const { employeeId } = req.params;
     const { fiscalYear } = req.query;
 
-    let targetEmployeeId: string;
+    let targetEmployeeId: number;
     
     if (employeeId) {
       // Admin/HR viewing another employee's balance
       const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
-      targetEmployeeId = employeeIdStr;
+      targetEmployeeId = parseInt(employeeIdStr);
     } else {
       // Employee viewing their own balance
       const employee = await prisma.employee.findFirst({
@@ -135,7 +135,7 @@ export const getAllLeaveBalances = async (
 
     const leaveBalances = await leaveBalanceService.getAllLeaveBalances(
       fiscalYear as string,
-      departmentId ? departmentId as string : undefined
+      departmentId ? parseInt(departmentId as string) : undefined
     );
 
     res.json({
@@ -264,19 +264,19 @@ export const updateUsedLeave = async (
     }
 
     await leaveBalanceService.updateUsedLeave(
-      employeeId,
+      parseInt(employeeId),
       leaveType,
       parseInt(days)
     );
 
     // Get updated leave balance for broadcasting
-    const updatedBalance = await leaveBalanceService.getEmployeeLeaveBalance(employeeId);
+    const updatedBalance = await leaveBalanceService.getEmployeeLeaveBalance(parseInt(employeeId));
 
     // Broadcast real-time leave balance update
     try {
-      await getWebSocketInstance().broadcastLeaveBalanceUpdate(employeeId, {
+      await getWebSocketInstance().broadcastLeaveBalanceUpdate(parseInt(employeeId), {
         type: 'LEAVE_BALANCE_UPDATED',
-        employeeId: employeeId,
+        employeeId: parseInt(employeeId),
         leaveType,
         daysUsed: parseInt(days),
         leaveBalance: updatedBalance,
@@ -327,7 +327,7 @@ export const setDepartmentLeavePolicy = async (
       return;
     }
 
-    await leaveBalanceService.setDepartmentLeavePolicy(departmentId, {
+    await leaveBalanceService.setDepartmentLeavePolicy(parseInt(departmentId), {
       casualTotal: parseInt(casualTotal),
       sickTotal: parseInt(sickTotal),
       earnedTotal: parseInt(earnedTotal)
@@ -364,7 +364,7 @@ export const getDepartmentLeavePolicy = async (
     }
 
     const departmentIdStr = Array.isArray(departmentId) ? departmentId[0] : departmentId;
-    const policy = await leaveBalanceService.getDepartmentLeavePolicy(departmentIdStr);
+    const policy = await leaveBalanceService.getDepartmentLeavePolicy(parseInt(departmentIdStr));
 
     if (!policy) {
       res.status(404).json({

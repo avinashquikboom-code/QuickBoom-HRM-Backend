@@ -629,7 +629,7 @@ export const approveExpense = async (
 
   try {
     const expense = await prisma.expense.update({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       data: {
         status: 'APPROVED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
@@ -653,7 +653,7 @@ export const rejectExpense = async (
 
   try {
     const expense = await prisma.expense.update({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       data: {
         status: 'REJECTED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
@@ -682,7 +682,7 @@ export const approveLeave = async (
   try {
     // Get leave request details before updating
     const existingLeave = await prisma.leaveRequest.findUnique({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       include: {
         employee: {
           include: {
@@ -699,7 +699,7 @@ export const approveLeave = async (
 
     // Update leave request status
     const leave = await prisma.leaveRequest.update({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       data: {
         status: 'APPROVED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
@@ -806,7 +806,7 @@ export const rejectLeave = async (
   try {
     // Get leave request details before updating
     const existingLeave = await prisma.leaveRequest.findUnique({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       include: {
         employee: {
           include: {
@@ -823,7 +823,7 @@ export const rejectLeave = async (
 
     // Update leave request status
     const leave = await prisma.leaveRequest.update({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       data: {
         status: 'REJECTED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
@@ -985,7 +985,7 @@ export const createHRTask = async (
     return;
   }
 
-  const parsedAssignedToId = assignedToId;
+  const parsedAssignedToId = parseInt(assignedToId, 10);
   if (isNaN(parsedAssignedToId)) {
     res.status(400).json({ success: false, message: 'Invalid assignedToId.' });
     return;
@@ -1151,7 +1151,7 @@ export const approveAttendanceCorrection = async (
 
   try {
     const correction = await prisma.attendanceCorrection.findUnique({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       include: {
         employee: { include: { user: true } },
         attendance: true
@@ -1185,7 +1185,7 @@ export const approveAttendanceCorrection = async (
 
     // Update correction request
     const updatedCorrection = await prisma.attendanceCorrection.update({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       data: {
         status: 'APPROVED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
@@ -1238,7 +1238,7 @@ export const rejectAttendanceCorrection = async (
 
   try {
     const correction = await prisma.attendanceCorrection.findUnique({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       include: {
         employee: { include: { user: true } },
         attendance: true
@@ -1257,7 +1257,7 @@ export const rejectAttendanceCorrection = async (
 
     // Update correction request
     const updatedCorrection = await prisma.attendanceCorrection.update({
-      where: { id: id as string },
+      where: { id: parseInt(id as string, 10) },
       data: {
         status: 'REJECTED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
@@ -1385,8 +1385,8 @@ export const createHREmployee = async (
       return;
     }
 
-    // Resolve designationId from designation name
-    let designationIdVal: string | null = null;
+     // Resolve designationId from designation name
+    let designationIdVal: number | null = null;
     if (designation) {
       const dbDesignation = await prisma.designation.findFirst({
         where: { name: { equals: designation, mode: 'insensitive' } }
@@ -1421,14 +1421,14 @@ export const createHREmployee = async (
         status,
         workModeId: workModeId || 'OFFICE',
         shiftTypeId: shiftTypeId || 'MORNING',
-        officeId: officeId ? officeId : null,
-        departmentId: departmentId ? departmentId : null,
+        officeId: officeId ? parseInt(officeId, 10) : null,
+        departmentId: departmentId ? parseInt(departmentId, 10) : null,
         bankName: bankName || null,
         accountNumber: accountNumber || null,
         ifscCode: ifscCode || null,
         accountType: accountType || 'Savings',
         branchName: branchName || null,
-        storeId: storeId ? storeId : null,
+        storeId: storeId ? parseInt(storeId, 10) : null,
         customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
         source: 'MANUAL',
       },
@@ -1460,7 +1460,7 @@ export const createHREmployee = async (
     });
 
     // Create Shift Assignment
-    const parsedShiftId = shiftId ? shiftId : null;
+    const parsedShiftId = shiftId ? parseInt(shiftId, 10) : null;
     if (parsedShiftId) {
       await prisma.shiftAssignment.create({
         data: {
@@ -1501,7 +1501,7 @@ export const createHREmployee = async (
         shiftType: newEmployee.shiftTypeId,
         workModeId: newEmployee.workModeId,
         shiftTypeId: newEmployee.shiftTypeId,
-        email: (newEmployee as any).user?.email || '',
+        email: newEmployee.user?.email || '',
         phone,
         aadharNumber,
         pfNumber,
@@ -1509,8 +1509,8 @@ export const createHREmployee = async (
         isHandicapped,
         currentAddress,
         permanentAddress,
-        department: (newEmployee as any).department?.name || 'Unassigned',
-        office: (newEmployee as any).office?.name || 'Remote',
+        department: newEmployee.department?.name || 'Unassigned',
+        office: newEmployee.office?.name || 'Remote',
         createdAt: newEmployee.createdAt,
       },
     });
@@ -1564,7 +1564,7 @@ export const updateHREmployee = async (
   }
 
   try {
-    const employeeId = id as string;
+    const employeeId = parseInt(id as string, 10);
 
     // Manage Shift & Work Mode Assignment History
     const activeAssignment = await prisma.shiftAssignment.findFirst({
@@ -1572,7 +1572,7 @@ export const updateHREmployee = async (
       orderBy: { effectiveFrom: 'desc' }
     });
 
-    const parsedShiftId = shiftId ? shiftId : undefined;
+    const parsedShiftId = shiftId ? parseInt(shiftId, 10) : undefined;
     const finalShiftId = parsedShiftId !== undefined ? parsedShiftId : (activeAssignment?.shiftId || null);
     const finalWorkModeId = workModeId !== undefined ? workModeId : (activeAssignment?.workModeId || 'OFFICE');
     const finalShiftTypeId = shiftTypeId !== undefined ? shiftTypeId : (activeAssignment?.shiftTypeId || 'MORNING');
@@ -1605,7 +1605,7 @@ export const updateHREmployee = async (
     }
     
     // Resolve designationId from designation name
-    let designationIdVal: string | null = null;
+    let designationIdVal: number | null = null;
     if (designation) {
       const dbDesignation = await prisma.designation.findFirst({
         where: { name: { equals: designation, mode: 'insensitive' } }
@@ -1625,14 +1625,14 @@ export const updateHREmployee = async (
         status,
         workModeId: finalWorkModeId,
         shiftTypeId: finalShiftTypeId,
-        officeId: officeId ? officeId : null,
-        departmentId: departmentId ? departmentId : null,
+        officeId: officeId ? parseInt(officeId, 10) : null,
+        departmentId: departmentId ? parseInt(departmentId, 10) : null,
         ...(bankName !== undefined && { bankName: bankName || null }),
         ...(accountNumber !== undefined && { accountNumber: accountNumber || null }),
         ...(ifscCode !== undefined && { ifscCode: ifscCode || null }),
         ...(accountType !== undefined && { accountType: accountType || 'Savings' }),
         ...(branchName !== undefined && { branchName: branchName || null }),
-        ...(storeId !== undefined && { storeId: storeId ? storeId : null }),
+        ...(storeId !== undefined && { storeId: storeId ? parseInt(storeId, 10) : null }),
         ...(customPunchRadius !== undefined && { customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null }),
       },
       include: {
@@ -1690,7 +1690,7 @@ export const updateHREmployee = async (
         shiftType: updatedEmployee.shiftTypeId,
         workModeId: updatedEmployee.workModeId,
         shiftTypeId: updatedEmployee.shiftTypeId,
-        email: (updatedEmployee as any).user?.email || '',
+        email: updatedEmployee.user?.email || '',
         phone,
         aadharNumber,
         pfNumber,
@@ -1698,8 +1698,8 @@ export const updateHREmployee = async (
         isHandicapped,
         currentAddress,
         permanentAddress,
-        department: (updatedEmployee as any).department?.name || 'Unassigned',
-        office: (updatedEmployee as any).office?.name || 'Remote',
+        department: updatedEmployee.department?.name || 'Unassigned',
+        office: updatedEmployee.office?.name || 'Remote',
         updatedAt: updatedEmployee.updatedAt,
       },
     });
@@ -1721,7 +1721,7 @@ export const deleteHREmployee = async (
   }
 
   try {
-    const employeeId = id as string;
+    const employeeId = parseInt(id as string, 10);
     
     // Check if employee exists
     const employee = await prisma.employee.findUnique({

@@ -7,7 +7,7 @@ datasource db {
 }
 
 model User {
-  id             String             @id @default(uuid()) @db.Uuid
+  id             Int             @id @default(autoincrement())
   email          String          @unique
   password       String
   role           Role            @default(EMPLOYEE)
@@ -27,8 +27,8 @@ model User {
 }
 
 model Profile {
-  id                String      @id @default(uuid()) @db.Uuid
-  userId            String @db.Uuid      @unique
+  id                Int      @id @default(autoincrement())
+  userId            Int      @unique
   email             String
   fullName          String
   phone             String   @default("")
@@ -57,7 +57,7 @@ model Profile {
 }
 
 model Office {
-  id                   String          @id @default(uuid()) @db.Uuid
+  id                   Int          @id @default(autoincrement())
   name                 String
   code                 String?      @unique
   address              String
@@ -81,7 +81,7 @@ model Office {
 }
 
 model Department {
-  id        String        @id @default(uuid()) @db.Uuid
+  id        Int        @id @default(autoincrement())
   name      String
   code      String?    @unique
   createdAt DateTime   @default(now())
@@ -92,24 +92,24 @@ model Department {
 }
 
 model Employee {
-  id               String               @id @default(uuid()) @db.Uuid
+  id               Int               @id @default(autoincrement())
   employeeID       String?           @unique
-  userId           String? @db.Uuid              @unique
+  userId           Int?              @unique
   employeeCode     String            @unique
   firstName        String
   lastName         String
   designation      String?
   mobileNumber     String?
   joiningDate      DateTime?
-  reportingManagerId String? @db.Uuid
-  designationId    String? @db.Uuid
+  reportingManagerId Int?
+  designationId    Int?
   status           String            @default("active")
   workModeId       String            @default("OFFICE")
   workMode         WorkMode?         @relation(fields: [workModeId], references: [id])
   shiftTypeId      String            @default("MORNING")
-  officeId         String? @db.Uuid
-  departmentId     String? @db.Uuid
-  storeId          String? @db.Uuid
+  officeId         Int?
+  departmentId     Int?
+  storeId          Int?
   // Bank Details
   bankName         String?
   accountNumber    String?
@@ -149,7 +149,7 @@ model Employee {
   shiftRequests    ShiftRequest[]
   locationHistory  LocationHistory[]
   branch           Branch?           @relation(fields: [branchId], references: [id])
-  branchId         String? @db.Uuid
+  branchId         Int?
 
   @@index([officeId])
   @@index([departmentId])
@@ -158,9 +158,9 @@ model Employee {
 }
 
 model Attendance {
-  id                    String       @id @default(uuid()) @db.Uuid
-  employeeId            String @db.Uuid
-  officeId              String? @db.Uuid
+  id                    Int       @id @default(autoincrement())
+  employeeId            Int
+  officeId              Int?
   date                  String
   checkIn               DateTime?
   checkOut              DateTime?
@@ -187,19 +187,19 @@ model Attendance {
 }
 
 model Comment {
-  id         String      @id @default(uuid()) @db.Uuid
+  id         Int      @id @default(autoincrement())
   entityType String
   entityId   String
   content    String
-  authorId   String @db.Uuid
+  authorId   Int
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   author     User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
 }
 
 model LiveLocation {
-  id         String      @id @default(uuid()) @db.Uuid
-  employeeId String @db.Uuid      @unique
+  id         Int      @id @default(autoincrement())
+  employeeId Int      @unique
   name       String
   role       String
   lat        Float
@@ -211,8 +211,8 @@ model LiveLocation {
 }
 
 model LeaveRequest {
-  id         String      @id @default(uuid()) @db.Uuid
-  employeeId String @db.Uuid
+  id         Int      @id @default(autoincrement())
+  employeeId Int
   type       String
   fromDate   DateTime
   toDate     DateTime
@@ -235,8 +235,8 @@ model LeaveRequest {
 }
 
 model LeaveBalance {
-  id           String      @id @default(uuid()) @db.Uuid
-  employeeId   String @db.Uuid      @unique
+  id           Int      @id @default(autoincrement())
+  employeeId   Int      @unique
   fiscalYear   String   @default("2026")
   casualTotal  Int      @default(12)
   casualUsed   Int      @default(0)
@@ -251,8 +251,8 @@ model LeaveBalance {
 }
 
 model Expense {
-  id          String      @id @default(uuid()) @db.Uuid
-  employeeId  String @db.Uuid
+  id          Int      @id @default(autoincrement())
+  employeeId  Int
   category    String
   amount      Float
   description String
@@ -274,11 +274,11 @@ model Expense {
 }
 
 model Task {
-  id           String      @id @default(uuid()) @db.Uuid
+  id           Int      @id @default(autoincrement())
   title        String
   description  String
-  assignedToId String @db.Uuid
-  assignedById String @db.Uuid
+  assignedToId Int
+  assignedById Int
   projectName  String
   dueDate      DateTime
   status       String   @default("TODO")
@@ -290,7 +290,7 @@ model Task {
 }
 
 model Shift {
-  id           String               @id @default(uuid()) @db.Uuid
+  id           Int               @id @default(autoincrement())
   name         String
   startTime    String
   endTime      String
@@ -298,9 +298,9 @@ model Shift {
   graceMinutes Int               @default(15)
   breakMinutes Int               @default(60)
   color        String            @default("#3BA38B")
-  officeId     String? @db.Uuid
-  roleId       String? @db.Uuid
-  departmentId String? @db.Uuid
+  officeId     Int?
+  roleId       Int?
+  departmentId Int?
   office       Office?           @relation(fields: [officeId], references: [id], onDelete: Cascade)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
@@ -308,9 +308,9 @@ model Shift {
 }
 
 model ShiftAssignment {
-  id            String       @id @default(uuid()) @db.Uuid
-  employeeId    String @db.Uuid
-  shiftId       String @db.Uuid
+  id            Int       @id @default(autoincrement())
+  employeeId    Int
+  shiftId       Int
   workModeId    String    @default("OFFICE")
   workMode      WorkMode? @relation(fields: [workModeId], references: [id])
   shiftTypeId   String    @default("MORNING")
@@ -323,9 +323,9 @@ model ShiftAssignment {
 }
 
 model Notification {
-  id         String       @id @default(uuid()) @db.Uuid
-  employeeId String? @db.Uuid
-  userId     String? @db.Uuid
+  id         Int       @id @default(autoincrement())
+  employeeId Int?
+  userId     Int?
   title      String
   body       String
   category   String    @default("GENERAL")
@@ -344,7 +344,7 @@ model Notification {
 }
 
 model Holiday {
-  id          String      @id @default(uuid()) @db.Uuid
+  id          Int      @id @default(autoincrement())
   name        String
   date        DateTime
   isPublic    Boolean  @default(true)
@@ -356,13 +356,13 @@ model Holiday {
 }
 
 model Document {
-  id          String      @id @default(uuid()) @db.Uuid
+  id          Int      @id @default(autoincrement())
   title       String
   type        String
   date        DateTime
   fileSize    String
   filePath    String?
-  employeeId  String? @db.Uuid
+  employeeId  Int?
   isPublic    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -370,9 +370,9 @@ model Document {
 }
 
 model AttendanceCorrection {
-  id                String       @id @default(uuid()) @db.Uuid
-  attendanceId      String @db.Uuid
-  employeeId        String @db.Uuid
+  id                Int       @id @default(autoincrement())
+  attendanceId      Int
+  employeeId        Int
   correctionType    String
   requestedCheckIn  DateTime?
   requestedCheckOut DateTime?
@@ -391,7 +391,7 @@ model AttendanceCorrection {
 }
 
 model Announcement {
-  id          String      @id @default(uuid()) @db.Uuid
+  id          Int      @id @default(autoincrement())
   title       String
   content     String
   category    String   @default("GENERAL")
@@ -401,7 +401,7 @@ model Announcement {
 }
 
 model PricingPlan {
-  id           String      @id @default(uuid()) @db.Uuid
+  id           Int      @id @default(autoincrement())
   name         String   @unique
   monthlyPrice Float
   yearlyPrice  Float
@@ -413,22 +413,22 @@ model PricingPlan {
 }
 
 model RolePermission {
-  id          String      @id @default(uuid()) @db.Uuid
+  id          Int      @id @default(autoincrement())
   role        Role     @unique
   permissions Json
   updatedAt   DateTime @updatedAt
 }
 
 model UserPermission {
-  id          String      @id @default(uuid()) @db.Uuid
-  userId      String @db.Uuid      @unique
+  id          Int      @id @default(autoincrement())
+  userId      Int      @unique
   permissions Json
   updatedAt   DateTime @updatedAt
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model SystemSetting {
-  id            String      @id @default(uuid()) @db.Uuid
+  id            Int      @id @default(1)
   platformName  String   @default("Super HRM")
   supportEmail  String   @default("admin@hrm.com")
   currency      String   @default("INR")
@@ -458,8 +458,8 @@ enum Role {
 }
 
 model Payslip {
-  id                String      @id @default(uuid()) @db.Uuid
-  employeeId        String @db.Uuid
+  id                Int      @id @default(autoincrement())
+  employeeId        Int
   month             Int
   year              Int
   baseSalary        Float
@@ -481,8 +481,8 @@ model Payslip {
 }
 
 model FCMToken {
-  id          String      @id @default(uuid()) @db.Uuid
-  userId      String @db.Uuid
+  id          Int      @id @default(autoincrement())
+  userId      Int
   token       String
   platform    String   @default("unknown")
   isActive    Boolean  @default(true)
@@ -495,8 +495,8 @@ model FCMToken {
 }
 
 model UserSession {
-  id         String      @id @default(uuid()) @db.Uuid
-  userId     String @db.Uuid
+  id         Int      @id @default(autoincrement())
+  userId     Int
   token      String   @unique
   deviceInfo String?
   ipAddress  String?
@@ -507,10 +507,10 @@ model UserSession {
 }
 
 model AuditLog {
-  id         String      @id @default(uuid()) @db.Uuid
-  userId     String? @db.Uuid
-  employeeId String? @db.Uuid
-  branchId   String? @db.Uuid
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  employeeId Int?
+  branchId   Int?
   ipAddress  String?
   deviceInfo String?
   action     String
@@ -518,12 +518,12 @@ model AuditLog {
 }
 
 model Asset {
-  id           String       @id @default(uuid()) @db.Uuid
+  id           Int       @id @default(autoincrement())
   name         String
   code         String    @unique
   type         String
   status       String    @default("AVAILABLE")
-  employeeId   String? @db.Uuid
+  employeeId   Int?
   assignedDate DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -531,7 +531,7 @@ model Asset {
 }
 
 model Project {
-  id          String      @id @default(uuid()) @db.Uuid
+  id          Int      @id @default(autoincrement())
   name        String   @unique
   description String?
   status      String   @default("ACTIVE")
@@ -540,7 +540,7 @@ model Project {
 }
 
 model Designation {
-  id        String        @id @default(uuid()) @db.Uuid
+  id        Int        @id @default(autoincrement())
   name      String     @unique
   isActive  Boolean    @default(true)
   createdAt DateTime   @default(now())
@@ -550,7 +550,7 @@ model Designation {
 }
 
 model CustomRole {
-  id        String      @id @default(uuid()) @db.Uuid
+  id        Int      @id @default(autoincrement())
   name      String   @unique
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -559,7 +559,7 @@ model CustomRole {
 
 
 model Store {
-  id          String       @id @default(uuid()) @db.Uuid
+  id          Int       @id @default(autoincrement())
   name        String
   code        String?   @unique
   address     String?
@@ -578,8 +578,8 @@ model Store {
 }
 
 model SalaryStructure {
-  id               String      @id @default(uuid()) @db.Uuid
-  employeeId       String @db.Uuid      @unique
+  id               Int      @id @default(autoincrement())
+  employeeId       Int      @unique
   monthlySalary    Float    @default(0)
   grossSalary      Float    @default(0)
   basicSalary      Float    @default(0)
@@ -601,8 +601,8 @@ model SalaryStructure {
 }
 
 model BreakRecord {
-  id           String        @id @default(uuid()) @db.Uuid
-  attendanceId String @db.Uuid
+  id           Int        @id @default(autoincrement())
+  attendanceId Int
   startTime    DateTime
   endTime      DateTime?
   duration     Int        @default(0)
@@ -612,8 +612,8 @@ model BreakRecord {
 }
 
 model Wallet {
-  id                String      @id @default(uuid()) @db.Uuid
-  employeeId        String @db.Uuid      @unique
+  id                Int      @id @default(autoincrement())
+  employeeId        Int      @unique
   availableBalance  Float    @default(0)
   advanceLimit      Float    @default(0)
   pendingClaims     Float    @default(0)
@@ -629,8 +629,8 @@ model Wallet {
 }
 
 model WalletTransaction {
-  id          String      @id @default(uuid()) @db.Uuid
-  walletId    String @db.Uuid
+  id          Int      @id @default(autoincrement())
+  walletId    Int
   title       String
   category    String
   amount      Float
@@ -648,8 +648,8 @@ model WalletTransaction {
 }
 
 model SalaryAdvance {
-  id          String      @id @default(uuid()) @db.Uuid
-  walletId    String @db.Uuid
+  id          Int      @id @default(autoincrement())
+  walletId    Int
   amount      Float
   months      Int
   reason      String
@@ -670,7 +670,7 @@ model SalaryAdvance {
 // Commission Management Module
 
 model CommissionPolicy {
-  id                String      @id @default(uuid()) @db.Uuid
+  id                Int      @id @default(autoincrement())
   name              String
   description       String?
   commissionType    String   @default("PERCENTAGE") // PERCENTAGE, FIXED, NONE
@@ -681,16 +681,16 @@ model CommissionPolicy {
   isActive          Boolean  @default(true)
   
   // Scope fields
-  storeId           String? @db.Uuid
-  employeeId        String? @db.Uuid
-  departmentId      String? @db.Uuid
-  designationId     String? @db.Uuid
+  storeId           Int?
+  employeeId        Int?
+  departmentId      Int?
+  designationId     Int?
   roleId            String?
   
   // Product/Category/Brand specific
-  productId         String? @db.Uuid
-  categoryId        String? @db.Uuid
-  brandId           String? @db.Uuid
+  productId         Int?
+  categoryId        Int?
+  brandId           Int?
   
   // Target & Bonus
   targetAmount      Float?
@@ -719,19 +719,19 @@ model CommissionPolicy {
 }
 
 model CommissionTransaction {
-  id                String      @id @default(uuid()) @db.Uuid
+  id                Int      @id @default(autoincrement())
   billId            String?
   invoiceNumber     String?
-  employeeId        String @db.Uuid
-  storeId           String? @db.Uuid
+  employeeId        Int
+  storeId           Int?
   saleAmount        Float
   commissionType    String   // PERCENTAGE, FIXED
   commissionPercent Float?
   commissionAmount  Float
   status            String   @default("PENDING") // PENDING, APPROVED, REJECTED, PAID
-  approvedBy        String? @db.Uuid
+  approvedBy        Int?
   approvedAt        DateTime?
-  payrollId         String? @db.Uuid
+  payrollId         Int?
   paidAt            DateTime?
   notes             String?
   
@@ -742,7 +742,7 @@ model CommissionTransaction {
   employee          Employee @relation("CommissionTransactions", fields: [employeeId], references: [id])
   store             Store?   @relation("CommissionTransactions", fields: [storeId], references: [id])
   policy            CommissionPolicy? @relation(fields: [policyId], references: [id])
-  policyId          String? @db.Uuid
+  policyId          Int?
   history           CommissionHistory[]
   adjustments       CommissionAdjustment[]
   
@@ -754,16 +754,16 @@ model CommissionTransaction {
 }
 
 model CommissionHistory {
-  id                String      @id @default(uuid()) @db.Uuid
-  transactionId     String @db.Uuid
-  employeeId        String @db.Uuid
+  id                Int      @id @default(autoincrement())
+  transactionId     Int
+  employeeId        Int
   action            String   // CREATED, APPROVED, REJECTED, PAID, ADJUSTED
   previousStatus    String?
   newStatus         String?
   previousAmount    Float?
   newAmount         Float?
   reason            String?
-  performedBy       String? @db.Uuid
+  performedBy       Int?
   performedAt       DateTime @default(now())
   
   // Relations
@@ -776,10 +776,10 @@ model CommissionHistory {
 }
 
 model CommissionTarget {
-  id                String      @id @default(uuid()) @db.Uuid
-  policyId          String @db.Uuid
-  employeeId        String? @db.Uuid
-  storeId           String? @db.Uuid
+  id                Int      @id @default(autoincrement())
+  policyId          Int
+  employeeId        Int?
+  storeId           Int?
   targetType        String   // MONTHLY, QUARTERLY, YEARLY
   targetAmount      Float
   achievedAmount    Float    @default(0)
@@ -807,16 +807,16 @@ model CommissionTarget {
 }
 
 model CommissionSettlement {
-  id                String      @id @default(uuid()) @db.Uuid
-  employeeId        String @db.Uuid
+  id                Int      @id @default(autoincrement())
+  employeeId        Int
   settlementDate    DateTime
   totalCommission   Float
   totalBonus        Float
   totalDeduction    Float    @default(0)
   netAmount         Float
   status            String   @default("PENDING") // PENDING, PROCESSED, PAID
-  payrollId         String? @db.Uuid
-  processedBy       String? @db.Uuid
+  payrollId         Int?
+  processedBy       Int?
   processedAt       DateTime?
   notes             String?
   
@@ -833,13 +833,13 @@ model CommissionSettlement {
 }
 
 model CommissionAdjustment {
-  id                String      @id @default(uuid()) @db.Uuid
-  transactionId     String @db.Uuid
-  employeeId        String @db.Uuid
+  id                Int      @id @default(autoincrement())
+  transactionId     Int
+  employeeId        Int
   adjustmentType    String   // INCREASE, DECREASE
   adjustmentAmount  Float
   reason            String
-  approvedBy        String? @db.Uuid
+  approvedBy        Int?
   approvedAt        DateTime?
   status            String   @default("PENDING") // PENDING, APPROVED, REJECTED
   
@@ -865,15 +865,15 @@ model WorkMode {
 
 
 model DeductionPolicy {
-  id                String      @id @default(uuid()) @db.Uuid
+  id                Int      @id @default(autoincrement())
   name              String
   type              String   // LATE_MARK, LEAVE, ABSENT
   deductionType     String   // FIXED_AMOUNT, PERCENTAGE, PER_DAY
   deductionValue    Float
   maxDeduction      Float?   // Maximum deduction amount per month
   applicableDays    String[] // Days this policy applies to (e.g., ["Monday", "Tuesday"])
-  departmentId      String? @db.Uuid
-  officeId          String? @db.Uuid
+  departmentId      Int?
+  officeId          Int?
   isActive          Boolean  @default(true)
   effectiveFrom     DateTime @default(now())
   effectiveTo       DateTime?
@@ -892,7 +892,7 @@ model DeductionPolicy {
 }
 
 model AttendanceGenerationPolicy {
-  id                                String      @id @default(uuid()) @db.Uuid
+  id                                Int      @id @default(autoincrement())
   isEnabled                         Boolean  @default(false)
   generationMode                    String   @default("MONTHLY") // DAILY, WEEKLY, MONTHLY
   autoGenerateCurrentMonth          Boolean  @default(true)
@@ -907,8 +907,8 @@ model AttendanceGenerationPolicy {
   autoApplyHalfDayRules            Boolean  @default(true)
   autoApplyLateMarkRules           Boolean  @default(true)
   autoApplyEarlyExitRules           Boolean  @default(true)
-  departmentId                      String? @db.Uuid
-  officeId                          String? @db.Uuid
+  departmentId                      Int?
+  officeId                          Int?
   effectiveFrom                     DateTime @default(now())
   effectiveTo                       DateTime?
   description                       String?
@@ -922,8 +922,8 @@ model AttendanceGenerationPolicy {
 }
 
 model Device {
-  id        String      @id @default(uuid()) @db.Uuid
-  userId    String @db.Uuid
+  id        Int      @id @default(autoincrement())
+  userId    Int
   fcmToken  String   @unique
   platform  String
   createdAt DateTime @default(now())
@@ -934,8 +934,8 @@ model Device {
 }
 
 model Break {
-  id         String       @id @default(uuid()) @db.Uuid
-  employeeId String @db.Uuid
+  id         Int       @id @default(autoincrement())
+  employeeId Int
   type       String    // LUNCH, TEA, PERSONAL, MEETING
   startAt    DateTime
   endAt      DateTime?
@@ -944,20 +944,20 @@ model Break {
 }
 
 model ShiftRequest {
-  id             String       @id @default(uuid()) @db.Uuid
-  employeeId     String @db.Uuid
+  id             Int       @id @default(autoincrement())
+  employeeId     Int
   currentShift   String
   requestedShift String
   reason         String
   status         String    @default("PENDING") // PENDING, APPROVED, REJECTED
   createdAt      DateTime  @default(now())
   decidedAt      DateTime?
-  decidedBy      String? @db.Uuid
+  decidedBy      Int?
   employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Branch {
-  id           String        @id @default(uuid()) @db.Uuid
+  id           Int        @id @default(autoincrement())
   name         String
   latitude     Float
   longitude    Float
@@ -966,8 +966,8 @@ model Branch {
 }
 
 model LocationHistory {
-  id         String      @id @default(uuid()) @db.Uuid
-  employeeId String @db.Uuid
+  id         Int      @id @default(autoincrement())
+  employeeId Int
   latitude   Float
   longitude  Float
   isOutside  Boolean  @default(false)
@@ -979,11 +979,11 @@ model LocationHistory {
 // ─── HR Task Management ────────────────────────────────────────────────────────
 
 model HrTask {
-  id          String        @id @default(uuid()) @db.Uuid
+  id          String        @id @default(uuid())
   title       String
   description String?       @db.Text
   assignedTo  String        // Employee.employeeID (HopKid GUID or local-* string)
-  assignedBy  String        @db.Uuid // User.id of HR creator
+  assignedBy  Int           // User.id of HR creator
   priority    HrPriority    @default(MEDIUM)
   dueDate     DateTime?
   status      HrTaskStatus  @default(PENDING)
@@ -997,10 +997,10 @@ model HrTask {
 }
 
 model HrTaskUpdate {
-  id        String        @id @default(uuid()) @db.Uuid
-  taskId    String        @db.Uuid
+  id        String        @id @default(uuid())
+  taskId    String
   task      HrTask        @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  byUserId  String @db.Uuid           // User.id of actor
+  byUserId  Int           // User.id of actor
   oldStatus HrTaskStatus?
   newStatus HrTaskStatus
   comment   String?       @db.Text

@@ -12,8 +12,8 @@ export const getCommissionDashboard = async (
 
     const whereClause: any = {};
     if (employeeId) {
-      const parsedId = employeeId as string;
-      if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(parsedId)) {
+      const parsedId = parseInt(employeeId as string, 10);
+      if (!isNaN(parsedId)) {
         whereClause.employeeId = parsedId;
       } else {
         const employee = await prisma.employee.findFirst({
@@ -22,13 +22,13 @@ export const getCommissionDashboard = async (
         if (employee) {
           whereClause.employeeId = employee.id;
         } else {
-          whereClause.employeeId = '00000000-0000-0000-0000-000000000000';
+          whereClause.employeeId = -1;
         }
       }
     }
     
     if (storeId) {
-      whereClause.storeId = storeId as string;
+      whereClause.storeId = parseInt(storeId as string, 10);
     }
     if (startDate && endDate) {
       whereClause.createdAt = {
@@ -181,8 +181,8 @@ export const getCommissionPolicies = async (
     const { storeId, employeeId, isActive } = req.query;
 
     const whereClause: any = {};
-    if (storeId) whereClause.storeId = storeId as string;
-    if (employeeId) whereClause.employeeId = employeeId as string;
+    if (storeId) whereClause.storeId = parseInt(storeId as string);
+    if (employeeId) whereClause.employeeId = parseInt(employeeId as string);
     if (isActive !== undefined) whereClause.isActive = isActive === 'true';
 
     const policies = await prisma.commissionPolicy.findMany({
@@ -211,7 +211,7 @@ export const getCommissionPolicyById = async (
     const { id } = req.params;
     const policyId = Array.isArray(id) ? id[0] : id;
     const policy = await prisma.commissionPolicy.findUnique({
-      where: { id: policyId },
+      where: { id: parseInt(policyId) },
       include: {
         employee: true,
         store: true,
@@ -242,7 +242,7 @@ export const updateCommissionPolicy = async (
     const policyData = req.body;
 
     const policy = await prisma.commissionPolicy.update({
-      where: { id: policyId },
+      where: { id: parseInt(policyId) },
       data: policyData,
       include: {
         employee: true,
@@ -271,7 +271,7 @@ export const deleteCommissionPolicy = async (
     const { id } = req.params;
     const policyId = Array.isArray(id) ? id[0] : id;
     await prisma.commissionPolicy.delete({
-      where: { id: policyId },
+      where: { id: parseInt(policyId) },
     });
 
     res.json({ success: true, message: 'Commission policy deleted successfully.' });
@@ -317,8 +317,8 @@ export const getCommissionTransactions = async (
 
     const whereClause: any = {};
     if (employeeId) {
-      const parsedId = employeeId as string;
-      if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(parsedId)) {
+      const parsedId = parseInt(employeeId as string, 10);
+      if (!isNaN(parsedId)) {
         whereClause.employeeId = parsedId;
       } else {
         const employee = await prisma.employee.findFirst({
@@ -327,13 +327,13 @@ export const getCommissionTransactions = async (
         if (employee) {
           whereClause.employeeId = employee.id;
         } else {
-          whereClause.employeeId = '00000000-0000-0000-0000-000000000000';
+          whereClause.employeeId = -1;
         }
       }
     }
     
     if (storeId) {
-      whereClause.storeId = storeId as string;
+      whereClause.storeId = parseInt(storeId as string, 10);
     }
     if (status) whereClause.status = status;
     if (startDate && endDate) {
@@ -370,7 +370,7 @@ export const approveCommissionTransaction = async (
     const { notes } = req.body;
 
     const transaction = await prisma.commissionTransaction.update({
-      where: { id: transactionId },
+      where: { id: parseInt(transactionId) },
       data: {
         status: 'APPROVED',
         approvedBy: req.user?.id,
@@ -405,7 +405,7 @@ export const rejectCommissionTransaction = async (
     const { notes } = req.body;
 
     const transaction = await prisma.commissionTransaction.update({
-      where: { id: transactionId },
+      where: { id: parseInt(transactionId) },
       data: {
         status: 'REJECTED',
         approvedBy: req.user?.id,
@@ -465,8 +465,8 @@ export const getCommissionTargets = async (
     const { employeeId, storeId, status } = req.query;
 
     const whereClause: any = {};
-    if (employeeId) whereClause.employeeId = employeeId as string;
-    if (storeId) whereClause.storeId = storeId as string;
+    if (employeeId) whereClause.employeeId = parseInt(employeeId as string);
+    if (storeId) whereClause.storeId = parseInt(storeId as string);
     if (status) whereClause.status = status;
 
     const targets = await prisma.commissionTarget.findMany({
@@ -496,7 +496,7 @@ export const updateCommissionTarget = async (
     const targetData = req.body;
 
     const target = await prisma.commissionTarget.update({
-      where: { id: targetId },
+      where: { id: parseInt(targetId) },
       data: targetData,
       include: {
         employee: true,
@@ -526,7 +526,7 @@ export const calculateCommission = async (
 
     // Find applicable policy for the employee
     const employee = await prisma.employee.findUnique({
-      where: { id: employeeId },
+      where: { id: parseInt(employeeId) },
       include: {
         commissionPolicies: {
           where: { isActive: true },
@@ -546,7 +546,7 @@ export const calculateCommission = async (
     // If no employee-specific policy, check store policy
     if (!policy && storeId) {
       const store = await prisma.store.findUnique({
-        where: { id: storeId },
+        where: { id: parseInt(storeId) },
         include: {
           commissionPolicies: {
             where: { isActive: true },
@@ -596,7 +596,7 @@ export const createCommissionSettlement = async (
     // Calculate total commission for the employee
     const transactions = await prisma.commissionTransaction.findMany({
       where: {
-        employeeId: employeeId,
+        employeeId: parseInt(employeeId),
         status: 'APPROVED',
         paidAt: null,
       },
@@ -606,7 +606,7 @@ export const createCommissionSettlement = async (
 
     const settlement = await prisma.commissionSettlement.create({
       data: {
-        employeeId: employeeId,
+        employeeId: parseInt(employeeId),
         settlementDate: new Date(settlementDate),
         totalCommission,
         totalBonus: 0,
@@ -643,7 +643,7 @@ export const createCommissionSettlement = async (
 interface GroupedReport {
   periodStart: string;
   periodEnd: string;
-  employeeId: string;
+  employeeId: number;
   employeeName: string;
   employeeCode: string;
   branchName: string;
@@ -680,7 +680,7 @@ export const fetchCommissionReport = async (
       lteDate = new Date(`${toStr}T23:59:59.999+05:30`);
     }
 
-    let targetEmployeeId: string | undefined;
+    let targetEmployeeId: number | undefined;
     // For all mobile-authenticated users (not HR/Admin), scope report to their own records
     const mobileRoles = ['EMPLOYEE', 'SALESMAN', 'STORE_MANAGER', 'HELPER'];
     if (req.user?.role && mobileRoles.includes(req.user.role)) {
@@ -693,8 +693,8 @@ export const fetchCommissionReport = async (
       }
       targetEmployeeId = employee.id;
     } else if (req.query.employeeId) {
-      const parsedId = req.query.employeeId as string;
-      if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(parsedId)) {
+      const parsedId = parseInt(req.query.employeeId as string, 10);
+      if (!isNaN(parsedId)) {
         targetEmployeeId = parsedId;
       } else {
         const employee = await prisma.employee.findFirst({
@@ -703,7 +703,7 @@ export const fetchCommissionReport = async (
         if (employee) {
           targetEmployeeId = employee.id;
         } else {
-          targetEmployeeId = '00000000-0000-0000-0000-000000000000';
+          targetEmployeeId = -1;
         }
       }
     }
@@ -732,7 +732,7 @@ export const fetchCommissionReport = async (
       [key: string]: {
         periodStart: string;
         periodEnd: string;
-        employeeId: string;
+        employeeId: number;
         employeeName: string;
         employeeCode: string;
         branchName: string;
@@ -778,7 +778,7 @@ export const fetchCommissionReport = async (
       }
     };
 
-    for (const tx of transactions as any[]) {
+    for (const tx of transactions) {
       const { start, end } = getPeriodBoundaries(tx.createdAt, groupBy);
       const empId = tx.employeeId;
       let empName = 'Employee';

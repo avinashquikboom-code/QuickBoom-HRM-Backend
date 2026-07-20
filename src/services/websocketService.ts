@@ -5,8 +5,8 @@ import { prisma } from '../utils/db';
 import leaveBalanceService from './leaveBalanceService';
 
 interface AuthenticatedSocket extends Socket {
-  userId?: string;
-  employeeId?: string;
+  userId?: number;
+  employeeId?: number;
   role?: string;
 }
 
@@ -119,19 +119,19 @@ class WebSocketService {
   }
 
   // Real-time attendance updates
-  async broadcastAttendanceUpdate(employeeId: string, data: any): Promise<void> {
+  async broadcastAttendanceUpdate(employeeId: number, data: any): Promise<void> {
     this.io.to(`employee_${employeeId}`).emit('attendanceUpdate', data);
     this.io.to('role_HR').emit('attendanceUpdate', data);
     this.io.to('role_ADMIN').emit('attendanceUpdate', data);
   }
 
   // Real-time notification updates
-  async broadcastNotification(employeeId: string, notification: any): Promise<void> {
+  async broadcastNotification(employeeId: number, notification: any): Promise<void> {
     this.io.to(`employee_${employeeId}`).emit('newNotification', notification);
   }
 
   // Real-time leave updates
-  async broadcastLeaveUpdate(employeeId: string, data: any): Promise<void> {
+  async broadcastLeaveUpdate(employeeId: number, data: any): Promise<void> {
     this.io.to(`employee_${employeeId}`).emit('leaveUpdate', data);
     this.io.to('role_HR').emit('leaveUpdate', data);
   }
@@ -147,7 +147,7 @@ class WebSocketService {
   }
 
   // Real-time leave balance updates
-  async broadcastLeaveBalanceUpdate(employeeId: string, data: any): Promise<void> {
+  async broadcastLeaveBalanceUpdate(employeeId: number, data: any): Promise<void> {
     this.io.to(`employee_${employeeId}`).emit('leaveBalanceUpdate', data);
     this.io.to('role_HR').emit('leaveBalanceUpdate', data);
     this.io.to('role_ADMIN').emit('leaveBalanceUpdate', data);
@@ -214,7 +214,7 @@ class WebSocketService {
     }
   }
 
-  private async getEmployeeDashboardStats(employeeId: string): Promise<any> {
+  private async getEmployeeDashboardStats(employeeId: number): Promise<any> {
     // Get employee-specific dashboard stats
     const attendance = await prisma.attendance.findMany({
       where: { employeeId },

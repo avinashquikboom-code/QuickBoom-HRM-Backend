@@ -36,9 +36,9 @@ export const fetchStoreById = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const storeId = id as string;
+    const storeId = parseInt(id as string, 10);
 
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(storeId)) {
+    if (isNaN(storeId)) {
       res.status(400).json({ success: false, message: 'Invalid store ID.' });
       return;
     }
@@ -128,8 +128,8 @@ export const updateStore = async (
     const { id } = req.params;
     const { name, code, address, country, pincode, isActive, maxPunchRadiusMeters, latitude, longitude } = req.body;
 
-    const storeId = id as string;
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(storeId)) {
+    const storeId = parseInt(id as string, 10);
+    if (isNaN(storeId)) {
       res.status(400).json({ success: false, message: 'Invalid store ID.' });
       return;
     }
@@ -181,9 +181,9 @@ export const deleteStore = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const storeId = id as string;
+    const storeId = parseInt(id as string, 10);
 
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(storeId)) {
+    if (isNaN(storeId)) {
       res.status(400).json({ success: false, message: 'Invalid store ID.' });
       return;
     }

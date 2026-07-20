@@ -12,9 +12,9 @@ const PRIMARY_COLOR = '#3BA38B';
 
 // Interface for attendance with office data
 interface AttendanceWithOffice {
-  id: string;
-  employeeId: string;
-  officeId: string | null;
+  id: number;
+  employeeId: number;
+  officeId: number | null;
   date: string;
   checkIn: Date | null;
   checkOut: Date | null;
@@ -30,7 +30,7 @@ interface AttendanceWithOffice {
   createdAt: Date;
   updatedAt: Date;
   office?: {
-    id: string;
+    id: number;
     name: string;
     code: string | null;
     address: string;
@@ -208,7 +208,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
 
     // Fetch enableGeofence from settings
     const systemSettings = await prisma.systemSetting.findUnique({
-      where: { id: '00000000-0000-0000-0000-000000000001' }
+      where: { id: 1 }
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
@@ -466,7 +466,7 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
 
     // Fetch enableGeofence from settings
     const systemSettings = await prisma.systemSetting.findUnique({
-      where: { id: '00000000-0000-0000-0000-000000000001' }
+      where: { id: 1 }
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
@@ -719,7 +719,7 @@ export const requestAttendanceCorrection = async (req: AuthenticatedRequest, res
     // Get attendance record
     const attendance = await prisma.attendance.findFirst({
       where: { 
-        id: attendanceId,
+        id: parseInt(attendanceId),
         employeeId: employee.id
       }
     });
@@ -1620,7 +1620,7 @@ export const downloadAttendanceReport = async (
     if (employeeId) {
       // Specific employee report
       employees = await prisma.employee.findMany({
-        where: { id: employeeId as string },
+        where: { id: parseInt(employeeId as string) },
         include: { office: true, department: true },
       });
     } else {
@@ -1641,7 +1641,7 @@ export const downloadAttendanceReport = async (
     });
 
     // Group attendances by employee
-    const attendanceByEmployee: Record<string, typeof attendances> = {};
+    const attendanceByEmployee: Record<number, typeof attendances> = {};
     attendances.forEach((att: AttendanceWithOffice) => {
       if (!attendanceByEmployee[att.employeeId]) {
         attendanceByEmployee[att.employeeId] = [];
@@ -1843,17 +1843,17 @@ export const fetchAllEmployeesAttendance = async (
   }
 
   if (employeeId) {
-    whereClause.employeeId = employeeId as string;
+    whereClause.employeeId = parseInt(employeeId as string);
   }
 
   if (departmentId) {
     whereClause.employee = {
-      departmentId: departmentId as string
+      departmentId: parseInt(departmentId as string)
     };
   }
 
   if (officeId) {
-    whereClause.officeId = officeId as string;
+    whereClause.officeId = parseInt(officeId as string);
   }
 
   try {
@@ -1976,7 +1976,7 @@ export const getMonthlyWorkSchedule = async (req: AuthenticatedRequest, res: Res
 
       // Get shift details if available
       let shiftDetails: {
-        id: string;
+        id: number;
         name: string;
         startTime: string;
         endTime: string;

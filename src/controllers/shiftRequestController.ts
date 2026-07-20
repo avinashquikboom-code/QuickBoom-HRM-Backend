@@ -152,8 +152,8 @@ export const decideShiftRequest = async (
   const { id } = req.params;
   const { status, note } = req.body; // APPROVED or REJECTED
 
-  const requestId = Array.isArray(id) ? id[0] : id;
-  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(requestId)) {
+  const requestId = parseInt(String(id), 10);
+  if (isNaN(requestId)) {
     res.status(400).json({ success: false, message: 'Invalid request ID.' });
     return;
   }
@@ -185,8 +185,8 @@ export const decideShiftRequest = async (
       });
 
       if (!targetShift) {
-        const shiftId = request.requestedShift;
-        if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(shiftId)) {
+        const shiftId = parseInt(request.requestedShift, 10);
+        if (!isNaN(shiftId)) {
           targetShift = await prisma.shift.findUnique({
             where: { id: shiftId }
           });
@@ -243,11 +243,11 @@ export const decideShiftRequest = async (
     }
 
     try {
-      if ((request as any).employee.userId) {
+      if (request.employee.userId) {
         // Create in-app notification row
         await prisma.notification.create({
           data: {
-            userId: (request as any).employee.userId,
+            userId: request.employee.userId,
             title: `Shift Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
             body: `Your shift change request has been ${status.toLowerCase()}.${note ? ` Reason: ${note}` : ''}`,
             isRead: false,
@@ -257,7 +257,7 @@ export const decideShiftRequest = async (
 
         // Send push notification via standard pushNotificationService
         pushNotificationService.sendPush(
-          [(request as any).employee.userId],
+          [request.employee.userId],
           `Shift Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
           `Your shift change request has been ${status.toLowerCase()}.${note ? ` Reason: ${note}` : ''}`,
           {

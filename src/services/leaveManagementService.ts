@@ -2,8 +2,8 @@ import { prisma } from '../utils/db';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface LeaveAllocation {
-  id: string;
-  employeeId: string;
+  id: number;
+  employeeId: number;
   leaveType: string;
   totalDays: number;
   usedDays: number;
@@ -15,7 +15,7 @@ export interface LeaveAllocation {
 }
 
 export interface LeavePolicy {
-  id: string;
+  id: number;
   name: string;
   leaveType: string;
   defaultDays: number;
@@ -42,7 +42,7 @@ class LeaveManagementService {
   /**
    * Get leave balances for an employee
    */
-  async getEmployeeLeaveBalances(employeeId: string): Promise<LeaveAllocation[]> {
+  async getEmployeeLeaveBalances(employeeId: number): Promise<LeaveAllocation[]> {
     try {
       const currentYear = new Date().getFullYear().toString();
       
@@ -75,7 +75,7 @@ class LeaveManagementService {
    * Create or update leave allocation for an employee
    */
   async upsertLeaveAllocation(
-    employeeId: string,
+    employeeId: number,
     leaveType: string,
     totalDays: number,
     fiscalYear: string
@@ -277,7 +277,7 @@ class LeaveManagementService {
   /**
    * Auto-approve leave based on policy
    */
-  async autoApproveLeave(leaveRequestId: string): Promise<boolean> {
+  async autoApproveLeave(leaveRequestId: number): Promise<boolean> {
     try {
       const leaveRequest = await prisma.leaveRequest.findUnique({
         where: { id: leaveRequestId },
@@ -354,7 +354,7 @@ class LeaveManagementService {
   /**
    * Carry forward unused leave days
    */
-  async carryForwardLeave(employeeId: string, fromYear: string, toYear: string): Promise<void> {
+  async carryForwardLeave(employeeId: number, fromYear: string, toYear: string): Promise<void> {
     try {
       const allocations = await this.getEmployeeLeaveBalances(employeeId);
       

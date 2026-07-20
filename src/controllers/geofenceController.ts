@@ -42,12 +42,12 @@ export const checkGeofence = async (
       latitude,
       longitude,
       employee.id,
-      officeId ? officeId : undefined
+      officeId ? parseInt(officeId, 10) : undefined
     );
 
     // Fetch enableGeofence from settings
     const systemSettings = await prisma.systemSetting.findUnique({
-      where: { id: '00000000-0000-0000-0000-000000000001' }
+      where: { id: 1 }
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
@@ -139,7 +139,7 @@ export const getGeofenceStatus = async (
 
     // Fetch enableGeofence from settings
     const systemSettings = await prisma.systemSetting.findUnique({
-      where: { id: '00000000-0000-0000-0000-000000000001' }
+      where: { id: 1 }
     });
     const rawAttendance = (systemSettings?.attendance as any) || {};
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;

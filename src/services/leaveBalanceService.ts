@@ -2,8 +2,8 @@ import { prisma } from '../utils/db';
 import { Role } from '@prisma/client';
 
 export interface LeaveAllocationData {
-  employeeId: string;
-  departmentId?: string;
+  employeeId: number;
+  departmentId?: number;
   fiscalYear?: string;
   casualTotal?: number;
   sickTotal?: number;
@@ -12,7 +12,7 @@ export interface LeaveAllocationData {
 }
 
 export interface DepartmentLeavePolicy {
-  departmentId: string;
+  departmentId: number;
   departmentName: string;
   casualTotal: number;
   sickTotal: number;
@@ -82,7 +82,7 @@ class LeaveBalanceService {
   /**
    * Get leave balance for an employee
    */
-  async getEmployeeLeaveBalance(employeeId: string, fiscalYear?: string): Promise<any> {
+  async getEmployeeLeaveBalance(employeeId: number, fiscalYear?: string): Promise<any> {
     try {
       const year = fiscalYear || new Date().getFullYear().toString();
       
@@ -130,7 +130,7 @@ class LeaveBalanceService {
   /**
    * Get all employees' leave balances (for admin/HR)
    */
-  async getAllLeaveBalances(fiscalYear?: string, departmentId?: string): Promise<any[]> {
+  async getAllLeaveBalances(fiscalYear?: string, departmentId?: number): Promise<any[]> {
     try {
       const year = fiscalYear || new Date().getFullYear().toString();
       
@@ -182,7 +182,7 @@ class LeaveBalanceService {
   /**
    * Update used leave count when a leave is approved
    */
-  async updateUsedLeave(employeeId: string, leaveType: string, days: number): Promise<void> {
+  async updateUsedLeave(employeeId: number, leaveType: string, days: number): Promise<void> {
     try {
       const fiscalYear = new Date().getFullYear().toString();
       
@@ -230,7 +230,7 @@ class LeaveBalanceService {
   /**
    * Set department-specific leave policies
    */
-  async setDepartmentLeavePolicy(departmentId: string, policy: {
+  async setDepartmentLeavePolicy(departmentId: number, policy: {
     casualTotal: number;
     sickTotal: number;
     earnedTotal: number;
@@ -249,7 +249,7 @@ class LeaveBalanceService {
   /**
    * Get department leave policy
    */
-  async getDepartmentLeavePolicy(departmentId: string): Promise<DepartmentLeavePolicy | null> {
+  async getDepartmentLeavePolicy(departmentId: number): Promise<DepartmentLeavePolicy | null> {
     try {
       const department = await prisma.department.findUnique({
         where: { id: departmentId }

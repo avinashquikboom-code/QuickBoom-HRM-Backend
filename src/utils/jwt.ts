@@ -4,7 +4,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'quickboom_secret_key_12345_67890';
 const REFRESH_SECRET = process.env.REFRESH_SECRET || 'quickboom_refresh_secret_key_12345_67890';
 
 export interface UserJWTPayload {
-  id: string;
+  id: number;
   email: string;
   role: string;
 }

@@ -29,20 +29,20 @@ class ProjectService {
     });
   }
 
-  async getProjectById(id: string) {
+  async getProjectById(id: number) {
     return prisma.project.findUnique({
       where: { id },
     });
   }
 
-  async updateProject(id: string, params: UpdateProjectParams) {
+  async updateProject(id: number, params: UpdateProjectParams) {
     return prisma.project.update({
       where: { id },
       data: params,
     });
   }
 
-  async deleteProject(id: string) {
+  async deleteProject(id: number) {
     return prisma.project.delete({
       where: { id },
     });

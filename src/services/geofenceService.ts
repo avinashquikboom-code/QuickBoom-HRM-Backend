@@ -3,7 +3,7 @@ import { prisma } from '../utils/db';
 export interface GeofenceResult {
   isWithinGeofence: boolean;
   distance: number;
-  officeId?: string;
+  officeId?: number;
   officeName?: string;
   maxRadius: number;
   coordinates: {
@@ -15,7 +15,7 @@ export interface GeofenceResult {
 }
 
 export interface OfficeGeofence {
-  id: string;
+  id: number;
   name: string;
   code: string | null;
   address: string;
@@ -48,7 +48,7 @@ class GeofenceService {
   /**
    * Check if user is within any office, store, or branch geofence
    */
-  async checkGeofence(userLat: number, userLon: number, employeeId?: string, officeId?: string): Promise<GeofenceResult> {
+  async checkGeofence(userLat: number, userLon: number, employeeId?: number, officeId?: number): Promise<GeofenceResult> {
     try {
       // Find the employee with their office, store, and branch relations
       const employee = employeeId ? await prisma.employee.findUnique({
@@ -61,7 +61,7 @@ class GeofenceService {
 
       const geofences: Array<{
         type: 'office' | 'store' | 'branch';
-        id: string;
+        id: number;
         name: string;
         latitude: number;
         longitude: number;
@@ -200,7 +200,7 @@ class GeofenceService {
   async upsertOfficeGeofence(officeData: Partial<OfficeGeofence>): Promise<OfficeGeofence> {
     try {
       const office = await prisma.office.upsert({
-        where: { id: officeData.id || '00000000-0000-0000-0000-000000000000' },
+        where: { id: officeData.id || 0 },
         update: {
           name: officeData.name,
           code: officeData.code,
@@ -243,7 +243,7 @@ class GeofenceService {
   /**
    * Delete office geofence
    */
-  async deleteOfficeGeofence(officeId: string): Promise<void> {
+  async deleteOfficeGeofence(officeId: number): Promise<void> {
     try {
       await prisma.office.delete({
         where: { id: officeId }
@@ -304,7 +304,7 @@ class GeofenceService {
   /**
    * Get geofence breach events for an employee
    */
-  async getGeofenceEvents(employeeId: string, limit: number = 50): Promise<any[]> {
+  async getGeofenceEvents(employeeId: number, limit: number = 50): Promise<any[]> {
     try {
       // This would typically query a geofence events table
       // For now, return empty array as this is a placeholder

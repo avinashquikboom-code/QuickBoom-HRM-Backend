@@ -83,7 +83,7 @@ export const getUpcomingWidgetData = async (
 
     // 4. Determine next salary date from system settings
     const systemSettings = await prisma.systemSetting.findUnique({
-      where: { id: '00000000-0000-0000-0000-000000000001' }
+      where: { id: 1 }
     });
     const payrollConfig = (systemSettings?.payroll as any) || {};
     const processingDay = payrollConfig.processingDay !== undefined ? Number(payrollConfig.processingDay) : 25;

@@ -182,8 +182,8 @@ export const getComprehensiveAttendanceReport = async (
       LEFT JOIN Profile p ON u.id = p.userId
       WHERE a.date >= ${startDate.toISOString().split('T')[0]} 
         AND a.date <= ${endDate.toISOString().split('T')[0]}
-        ${employeeId ? `AND a.employeeId = ${employeeId as string}` : ''}
-        ${departmentId ? `AND e.departmentId = ${departmentId as string}` : ''}
+        ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
+        ${departmentId ? `AND e.departmentId = ${parseInt(departmentId as string)}` : ''}
       ORDER BY a.date DESC, e.firstName, e.lastName
     ` as any[];
 
@@ -216,7 +216,7 @@ export const getComprehensiveAttendanceReport = async (
         LEFT JOIN Employee e ON a.employeeId = e.id
         WHERE a.date >= ${startDate.toISOString().split('T')[0]} 
           AND a.date <= ${endDate.toISOString().split('T')[0]}
-          ${employeeId ? `AND a.employeeId = ${employeeId as string}` : ''}
+          ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
         ORDER BY a.date DESC, a.checkIn
       ` as any[];
     }
@@ -250,7 +250,7 @@ export const getComprehensiveAttendanceReport = async (
         LEFT JOIN Employee e ON a.employeeId = e.id
         WHERE a.date >= ${startDate.toISOString().split('T')[0]} 
           AND a.date <= ${endDate.toISOString().split('T')[0]}
-          ${employeeId ? `AND a.employeeId = ${employeeId as string}` : ''}
+          ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
           AND a.totalBreakSeconds > 0
         ORDER BY a.date DESC, a.breakStartTime
       ` as any[];
@@ -517,7 +517,7 @@ export const getLocationTrackingReport = async (
       LEFT JOIN Office o ON a.officeId = o.id
       WHERE a.date >= ${startDate} 
         AND a.date <= ${endDate}
-        ${employeeId ? `AND a.employeeId = ${employeeId as string}` : ''}
+        ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
       ORDER BY a.date DESC, a.checkIn
     ` as any[];
 
@@ -788,8 +788,8 @@ export const downloadComprehensiveAttendanceReport = async (
       LEFT JOIN Office o ON a.officeId = o.id
       WHERE a.date >= ${startDate.toISOString().split('T')[0]}
         AND a.date <= ${endDate.toISOString().split('T')[0]}
-        ${employeeId ? `AND a.employeeId = ${employeeId as string}` : ''}
-        ${departmentId ? `AND e.departmentId = ${departmentId as string}` : ''}
+        ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
+        ${departmentId ? `AND e.departmentId = ${parseInt(departmentId as string)}` : ''}
       ORDER BY e.firstName, e.lastName, a.date
     ` as any[];
 

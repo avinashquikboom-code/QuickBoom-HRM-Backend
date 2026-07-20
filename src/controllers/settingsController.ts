@@ -4,14 +4,14 @@ import { prisma } from '../utils/db';
 export const getSettings = async (req: Request, res: Response): Promise<void> => {
   try {
     let settings = await prisma.systemSetting.findUnique({
-      where: { id: '00000000-0000-0000-0000-000000000001' },
+      where: { id: 1 },
     });
 
     if (!settings) {
       // Create default settings if not exists
       settings = await prisma.systemSetting.create({
         data: {
-          id: '00000000-0000-0000-0000-000000000001',
+          id: 1,
           notifications: {
             newEmployee: { email: true, push: false },
             leaveRequest: { email: true, push: true },
@@ -50,7 +50,7 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
     } = req.body;
 
     const updatedSettings = await prisma.systemSetting.upsert({
-      where: { id: '00000000-0000-0000-0000-000000000001' },
+      where: { id: 1 },
       update: {
         platformName,
         supportEmail,
@@ -63,7 +63,7 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
         notifications,
       },
       create: {
-        id: '00000000-0000-0000-0000-000000000001',
+        id: 1,
         platformName,
         supportEmail,
         currency,

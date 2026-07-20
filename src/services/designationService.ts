@@ -7,7 +7,7 @@ class DesignationService {
     });
   }
 
-  async getDesignationById(id: string) {
+  async getDesignationById(id: number) {
     return prisma.designation.findUnique({
       where: { id },
     });
@@ -20,7 +20,7 @@ class DesignationService {
     });
   }
 
-  async updateDesignation(id: string, name: string, isActive?: boolean) {
+  async updateDesignation(id: number, name: string, isActive?: boolean) {
     const data: any = { name: name.trim() };
     if (isActive !== undefined) {
       data.isActive = isActive;
@@ -31,7 +31,7 @@ class DesignationService {
     });
   }
 
-  async deleteDesignation(id: string) {
+  async deleteDesignation(id: number) {
     return prisma.designation.delete({
       where: { id },
     });

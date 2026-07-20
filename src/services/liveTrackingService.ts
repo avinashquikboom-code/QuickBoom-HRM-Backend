@@ -4,12 +4,12 @@ import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 class LiveTrackingService {
   private activeSessions: Map<string, TrackingSession> = new Map();
-  private locationBuffer: Map<string, LocationPoint[]> = new Map();
+  private locationBuffer: Map<number, LocationPoint[]> = new Map();
 
   /**
    * Start a new tracking session for an employee
    */
-  async startTrackingSession(employeeId: string, purpose: string, notes?: string): Promise<TrackingSession> {
+  async startTrackingSession(employeeId: number, purpose: string, notes?: string): Promise<TrackingSession> {
     try {
       const sessionId = `session_${employeeId}_${Date.now()}`;
       const session: TrackingSession = {
@@ -94,7 +94,7 @@ class LiveTrackingService {
   /**
    * Update employee location
    */
-  async updateLocation(employeeId: string, location: LocationPoint): Promise<void> {
+  async updateLocation(employeeId: number, location: LocationPoint): Promise<void> {
     try {
       // Validate coordinates
       if (!this.isValidLocation(location)) {
@@ -152,7 +152,7 @@ class LiveTrackingService {
   /**
    * Get current location of employee
    */
-  async getCurrentLocation(employeeId: string): Promise<LocationPoint | null> {
+  async getCurrentLocation(employeeId: number): Promise<LocationPoint | null> {
     try {
       const buffer = this.locationBuffer.get(employeeId);
       return buffer && buffer.length > 0 ? buffer[buffer.length - 1] : null;
@@ -166,7 +166,7 @@ class LiveTrackingService {
   /**
    * Get employee route history
    */
-  async getRouteHistory(employeeId: string, startDate: Date, endDate: Date): Promise<RouteHistory[]> {
+  async getRouteHistory(employeeId: number, startDate: Date, endDate: Date): Promise<RouteHistory[]> {
     try {
       // This would typically query a route_history table
       // For now, return empty array as placeholder
@@ -180,7 +180,7 @@ class LiveTrackingService {
   /**
    * Get geofence events for employee
    */
-  async getGeofenceEvents(employeeId: string, limit: number = 50): Promise<GeofenceEvent[]> {
+  async getGeofenceEvents(employeeId: number, limit: number = 50): Promise<GeofenceEvent[]> {
     try {
       const events = this.geofenceEvents.get(employeeId) || [];
       // Return most recent events first, limited by the specified number
@@ -270,7 +270,7 @@ class LiveTrackingService {
   /**
    * Check for geofence events
    */
-  private async checkGeofenceEvents(employeeId: string, location: LocationPoint): Promise<void> {
+  private async checkGeofenceEvents(employeeId: number, location: LocationPoint): Promise<void> {
     try {
       // Get employee's assigned office
       const employee = await prisma.employee.findUnique({
@@ -375,13 +375,13 @@ class LiveTrackingService {
   }
 
   // In-memory storage for geofence status and events
-  private geofenceStatusMap: Map<string, boolean> = new Map();
-  private geofenceEvents: Map<string, GeofenceEvent[]> = new Map();
+  private geofenceStatusMap: Map<number, boolean> = new Map();
+  private geofenceEvents: Map<number, GeofenceEvent[]> = new Map();
 
   /**
    * Get active sessions for an employee
    */
-  async getActiveSessions(employeeId: string): Promise<TrackingSession[]> {
+  async getActiveSessions(employeeId: number): Promise<TrackingSession[]> {
     try {
       const sessions: TrackingSession[] = [];
       for (const [sessionId, session] of this.activeSessions.entries()) {
@@ -399,7 +399,7 @@ class LiveTrackingService {
   /**
    * Get location history for an employee
    */
-  async getLocationHistory(employeeId: string, sessionId?: string, limit: number = 100): Promise<LocationPoint[]> {
+  async getLocationHistory(employeeId: number, sessionId?: string, limit: number = 100): Promise<LocationPoint[]> {
     try {
       const locations = this.locationBuffer.get(employeeId) || [];
       
@@ -428,7 +428,7 @@ class LiveTrackingService {
   /**
    * Get live locations of all employees (HR/Admin only)
    */
-  async getLiveLocations(officeId?: string): Promise<any[]> {
+  async getLiveLocations(officeId?: number): Promise<any[]> {
     try {
       const liveLocations: any[] = [];
       

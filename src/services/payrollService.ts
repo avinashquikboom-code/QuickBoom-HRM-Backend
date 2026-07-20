@@ -2,7 +2,7 @@ import { prisma } from '../utils/db';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
-  employeeId: string;
+  employeeId: number;
   month: number;
   year: number;
   baseSalary: number;
@@ -36,8 +36,8 @@ export interface PayrollRun {
 }
 
 export interface SalaryStructure {
-  id: string;
-  employeeId: string;
+  id: number;
+  employeeId: number;
   baseSalary: number;
   hra: number;
   da: number;
@@ -57,7 +57,7 @@ class PayrollService {
   /**
    * Calculate payroll for an employee
    */
-  async calculatePayroll(employeeId: string, month: number, year: number): Promise<PayrollCalculation> {
+  async calculatePayroll(employeeId: number, month: number, year: number): Promise<PayrollCalculation> {
     try {
       // Get employee information
       const employee = await prisma.employee.findUnique({
@@ -137,7 +137,7 @@ class PayrollService {
   /**
    * Process payroll for multiple employees
    */
-  async processPayrollRun(employeeIds: string[], month: number, year: number, runName?: string): Promise<PayrollRun> {
+  async processPayrollRun(employeeIds: number[], month: number, year: number, runName?: string): Promise<PayrollRun> {
     try {
       const runId = `run_${Date.now()}`;
       const run: PayrollRun = {
@@ -210,7 +210,7 @@ class PayrollService {
   /**
    * Get salary structure for an employee
    */
-  async getSalaryStructure(employeeId: string, effectiveDate: Date): Promise<SalaryStructure> {
+  async getSalaryStructure(employeeId: number, effectiveDate: Date): Promise<SalaryStructure> {
     try {
       const structure = await prisma.$queryRaw`
         SELECT * FROM salary_structure 
@@ -225,7 +225,7 @@ class PayrollService {
       if (structure.length === 0) {
         // Return default structure
         return {
-          id: '00000000-0000-0000-0000-000000000000',
+          id: 0,
           employeeId,
           baseSalary: 0,
           hra: 0,
@@ -252,7 +252,7 @@ class PayrollService {
   /**
    * Update salary structure
    */
-  async updateSalaryStructure(employeeId: string, structureData: Partial<SalaryStructure>): Promise<SalaryStructure> {
+  async updateSalaryStructure(employeeId: number, structureData: Partial<SalaryStructure>): Promise<SalaryStructure> {
     try {
       // Deactivate existing structures
       await prisma.$queryRaw`
@@ -354,7 +354,7 @@ class PayrollService {
   /**
    * Helper methods
    */
-  private async getAttendanceData(employeeId: string, month: number, year: number): Promise<any> {
+  private async getAttendanceData(employeeId: number, month: number, year: number): Promise<any> {
     try {
       const startDate = new Date(year, month - 1, 1);
       const endDate = new Date(year, month, 0);
@@ -441,7 +441,7 @@ class PayrollService {
     return 0;
   }
 
-  private async calculateBonus(employeeId: string, month: number, year: number): Promise<number> {
+  private async calculateBonus(employeeId: number, month: number, year: number): Promise<number> {
     // Placeholder for bonus calculation
     // This could be based on performance, company policy, etc.
     return 0;
@@ -464,7 +464,7 @@ class PayrollService {
     return deductions;
   }
 
-  private async applyPolicyDeductions(employeeId: string, attendanceData: any, grossSalary: number): Promise<number> {
+  private async applyPolicyDeductions(employeeId: number, attendanceData: any, grossSalary: number): Promise<number> {
     try {
       // Get applicable policies for the employee
       const employee = await prisma.employee.findUnique({
@@ -613,7 +613,7 @@ class PayrollService {
     }
   }
 
-  private async sendPayrollNotification(employeeId: string, calculation: PayrollCalculation): Promise<void> {
+  private async sendPayrollNotification(employeeId: number, calculation: PayrollCalculation): Promise<void> {
     try {
       const employee = await prisma.employee.findUnique({
         where: { id: employeeId },

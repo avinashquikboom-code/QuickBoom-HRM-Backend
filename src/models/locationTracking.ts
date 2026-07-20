@@ -11,7 +11,7 @@ export interface LocationPoint {
 
 export interface TrackingSession {
   id: string;
-  employeeId: string;
+  employeeId: number;
   startTime: Date;
   endTime?: Date;
   isActive: boolean;
@@ -24,7 +24,7 @@ export interface TrackingSession {
 
 export interface RouteHistory {
   id: string;
-  employeeId: string;
+  employeeId: number;
   date: Date;
   route: LocationPoint[];
   startPoint: LocationPoint;
@@ -37,10 +37,10 @@ export interface RouteHistory {
 
 export interface GeofenceEvent {
   id: string;
-  employeeId: string;
+  employeeId: number;
   eventType: 'ENTER' | 'EXIT' | 'BREACH';
   location: LocationPoint;
-  officeId: string;
+  officeId: number;
   officeName: string;
   timestamp: Date;
   description: string;

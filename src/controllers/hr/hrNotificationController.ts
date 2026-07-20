@@ -8,7 +8,7 @@ import { firebaseNotificationService } from '../../services/firebaseNotification
 // Silently ignores errors (e.g. no FCM token registered yet).
 // ─────────────────────────────────────────────────────────────
 async function pushToEmployee(
-  userId: string,
+  userId: number,
   title: string,
   body: string,
   data?: Record<string, string>
@@ -47,7 +47,7 @@ export const sendNotification = async (req: AuthenticatedRequest, res: Response)
   try {
     console.log('🔔 [NOTIFICATION] Looking up employee:', employeeId);
     const employee = await prisma.employee.findUnique({
-      where: { id: employeeId },
+      where: { id: parseInt(employeeId) },
       include: { user: { select: { id: true } } },
     });
 

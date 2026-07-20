@@ -54,8 +54,8 @@ export const updateGlobalPermissions = async (req: Request, res: Response) => {
 export const getUserPermissions = async (req: Request, res: Response) => {
   try {
     const userIdStr = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
-    const userId = userIdStr;
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+    const userId = parseInt(userIdStr, 10);
+    if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
 
     const authReq = req as AuthenticatedRequest;
     if (!authReq.user) {
@@ -90,8 +90,8 @@ export const getUserPermissions = async (req: Request, res: Response) => {
 export const updateUserPermissions = async (req: Request, res: Response) => {
   try {
     const userIdStr = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
-    const userId = userIdStr;
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+    const userId = parseInt(userIdStr, 10);
+    if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
 
     const authReq = req as AuthenticatedRequest;
     if (!authReq.user) {

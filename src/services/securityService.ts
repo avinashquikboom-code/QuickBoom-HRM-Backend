@@ -4,9 +4,9 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 
 export interface SecurityAuditLog {
-  id: string;
-  userId?: string;
-  employeeId?: string;
+  id: number;
+  userId?: number;
+  employeeId?: number;
   action: string;
   resource: string;
   details?: string;
@@ -18,7 +18,7 @@ export interface SecurityAuditLog {
 }
 
 export interface SecurityPolicy {
-  id: string;
+  id: number;
   name: string;
   type: 'PASSWORD' | 'SESSION' | 'ACCESS' | 'DATA';
   rules: any;
@@ -29,13 +29,13 @@ export interface SecurityPolicy {
 }
 
 export interface SecurityAlert {
-  id: string;
+  id: number;
   type: string;
   severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   title: string;
   description: string;
-  userId?: string;
-  employeeId?: string;
+  userId?: number;
+  employeeId?: number;
   ipAddress?: string;
   isResolved: boolean;
   resolvedAt?: Date;
@@ -44,14 +44,14 @@ export interface SecurityAlert {
 }
 
 export interface LoginAttempt {
-  id: string;
+  id: number;
   email: string;
   ipAddress: string;
   userAgent?: string;
   success: boolean;
   failureReason?: string;
   attemptedAt: Date;
-  userId?: string;
+  userId?: number;
 }
 
 class SecurityService {
@@ -156,7 +156,7 @@ class SecurityService {
     userAgent?: string;
     success: boolean;
     failureReason?: string;
-    userId?: string;
+    userId?: number;
   }): Promise<void> {
     try {
       await prisma.$queryRaw`
@@ -205,8 +205,8 @@ class SecurityService {
     userAgent?: string;
     status: 'SUCCESS' | 'FAILURE' | 'BLOCKED';
     riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-    userId?: string;
-    employeeId?: string;
+    userId?: number;
+    employeeId?: number;
   }): Promise<void> {
     try {
       await prisma.$queryRaw`
@@ -297,8 +297,8 @@ class SecurityService {
     severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
     title: string;
     description: string;
-    userId?: string;
-    employeeId?: string;
+    userId?: number;
+    employeeId?: number;
     ipAddress?: string;
   }): Promise<void> {
     try {
@@ -374,7 +374,7 @@ class SecurityService {
   async getSecurityAuditLogs(
     startDate?: Date,
     endDate?: Date,
-    userId?: string,
+    userId?: number,
     action?: string,
     riskLevel?: string
   ): Promise<SecurityAuditLog[]> {

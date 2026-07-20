@@ -157,7 +157,7 @@ export const markAttendance = async (
     // Check if attendance already exists for today
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
-        employeeId: employeeId,
+        employeeId: parseInt(employeeId),
         date: today
       }
     });
@@ -185,7 +185,7 @@ export const markAttendance = async (
     } else {
       // Create new attendance record
       const createData: any = {
-        employeeId: employeeId,
+        employeeId: parseInt(employeeId),
         date: today,
         status: 'PRESENT',
         createdAt: now,
@@ -242,12 +242,12 @@ export const getAttendanceReport = async (
     }
 
     if (employeeId) {
-      whereClause.employeeId = employeeId as string;
+      whereClause.employeeId = parseInt(employeeId as string);
     }
 
     if (departmentId) {
       whereClause.employee = {
-        departmentId: departmentId as string
+        departmentId: parseInt(departmentId as string)
       };
     }
 

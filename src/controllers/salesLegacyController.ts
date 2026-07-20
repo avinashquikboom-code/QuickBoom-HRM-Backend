@@ -38,7 +38,7 @@ export const addSales = async (
 
     // Find applicable commission policy
     let policy = employee.commissionPolicies[0];
-    const targetStoreId = storeId ? storeId : employee.storeId;
+    const targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
 
     if (!policy && targetStoreId) {
       const store = await prisma.store.findUnique({
@@ -168,7 +168,7 @@ export const updateSales = async (
         commissionAmount,
         commissionPercent: commissionPercent || null,
         notes: notes || transaction.notes,
-        storeId: storeId ? storeId : transaction.storeId,
+        storeId: storeId ? parseInt(storeId, 10) : transaction.storeId,
       },
       include: {
         employee: true,
@@ -390,7 +390,7 @@ export const syncSalesBatch = async (
         if (resolvedSaleAmount === undefined || isNaN(Number(resolvedSaleAmount))) continue;
 
         let policy = employee.commissionPolicies[0];
-        const targetStoreId = storeId ? storeId : employee.storeId;
+        const targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
 
         if (!policy && targetStoreId) {
           const store = await prisma.store.findUnique({

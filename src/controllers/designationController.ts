@@ -52,9 +52,9 @@ export const updateDesignation = async (
   try {
     const { id } = req.params;
     const { name, isActive } = req.body;
-    const designationId = id as string;
+    const designationId = parseInt(id as string, 10);
 
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(designationId)) {
+    if (isNaN(designationId)) {
       res.status(400).json({ success: false, message: 'Invalid designation ID.' });
       return;
     }
@@ -82,9 +82,9 @@ export const deleteDesignation = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const designationId = id as string;
+    const designationId = parseInt(id as string, 10);
 
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(designationId)) {
+    if (isNaN(designationId)) {
       res.status(400).json({ success: false, message: 'Invalid designation ID.' });
       return;
     }

@@ -110,7 +110,7 @@ export const getMobileTaskById = async (
 
     const task = await prisma.task.findFirst({
       where: {
-        id: taskId,
+        id: parseInt(taskId),
         OR: [
           { assignedToId: employee.id },
           { assignedById: req.user!.id }
@@ -221,7 +221,7 @@ export const createMobileTask = async (
     // Verify assigned employee belongs to the same store
     const assignedEmployeeId = Array.isArray(assignedToId) ? assignedToId[0] : assignedToId;
     const assignedEmployee = await prisma.employee.findUnique({
-      where: { id: assignedEmployeeId }
+      where: { id: parseInt(assignedEmployeeId) }
     });
 
     if (!assignedEmployee || assignedEmployee.storeId !== employee.storeId) {
@@ -237,7 +237,7 @@ export const createMobileTask = async (
         title,
         description: description || '',
         projectName: projectName || '',
-        assignedToId: assignedToId,
+        assignedToId: parseInt(assignedToId),
         assignedById: req.user!.id,
         dueDate: new Date(dueDate),
         priority: priority || 'MEDIUM',
@@ -324,7 +324,7 @@ export const updateMobileTask = async (
 
     const task = await prisma.task.findFirst({
       where: {
-        id: taskId,
+        id: parseInt(taskId),
         OR: [
           { assignedToId: employee.id },
           { assignedById: req.user!.id }
@@ -361,7 +361,7 @@ export const updateMobileTask = async (
     }
 
     const updatedTask = await prisma.task.update({
-      where: { id: taskId },
+      where: { id: parseInt(taskId) },
       data: updateData,
       include: {
         assignedBy: {
@@ -440,7 +440,7 @@ export const deleteMobileTask = async (
 
     const task = await prisma.task.findFirst({
       where: {
-        id: taskId,
+        id: parseInt(taskId),
         assignedById: req.user!.id
       },
     });
@@ -454,7 +454,7 @@ export const deleteMobileTask = async (
     }
 
     await prisma.task.delete({
-      where: { id: taskId }
+      where: { id: parseInt(taskId) }
     });
 
     res.json({

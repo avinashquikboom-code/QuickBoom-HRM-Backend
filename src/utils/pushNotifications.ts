@@ -9,7 +9,7 @@ import { prisma } from './db';
  * @param data - Optional extra data payload
  */
 export async function sendPushNotification(
-  userId: string,
+  userId: number,
   title: string,
   body: string,
   data?: Record<string, string>
