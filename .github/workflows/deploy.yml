@@ -1,14 +1,12 @@
 name: Build & Push Backend
 
-# Build the image and push it to AWS ECR on every push to main.
-# Deployment to the server is MANUAL (pull + docker compose up on the VPS).
+# Build the image, push to ECR, then auto-deploy to VPS on every push to main.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 env:
-  # Hardcoded ECR target (no secrets needed for region/repo).
   AWS_REGION: ap-south-1
   IMAGE_URI: 546941058055.dkr.ecr.ap-south-1.amazonaws.com/hrm-backend
 
@@ -49,3 +47,17 @@ jobs:
           docker push "$IMAGE_URI:$IMAGE_TAG"
           docker push "$IMAGE_URI:latest"
           echo "Pushed $IMAGE_URI:latest (and :$IMAGE_TAG)"
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/quickboom
+            aws ecr get-login-password --region ap-south-1 | \
+              docker login --username AWS --password-stdin 546941058055.dkr.ecr.ap-south-1.amazonaws.com
+            docker compose --env-file .deploy.env pull backend
+            docker compose --env-file .deploy.env up -d --force-recreate backend
+            echo "✅ Backend redeployed"
