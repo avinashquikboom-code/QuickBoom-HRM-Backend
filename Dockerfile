@@ -28,5 +28,9 @@ RUN npm run build
 # Expose port (Render sets PORT env var automatically)
 EXPOSE 10000
 
-# Run migrations and start server
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+# Copy entrypoint script
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+
+# Run migrations safely and start server
+CMD ["sh", "entrypoint.sh"]
