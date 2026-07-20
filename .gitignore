@@ -16,3 +16,6 @@ deploy/deploy.env
 
 # Agent files
 AGENT.md
+
+# Local DB backups (never commit)
+backups/
