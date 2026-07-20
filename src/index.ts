@@ -117,6 +117,7 @@ app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
+app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
 app.use('/api/employee', employeeRoutes);
 app.use('/api/Employee', employeeLegacyRoutes);
 app.use('/api/Sales', salesLegacyRoutes);
@@ -125,6 +126,7 @@ app.use('/api/commission', commissionRoutes);
 app.use('/api/mobile/notifications', mobileNotificationRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/hr/tasks', mobileHrTaskRoutes);
 app.use('/api/hr', hrRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/leave-balance', leaveBalanceRoutes);
@@ -208,8 +210,6 @@ app.use('/api/mobile/attendance/comprehensive', mobileComprehensiveAttendanceRou
 app.use('/api/mobile/dashboard', upcomingRoutes);
 app.use('/api/mobile/commission', mobileCommissionRoutes);
 app.use('/api/mobile/tasks', mobileTaskRoutes);
-app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
-app.use('/api/hr/tasks', mobileHrTaskRoutes);
 app.use('/api/mobile/store', mobileStoreRoutes);
 app.use('/api/mobile/holidays', mobileHolidayRoutes);
 
