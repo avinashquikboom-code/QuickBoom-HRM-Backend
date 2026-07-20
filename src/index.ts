@@ -38,6 +38,8 @@ import mobileTaskRoutes from './routes/mobile/mobileTaskRoutes';
 import mobileStoreRoutes from './routes/mobile/mobileStoreRoutes';
 import mobileDocumentRoutes from './routes/mobile/mobileDocumentRoutes';
 import mobileHolidayRoutes from './routes/mobile/mobileHolidayRoutes';
+import mobileEmployeeTaskRoutes from './routes/mobile/mobileEmployeeTaskRoutes';
+import mobileHrTaskRoutes from './routes/mobile/mobileHrTaskRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
 import policyRoutes from './routes/policyRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
@@ -206,6 +208,8 @@ app.use('/api/mobile/attendance/comprehensive', mobileComprehensiveAttendanceRou
 app.use('/api/mobile/dashboard', upcomingRoutes);
 app.use('/api/mobile/commission', mobileCommissionRoutes);
 app.use('/api/mobile/tasks', mobileTaskRoutes);
+app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
+app.use('/api/hr/tasks', mobileHrTaskRoutes);
 app.use('/api/mobile/store', mobileStoreRoutes);
 app.use('/api/mobile/holidays', mobileHolidayRoutes);
 
