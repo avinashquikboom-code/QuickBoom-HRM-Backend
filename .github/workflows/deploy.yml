@@ -58,6 +58,6 @@ jobs:
             cd /opt/quickboom
             aws ecr get-login-password --region ap-south-1 | \
               docker login --username AWS --password-stdin 546941058055.dkr.ecr.ap-south-1.amazonaws.com
-            docker compose --env-file .deploy.env pull backend
-            docker compose --env-file .deploy.env up -d --force-recreate backend
+            docker compose --env-file deploy.env pull backend
+            docker compose --env-file deploy.env up -d --force-recreate backend
             echo "✅ Backend redeployed"
