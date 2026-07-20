@@ -624,8 +624,8 @@ export const employeeLogin = async (req: Request, res: Response): Promise<void> 
 };
 
 export const hrLogin = async (req: Request, res: Response): Promise<void> => {
-  // HR login endpoint: only the HR role is permitted (used by mobile HR tab)
-  await authenticateRoleLogin(req, res, [Role.HR]);
+  // HR login endpoint: HR, ADMIN, and SUPER_ADMIN roles are permitted (used by mobile HR/Admin tab)
+  await authenticateRoleLogin(req, res, [Role.HR, Role.ADMIN, Role.SUPER_ADMIN]);
 };
 
 export const superAdminLogin = async (req: Request, res: Response): Promise<void> => {
