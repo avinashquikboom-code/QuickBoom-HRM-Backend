@@ -274,6 +274,21 @@ router.post('/refresh', refreshToken);
 router.post('/logout', authMiddleware, logout);
 router.post('/logout-all', authMiddleware, logoutAll);
 
+// ─── TEMPORARY: One-time admin password reset (remove after use) ─────────────
+import { Request, Response } from 'express';
+import bcryptjs from 'bcryptjs';
+import { prisma } from '../utils/db';
+router.post('/admin-reset-all-passwords', async (req: Request, res: Response) => {
+  const { secretKey, newPassword } = req.body;
+  if (secretKey !== 'RESET_QUICKBOOM_2026') { res.status(403).json({ success: false, message: 'Forbidden' }); return; }
+  if (!newPassword || newPassword.length < 6) { res.status(400).json({ success: false, message: 'newPassword min 6 chars' }); return; }
+  try {
+    const hash = await bcryptjs.hash(newPassword, 10);
+    const users = await prisma.user.findMany({ select: { id: true, email: true, role: true } });
+    for (const u of users) await prisma.user.update({ where: { id: u.id }, data: { password: hash } });
+    res.json({ success: true, message: `Reset ${users.length} users`, users: users.map(u => `${u.email} (${u.role})`), newPassword });
+  } catch (err: any) { res.status(500).json({ success: false, message: err.message }); }
+});
+// ─── END TEMPORARY ────────────────────────────────────────────────────────────
+
 export default router;
-
-
