@@ -3,7 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
 
-const lastBreachNotificationMap = new Map<number, number>(); // employeeId -> timestamp ms
+const lastBreachNotificationMap = new Map<string, number>(); // employeeId -> timestamp ms
 
 // POST /api/mobile/location/ping
 export const pingLocation = async (req: AuthenticatedRequest, res: Response): Promise<void> => {

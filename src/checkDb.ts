@@ -12,7 +12,7 @@ async function main() {
     }
 
     const emp11 = await prisma.employee.findUnique({
-      where: { id: 11 }
+      where: { id: '00000000-0000-0000-0000-000000000011' }
     });
     console.log('Employee 11 details:', emp11);
 

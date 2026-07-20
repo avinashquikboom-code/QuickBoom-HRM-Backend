@@ -10,7 +10,7 @@ export interface UpdateAssetParams {
   name?: string;
   type?: string;
   status?: string;
-  employeeId?: number | null;
+  employeeId?: string | null;
   assignedDate?: Date | null;
 }
 
@@ -34,27 +34,27 @@ class AssetService {
     });
   }
 
-  async getAssetById(id: number) {
+  async getAssetById(id: string) {
     return prisma.asset.findUnique({
       where: { id },
       include: { employee: true },
     });
   }
 
-  async updateAsset(id: number, params: UpdateAssetParams) {
+  async updateAsset(id: string, params: UpdateAssetParams) {
     return prisma.asset.update({
       where: { id },
       data: params,
     });
   }
 
-  async deleteAsset(id: number) {
+  async deleteAsset(id: string) {
     return prisma.asset.delete({
       where: { id },
     });
   }
 
-  async assignAsset(id: number, employeeId: number) {
+  async assignAsset(id: string, employeeId: string) {
     return prisma.asset.update({
       where: { id },
       data: {
@@ -65,7 +65,7 @@ class AssetService {
     });
   }
 
-  async returnAsset(id: number) {
+  async returnAsset(id: string) {
     return prisma.asset.update({
       where: { id },
       data: {

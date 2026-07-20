@@ -63,7 +63,7 @@ export const getAllEmployeesLeaveBalances = async (
     
     const leaveBalances = await leaveBalanceService.getAllLeaveBalances(
       fiscalYear as string,
-      departmentId ? parseInt(departmentId as string) : undefined
+      departmentId ? departmentId as string : undefined
     );
 
     res.json({
@@ -105,7 +105,7 @@ export const updateEmployeeLeaveBalance = async (
     }
 
     const updatedBalance = await leaveBalanceService.createOrUpdateLeaveBalance({
-      employeeId: parseInt(employeeId),
+      employeeId: employeeId,
       fiscalYear,
       casualTotal: casualTotal ? parseInt(casualTotal) : undefined,
       sickTotal: sickTotal ? parseInt(sickTotal) : undefined,
@@ -115,9 +115,9 @@ export const updateEmployeeLeaveBalance = async (
 
     // Broadcast real-time leave balance update
     try {
-      await getWebSocketInstance().broadcastLeaveBalanceUpdate(parseInt(employeeId), {
+      await getWebSocketInstance().broadcastLeaveBalanceUpdate(employeeId, {
         type: 'LEAVE_BALANCE_UPDATED',
-        employeeId: parseInt(employeeId),
+        employeeId: employeeId,
         fiscalYear,
         leaveBalance: updatedBalance,
         updatedBy: req.user?.email || 'HR Mobile',
@@ -183,7 +183,7 @@ export const getDepartmentLeavePolicyMobile = async (
     }
 
     const departmentIdStr = Array.isArray(departmentId) ? departmentId[0] : departmentId;
-    const policy = await leaveBalanceService.getDepartmentLeavePolicy(parseInt(departmentIdStr));
+    const policy = await leaveBalanceService.getDepartmentLeavePolicy(departmentIdStr);
 
     if (!policy) {
       res.status(404).json({ success: false, message: 'Department not found' });

@@ -52,14 +52,14 @@ export const authMiddleware = async (
         where: { role: 'SUPER_ADMIN' }
       });
       req.user = {
-        id: dbUser?.id ?? 13,
+        id: dbUser?.id ?? '00000000-0000-0000-0000-000000000013',
         email: dbUser?.email ?? 'admin@hrm.com',
         role: 'SUPER_ADMIN'
       };
       next();
       return;
     } catch {
-      req.user = { id: 13, email: 'admin@hrm.com', role: 'SUPER_ADMIN' };
+      req.user = { id: '00000000-0000-0000-0000-000000000013', email: 'admin@hrm.com', role: 'SUPER_ADMIN' };
       next();
       return;
     }
@@ -71,14 +71,14 @@ export const authMiddleware = async (
         where: { role: 'HR' }
       });
       req.user = {
-        id: dbUser?.id ?? 2,
+        id: dbUser?.id ?? '00000000-0000-0000-0000-000000000002',
         email: dbUser?.email ?? 'hr@hrm.com',
         role: 'HR'
       };
       next();
       return;
     } catch {
-      req.user = { id: 2, email: 'hr@hrm.com', role: 'HR' };
+      req.user = { id: '00000000-0000-0000-0000-000000000002', email: 'hr@hrm.com', role: 'HR' };
       next();
       return;
     }
@@ -90,14 +90,14 @@ export const authMiddleware = async (
         where: { role: 'ADMIN' }
       });
       req.user = {
-        id: dbUser?.id ?? 14,
+        id: dbUser?.id ?? '00000000-0000-0000-0000-000000000014',
         email: dbUser?.email ?? 'admin@hrm.com',
         role: 'ADMIN'
       };
       next();
       return;
     } catch {
-      req.user = { id: 14, email: 'admin@hrm.com', role: 'ADMIN' };
+      req.user = { id: '00000000-0000-0000-0000-000000000014', email: 'admin@hrm.com', role: 'ADMIN' };
       next();
       return;
     }
@@ -109,14 +109,14 @@ export const authMiddleware = async (
         where: { role: 'EMPLOYEE' }
       });
       req.user = {
-        id: dbUser?.id ?? 3,
+        id: dbUser?.id ?? '00000000-0000-0000-0000-000000000003',
         email: dbUser?.email ?? 'employee@hrm.com',
         role: 'EMPLOYEE'
       };
       next();
       return;
     } catch {
-      req.user = { id: 3, email: 'employee@hrm.com', role: 'EMPLOYEE' };
+      req.user = { id: '00000000-0000-0000-0000-000000000003', email: 'employee@hrm.com', role: 'EMPLOYEE' };
       next();
       return;
     }

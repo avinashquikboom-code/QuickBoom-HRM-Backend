@@ -1018,8 +1018,8 @@ export const updateEmployeeTaskStatus = async (
     return;
   }
 
-  const taskIdInt = parseInt(id as string, 10);
-  if (isNaN(taskIdInt)) {
+  const taskId = Array.isArray(id) ? id[0] : id;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(taskId)) {
     res.status(400).json({ success: false, message: 'Invalid Task ID.' });
     return;
   }
@@ -1044,7 +1044,7 @@ export const updateEmployeeTaskStatus = async (
     }
 
     const existingTask = await prisma.task.findUnique({
-      where: { id: taskIdInt },
+      where: { id: taskId },
     });
 
     if (!existingTask || existingTask.assignedToId !== employee.id) {
@@ -1053,7 +1053,7 @@ export const updateEmployeeTaskStatus = async (
     }
 
     const updatedTask = await prisma.task.update({
-      where: { id: taskIdInt },
+      where: { id: taskId },
       data: { status: dbStatus },
     });
 
@@ -1115,9 +1115,8 @@ export const markEmployeeNotificationRead = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const notifIdInt = parseInt(id as string, 10);
-
-  if (isNaN(notifIdInt)) {
+  const notifId = Array.isArray(id) ? id[0] : id;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(notifId)) {
     res.status(400).json({ success: false, message: 'Invalid Notification ID.' });
     return;
   }
@@ -1130,7 +1129,7 @@ export const markEmployeeNotificationRead = async (
     }
 
     const notification = await prisma.notification.findUnique({
-      where: { id: notifIdInt },
+      where: { id: notifId },
     });
 
     if (!notification || notification.employeeId !== employee.id) {
@@ -1139,7 +1138,7 @@ export const markEmployeeNotificationRead = async (
     }
 
     await prisma.notification.update({
-      where: { id: notifIdInt },
+      where: { id: notifId },
       data: { isRead: true },
     });
 

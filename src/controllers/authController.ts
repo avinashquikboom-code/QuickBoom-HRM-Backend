@@ -337,8 +337,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
             lastName: lastName || '',
             designation: designation || (dbRole === Role.EMPLOYEE ? 'Employee' : 'HR Administrator'),
             status: 'active',
-            departmentId: departmentId ? parseInt(departmentId) : null,
-            officeId: officeId ? parseInt(officeId) : null,
+            departmentId: departmentId ? departmentId : null,
+            officeId: officeId ? officeId : null,
             bankName: bankName || null,
             accountNumber: accountNumber || null,
             ifscCode: ifscCode || null,
@@ -352,7 +352,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           const leaveBalanceService = require('../services/leaveBalanceService').default;
           await leaveBalanceService.createOrUpdateLeaveBalance({
             employeeId: employee.id,
-            departmentId: departmentId ? parseInt(departmentId) : undefined,
+            departmentId: departmentId ? departmentId : undefined,
             createdBy: 'Registration System'
           });
           console.log(`✅ Leave balance allocated for new employee ${employee.id}`);

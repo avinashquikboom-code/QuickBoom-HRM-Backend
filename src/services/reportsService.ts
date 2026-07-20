@@ -8,9 +8,9 @@ export interface ReportConfig {
     endDate: Date;
   };
   filters?: {
-    departmentId?: number;
-    employeeId?: number;
-    officeId?: number;
+    departmentId?: string;
+    employeeId?: string;
+    officeId?: string;
     status?: string;
     leaveType?: string;
   };

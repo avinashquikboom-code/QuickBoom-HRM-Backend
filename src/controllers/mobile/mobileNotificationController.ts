@@ -53,7 +53,7 @@ export const markNotificationAsRead = async (
 
     const notification = await prisma.notification.findFirst({
       where: {
-        id: parseInt(id),
+        id: id,
         userId: req.user?.id,
       },
     });
@@ -64,7 +64,7 @@ export const markNotificationAsRead = async (
     }
 
     await prisma.notification.update({
-      where: { id: parseInt(id) },
+      where: { id: id },
       data: { isRead: true },
     });
 

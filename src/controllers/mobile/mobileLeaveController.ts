@@ -401,7 +401,7 @@ export const downloadLeaveReport = async (
     let whereClause: any = {};
     
     if (employeeId) {
-      whereClause.employeeId = parseInt(employeeId as string);
+      whereClause.employeeId = employeeId as string;
     }
     
     if (startDate && endDate) {
@@ -576,7 +576,7 @@ export const fetchHRLeaveRequests = async (
     }
     
     if (employeeId) {
-      whereClause.employeeId = parseInt(employeeId as string);
+      whereClause.employeeId = employeeId as string;
     }
 
     const leaveRequests = await prisma.leaveRequest.findMany({
@@ -654,7 +654,7 @@ export const approveLeaveRequest = async (
 
     // Get leave request details before updating
     const existingLeave = await prisma.leaveRequest.findUnique({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: id as string },
       include: {
         employee: {
           include: {
@@ -671,7 +671,7 @@ export const approveLeaveRequest = async (
 
     // Update leave request status
     const leave = await prisma.leaveRequest.update({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: id as string },
       data: {
         status: 'APPROVED',
         reviewedBy: reviewerName || req.user?.email || 'HR',
@@ -777,7 +777,7 @@ export const rejectLeaveRequest = async (
 
     // Get leave request details before updating
     const existingLeave = await prisma.leaveRequest.findUnique({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: id as string },
       include: {
         employee: {
           include: {
@@ -794,7 +794,7 @@ export const rejectLeaveRequest = async (
 
     // Update leave request status
     const leave = await prisma.leaveRequest.update({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: id as string },
       data: {
         status: 'REJECTED',
         reviewedBy: reviewerName || req.user?.email || 'HR',

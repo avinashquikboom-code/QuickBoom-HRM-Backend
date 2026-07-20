@@ -2,7 +2,7 @@ import { prisma } from '../utils/db';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 export interface NotificationTemplate {
-  id: number;
+  id: string;
   name: string;
   type: string;
   title: string;
@@ -16,7 +16,7 @@ export interface NotificationTemplate {
 }
 
 export interface NotificationRule {
-  id: number;
+  id: string;
   name: string;
   trigger: string;
   conditions: any;
@@ -29,7 +29,7 @@ export interface NotificationRule {
 }
 
 export interface NotificationCampaign {
-  id: number;
+  id: string;
   name: string;
   title: string;
   body: string;
@@ -117,7 +117,7 @@ class NotificationService {
     title: string;
     body: string;
     category: string;
-    recipients: number[];
+    recipients: string[];
     actionId?: string;
     actionType?: string;
     variables?: Record<string, any>;
@@ -195,7 +195,7 @@ class NotificationService {
    */
   async sendTemplateNotification(
     templateId: number,
-    recipients: number[],
+    recipients: string[],
     variables?: Record<string, any>
   ): Promise<{ sent: number; failed: number }> {
     try {
@@ -214,7 +214,7 @@ class NotificationService {
         title: templateData.title,
         body: templateData.body,
         category: templateData.category,
-        recipients: recipients as number[],
+        recipients: recipients as string[],
         actionType: templateData.type,
         variables
       });
@@ -410,7 +410,7 @@ class NotificationService {
   /**
    * Mark notifications as read
    */
-  async markNotificationsAsRead(employeeId: number, notificationIds?: number[]): Promise<void> {
+  async markNotificationsAsRead(employeeId: string, notificationIds?: number[]): Promise<void> {
     try {
       let whereClause = `WHERE employee_id = ${employeeId}`;
       if (notificationIds && notificationIds.length > 0) {

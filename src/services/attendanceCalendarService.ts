@@ -3,15 +3,15 @@ import { prisma } from '../utils/db';
 interface CalendarGenerationConfig {
   month: number;
   year: number;
-  departmentId?: number;
-  officeId?: number;
+  departmentId?: string;
+  officeId?: string;
 }
 
 interface GeneratedAttendance {
-  employeeId: number;
+  employeeId: string;
   date: string;
   status: string;
-  officeId?: number;
+  officeId?: string;
   isWeeklyOff?: boolean;
   isHoliday?: boolean;
 }
@@ -85,7 +85,7 @@ class AttendanceCalendarService {
     return generatedAttendance;
   }
 
-  private async getEmployees(departmentId?: number, officeId?: number) {
+  private async getEmployees(departmentId?: string, officeId?: string) {
     const where: any = { status: 'active' };
     if (departmentId) where.departmentId = departmentId;
     if (officeId) where.officeId = officeId;
@@ -112,7 +112,7 @@ class AttendanceCalendarService {
     });
   }
 
-  private async getOffices(departmentId?: number, officeId?: number) {
+  private async getOffices(departmentId?: string, officeId?: string) {
     const where: any = { isActive: true };
     if (officeId) where.id = officeId;
     
@@ -144,7 +144,7 @@ class AttendanceCalendarService {
     });
   }
 
-  async generateCalendarForPolicy(policyId: number) {
+  async generateCalendarForPolicy(policyId: string) {
     const policy = await prisma.attendanceGenerationPolicy.findUnique({
       where: { id: policyId }
     });

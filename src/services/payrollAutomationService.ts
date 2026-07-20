@@ -23,7 +23,7 @@ export class PayrollAutomationService {
    * then upserts the Payslip record.
    */
   static async calculateAndSaveSalary(
-    employeeId: number,
+    employeeId: string,
     month: number,
     year: number,
     status: string = 'Pending Approval'

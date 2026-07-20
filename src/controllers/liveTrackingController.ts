@@ -247,7 +247,7 @@ export const getLiveLocations = async (
       return;
     }
 
-    let officeId: number | undefined;
+    let officeId: string | undefined;
     if (req.user?.role === 'STORE_MANAGER') {
       const storeManager = await prisma.employee.findFirst({
         where: { userId: req.user.id }
@@ -286,12 +286,12 @@ export const getCurrentLocation = async (
     const { employeeId } = req.params;
     
     // Get employee information (for own location or HR viewing others)
-    let targetEmployeeId: number;
+    let targetEmployeeId: string;
     
     if (employeeId) {
       // HR/Admin viewing another employee's location
       const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
-      targetEmployeeId = parseInt(employeeIdStr);
+      targetEmployeeId = employeeIdStr;
 
       // Perform store manager authorization check
       if (req.user?.role === 'STORE_MANAGER') {
@@ -363,7 +363,7 @@ export const getRouteHistory = async (
     }
 
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
-    const targetEmployeeId = parseInt(employeeIdStr);
+    const targetEmployeeId = employeeIdStr;
 
     // Perform store manager authorization check
     if (req.user?.role === 'STORE_MANAGER') {
@@ -438,7 +438,7 @@ export const getGeofenceEvents = async (
     const { limit = '50' } = req.query as { limit: string };
 
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
-    const targetEmployeeId = parseInt(employeeIdStr);
+    const targetEmployeeId = employeeIdStr;
 
     // Perform store manager authorization check
     if (req.user?.role === 'STORE_MANAGER') {

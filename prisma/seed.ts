@@ -34,6 +34,16 @@ async function main() {
   await prisma.profile.deleteMany({});
   await prisma.pricingPlan.deleteMany({});
   await prisma.user.deleteMany({});
+  await prisma.workMode.deleteMany({});
+
+  // 1.5. Create Work Modes
+  await prisma.workMode.createMany({
+    data: [
+      { id: 'OFFICE', name: 'Office' },
+      { id: 'REMOTE', name: 'Remote' },
+      { id: 'HYBRID', name: 'Hybrid' },
+    ],
+  });
 
   // 2. Create Departments
   const deptHR = await prisma.department.create({

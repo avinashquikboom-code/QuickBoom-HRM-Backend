@@ -331,7 +331,7 @@ export const getSecurityAuditLogs = async (
     const logs = await securityService.getSecurityAuditLogs(
       startDate ? new Date(startDate) : undefined,
       endDate ? new Date(endDate) : undefined,
-      userId ? parseInt(userId) : undefined,
+      userId ? userId : undefined,
       action,
       riskLevel
     );

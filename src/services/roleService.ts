@@ -40,9 +40,8 @@ class RoleService {
 
   async updateRole(id: string, name: string) {
     const normalized = name.trim();
-    const roleId = parseInt(id, 10);
 
-    if (isNaN(roleId)) {
+    if (!id || typeof id !== 'string' || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(id)) {
       throw new Error('Invalid role ID.');
     }
 
@@ -53,7 +52,7 @@ class RoleService {
 
     // Check if the role exists and is custom
     const existingRole = await prisma.customRole.findUnique({
-      where: { id: roleId },
+      where: { id },
     });
 
     if (!existingRole) {
@@ -61,21 +60,19 @@ class RoleService {
     }
 
     return prisma.customRole.update({
-      where: { id: roleId },
+      where: { id },
       data: { name: normalized },
     });
   }
 
   async deleteRole(id: string) {
-    const roleId = parseInt(id, 10);
-
-    if (isNaN(roleId)) {
+    if (!id || typeof id !== 'string' || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(id)) {
       throw new Error('Invalid role ID.');
     }
 
     // Check if the role exists and is custom
     const existingRole = await prisma.customRole.findUnique({
-      where: { id: roleId },
+      where: { id },
     });
 
     if (!existingRole) {
@@ -83,7 +80,7 @@ class RoleService {
     }
 
     await prisma.customRole.delete({
-      where: { id: roleId },
+      where: { id },
     });
   }
 }

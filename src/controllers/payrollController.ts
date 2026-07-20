@@ -24,7 +24,7 @@ export const calculateEmployeePayroll = async (
     }
 
     const calculation = await payrollService.calculatePayroll(
-      parseInt(employeeId),
+      employeeId,
       parseInt(month),
       parseInt(year)
     );
@@ -61,7 +61,7 @@ export const processPayrollRun = async (
     }
 
     const run = await payrollService.processPayrollRun(
-      employeeIds.map(id => parseInt(id)),
+      employeeIds.map(id => id),
       parseInt(month),
       parseInt(year),
       runName
@@ -91,7 +91,7 @@ export const getSalaryStructure = async (
     const { effectiveDate } = req.query as { effectiveDate?: string };
     
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
-    const targetEmployeeId = parseInt(employeeIdStr);
+    const targetEmployeeId = employeeIdStr;
     
     const date = effectiveDate ? new Date(effectiveDate) : new Date();
 
@@ -130,7 +130,7 @@ export const updateSalaryStructure = async (
 
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
     const structure = await payrollService.updateSalaryStructure(
-      parseInt(employeeIdStr),
+      employeeIdStr,
       structureData
     );
 
@@ -261,7 +261,7 @@ export const getEmployeePayrollHistory = async (
 
     const payslips = await prisma.payslip.findMany({
       where: {
-        employeeId: parseInt(employeeIdStr)
+        employeeId: employeeIdStr
       },
       orderBy: [
         { year: 'desc' },
@@ -298,7 +298,7 @@ export const generatePayslipPDF = async (
     const monthNum = parseInt(Array.isArray(month) ? month[0] : month);
     const yearNum  = parseInt(Array.isArray(year)  ? year[0]  : year);
     const payslip = await prisma.payslip.findUnique({
-      where: { employeeId_month_year: { employeeId: parseInt(employeeIdStr), month: monthNum, year: yearNum } },
+      where: { employeeId_month_year: { employeeId: employeeIdStr, month: monthNum, year: yearNum } },
       include: { employee: { include: { department: true, office: true } } }
     });
     if (!payslip) {
@@ -452,7 +452,7 @@ export const approvePayslip = async (
     const payslipIdStr = Array.isArray(payslipId) ? payslipId[0] : payslipId;
 
     const payslip = await prisma.payslip.update({
-      where: { id: parseInt(payslipIdStr) },
+      where: { id: payslipIdStr },
       data: {
         status: 'Approved',
         updatedAt: new Date()
@@ -494,7 +494,7 @@ export const rejectPayslip = async (
     const payslipIdStr = Array.isArray(payslipId) ? payslipId[0] : payslipId;
 
     const payslip = await prisma.payslip.update({
-      where: { id: parseInt(payslipIdStr) },
+      where: { id: payslipIdStr },
       data: {
         status: 'Rejected',
         updatedAt: new Date()
@@ -748,7 +748,7 @@ export const approveAdminPayslip = async (
     // Update payslip status
     const payslip = await prisma.payslip.updateMany({
       where: {
-        employeeId: parseInt(employeeId),
+        employeeId: employeeId,
         month: parseInt(month),
         year: parseInt(year)
       },

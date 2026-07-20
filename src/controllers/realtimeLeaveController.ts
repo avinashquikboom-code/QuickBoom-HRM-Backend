@@ -300,7 +300,7 @@ export const markLeaveNotificationsRead = async (
 
     await prisma.notification.updateMany({
       where: {
-        id: { in: notificationIds.map(id => parseInt(id)) },
+        id: { in: notificationIds.map(id => id) },
         userId: req.user?.id
       },
       data: { isRead: true }

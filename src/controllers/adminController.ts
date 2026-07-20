@@ -19,11 +19,10 @@ const PRIMARY_COLOR = '#14B8A6';
  *   - A GUID (employeeID):      "a8f52ed2-eddb-4a86-b132-c4965a4dbce6"
  *   - A legacy local-* string:  "local-hr001"
  */
-async function resolveEmployeeDbId(idParam: string): Promise<number | null> {
+async function resolveEmployeeDbId(idParam: string): Promise<string | null> {
   const trimmed = idParam.trim();
-  const asInt = parseInt(trimmed, 10);
-  if (!isNaN(asInt) && asInt.toString() === trimmed) {
-    const emp = await prisma.employee.findUnique({ where: { id: asInt }, select: { id: true } });
+  if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(trimmed)) {
+    const emp = await prisma.employee.findUnique({ where: { id: trimmed }, select: { id: true } });
     return emp?.id ?? null;
   }
   const emp = await prisma.employee.findFirst({
@@ -109,8 +108,8 @@ export const updateUserStatus = async (
   const { id } = req.params;
   const { isActive } = req.body;
   
-  const userId = parseInt(id as string, 10);
-  if (isNaN(userId)) {
+  const userId = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId)) {
     res.status(400).json({ success: false, message: 'Invalid user ID' });
     return;
   }
@@ -148,8 +147,8 @@ export const deletePlatformUser = async (
 ): Promise<void> => {
   const { id } = req.params;
   
-  const userId = parseInt(id as string, 10);
-  if (isNaN(userId)) {
+  const userId = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userId)) {
     res.status(400).json({ success: false, message: 'Invalid user ID' });
     return;
   }
@@ -479,14 +478,14 @@ export const updateEmployee = async (
     if (status !== undefined) updateData.status = status;
     if (officeId !== undefined) {
       if (officeId) {
-        updateData.officeId = parseInt(officeId);
+        updateData.officeId = officeId;
       } else {
         updateData.officeId = null;
       }
     }
     if (departmentId !== undefined) {
       if (departmentId) {
-        updateData.departmentId = parseInt(departmentId);
+        updateData.departmentId = departmentId;
       } else {
         updateData.departmentId = null;
       }
@@ -499,7 +498,7 @@ export const updateEmployee = async (
     if (accountType !== undefined) updateData.accountType = accountType || 'Savings';
     if (branchName !== undefined) updateData.branchName = branchName || null;
     if (storeId !== undefined) {
-      const parsedStoreId = storeId ? parseInt(storeId) : null;
+      const parsedStoreId = storeId ? storeId : null;
       updateData.storeId = parsedStoreId;
       if (parsedStoreId) {
         const storeObj = await prisma.store.findUnique({ where: { id: parsedStoreId } });
@@ -545,7 +544,7 @@ export const updateEmployee = async (
     // Handle designationId — also sync the designation string from the DB
     if (designationId !== undefined) {
       if (designationId) {
-        const parsedDesignationId = parseInt(designationId);
+        const parsedDesignationId = designationId;
         updateData.designationId = parsedDesignationId;
         const designationRecord = await prisma.designation.findUnique({
           where: { id: parsedDesignationId },
@@ -581,13 +580,13 @@ export const updateEmployee = async (
       if (existingAssignment) {
         await prisma.shiftAssignment.update({
           where: { id: existingAssignment.id },
-          data: { shiftId: parseInt(shiftId) },
+          data: { shiftId: shiftId },
         });
       } else {
         await prisma.shiftAssignment.create({
           data: {
             employeeId: employeeId,
-            shiftId: parseInt(shiftId),
+            shiftId: shiftId,
             effectiveFrom: new Date(),
           },
         });
@@ -796,7 +795,7 @@ export const createEmployee = async (
       });
     } else {
       // Use existing user
-      user = await prisma.user.findUnique({ where: { id: parseInt(userId, 10) } });
+      user = await prisma.user.findUnique({ where: { id: userId } });
       if (!user) {
         res.status(404).json({ success: false, message: 'User not found.' });
         return;
@@ -843,7 +842,7 @@ export const createEmployee = async (
       where: {
         OR: [
           { userId: user.id },
-          mobileNumber ? { mobileNumber } : { id: -1 }
+          mobileNumber ? { mobileNumber } : { id: '00000000-0000-0000-0000-000000000000' }
         ]
       }
     });
@@ -853,9 +852,9 @@ export const createEmployee = async (
       return;
     }
 
-    const parsedManagerId = reportingManagerId ? parseInt(reportingManagerId, 10) : null;
-    const parsedShiftId = shiftId ? parseInt(shiftId, 10) : null;
-    const parsedDesignationId = designationId ? parseInt(designationId, 10) : null;
+    const parsedManagerId = reportingManagerId ? reportingManagerId : null;
+    const parsedShiftId = shiftId ? shiftId : null;
+    const parsedDesignationId = designationId ? designationId : null;
 
     let resolvedDesignation = designation || 'Employee';
     if (parsedDesignationId) {
@@ -888,8 +887,8 @@ export const createEmployee = async (
           status: status || 'active',
           workModeId: workModeId || 'OFFICE',
           shiftTypeId: shiftTypeId || 'MORNING',
-          officeId: officeId ? parseInt(officeId, 10) : employeeRecord.officeId,
-          departmentId: departmentId ? parseInt(departmentId, 10) : employeeRecord.departmentId,
+          officeId: officeId ? officeId : employeeRecord.officeId,
+          departmentId: departmentId ? departmentId : employeeRecord.departmentId,
           mobileNumber: mobileNumber || employeeRecord.mobileNumber,
           joiningDate: joiningDate ? new Date(joiningDate) : employeeRecord.joiningDate,
           reportingManagerId: parsedManagerId || employeeRecord.reportingManagerId,
@@ -899,7 +898,7 @@ export const createEmployee = async (
           ifscCode: ifscCode || employeeRecord.ifscCode,
           accountType: accountType || employeeRecord.accountType,
           branchName: branchName || employeeRecord.branchName,
-          storeId: storeId ? parseInt(storeId, 10) : employeeRecord.storeId,
+          storeId: storeId ? storeId : employeeRecord.storeId,
           customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : employeeRecord.customPunchRadius,
           commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
             ? employeeRecord.commissionPercentage
@@ -932,8 +931,8 @@ export const createEmployee = async (
           status: status || 'active',
           workModeId: workModeId || 'OFFICE',
           shiftTypeId: shiftTypeId || 'MORNING',
-          officeId: officeId ? parseInt(officeId, 10) : null,
-          departmentId: departmentId ? parseInt(departmentId, 10) : null,
+          officeId: officeId ? officeId : null,
+          departmentId: departmentId ? departmentId : null,
           mobileNumber: mobileNumber || null,
           joiningDate: joiningDate ? new Date(joiningDate) : null,
           reportingManagerId: parsedManagerId,
@@ -943,7 +942,7 @@ export const createEmployee = async (
           ifscCode: ifscCode || null,
           accountType: accountType || 'Savings',
           branchName: branchName || null,
-          storeId: storeId ? parseInt(storeId, 10) : null,
+          storeId: storeId ? storeId : null,
           customPunchRadius: customPunchRadius ? parseFloat(customPunchRadius) : null,
           commissionPercentage: (commissionPercentage === null || commissionPercentage === undefined || commissionPercentage === '')
             ? null
@@ -963,7 +962,7 @@ export const createEmployee = async (
       const leaveBalanceService = require('../services/leaveBalanceService').default;
       await leaveBalanceService.createOrUpdateLeaveBalance({
         employeeId: newEmployee.id,
-        departmentId: departmentId ? parseInt(departmentId) : undefined,
+        departmentId: departmentId ? departmentId : undefined,
         createdBy: 'Admin Panel',
       });
       console.log(`✅ Leave balance allocated for employee ${newEmployee.id}`);
@@ -1088,20 +1087,20 @@ export const createAndAssignEmployee = async (
     return;
   }
 
-  const userIdInt = parseInt(userId, 10);
-  if (isNaN(userIdInt)) {
+  const userIdInt = userId as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid userId.' });
     return;
   }
 
-  const offIdInt = officeId ? parseInt(officeId, 10) : null;
-  if (officeId && isNaN(offIdInt as number)) {
+  const offIdInt = officeId ? (officeId as string) : null;
+  if (officeId && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(officeId as string)) {
     res.status(400).json({ success: false, message: 'Invalid officeId.' });
     return;
   }
 
-  const deptIdInt = departmentId ? parseInt(departmentId, 10) : null;
-  if (departmentId && isNaN(deptIdInt as number)) {
+  const deptIdInt = departmentId ? (departmentId as string) : null;
+  if (departmentId && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(departmentId as string)) {
     res.status(400).json({ success: false, message: 'Invalid departmentId.' });
     return;
   }
@@ -1297,8 +1296,8 @@ export const updateDepartment = async (
   const { id } = req.params;
   const { name, code } = req.body;
 
-  const departmentIdInt = parseInt(id as string, 10);
-  if (isNaN(departmentIdInt)) {
+  const departmentIdInt = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(departmentIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Department ID.' });
     return;
   }
@@ -1360,8 +1359,8 @@ export const deleteDepartment = async (
 ): Promise<void> => {
   const { id } = req.params;
 
-  const departmentIdInt = parseInt(id as string, 10);
-  if (isNaN(departmentIdInt)) {
+  const departmentIdInt = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(departmentIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Department ID.' });
     return;
   }
@@ -1461,9 +1460,9 @@ export const fetchOfficeById = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const officeIdInt = parseInt(id as string, 10);
+  const officeIdInt = id as string;
 
-  if (isNaN(officeIdInt)) {
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(officeIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Office ID.' });
     return;
   }
@@ -1611,9 +1610,9 @@ export const updateOffice = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const officeIdInt = parseInt(id as string, 10);
+  const officeIdInt = id as string;
 
-  if (isNaN(officeIdInt)) {
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(officeIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Office ID.' });
     return;
   }
@@ -1719,9 +1718,9 @@ export const deleteOffice = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const officeIdInt = parseInt(id as string, 10);
+  const officeIdInt = id as string;
 
-  if (isNaN(officeIdInt)) {
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(officeIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Office ID.' });
     return;
   }
@@ -1780,7 +1779,7 @@ export const assignEmployeeToOffice = async (
   }
 
   // officeId is optional (representing unassignment if not provided)
-  const offIdInt = officeId ? parseInt(officeId, 10) : null;
+  const offIdInt = officeId ? officeId : null;
 
   try {
     const employee = await prisma.employee.findUnique({
@@ -1820,14 +1819,14 @@ export const assignEmployeeToOffice = async (
         firstName: updatedEmployee.firstName,
         lastName: updatedEmployee.lastName,
         officeId: updatedEmployee.officeId?.toString() || null,
-        office: updatedEmployee.office
+        office: (updatedEmployee as any).office
           ? {
-              id: updatedEmployee.office.id.toString(),
-              name: updatedEmployee.office.name,
-              latitude: updatedEmployee.office.latitude,
-              longitude: updatedEmployee.office.longitude,
-              idealRadiusMeters: updatedEmployee.office.idealRadiusMeters,
-              maxPunchRadiusMeters: updatedEmployee.office.maxPunchRadiusMeters,
+              id: (updatedEmployee as any).office.id.toString(),
+              name: (updatedEmployee as any).office.name,
+              latitude: (updatedEmployee as any).office.latitude,
+              longitude: (updatedEmployee as any).office.longitude,
+              idealRadiusMeters: (updatedEmployee as any).office.idealRadiusMeters,
+              maxPunchRadiusMeters: (updatedEmployee as any).office.maxPunchRadiusMeters,
             }
           : null,
       },
@@ -2034,7 +2033,7 @@ export const fetchAttendanceHistory = async (
     }
   }
   if (employeeId) {
-    whereClause.employeeId = parseInt(employeeId as string, 10);
+    whereClause.employeeId = employeeId as string;
   }
 
   try {
@@ -2269,9 +2268,8 @@ export const deleteComment = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const commentIdInt = parseInt(id as string, 10);
-
-  if (isNaN(commentIdInt)) {
+  const commentIdInt = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(commentIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Comment ID.' });
     return;
   }
@@ -2326,7 +2324,7 @@ export const fetchDashboardStats = async (
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   try {
-    let officeId: number | undefined;
+    let officeId: string | undefined;
     if (req.user?.role === 'STORE_MANAGER') {
       const storeManager = await prisma.employee.findFirst({
         where: { userId: req.user.id }
@@ -3062,7 +3060,7 @@ export const removeAdminAvatar = async (
 
 export interface TelemetryLog {
   id: string;
-  employeeId: number;
+  employeeId: string;
   name: string;
   type: string;
   message: string;
@@ -3075,7 +3073,7 @@ export interface TelemetryLog {
 export let telemetryLogs: TelemetryLog[] = [
   {
     id: 'log-initial-1',
-    employeeId: 3,
+    employeeId: '3',
     name: 'Amit Kumar',
     type: 'GPS Reconnected',
     message: 'Satellite signal restored successfully',
@@ -3085,7 +3083,7 @@ export let telemetryLogs: TelemetryLog[] = [
   },
   {
     id: 'log-initial-2',
-    employeeId: 2,
+    employeeId: '2',
     name: 'Rahul Verma',
     type: 'Office Check-In',
     message: 'Checked in at Main Entrance Gate',
@@ -3217,7 +3215,7 @@ export const fetchLiveLocations = async (
   res: Response
 ): Promise<void> => {
   try {
-    let officeId: number | undefined;
+    let officeId: string | undefined;
     let employeeWhere: Prisma.EmployeeWhereInput = {
       officeId: { not: null },
       status: 'active'
@@ -3423,7 +3421,7 @@ export const fetchAdminLeaves = async (
   let whereClause: Prisma.LeaveRequestWhereInput = {};
   
   if (employeeId) {
-    whereClause.employeeId = parseInt(employeeId as string, 10);
+    whereClause.employeeId = employeeId as string;
   }
   
   if (status && status !== 'All') {
@@ -3527,8 +3525,8 @@ export const updateAdminLeaveStatus = async (
   const { id } = req.params;
   const { status, reviewNote } = req.body; // e.g. "Approved" or "Rejected"
   
-  const leaveIdInt = parseInt(id as string, 10);
-  if (isNaN(leaveIdInt)) {
+  const leaveIdInt = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(leaveIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Leave ID.' });
     return;
   }
@@ -3757,8 +3755,8 @@ export const createAdminTask = async (
   }
 
   try {
-    const parsedAssigneeId = parseInt(assigneeId, 10);
-    if (isNaN(parsedAssigneeId)) {
+    const parsedAssigneeId = assigneeId as string;
+    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(parsedAssigneeId)) {
       res.status(400).json({ success: false, message: 'Invalid Assignee ID.' });
       return;
     }
@@ -3804,8 +3802,8 @@ export const updateAdminTask = async (
   const { id } = req.params;
   const { title, description, assigneeId, priority, deadline, projectName, status, progress } = req.body;
 
-  const taskIdInt = parseInt(id as string, 10);
-  if (isNaN(taskIdInt)) {
+  const taskId = Array.isArray(id) ? id[0] : id;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(taskId)) {
     res.status(400).json({ success: false, message: 'Invalid Task ID.' });
     return;
   }
@@ -3814,7 +3812,7 @@ export const updateAdminTask = async (
     const updateData: Prisma.TaskUpdateInput = {};
     if (title) updateData.title = title;
     if (description) updateData.description = description;
-    if (assigneeId) updateData.assignedTo = { connect: { id: parseInt(assigneeId, 10) } };
+    if (assigneeId) updateData.assignedTo = { connect: { id: assigneeId } };
     if (projectName) updateData.projectName = projectName;
     if (deadline) updateData.dueDate = new Date(deadline);
     if (priority) updateData.priority = priority.toUpperCase();
@@ -3826,7 +3824,7 @@ export const updateAdminTask = async (
     }
 
     const updated = await prisma.task.update({
-      where: { id: taskIdInt },
+      where: { id: taskId },
       data: updateData,
     });
 
@@ -3846,16 +3844,16 @@ export const deleteAdminTask = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const taskIdInt = parseInt(id as string, 10);
+  const taskId = Array.isArray(id) ? id[0] : id;
 
-  if (isNaN(taskIdInt)) {
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(taskId)) {
     res.status(400).json({ success: false, message: 'Invalid Task ID.' });
     return;
   }
 
   try {
     await prisma.task.delete({
-      where: { id: taskIdInt },
+      where: { id: taskId },
     });
 
     res.json({
@@ -3883,7 +3881,7 @@ export const downloadLeaveReport = async (
     }
 
     let whereClause: any = {};
-    if (employeeId) whereClause.employeeId = parseInt(employeeId as string);
+    if (employeeId) whereClause.employeeId = employeeId as string;
     if (startDate && endDate) {
       whereClause.appliedOn = {
         gte: new Date(startDate as string),
@@ -3898,7 +3896,7 @@ export const downloadLeaveReport = async (
     });
 
     const employees = await prisma.employee.findMany({
-      where: employeeId ? { id: parseInt(employeeId as string) } : {},
+      where: employeeId ? { id: employeeId as string } : {},
       include: { office: true, leaveRequests: true, department: true },
       orderBy: { employeeCode: 'asc' },
     });
@@ -4296,9 +4294,9 @@ export const updateSubscription = async (
   res: Response
 ): Promise<void> => {
   const { officeId } = req.params;
-  const officeIdInt = parseInt(officeId as string, 10);
+  const officeIdInt = officeId as string;
 
-  if (isNaN(officeIdInt)) {
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(officeIdInt)) {
     res.status(400).json({ success: false, message: 'Invalid Office/Company ID.' });
     return;
   }
@@ -4391,9 +4389,9 @@ export const updatePricingPlan = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const planId = parseInt(id as string, 10);
+  const planId = id as string;
 
-  if (isNaN(planId)) {
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(planId)) {
     res.status(400).json({ success: false, message: 'Invalid pricing plan ID.' });
     return;
   }
@@ -4649,7 +4647,7 @@ export const fetchPayrollRuns = async (
       company: off.name,
       employees: off.employees.length,
       totalAmount: `₹${(off.employees.length * 45000).toLocaleString('en-IN')}`,
-      status: off.id % 2 === 0 ? 'Completed' : 'Pending Approval',
+      status: (off.id.charCodeAt(off.id.length - 1) % 2 === 0) ? 'Completed' : 'Pending Approval',
       date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
     }));
 
@@ -4797,8 +4795,8 @@ export const approveSalarySlip = async (
       return;
     }
 
-    const empIdInt = parseInt(employeeId, 10);
-    if (isNaN(empIdInt)) {
+    const empIdInt = employeeId as string;
+    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(empIdInt)) {
       res.status(400).json({ success: false, message: 'Invalid employee ID.' });
       return;
     }
@@ -4974,7 +4972,7 @@ export const fetchPayrollReportDetails = async (
       },
     });
 
-    const attendanceByEmployee: Record<number, any[]> = {};
+    const attendanceByEmployee: Record<string, any[]> = {};
     attendances.forEach((att) => {
       if (!attendanceByEmployee[att.employeeId]) {
         attendanceByEmployee[att.employeeId] = [];
@@ -5002,9 +5000,9 @@ export const fetchPayrollReportDetails = async (
       }
 
       const empAtts = attendanceByEmployee[emp.id] || [];
-      const present = empAtts.filter((a) => a.status === 'PRESENT').length;
-      const late = empAtts.filter((a) => a.status === 'LATE').length;
-      const halfDay = empAtts.filter((a) => a.status === 'HALF_DAY').length;
+      const present = empAtts.filter((a: any) => a.status === 'PRESENT').length;
+      const late = empAtts.filter((a: any) => a.status === 'LATE').length;
+      const halfDay = empAtts.filter((a: any) => a.status === 'HALF_DAY').length;
       const totalDays = empAtts.length;
       const presentDays = present + late + (halfDay * 0.5);
       const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
@@ -5120,7 +5118,7 @@ export const fetchAttendanceReportDetails = async (
       where: attendanceWhere,
     });
 
-    const attendanceByEmployee: Record<number, typeof attendances> = {};
+    const attendanceByEmployee: Record<string, typeof attendances> = {};
     attendances.forEach((att) => {
       if (!attendanceByEmployee[att.employeeId]) {
         attendanceByEmployee[att.employeeId] = [];
@@ -5217,7 +5215,7 @@ export const downloadAttendanceReport = async (
       return;
     }
 
-    let officeId: number | undefined;
+    let officeId: string | undefined;
     if (req.user?.role === 'STORE_MANAGER') {
       const storeManager = await prisma.employee.findFirst({
         where: { userId: req.user.id }
@@ -5232,7 +5230,7 @@ export const downloadAttendanceReport = async (
     let employees;
     if (employeeId) {
       // Specific employee report
-      const targetEmpId = parseInt(employeeId as string, 10);
+      const targetEmpId = employeeId as string;
       const targetEmp = await prisma.employee.findUnique({
         where: { id: targetEmpId },
         include: { office: true, department: true }
@@ -5266,7 +5264,7 @@ export const downloadAttendanceReport = async (
     });
 
     // Group attendances by employee
-    const attendanceByEmployee: Record<number, typeof attendances> = {};
+    const attendanceByEmployee: Record<string, typeof attendances> = {};
     attendances.forEach((att) => {
       if (!attendanceByEmployee[att.employeeId]) {
         attendanceByEmployee[att.employeeId] = [];
@@ -5588,7 +5586,7 @@ export const downloadAttendanceReport = async (
                         { text: 'Status', style: 'colHeader', alignment: 'center' },
                         { text: 'Notes / Remarks', style: 'colHeader' },
                       ],
-                      ...empData.attendances.map((att, i) => [
+                      ...empData.attendances.map((att: any, i: number) => [
                         { text: formatDateStr(att.date), fontSize: 8, color: '#111827', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
                         { text: formatTime(att.checkIn), fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
                         { text: formatTime(att.checkOut), fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F9FAFB' : 'white' },
@@ -5714,7 +5712,7 @@ export const markAdminNotificationRead = async (
     }
 
     const notif = await prisma.notification.findUnique({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: id as string },
     });
 
     if (!notif || notif.userId !== userId) {
@@ -5723,7 +5721,7 @@ export const markAdminNotificationRead = async (
     }
 
     const notification = await prisma.notification.update({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: id as string },
       data: { isRead: true },
     });
 
@@ -5767,13 +5765,13 @@ export const fetchAdminSettings = async (
 ): Promise<void> => {
   try {
     let settingsRecord = await prisma.systemSetting.findUnique({
-      where: { id: 1 },
+      where: { id: '00000000-0000-0000-0000-000000000001' },
     });
 
     if (!settingsRecord) {
       settingsRecord = await prisma.systemSetting.create({
         data: {
-          id: 1,
+          id: '00000000-0000-0000-0000-000000000001',
           company: {
             name: 'HRM Portal',
             logo: '',
@@ -5910,10 +5908,10 @@ export const updateAdminSettings = async (
     updateData[category] = updatedSettings;
 
     const updatedRecord = await prisma.systemSetting.upsert({
-      where: { id: 1 },
+      where: { id: '00000000-0000-0000-0000-000000000001' },
       update: updateData,
       create: {
-        id: 1,
+        id: '00000000-0000-0000-0000-000000000001',
         ...updateData,
       },
     });
@@ -5943,7 +5941,7 @@ export const fetchAdminLeaveBalancesDetailed = async (
     const leaveBalanceService = require('../services/leaveBalanceService').default;
     const leaveBalances = await leaveBalanceService.getAllLeaveBalances(
       fiscalYear as string,
-      departmentId ? parseInt(departmentId as string) : undefined
+      departmentId ? departmentId as string : undefined
     );
 
     res.json({
@@ -6057,8 +6055,8 @@ export const resetEmployeePassword = async (
   const { userId } = req.params;
   const { newPassword, isTemporary = false } = req.body;
 
-  const userIdInt = parseInt(userId as string, 10);
-  if (isNaN(userIdInt)) {
+  const userIdStr = userId as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(userIdStr)) {
     res.status(400).json({ success: false, message: 'Invalid User ID.' });
     return;
   }
@@ -6076,7 +6074,7 @@ export const resetEmployeePassword = async (
   try {
     // Check if user exists
     const user = await prisma.user.findUnique({
-      where: { id: userIdInt }
+      where: { id: userIdStr }
     });
 
     if (!user) {
@@ -6089,7 +6087,7 @@ export const resetEmployeePassword = async (
 
     // Update user password
     await prisma.user.update({
-      where: { id: userIdInt },
+      where: { id: userIdStr },
       data: { 
         password: hashedPassword,
         updatedAt: new Date()
@@ -6098,12 +6096,12 @@ export const resetEmployeePassword = async (
 
     // Trigger push notification to employee (fire-and-forget, never awaited)
     pushNotificationService.sendPush(
-      [userIdInt],
+      [userIdStr],
       'Password Reset',
       'Your password has been reset by an administrator.',
       {
         screen: 'profile',
-        id: userIdInt.toString()
+        id: userIdStr.toString()
       }
     ).catch(err => console.error('Failed to send password reset push:', err));
 
@@ -6114,7 +6112,7 @@ export const resetEmployeePassword = async (
       success: true,
       message: 'Password reset successfully.',
       data: {
-        userId: userIdInt,
+        userId: userIdStr,
         email: user.email,
         isTemporary
       }
@@ -6290,7 +6288,7 @@ export const sendNotificationToDepartment = async (
   try {
     // Get all employees in the department
     const employees = await prisma.employee.findMany({
-      where: { departmentId: parseInt(departmentId) },
+      where: { departmentId: departmentId },
       include: { user: true }
     });
 
@@ -6317,7 +6315,7 @@ export const sendNotificationToDepartment = async (
     try {
       const firebaseNotificationService = require('../services/firebaseNotificationService').firebaseNotificationService;
       await firebaseNotificationService.sendNotificationToDepartment(
-        parseInt(departmentId),
+        departmentId,
         title,
         body,
         { category }
@@ -6545,8 +6543,8 @@ export const updateShift = async (
   const { id } = req.params;
   const { name, startTime, endTime, workingDays, graceMinutes, breakMinutes, color } = req.body;
 
-  const shiftId = parseInt(id as string, 10);
-  if (isNaN(shiftId)) {
+  const shiftId = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(shiftId)) {
     res.status(400).json({ success: false, message: 'Invalid Shift ID.' });
     return;
   }
@@ -6582,8 +6580,8 @@ export const deleteShift = async (
 ): Promise<void> => {
   const { id } = req.params;
 
-  const shiftId = parseInt(id as string, 10);
-  if (isNaN(shiftId)) {
+  const shiftId = id as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(shiftId)) {
     res.status(400).json({ success: false, message: 'Invalid Shift ID.' });
     return;
   }
@@ -6617,7 +6615,7 @@ export const assignShiftToEmployee = async (
   try {
     // Check if employee exists
     const employee = await prisma.employee.findUnique({
-      where: { id: parseInt(employeeId) }
+      where: { id: employeeId }
     });
 
     if (!employee) {
@@ -6627,7 +6625,7 @@ export const assignShiftToEmployee = async (
 
     // Check if shift exists
     const shift = await prisma.shift.findUnique({
-      where: { id: parseInt(shiftId) }
+      where: { id: shiftId }
     });
 
     if (!shift) {
@@ -6641,7 +6639,7 @@ export const assignShiftToEmployee = async (
     // End any existing active assignments for this employee
     await prisma.shiftAssignment.updateMany({
       where: {
-        employeeId: parseInt(employeeId),
+        employeeId: employeeId,
         effectiveTo: null
       },
       data: {
@@ -6652,8 +6650,8 @@ export const assignShiftToEmployee = async (
     // Create new assignment
     const assignment = await prisma.shiftAssignment.create({
       data: {
-        employeeId: parseInt(employeeId),
-        shiftId: parseInt(shiftId),
+        employeeId: employeeId,
+        shiftId: shiftId,
         workModeId: finalWorkModeId,
         shiftTypeId: finalShiftTypeId,
         effectiveFrom: new Date(effectiveFrom),
@@ -6674,7 +6672,7 @@ export const assignShiftToEmployee = async (
 
     // Sync Employee model current state
     await prisma.employee.update({
-      where: { id: parseInt(employeeId) },
+      where: { id: employeeId },
       data: {
         workModeId: finalWorkModeId,
         shiftTypeId: finalShiftTypeId
@@ -6826,9 +6824,9 @@ export const deleteAdminHoliday = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const holidayId = parseInt(id as string, 10);
+  const holidayId = id as string;
 
-  if (isNaN(holidayId)) {
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(holidayId)) {
     res.status(400).json({ success: false, message: 'Invalid holiday ID.' });
     return;
   }
@@ -6928,7 +6926,7 @@ export const fetchLiveDashboardStats = async (
     };
 
     // Calculate branchWise counts map: officeId -> { branchName, present, absent, onBreak }
-    const branchMap = new Map<number, { branch: string; present: number; absent: number; onBreak: number }>();
+    const branchMap = new Map<string, { branch: string; present: number; absent: number; onBreak: number }>();
 
     for (const emp of activeEmployees) {
       const officeId = emp.officeId;
@@ -7099,8 +7097,8 @@ export const toggleLeaveDeduction = async (
   const { id } = req.params;
   const { deductionApplied, reason } = req.body;
 
-  const leaveId = parseInt(String(id), 10);
-  if (isNaN(leaveId)) {
+  const leaveId = Array.isArray(id) ? id[0] : id;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(leaveId)) {
     res.status(400).json({ success: false, message: 'Invalid leave request ID.' });
     return;
   }
@@ -7132,7 +7130,7 @@ export const toggleLeaveDeduction = async (
         entityType: 'LEAVE_REQUEST',
         entityId: String(id),
         content: `Deduction status toggled to: ${!!deductionApplied} by ${req.user?.email || 'HR'}. Reason: ${reason || 'None provided'}`,
-        authorId: req.user?.id || 1
+        authorId: req.user?.id || '00000000-0000-0000-0000-000000000001'
       }
     });
 
@@ -7193,8 +7191,8 @@ export const fetchLocationHistory = async (
     return;
   }
 
-  const empId = parseInt(typeof employeeId === 'string' ? employeeId : String(employeeId), 10);
-  if (isNaN(empId)) {
+  const empId = (Array.isArray(employeeId) ? employeeId[0] : employeeId) as string;
+  if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(empId)) {
     res.status(400).json({ success: false, message: 'Invalid Employee ID.' });
     return;
   }
@@ -7238,7 +7236,7 @@ export const exportReport = async (
 
   const targetMonthStr = monthStrQuery || new Date().toISOString().slice(0, 7);
   const targetFormat = formatStr.toLowerCase();
-  const targetBranchId = branchIdStr ? parseInt(branchIdStr, 10) : undefined;
+  const targetBranchId = branchIdStr ? branchIdStr : undefined;
 
   try {
     let targetYear = new Date().getFullYear();
@@ -7251,7 +7249,7 @@ export const exportReport = async (
     }
 
     const employeeWhere: Prisma.EmployeeWhereInput = {};
-    if (targetBranchId && !isNaN(targetBranchId)) {
+    if (targetBranchId) {
       employeeWhere.officeId = targetBranchId;
     }
     const employees = await prisma.employee.findMany({
@@ -7275,7 +7273,7 @@ export const exportReport = async (
           date: { startsWith: monthStr }
         }
       });
-      const attendanceByEmployee: Record<number, any[]> = {};
+      const attendanceByEmployee: Record<string, any[]> = {};
       attendances.forEach((att) => {
         if (!attendanceByEmployee[att.employeeId]) {
           attendanceByEmployee[att.employeeId] = [];
@@ -7396,7 +7394,7 @@ export const exportReport = async (
         }
       });
 
-      const attendanceByEmployee: Record<number, any[]> = {};
+      const attendanceByEmployee: Record<string, any[]> = {};
       attendances.forEach((att) => {
         if (!attendanceByEmployee[att.employeeId]) {
           attendanceByEmployee[att.employeeId] = [];

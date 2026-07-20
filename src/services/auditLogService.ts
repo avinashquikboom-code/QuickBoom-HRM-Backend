@@ -1,9 +1,9 @@
 import { prisma } from '../utils/db';
 
 export interface CreateAuditLogParams {
-  userId?: number;
-  employeeId?: number;
-  branchId?: number;
+  userId?: string;
+  employeeId?: string;
+  branchId?: string;
   ipAddress?: string;
   deviceInfo?: string;
   action: string;

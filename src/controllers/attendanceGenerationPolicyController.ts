@@ -50,8 +50,8 @@ export const createAttendanceGenerationPolicy = async (
         autoApplyHalfDayRules: autoApplyHalfDayRules ?? true,
         autoApplyLateMarkRules: autoApplyLateMarkRules ?? true,
         autoApplyEarlyExitRules: autoApplyEarlyExitRules ?? true,
-        departmentId: departmentId ? parseInt(departmentId) : null,
-        officeId: officeId ? parseInt(officeId) : null,
+        departmentId: departmentId ? departmentId : null,
+        officeId: officeId ? officeId : null,
         effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
         effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
         description,
@@ -88,8 +88,8 @@ export const getAllAttendanceGenerationPolicies = async (
     const where: any = {};
     
     if (isEnabled !== undefined) where.isEnabled = isEnabled === 'true';
-    if (departmentId) where.departmentId = parseInt(departmentId);
-    if (officeId) where.officeId = parseInt(officeId);
+    if (departmentId) where.departmentId = departmentId;
+    if (officeId) where.officeId = officeId;
 
     const policies = await prisma.attendanceGenerationPolicy.findMany({
       where,
@@ -119,7 +119,7 @@ export const getAttendanceGenerationPolicyById = async (
     const idStr = Array.isArray(id) ? id[0] : id;
 
     const policy = await prisma.attendanceGenerationPolicy.findUnique({
-      where: { id: parseInt(idStr) }
+      where: { id: idStr }
     });
 
     if (!policy) {
@@ -191,14 +191,14 @@ export const updateAttendanceGenerationPolicy = async (
     if (autoApplyHalfDayRules !== undefined) updateData.autoApplyHalfDayRules = autoApplyHalfDayRules;
     if (autoApplyLateMarkRules !== undefined) updateData.autoApplyLateMarkRules = autoApplyLateMarkRules;
     if (autoApplyEarlyExitRules !== undefined) updateData.autoApplyEarlyExitRules = autoApplyEarlyExitRules;
-    if (departmentId !== undefined) updateData.departmentId = departmentId ? parseInt(departmentId) : null;
-    if (officeId !== undefined) updateData.officeId = officeId ? parseInt(officeId) : null;
+    if (departmentId !== undefined) updateData.departmentId = departmentId ? departmentId : null;
+    if (officeId !== undefined) updateData.officeId = officeId ? officeId : null;
     if (effectiveFrom !== undefined) updateData.effectiveFrom = effectiveFrom ? new Date(effectiveFrom) : null;
     if (effectiveTo !== undefined) updateData.effectiveTo = effectiveTo ? new Date(effectiveTo) : null;
     if (description !== undefined) updateData.description = description;
 
     const policy = await prisma.attendanceGenerationPolicy.update({
-      where: { id: parseInt(idStr) },
+      where: { id: idStr },
       data: updateData
     });
 
@@ -226,7 +226,7 @@ export const deleteAttendanceGenerationPolicy = async (
     const idStr = Array.isArray(id) ? id[0] : id;
 
     await prisma.attendanceGenerationPolicy.delete({
-      where: { id: parseInt(idStr) }
+      where: { id: idStr }
     });
 
     res.json({
@@ -251,7 +251,7 @@ export const generateAttendanceCalendar = async (
     const { policyId } = req.params;
     const idStr = Array.isArray(policyId) ? policyId[0] : policyId;
 
-    const results = await attendanceCalendarService.generateCalendarForPolicy(parseInt(idStr));
+    const results = await attendanceCalendarService.generateCalendarForPolicy(idStr);
 
     res.json({
       success: true,
@@ -278,8 +278,8 @@ export const generateCalendarForMonth = async (
     const results = await attendanceCalendarService.generateCalendar({
       month: parseInt(month as string),
       year: parseInt(year as string),
-      departmentId: departmentId ? parseInt(departmentId as string) : undefined,
-      officeId: officeId ? parseInt(officeId as string) : undefined
+      departmentId: departmentId ? departmentId as string : undefined,
+      officeId: officeId ? officeId as string : undefined
     });
 
     res.json({

@@ -15,12 +15,12 @@ export const getEmployeeLeaveBalances = async (
     const { employeeId } = req.params;
     
     // Get employee information
-    let targetEmployeeId: number;
+    let targetEmployeeId: string;
     
     if (employeeId) {
       // HR/Admin viewing another employee's balances
       const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
-      targetEmployeeId = parseInt(employeeIdStr);
+      targetEmployeeId = employeeIdStr;
     } else {
       // Employee viewing their own balances
       const employee = await prisma.employee.findFirst({
@@ -72,7 +72,7 @@ export const upsertLeaveAllocation = async (
     }
 
     const allocation = await leaveManagementService.upsertLeaveAllocation(
-      parseInt(employeeId),
+      employeeId,
       leaveType,
       parseInt(totalDays),
       fiscalYear
@@ -122,7 +122,7 @@ export const upsertLeavePolicy = async (
     const { id, name, leaveType, defaultDays, accrualRate, maxCarryForward, probationDays, isActive, description } = req.body;
 
     const policy = await leaveManagementService.upsertLeavePolicy({
-      id: id ? parseInt(id) : undefined,
+      id: id ? id : undefined,
       name,
       leaveType,
       defaultDays: defaultDays ? parseInt(defaultDays) : undefined,
@@ -190,7 +190,7 @@ export const autoApproveLeave = async (
       return;
     }
 
-    const success = await leaveManagementService.autoApproveLeave(parseInt(leaveRequestId));
+    const success = await leaveManagementService.autoApproveLeave(leaveRequestId);
 
     if (success) {
       res.json({
@@ -231,7 +231,7 @@ export const carryForwardLeave = async (
     }
 
     await leaveManagementService.carryForwardLeave(
-      parseInt(employeeId),
+      employeeId,
       fromYear,
       toYear
     );

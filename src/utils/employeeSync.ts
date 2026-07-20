@@ -115,8 +115,8 @@ export async function syncHopkidEmployees(): Promise<void> {
     for (const emp of dataList) {
       if (!emp.employeeCode) continue;
 
-      let localStoreId: number | null = null;
-      let localOfficeId: number | null = null;
+      let localStoreId: string | null = null;
+      let localOfficeId: string | null = null;
 
       if (emp.branchName) {
         // Find or create Store

@@ -656,8 +656,7 @@ export const updateMobileProfile = async (
     if (user.employee) {
       const employeeUpdateData: any = {};
       if (departmentId !== undefined) {
-        const parsedDepartmentId = parseInt(departmentId as string, 10);
-        employeeUpdateData.departmentId = isNaN(parsedDepartmentId) ? null : parsedDepartmentId;
+        employeeUpdateData.departmentId = departmentId || null;
       }
       if (shiftTypeId !== undefined) employeeUpdateData.shiftTypeId = shiftTypeId;
       if (workModeId !== undefined) employeeUpdateData.workModeId = workModeId;

@@ -11,10 +11,9 @@ export const findUserByEmail = async (email: string) => {
   });
 };
 
-export const findUserById = async (id: string | number) => {
-  const parsedId = typeof id === "string" ? parseInt(id, 10) : id;
+export const findUserById = async (id: string) => {
   return await prisma.user.findUnique({
-    where: { id: parsedId },
+    where: { id },
     include: {
       profile: true,
       employee: true,

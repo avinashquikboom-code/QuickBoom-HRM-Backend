@@ -105,7 +105,7 @@ export class FirebaseNotificationService {
 
   // Send notification to specific user by user ID
   async sendNotificationToUser(
-    userId: number,
+    userId: string,
     title: string,
     body: string,
     data?: Record<string, string>,
@@ -157,7 +157,7 @@ export class FirebaseNotificationService {
 
   // Send notification to users by department
   async sendNotificationToDepartment(
-    departmentId: number,
+    departmentId: string,
     title: string,
     body: string,
     data?: Record<string, string>,
