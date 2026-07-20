@@ -379,9 +379,15 @@ export const syncSalesBatch = async (
       if (!endpoint || !payload) continue;
       const normEndpoint = endpoint.toLowerCase().replace(/^\/api/, '');
 
-      if (normEndpoint === '/sales/addsales' || normEndpoint === 'addsales') {
-        const { billId, invoiceNumber, saleAmount, storeId, notes } = payload;
-        if (saleAmount === undefined || isNaN(Number(saleAmount))) continue;
+      if (normEndpoint === '/sales/addsales' || normEndpoint === 'addsales' ||
+          normEndpoint.includes('/api/sales/addsales')) {
+        // Support both old shape (saleAmount, invoiceNumber) and new DTO shape (NetAmount/FinalAmount, InvoiceNo).
+        const resolvedSaleAmount = payload.saleAmount ?? payload.NetAmount ?? payload.FinalAmount;
+        const resolvedInvoiceNumber = payload.invoiceNumber ?? payload.InvoiceNo;
+        const resolvedBillId = payload.billId;
+        const { storeId, notes } = payload;
+
+        if (resolvedSaleAmount === undefined || isNaN(Number(resolvedSaleAmount))) continue;
 
         let policy = employee.commissionPolicies[0];
         const targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
@@ -408,7 +414,7 @@ export const syncSalesBatch = async (
         if (policy) {
           commissionType = policy.commissionType;
           if (policy.commissionType === 'PERCENTAGE') {
-            commissionAmount = (Number(saleAmount) * policy.commissionValue) / 100;
+            commissionAmount = (Number(resolvedSaleAmount) * policy.commissionValue) / 100;
             commissionPercent = policy.commissionValue;
           } else if (policy.commissionType === 'FIXED') {
             commissionAmount = policy.commissionValue;
@@ -420,12 +426,12 @@ export const syncSalesBatch = async (
             employeeId: employee.id,
             storeId: targetStoreId,
             policyId: policy ? policy.id : null,
-            saleAmount: parseFloat(saleAmount),
+            saleAmount: parseFloat(resolvedSaleAmount),
             commissionType,
             commissionPercent: commissionPercent || null,
             commissionAmount,
-            billId: billId || null,
-            invoiceNumber: invoiceNumber || null,
+            billId: resolvedBillId || null,
+            invoiceNumber: resolvedInvoiceNumber || null,
             status: 'PENDING',
             notes: notes || null,
           }
@@ -433,25 +439,34 @@ export const syncSalesBatch = async (
 
         results.push({ success: true, transactionId: transaction.id, endpoint });
         syncedCount++;
-      } else if (normEndpoint === '/sales/addcreditnote' || normEndpoint === 'addcreditnote') {
-        const { billId, invoiceNumber, creditAmount, notes } = payload;
-        if (creditAmount === undefined || isNaN(Number(creditAmount)) || Number(creditAmount) <= 0) continue;
+
+      } else if (normEndpoint === '/sales/addcreditnote' || normEndpoint === 'addcreditnote' ||
+                 normEndpoint.includes('/api/sales/addcreditnote')) {
+        const resolvedCreditAmount = payload.creditAmount ?? payload.CNAmount;
+        const resolvedInvoiceNumber = payload.invoiceNumber ?? payload.CNNo;
+        const resolvedBillId = payload.billId;
+        const { notes } = payload;
+
+        if (resolvedCreditAmount === undefined || isNaN(Number(resolvedCreditAmount)) || Number(resolvedCreditAmount) <= 0) continue;
 
         const whereClause: any = {};
-        if (billId) whereClause.billId = billId;
-        if (invoiceNumber) whereClause.invoiceNumber = invoiceNumber;
+        if (resolvedBillId) whereClause.billId = resolvedBillId;
+        if (resolvedInvoiceNumber) whereClause.invoiceNumber = resolvedInvoiceNumber;
 
+        // Fallback: search for original transaction using SalesID (new DTO has SalesID)
         const originalTransaction = await prisma.commissionTransaction.findFirst({
-          where: whereClause,
+          where: payload.SalesID
+            ? { OR: [whereClause, { billId: payload.SalesID }] }
+            : whereClause,
         });
 
         if (!originalTransaction) continue;
 
         let reducedCommission = 0;
         if (originalTransaction.commissionPercent) {
-          reducedCommission = (Number(creditAmount) * originalTransaction.commissionPercent) / 100;
+          reducedCommission = (Number(resolvedCreditAmount) * originalTransaction.commissionPercent) / 100;
         } else if (originalTransaction.commissionType === 'FIXED') {
-          reducedCommission = (Number(creditAmount) / originalTransaction.saleAmount) * originalTransaction.commissionAmount;
+          reducedCommission = (Number(resolvedCreditAmount) / originalTransaction.saleAmount) * originalTransaction.commissionAmount;
         }
 
         const creditTransaction = await prisma.commissionTransaction.create({
@@ -459,12 +474,12 @@ export const syncSalesBatch = async (
             employeeId: originalTransaction.employeeId,
             storeId: originalTransaction.storeId,
             policyId: originalTransaction.policyId,
-            saleAmount: -parseFloat(creditAmount),
+            saleAmount: -parseFloat(resolvedCreditAmount),
             commissionType: originalTransaction.commissionType,
             commissionPercent: originalTransaction.commissionPercent,
             commissionAmount: -reducedCommission,
-            billId: billId || null,
-            invoiceNumber: invoiceNumber ? `${invoiceNumber}-CN` : null,
+            billId: resolvedBillId || null,
+            invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-CN` : null,
             status: 'PENDING',
             notes: notes || `Credit Note for original sale of amount ₹${originalTransaction.saleAmount}`,
           }
@@ -472,22 +487,49 @@ export const syncSalesBatch = async (
 
         results.push({ success: true, transactionId: creditTransaction.id, endpoint });
         syncedCount++;
-      } else if (normEndpoint === '/sales/addsalesexchange' || normEndpoint === 'addsalesexchange') {
-        const { billId, invoiceNumber, returnAmount, newSaleAmount, notes } = payload;
-        if (returnAmount === undefined || isNaN(Number(returnAmount)) || returnAmount < 0) continue;
-        if (newSaleAmount === undefined || isNaN(Number(newSaleAmount)) || newSaleAmount < 0) continue;
+      } else if (normEndpoint === '/sales/addsalesexchange' || normEndpoint === 'addsalesexchange' ||
+                 normEndpoint.includes('/api/sales/addsalesexchange')) {
+        const resolvedInvoiceNumber = payload.invoiceNumber ?? payload.ExchangeInvoiceNo;
+        const resolvedBillId = payload.billId;
+        const { notes } = payload;
+
+        let resolvedReturnAmount = payload.returnAmount;
+        let resolvedNewSaleAmount = payload.newSaleAmount;
+
+        // If return/new amounts are missing, compute from SalesExchangeProductList (new DTO shape)
+        if ((resolvedReturnAmount === undefined || resolvedNewSaleAmount === undefined) &&
+            Array.isArray(payload.SalesExchangeProductList)) {
+          let sumReturn = 0;
+          let sumNew = 0;
+          for (const item of payload.SalesExchangeProductList) {
+            const itemTotal = Number(item.Total ?? item.price ?? 0);
+            if (item.IsOld === true || item.isOld === true) {
+              sumReturn += itemTotal;
+            } else {
+              sumNew += itemTotal;
+            }
+          }
+          resolvedReturnAmount = sumReturn;
+          resolvedNewSaleAmount = sumNew;
+        }
+
+        if (resolvedReturnAmount === undefined || isNaN(Number(resolvedReturnAmount)) || resolvedReturnAmount < 0) continue;
+        if (resolvedNewSaleAmount === undefined || isNaN(Number(resolvedNewSaleAmount)) || resolvedNewSaleAmount < 0) continue;
 
         const whereClause: any = {};
-        if (billId) whereClause.billId = billId;
-        if (invoiceNumber) whereClause.invoiceNumber = invoiceNumber;
+        if (resolvedBillId) whereClause.billId = resolvedBillId;
+        if (resolvedInvoiceNumber) whereClause.invoiceNumber = resolvedInvoiceNumber;
 
+        // Fallback: search for original transaction using SalesID (new DTO has SalesID)
         const originalTransaction = await prisma.commissionTransaction.findFirst({
-          where: whereClause,
+          where: payload.SalesID
+            ? { OR: [whereClause, { billId: payload.SalesID }] }
+            : whereClause,
         });
 
         if (!originalTransaction) continue;
 
-        const netDifference = Number(newSaleAmount) - Number(returnAmount);
+        const netDifference = Number(resolvedNewSaleAmount) - Number(resolvedReturnAmount);
         let adjustedCommission = 0;
 
         if (originalTransaction.commissionPercent) {
@@ -505,10 +547,10 @@ export const syncSalesBatch = async (
             commissionType: originalTransaction.commissionType,
             commissionPercent: originalTransaction.commissionPercent,
             commissionAmount: adjustedCommission,
-            billId: billId || null,
-            invoiceNumber: invoiceNumber ? `${invoiceNumber}-EX` : null,
+            billId: resolvedBillId || null,
+            invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-EX` : null,
             status: 'PENDING',
-            notes: notes || `Sales Exchange: returned ₹${returnAmount}, purchased ₹${newSaleAmount}`,
+            notes: notes || `Sales Exchange: returned ₹${resolvedReturnAmount}, purchased ₹${resolvedNewSaleAmount}`,
           }
         });
 

@@ -976,4 +976,48 @@ model LocationHistory {
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
+// ─── HR Task Management ────────────────────────────────────────────────────────
 
+model HrTask {
+  id          String        @id @default(uuid())
+  title       String
+  description String?       @db.Text
+  assignedTo  String        // Employee.employeeID (HopKid GUID or local-* string)
+  assignedBy  Int           // User.id of HR creator
+  priority    HrPriority    @default(MEDIUM)
+  dueDate     DateTime?
+  status      HrTaskStatus  @default(PENDING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  updates     HrTaskUpdate[]
+
+  @@index([assignedTo])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model HrTaskUpdate {
+  id        String        @id @default(uuid())
+  taskId    String
+  task      HrTask        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  byUserId  Int           // User.id of actor
+  oldStatus HrTaskStatus?
+  newStatus HrTaskStatus
+  comment   String?       @db.Text
+  at        DateTime      @default(now())
+
+  @@index([taskId])
+}
+
+enum HrPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum HrTaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
