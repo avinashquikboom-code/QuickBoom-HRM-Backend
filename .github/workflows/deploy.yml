@@ -1,21 +1,29 @@
-name: Build & Deploy Backend
+name: Build & Push Backend
 
-# Auto-deploy on every push to main. Trigger manually from the Actions tab too.
+# Build the image and push it to AWS ECR on every push to main.
+# Deployment to the server is MANUAL (pull + docker compose up on the VPS).
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }} # e.g. quickboom-backend
+  # Hardcoded ECR target (no secrets needed for region/repo).
+  AWS_REGION: ap-south-1
+  IMAGE_URI: 546941058055.dkr.ecr.ap-south-1.amazonaws.com/hrm-backend
 
 jobs:
-  build-and-deploy:
-    name: Build image, push to ECR, deploy to VPS
+  build-and-push:
+    name: Build image and push to ECR
     runs-on: ubuntu-latest
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
     steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -27,16 +35,12 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push image to ECR
-        id: build-image
         env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
           docker build \
             -f Dockerfile.deploy \
             -t "$IMAGE_URI:$IMAGE_TAG" \
@@ -44,50 +48,4 @@ jobs:
             .
           docker push "$IMAGE_URI:$IMAGE_TAG"
           docker push "$IMAGE_URI:latest"
-          echo "image=$IMAGE_URI:latest" >> "$GITHUB_OUTPUT"
-
-      - name: Copy docker-compose to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT }}
-          source: docker-compose.yml
-          target: /opt/quickboom
-
-      - name: Deploy on VPS over SSH
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT }}
-          envs: ECR_REGISTRY
-          script: |
-            set -e
-            cd /opt/quickboom
-
-            # App runtime secrets are NOT injected here — they live in backend.env
-            # on the VPS (created once, never touched by CI). Fail fast if missing.
-            if [ ! -f backend.env ]; then
-              echo "ERROR: /opt/quickboom/backend.env not found. Create it on the VPS first (see DEPLOY.md)." >&2
-              exit 1
-            fi
-
-            # Persist registry + image refs for compose (deployment-only values).
-            grep -q '^ECR_REGISTRY=' .deploy.env 2>/dev/null && \
-              sed -i "s#^ECR_REGISTRY=.*#ECR_REGISTRY=${ECR_REGISTRY}#" .deploy.env || \
-              echo "ECR_REGISTRY=${ECR_REGISTRY}" >> .deploy.env
-            grep -q '^BACKEND_REPO=' .deploy.env 2>/dev/null || \
-              echo "BACKEND_REPO=${{ secrets.ECR_REPOSITORY }}" >> .deploy.env
-
-            # Authenticate Docker to ECR on the VPS, then pull & restart the backend only.
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} \
-              | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
-
-            docker compose --env-file .deploy.env pull backend
-            docker compose --env-file .deploy.env up -d backend
-            docker image prune -f
+          echo "Pushed $IMAGE_URI:latest (and :$IMAGE_TAG)"
