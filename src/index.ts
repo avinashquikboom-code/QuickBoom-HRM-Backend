@@ -48,8 +48,6 @@ import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoute
 import deviceRoutes from './routes/deviceRoutes';
 import breakRoutes from './routes/breakRoutes';
 import shiftRequestRoutes from './routes/shiftRequestRoutes';
-import productRoutes from './routes/productRoutes';
-import invoiceRoutes from './routes/invoiceRoutes';
 import locationTrackingRoutes from './routes/locationTrackingRoutes';
 import { authenticateToken } from './middlewares/authMiddleware';
 import { initializeFirebase } from './config/firebase';
@@ -119,8 +117,6 @@ app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/invoices', invoiceRoutes);
 app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
 app.use('/api/employee', employeeRoutes);
 app.use('/api/Employee', employeeLegacyRoutes);
