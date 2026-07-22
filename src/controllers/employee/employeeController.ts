@@ -833,26 +833,71 @@ export const fetchEmployeeShift = async (
       include: { shift: true },
     });
 
+    if (assignment) {
+      res.json({
+        success: true,
+        assignment: {
+          employeeId: employee.id.toString(),
+          employeeName: `${employee.firstName} ${employee.lastName}`,
+          department: employee.department?.name || 'Unassigned',
+          shift: {
+            id: assignment.shift.id.toString(),
+            name: assignment.shift.name,
+            startTime: assignment.shift.startTime,
+            endTime: assignment.shift.endTime,
+            workingDays: assignment.shift.workingDays,
+            graceMinutes: assignment.shift.graceMinutes,
+            breakMinutes: assignment.shift.graceMinutes,
+            color: assignment.shift.color,
+          },
+          effectiveFrom: assignment.effectiveFrom.toISOString(),
+        },
+      });
+      return;
+    }
+
+    // Fallback if no explicit ShiftAssignment record exists: build shift from employee.shiftTypeId
+    const shiftType = employee.shiftTypeId || 'MORNING';
+    let name = 'Morning Shift';
+    let startTime = '09:00';
+    let endTime = '18:00';
+    let color = '#3BA38B';
+
+    if (shiftType === 'EVENING') {
+      name = 'Evening Shift';
+      startTime = '14:00';
+      endTime = '23:00';
+      color = '#F59E0B';
+    } else if (shiftType === 'NIGHT') {
+      name = 'Night Shift';
+      startTime = '22:00';
+      endTime = '07:00';
+      color = '#6366F1';
+    } else if (shiftType === 'ON_FIELD') {
+      name = 'On Field Shift';
+      startTime = '09:00';
+      endTime = '18:00';
+      color = '#EC4899';
+    }
+
     res.json({
       success: true,
-      assignment: assignment
-        ? {
-            employeeId: employee.id.toString(),
-            employeeName: `${employee.firstName} ${employee.lastName}`,
-            department: employee.department?.name || 'Unassigned',
-            shift: {
-              id: assignment.shift.id.toString(),
-              name: assignment.shift.name,
-              startTime: assignment.shift.startTime,
-              endTime: assignment.shift.endTime,
-              workingDays: assignment.shift.workingDays,
-              graceMinutes: assignment.shift.graceMinutes,
-              breakMinutes: assignment.shift.graceMinutes,
-              color: assignment.shift.color,
-            },
-            effectiveFrom: assignment.effectiveFrom.toISOString(),
-          }
-        : null,
+      assignment: {
+        employeeId: employee.id.toString(),
+        employeeName: `${employee.firstName} ${employee.lastName}`,
+        department: employee.department?.name || 'Operations',
+        shift: {
+          id: shiftType,
+          name,
+          startTime,
+          endTime,
+          workingDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+          graceMinutes: 15,
+          breakMinutes: 60,
+          color,
+        },
+        effectiveFrom: employee.createdAt ? employee.createdAt.toISOString() : new Date().toISOString(),
+      },
     });
   } catch (error) {
     console.error('Fetch shift error:', error);
@@ -1462,6 +1507,29 @@ export const fetchEmployeeWallet = async (
       where: { employeeId: employee.id },
     });
 
+    // Get latest payslip for upcoming salary info
+    const latestPayslip = await prisma.payslip.findFirst({
+      where: { employeeId: employee.id },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
+
+    const registeredSalary = salaryStructure
+      ? (salaryStructure.monthlySalary || salaryStructure.grossSalary || 0)
+      : 0;
+
+    let estimatedNetSalary = registeredSalary;
+    if (salaryStructure) {
+      const basic = salaryStructure.basicSalary || 0;
+      const gross = salaryStructure.monthlySalary || salaryStructure.grossSalary || 0;
+      const pf = salaryStructure.pfEnabled ? Math.round(basic * ((salaryStructure.employeePfRate || 12) / 100)) : 0;
+      const esic = salaryStructure.esicEnabled ? Math.round(gross * ((salaryStructure.employeeEsicRate || 0.75) / 100)) : 0;
+      estimatedNetSalary = Math.max(0, gross - (pf + esic));
+    }
+
+    const upcomingSalary = latestPayslip
+      ? latestPayslip.netSalary
+      : estimatedNetSalary;
+
     res.json({
       success: true,
       wallet: {
@@ -1471,6 +1539,10 @@ export const fetchEmployeeWallet = async (
         pendingClaims: wallet.pendingClaims,
         cardNumber: wallet.cardNumber,
         isActive: wallet.isActive,
+        registeredSalary,
+        upcomingSalary,
+        grossSalary: registeredSalary,
+        netSalary: upcomingSalary,
         transactions: wallet.transactions.map(tx => ({
           id: tx.id.toString(),
           title: tx.title,
