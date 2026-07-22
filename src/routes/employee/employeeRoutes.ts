@@ -30,6 +30,7 @@ import {
   requestSalaryAdvance,
   fetchBankDetails,
   updateBankDetails,
+  requestBankDetailsEdit,
 } from '../../controllers/employee/employeeController';
 
 const router = Router();
@@ -401,6 +402,7 @@ router.put('/notifications/read-all', markAllEmployeeNotificationsRead);
 router.get('/wallet', fetchEmployeeWallet);
 router.post('/wallet/advance', requestSalaryAdvance);
 router.get('/wallet/bank-details', fetchBankDetails);
+router.post('/wallet/bank-details/request', requestBankDetailsEdit);
 router.post('/wallet/bank-details', updateBankDetails);
 
 export default router;

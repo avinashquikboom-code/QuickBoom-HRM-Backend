@@ -148,6 +148,7 @@ model Employee {
   breaks           Break[]
   shiftRequests    ShiftRequest[]
   locationHistory  LocationHistory[]
+  bankEditRequests BankEditRequest[]
   branch           Branch?           @relation(fields: [branchId], references: [id])
   branchId         Int?
 
@@ -1020,4 +1021,20 @@ enum HrTaskStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
+}
+
+model BankEditRequest {
+  id            Int       @id @default(autoincrement())
+  employeeId    Int
+  bankName      String?
+  accountNumber String?
+  ifscCode      String?
+  accountType   String?
+  branchName    String?
+  reason        String?
+  status        String    @default("PENDING") // PENDING, APPROVED, REJECTED, COMPLETED
+  createdAt     DateTime  @default(now())
+  decidedAt     DateTime?
+  decidedBy     Int?
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }

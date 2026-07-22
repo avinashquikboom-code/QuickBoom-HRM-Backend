@@ -7492,3 +7492,132 @@ export const exportReport = async (
   }
 };
 
+export const fetchBankEditRequests = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const requests = await prisma.bankEditRequest.findMany({
+      include: {
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            bankName: true,
+            accountNumber: true,
+            ifscCode: true,
+            accountType: true,
+            branchName: true,
+            department: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      requests: requests.map((r) => ({
+        id: r.id,
+        employeeId: r.employeeId,
+        employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
+        employeeCode: r.employee.employeeCode,
+        department: r.employee.department?.name || 'Operations',
+        currentBank: {
+          bankName: r.employee.bankName,
+          accountNumber: r.employee.accountNumber,
+          ifscCode: r.employee.ifscCode,
+          accountType: r.employee.accountType,
+          branchName: r.employee.branchName,
+        },
+        requestedBank: {
+          bankName: r.bankName,
+          accountNumber: r.accountNumber,
+          ifscCode: r.ifscCode,
+          accountType: r.accountType,
+          branchName: r.branchName,
+        },
+        reason: r.reason,
+        status: r.status,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error('Fetch bank edit requests error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch bank edit requests.' });
+  }
+};
+
+export const handleBankEditRequestAction = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const paramId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const requestId = parseInt(paramId);
+    const { action } = req.body;
+
+    const editRequest = await prisma.bankEditRequest.findUnique({
+      where: { id: requestId },
+      include: { employee: true },
+    });
+
+    if (!editRequest) {
+      res.status(404).json({ success: false, message: 'Request not found.' });
+      return;
+    }
+
+    const newStatus = action === 'APPROVE' || action === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+
+    await prisma.bankEditRequest.update({
+      where: { id: requestId },
+      data: {
+        status: newStatus,
+        decidedAt: new Date(),
+        decidedBy: req.user?.id || null,
+      },
+    });
+
+    if (newStatus === 'APPROVED' && (editRequest.bankName || editRequest.accountNumber)) {
+      await prisma.employee.update({
+        where: { id: editRequest.employeeId },
+        data: {
+          ...(editRequest.bankName && { bankName: editRequest.bankName }),
+          ...(editRequest.accountNumber && { accountNumber: editRequest.accountNumber }),
+          ...(editRequest.ifscCode && { ifscCode: editRequest.ifscCode }),
+          ...(editRequest.accountType && { accountType: editRequest.accountType }),
+          ...(editRequest.branchName && { branchName: editRequest.branchName }),
+        },
+      });
+    }
+
+    try {
+      if (editRequest.employee.userId) {
+        const title = newStatus === 'APPROVED' ? 'Bank Edit Request Approved' : 'Bank Edit Request Rejected';
+        const body = newStatus === 'APPROVED'
+          ? 'HR has approved your request to update bank account details. You can now edit your bank details.'
+          : 'HR has rejected your request to update bank account details.';
+
+        await pushNotificationService.sendPush(
+          [editRequest.employee.userId],
+          title,
+          body,
+          { type: 'BANK_EDIT_DECISION', status: newStatus }
+        );
+      }
+    } catch (e) {
+      console.error('Failed to notify employee:', e);
+    }
+
+    res.json({
+      success: true,
+      message: `Bank edit request ${newStatus.toLowerCase()} successfully.`,
+    });
+  } catch (error) {
+    console.error('Handle bank edit request error:', error);
+    res.status(500).json({ success: false, message: 'Failed to process request.' });
+  }
+};
+

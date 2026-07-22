@@ -83,6 +83,8 @@ import {
   fetchLocationAlerts,
   fetchLocationHistory,
   exportReport,
+  fetchBankEditRequests,
+  handleBankEditRequestAction,
 } from '../controllers/adminController';
 import {
   fetchDesignations,
@@ -657,6 +659,10 @@ router.delete('/shifts/:id', deleteShift);
 router.post('/shifts/assign', assignShiftToEmployee);
 router.get('/shift-requests', fetchAdminShiftRequests);
 router.patch('/shift-requests/:id', decideShiftRequest);
+
+// Bank Edit Requests Management
+router.get('/bank-edit-requests', fetchBankEditRequests);
+router.post('/bank-edit-requests/:id/action', handleBankEditRequestAction);
 
 /**
  * @swagger
