@@ -734,6 +734,17 @@ model CommissionTransaction {
   payrollId         Int?
   paidAt            DateTime?
   notes             String?
+
+  // Customer & Sales Order Details
+  customerName      String?
+  customerPhone     String?
+  customerAddress   String?
+  customerGstin     String?
+  paymentMode       String?  @default("CASH") // CASH, UPI, CARD, NET_BANKING
+  sellerName        String?  @default("HopKid Retail Pvt Ltd")
+  sellerGstin       String?  @default("27AAACH2426J1Z8")
+  sellerAddress     String?  @default("Main Market Road, Mumbai, Maharashtra 400001")
+  items             Json?    // Array of [{ productId, productName, size, color, quantity, price, discount, hsnCode, gstRate, taxAmount, totalAmount }]
   
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -751,6 +762,46 @@ model CommissionTransaction {
   @@index([status])
   @@index([createdAt])
   @@index([payrollId])
+}
+
+// ─── Product Management ────────────────────────────────────────────────────────
+
+model Product {
+  id            Int      @id @default(autoincrement())
+  name          String
+  sku           String   @unique
+  description   String?
+  category      String?  @default("General")
+  brand         String?  @default("HopKid")
+  price         Float
+  mrp           Float?
+  costPrice     Float?
+  hsnCode       String?  @default("6204")
+  gstRate       Float    @default(18.0)
+  sizes         String[] // e.g., ["S", "M", "L", "XL"]
+  colors        String[] // e.g., ["Red", "Blue", "Black"]
+  imageUrl      String?
+  stockQuantity Int      @default(100)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([name])
+  @@index([category])
+}
+
+model ProductSize {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique // e.g. "XS", "S", "M", "L", "XL", "XXL", "28", "30", "32", "34", "36"
+  category  String?  @default("General")
+  createdAt DateTime @default(now())
+}
+
+model ProductColor {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique // e.g. "Red", "Blue", "Black", "White", "Navy Blue", "Olive"
+  hexCode   String?  @default("#000000")
+  createdAt DateTime @default(now())
 }
 
 model CommissionHistory {
