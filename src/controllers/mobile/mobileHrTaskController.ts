@@ -60,6 +60,22 @@ function buildFlutterTask(
   assigneeName: string,
   assignerName: string,
 ) {
+  let photoUrls: string[] = [];
+  if (t.photoUrl) {
+    try {
+      const parsed = JSON.parse(t.photoUrl);
+      if (Array.isArray(parsed)) {
+        photoUrls = parsed.filter((x): x is string => typeof x === 'string' && x.length > 0);
+      } else if (typeof t.photoUrl === 'string' && t.photoUrl.trim().length > 0) {
+        photoUrls = [t.photoUrl];
+      }
+    } catch {
+      if (typeof t.photoUrl === 'string' && t.photoUrl.trim().length > 0) {
+        photoUrls = [t.photoUrl];
+      }
+    }
+  }
+
   return {
     id: t.id,
     title: t.title,
@@ -73,7 +89,8 @@ function buildFlutterTask(
     status: toFlutterStatus(t.status, t.dueDate),
     priority: t.priority.toLowerCase(),
     requiresPhoto: Boolean(t.requiresPhoto),
-    photoUrl: t.photoUrl ?? null,
+    photoUrl: photoUrls.length > 0 ? photoUrls[0] : (t.photoUrl ?? null),
+    photoUrls: photoUrls,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };
@@ -88,25 +105,35 @@ export const getMyHrTasks = async (
   res: Response
 ): Promise<void> => {
   try {
+    const user = req.user!;
     const employee = await prisma.employee.findFirst({
-      where: { userId: req.user!.id },
+      where: {
+        OR: [
+          { userId: user.id },
+          ...(user.email ? [{ user: { email: user.email } }] : []),
+        ],
+      },
       select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true },
     });
 
-    if (!employee) {
-      res.json({ success: true, tasks: [] });
-      return;
+    const identifiers: string[] = [
+      String(user.id),
+      ...(user.email ? [user.email] : []),
+    ];
+
+    if (employee) {
+      if (employee.employeeID) identifiers.push(employee.employeeID);
+      if (employee.employeeCode) identifiers.push(employee.employeeCode);
+      if (employee.id) identifiers.push(String(employee.id));
+      const fullName = `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim();
+      if (fullName) identifiers.push(fullName);
     }
 
-    const identifiers = [
-      employee.employeeID,
-      employee.employeeCode,
-      String(employee.id),
-    ].filter((x): x is string => Boolean(x) && typeof x === 'string');
+    const uniqueIdentifiers = [...new Set(identifiers.filter((x): x is string => Boolean(x) && typeof x === 'string'))];
 
     const { status, priority } = req.query as Record<string, string>;
 
-    const where: any = { assignedTo: { in: identifiers } };
+    const where: any = { assignedTo: { in: uniqueIdentifiers } };
     if (status) {
       const mapped = fromFlutterStatus(status);
       if (mapped) where.status = mapped;
@@ -130,7 +157,7 @@ export const getMyHrTasks = async (
       assigners.map((u) => [u.id, (u as any).profile?.fullName || u.email])
     );
 
-    const myName = `${employee.firstName} ${employee.lastName}`.trim();
+    const myName = employee ? `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() : (user.email || `User #${user.id}`);
 
     res.json({
       success: true,
@@ -157,27 +184,41 @@ export const updateMyHrTask = async (
 ): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { status, photoUrl } = req.body as { status?: string; photoUrl?: string };
+    const { status, photoUrl, photoUrls } = req.body as {
+      status?: string;
+      photoUrl?: string | string[];
+      photoUrls?: string[];
+    };
 
     // Verify task belongs to this employee
+    const user = req.user!;
     const employee = await prisma.employee.findFirst({
-      where: { userId: req.user!.id },
+      where: {
+        OR: [
+          { userId: user.id },
+          ...(user.email ? [{ user: { email: user.email } }] : []),
+        ],
+      },
       select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true },
     });
 
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee record not found.' });
-      return;
+    const identifiers: string[] = [
+      String(user.id),
+      ...(user.email ? [user.email] : []),
+    ];
+
+    if (employee) {
+      if (employee.employeeID) identifiers.push(employee.employeeID);
+      if (employee.employeeCode) identifiers.push(employee.employeeCode);
+      if (employee.id) identifiers.push(String(employee.id));
+      const fullName = `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim();
+      if (fullName) identifiers.push(fullName);
     }
 
-    const identifiers = [
-      employee.employeeID,
-      employee.employeeCode,
-      String(employee.id),
-    ].filter((x): x is string => Boolean(x) && typeof x === 'string');
+    const uniqueIdentifiers = [...new Set(identifiers.filter((x): x is string => Boolean(x) && typeof x === 'string'))];
 
     const task = await prisma.hrTask.findFirst({
-      where: { id, assignedTo: { in: identifiers } },
+      where: { id, assignedTo: { in: uniqueIdentifiers } },
     });
 
     if (!task) {
@@ -192,7 +233,11 @@ export const updateMyHrTask = async (
     }
 
     const updateData: any = { status: newStatus, updatedAt: new Date() };
-    if (photoUrl) {
+    if (Array.isArray(photoUrls) && photoUrls.length > 0) {
+      updateData.photoUrl = JSON.stringify(photoUrls);
+    } else if (Array.isArray(photoUrl) && photoUrl.length > 0) {
+      updateData.photoUrl = JSON.stringify(photoUrl);
+    } else if (typeof photoUrl === 'string' && photoUrl.trim().length > 0) {
       updateData.photoUrl = photoUrl;
     }
 
@@ -214,7 +259,7 @@ export const updateMyHrTask = async (
     ]);
 
     const updated = await prisma.hrTask.findUnique({ where: { id } });
-    const myName = `${employee.firstName} ${employee.lastName}`.trim();
+    const myName = employee ? `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() : (user.email || `User #${user.id}`);
     const assignerName = await resolveUserName(task.assignedBy);
 
     res.json({
