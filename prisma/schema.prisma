@@ -284,6 +284,8 @@ model Task {
   dueDate      DateTime
   status       String   @default("TODO")
   priority     String   @default("MEDIUM")
+  requiresPhoto Boolean @default(false)
+  photoUrl     String?  @db.Text
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   assignedBy   User     @relation("AssignedByTasks", fields: [assignedById], references: [id], onDelete: Cascade)
@@ -980,17 +982,19 @@ model LocationHistory {
 // ─── HR Task Management ────────────────────────────────────────────────────────
 
 model HrTask {
-  id          String        @id @default(uuid())
-  title       String
-  description String?       @db.Text
-  assignedTo  String        // Employee.employeeID (HopKid GUID or local-* string)
-  assignedBy  Int           // User.id of HR creator
-  priority    HrPriority    @default(MEDIUM)
-  dueDate     DateTime?
-  status      HrTaskStatus  @default(PENDING)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  updates     HrTaskUpdate[]
+  id            String        @id @default(uuid())
+  title         String
+  description   String?       @db.Text
+  assignedTo    String        // Employee.employeeID (HopKid GUID or local-* string)
+  assignedBy    Int           // User.id of HR creator
+  priority      HrPriority    @default(MEDIUM)
+  dueDate       DateTime?
+  status        HrTaskStatus  @default(PENDING)
+  requiresPhoto Boolean       @default(false)
+  photoUrl      String?       @db.Text
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  updates       HrTaskUpdate[]
 
   @@index([assignedTo])
   @@index([status])

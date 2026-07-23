@@ -72,6 +72,8 @@ function buildFlutterTask(
     dueDate: t.dueDate?.toISOString() ?? null,
     status: toFlutterStatus(t.status, t.dueDate),
     priority: t.priority.toLowerCase(),
+    requiresPhoto: Boolean(t.requiresPhoto),
+    photoUrl: t.photoUrl ?? null,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };
@@ -149,7 +151,7 @@ export const updateMyHrTask = async (
 ): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { status } = req.body as { status?: string };
+    const { status, photoUrl } = req.body as { status?: string; photoUrl?: string };
 
     // Verify task belongs to this employee
     const employee = await prisma.employee.findFirst({
@@ -177,11 +179,16 @@ export const updateMyHrTask = async (
       return;
     }
 
+    const updateData: any = { status: newStatus, updatedAt: new Date() };
+    if (photoUrl) {
+      updateData.photoUrl = photoUrl;
+    }
+
     // Write audit row + update in transaction
     await prisma.$transaction([
       prisma.hrTask.update({
         where: { id },
-        data: { status: newStatus, updatedAt: new Date() },
+        data: updateData,
       }),
       prisma.hrTaskUpdate.create({
         data: {
@@ -289,6 +296,7 @@ export const createHrTaskMobile = async (
       projectName,
       dueDate,
       priority,
+      requiresPhoto,
     } = req.body as {
       title: string;
       description?: string;
@@ -297,6 +305,7 @@ export const createHrTaskMobile = async (
       projectName?: string;
       dueDate?: string;
       priority?: string;
+      requiresPhoto?: boolean;
     };
 
     if (!title || !assignedToId) {
@@ -328,6 +337,7 @@ export const createHrTaskMobile = async (
           priority: fromFlutterPriority(priority),
           dueDate: dueDate ? new Date(dueDate) : null,
           status: HrTaskStatus.PENDING,
+          requiresPhoto: Boolean(requiresPhoto),
           updates: {
             create: {
               byUserId: req.user!.id,

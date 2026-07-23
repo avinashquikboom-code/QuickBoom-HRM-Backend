@@ -81,12 +81,16 @@ export const createTask = async (
       assignedTo,
       priority,
       dueDate,
+      requiresPhoto,
+      photoUrl,
     } = req.body as {
       title: string;
       description?: string;
       assignedTo: string;
       priority?: string;
       dueDate?: string;
+      requiresPhoto?: boolean;
+      photoUrl?: string;
     };
 
     if (!title || !assignedTo) {
@@ -122,6 +126,8 @@ export const createTask = async (
           priority: priorityEnum,
           dueDate: dueDate ? new Date(dueDate) : null,
           status: HrTaskStatus.PENDING,
+          requiresPhoto: Boolean(requiresPhoto),
+          photoUrl: photoUrl ?? null,
           updates: {
             create: {
               byUserId: req.user!.id,
@@ -286,10 +292,35 @@ export const getTask = async (
   try {
     const id = req.params.id as string;
 
-    const task = await prisma.hrTask.findUnique({
+    let task: any = await prisma.hrTask.findUnique({
       where: { id },
       include: { updates: { orderBy: { at: 'asc' } } },
     });
+
+    if (!task && !isNaN(Number(id))) {
+      // Fallback to legacy Task table if ID is numeric
+      const legacyTask = await prisma.task.findUnique({
+        where: { id: Number(id) },
+        include: { assignedTo: true, assignedBy: true },
+      });
+      if (legacyTask) {
+        task = {
+          id: String(legacyTask.id),
+          title: legacyTask.title,
+          description: legacyTask.description,
+          assignedTo: legacyTask.assignedTo.employeeID ?? String(legacyTask.assignedToId),
+          assignedBy: legacyTask.assignedById,
+          priority: legacyTask.priority as any,
+          dueDate: legacyTask.dueDate,
+          status: legacyTask.status as any,
+          requiresPhoto: (legacyTask as any).requiresPhoto ?? false,
+          photoUrl: (legacyTask as any).photoUrl ?? null,
+          createdAt: legacyTask.createdAt,
+          updatedAt: legacyTask.updatedAt,
+          updates: [],
+        };
+      }
+    }
 
     if (!task) {
       res.status(404).json({ success: false, message: 'Task not found.' });
@@ -374,6 +405,8 @@ export const updateTask = async (
       dueDate,
       status,
       comment,
+      requiresPhoto,
+      photoUrl,
     } = req.body as {
       title?: string;
       description?: string;
@@ -382,6 +415,8 @@ export const updateTask = async (
       dueDate?: string | null;
       status?: string;
       comment?: string;
+      requiresPhoto?: boolean;
+      photoUrl?: string | null;
     };
 
     const existing = await prisma.hrTask.findUnique({ where: { id: id } });
@@ -430,6 +465,8 @@ export const updateTask = async (
     if (priority !== undefined) updateData.priority = priorityEnum;
     if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
     if (statusChanged) updateData.status = statusEnum;
+    if (requiresPhoto !== undefined) updateData.requiresPhoto = Boolean(requiresPhoto);
+    if (photoUrl !== undefined) updateData.photoUrl = photoUrl;
 
     // If status changed, write audit row in transaction
     if (statusChanged) {
