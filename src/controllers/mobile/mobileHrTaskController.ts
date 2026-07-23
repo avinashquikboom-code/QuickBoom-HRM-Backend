@@ -90,17 +90,23 @@ export const getMyHrTasks = async (
   try {
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user!.id },
-      select: { employeeID: true, firstName: true, lastName: true },
+      select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true },
     });
 
-    if (!employee?.employeeID) {
+    if (!employee) {
       res.json({ success: true, tasks: [] });
       return;
     }
 
+    const identifiers = [
+      employee.employeeID,
+      employee.employeeCode,
+      String(employee.id),
+    ].filter((x): x is string => Boolean(x) && typeof x === 'string');
+
     const { status, priority } = req.query as Record<string, string>;
 
-    const where: any = { assignedTo: employee.employeeID };
+    const where: any = { assignedTo: { in: identifiers } };
     if (status) {
       const mapped = fromFlutterStatus(status);
       if (mapped) where.status = mapped;
@@ -156,16 +162,22 @@ export const updateMyHrTask = async (
     // Verify task belongs to this employee
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user!.id },
-      select: { employeeID: true, firstName: true, lastName: true },
+      select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true },
     });
 
-    if (!employee?.employeeID) {
+    if (!employee) {
       res.status(404).json({ success: false, message: 'Employee record not found.' });
       return;
     }
 
+    const identifiers = [
+      employee.employeeID,
+      employee.employeeCode,
+      String(employee.id),
+    ].filter((x): x is string => Boolean(x) && typeof x === 'string');
+
     const task = await prisma.hrTask.findFirst({
-      where: { id, assignedTo: employee.employeeID },
+      where: { id, assignedTo: { in: identifiers } },
     });
 
     if (!task) {
@@ -383,7 +395,11 @@ export const createHrTaskMobile = async (
       }).catch(() => {});
 
       pushNotificationService
-        .sendPush([emp.userId], '📋 New Task Assigned', `You have been assigned: ${task.title}`, {})
+        .sendPush([emp.userId], '📋 New Task Assigned', `You have been assigned: ${task.title}`, {
+          type: 'task',
+          screen: 'tasks',
+          actionType: 'TASK_ASSIGNED',
+        })
         .catch(() => {});
     }
 

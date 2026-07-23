@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { pushNotificationService } from '../../services/pushNotificationService';
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import leaveBalanceService from '../../services/leaveBalanceService';
@@ -393,7 +393,13 @@ export const downloadLeaveReport = async (
     const { employeeId, startDate, endDate } = req.query;
 
     // Check if user is HR or Admin
-    if (req.user?.role !== 'HR' && req.user?.role !== 'SUPER_ADMIN') {
+    if (
+      req.user?.role !== Role.HR &&
+      req.user?.role !== Role.ADMIN &&
+      req.user?.role !== Role.SUPER_ADMIN &&
+      req.user?.role !== Role.PLATFORM_ADMIN &&
+      req.user?.role !== Role.STORE_MANAGER
+    ) {
       res.status(403).json({ success: false, message: 'Access denied' });
       return;
     }

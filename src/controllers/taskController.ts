@@ -17,15 +17,22 @@ function isOverdue(task: { dueDate: Date | null; status: HrTaskStatus }): boolea
   );
 }
 
-/** Fire-and-forget FCM to the user linked to a given Employee.employeeID */
+/** Fire-and-forget FCM to the user linked to a given Employee identifier */
 async function notifyEmployee(
   employeeId: string,
   title: string,
   body: string
 ): Promise<void> {
   try {
+    const isNum = !isNaN(Number(employeeId));
     const employee = await prisma.employee.findFirst({
-      where: { employeeID: employeeId },
+      where: {
+        OR: [
+          { employeeID: employeeId },
+          { employeeCode: employeeId },
+          ...(isNum ? [{ id: Number(employeeId) }] : []),
+        ],
+      },
       select: { userId: true },
     });
     if (!employee?.userId) return;
@@ -42,7 +49,11 @@ async function notifyEmployee(
     }).catch(() => {});
 
     // Send push notification
-    pushNotificationService.sendPush([employee.userId], title, body, {}).catch(() => {});
+    pushNotificationService.sendPush([employee.userId], title, body, {
+      type: 'task',
+      screen: 'tasks',
+      actionType: 'TASK_ASSIGNED',
+    }).catch(() => {});
   } catch {
     // fire-and-forget — never throw
   }

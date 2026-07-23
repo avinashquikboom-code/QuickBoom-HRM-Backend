@@ -1816,11 +1816,17 @@ export const fetchAllEmployeesAttendance = async (
 ): Promise<void> => {
   const { from, to, limit = '50', page = '1', employeeId, departmentId, officeId } = req.query;
 
-  // Only HR, ADMIN, and SUPER_ADMIN can access this
-  if (req.user?.role !== Role.HR && req.user?.role !== Role.ADMIN && req.user?.role !== Role.SUPER_ADMIN) {
+  // Only HR, ADMIN, SUPER_ADMIN, PLATFORM_ADMIN, and STORE_MANAGER can access this
+  if (
+    req.user?.role !== Role.HR &&
+    req.user?.role !== Role.ADMIN &&
+    req.user?.role !== Role.SUPER_ADMIN &&
+    req.user?.role !== Role.PLATFORM_ADMIN &&
+    req.user?.role !== Role.STORE_MANAGER
+  ) {
     res.status(403).json({
       success: false,
-      message: 'Access denied. HR, Admin, and Super Admin only.',
+      message: 'Access denied. HR, Admin, and Store Managers only.',
       errorCode: 'ACCESS_DENIED'
     });
     return;
