@@ -1277,12 +1277,30 @@ export const fetchEmployeeDashboardStats = async (
     const sickUsed = getUsedDays('SICK');
     const earnedUsed = getUsedDays('EARNED');
 
-    // D. Tasks statistics
-    const totalTasks = await prisma.task.findMany({
-      where: { assignedToId: employee.id },
-    });
-    const completedTasksCount = totalTasks.filter((t) => t.status === 'COMPLETED').length;
-    const pendingTasksCount = totalTasks.filter((t) => t.status !== 'COMPLETED').length;
+    // D. Tasks statistics (combine legacy Task and HrTask)
+    const identifiers: string[] = [
+      String(employee.id),
+      ...(employee.employeeID ? [employee.employeeID] : []),
+      ...(employee.employeeCode ? [employee.employeeCode] : []),
+      ...(req.user?.id ? [String(req.user.id)] : []),
+      ...(req.user?.email ? [req.user.email] : []),
+    ];
+    const uniqueIdentifiers = [...new Set(identifiers)];
+
+    const [legacyTasksList, hrTasksList] = await Promise.all([
+      prisma.task.findMany({
+        where: { assignedToId: employee.id },
+      }),
+      prisma.hrTask.findMany({
+        where: { assignedTo: { in: uniqueIdentifiers } },
+      }),
+    ]);
+
+    const totalTaskCount = legacyTasksList.length + hrTasksList.length;
+    const completedLegacy = legacyTasksList.filter((t) => t.status === 'COMPLETED').length;
+    const completedHr = hrTasksList.filter((t) => t.status === 'COMPLETED').length;
+    const completedTasksCount = completedLegacy + completedHr;
+    const pendingTasksCount = totalTaskCount - completedTasksCount;
 
     // E. Fetch recent announcements
     const announcements = await prisma.announcement.findMany({
@@ -1294,7 +1312,7 @@ export const fetchEmployeeDashboardStats = async (
       success: true,
       stats: {
         tasks: {
-          total: totalTasks.length,
+          total: totalTaskCount,
           completed: completedTasksCount,
           pending: pendingTasksCount,
         },

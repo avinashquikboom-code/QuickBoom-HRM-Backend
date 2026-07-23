@@ -124,6 +124,8 @@ export const createTask = async (
           { employeeID: assignedTo },
           { employeeCode: assignedTo },
           ...(isNum ? [{ id: Number(assignedTo) }] : []),
+          ...(isNum ? [{ userId: Number(assignedTo) }] : []),
+          { user: { email: assignedTo } },
         ],
       },
     });

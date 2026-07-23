@@ -10,11 +10,12 @@ import { pushNotificationService } from '../../services/pushNotificationService'
  * Map HrTask status (backend enum) → Flutter-expected status strings.
  * Flutter parser recognises: 'todo' | 'inprogress' | 'completed' | 'overdue'
  */
-function toFlutterStatus(status: HrTaskStatus, dueDate: Date | null): string {
-  if (status === HrTaskStatus.COMPLETED) return 'completed';
-  if (status === HrTaskStatus.CANCELLED) return 'overdue';   // treat cancelled as overdue-style visually
-  if (status === HrTaskStatus.IN_PROGRESS) return 'inprogress';
-  // PENDING — check overdue
+function toFlutterStatus(status: HrTaskStatus | string, dueDate: Date | null): string {
+  const s = String(status).toUpperCase();
+  if (s === 'COMPLETED') return 'completed';
+  if (s === 'CANCELLED') return 'overdue';
+  if (s === 'IN_PROGRESS' || s === 'INPROGRESS') return 'inprogress';
+  // PENDING / TODO — check overdue
   if (dueDate && dueDate < new Date()) return 'overdue';
   return 'todo';
 }
@@ -36,11 +37,20 @@ function fromFlutterPriority(p: string | undefined): HrPriority {
 function fromFlutterStatus(s: string | undefined): HrTaskStatus | null {
   if (!s) return null;
   switch (s.toLowerCase()) {
-    case 'todo':        return HrTaskStatus.PENDING;
-    case 'inprogress':  return HrTaskStatus.IN_PROGRESS;
-    case 'completed':   return HrTaskStatus.COMPLETED;
-    case 'overdue':     return HrTaskStatus.PENDING; // can't set overdue directly
-    default:            return null;
+    case 'todo':
+    case 'pending':
+      return HrTaskStatus.PENDING;
+    case 'inprogress':
+    case 'in_progress':
+      return HrTaskStatus.IN_PROGRESS;
+    case 'completed':
+    case 'done':
+      return HrTaskStatus.COMPLETED;
+    case 'overdue':
+    case 'cancelled':
+      return HrTaskStatus.PENDING;
+    default:
+      return null;
   }
 }
 
@@ -77,28 +87,28 @@ function buildFlutterTask(
   }
 
   return {
-    id: t.id,
+    id: String(t.id),
     title: t.title,
     description: t.description ?? '',
-    assignedToId: t.assignedTo,
+    assignedToId: String(t.assignedTo ?? t.assignedToId ?? ''),
     assignedToName: assigneeName,
-    assignedById: String(t.assignedBy),
+    assignedById: String(t.assignedBy ?? t.assignedById ?? ''),
     assignedByName: assignerName,
-    projectName: '',              // HrTask has no projectName — send empty string so Flutter doesn't crash
-    dueDate: t.dueDate?.toISOString() ?? null,
-    status: toFlutterStatus(t.status, t.dueDate),
-    priority: t.priority.toLowerCase(),
+    projectName: t.projectName ?? 'General',
+    dueDate: t.dueDate ? new Date(t.dueDate).toISOString() : null,
+    status: toFlutterStatus(t.status, t.dueDate ? new Date(t.dueDate) : null),
+    priority: String(t.priority ?? 'MEDIUM').toLowerCase(),
     requiresPhoto: Boolean(t.requiresPhoto),
     photoUrl: photoUrls.length > 0 ? photoUrls[0] : (t.photoUrl ?? null),
     photoUrls: photoUrls,
-    createdAt: t.createdAt.toISOString(),
-    updatedAt: t.updatedAt.toISOString(),
+    createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString(),
+    updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : new Date().toISOString(),
   };
 }
 
 // ─── GET /api/employee/tasks ───────────────────────────────────────────────────
-// Employee sees their own assigned HrTasks.
-// Auth: any authenticated mobile user (their Employee.employeeID is used as filter)
+// Employee sees their own assigned tasks (both HrTask and legacy Task).
+// Auth: any authenticated mobile user
 
 export const getMyHrTasks = async (
   req: AuthenticatedRequest,
@@ -133,22 +143,65 @@ export const getMyHrTasks = async (
 
     const { status, priority } = req.query as Record<string, string>;
 
-    const where: any = { assignedTo: { in: uniqueIdentifiers } };
+    const hrWhere: any = { assignedTo: { in: uniqueIdentifiers } };
     if (status) {
       const mapped = fromFlutterStatus(status);
-      if (mapped) where.status = mapped;
+      if (mapped) hrWhere.status = mapped;
     }
     if (priority) {
-      where.priority = fromFlutterPriority(priority);
+      hrWhere.priority = fromFlutterPriority(priority);
     }
 
-    const tasks = await prisma.hrTask.findMany({
-      where,
+    // Fetch HrTasks
+    const hrTasks = await prisma.hrTask.findMany({
+      where: hrWhere,
       orderBy: { createdAt: 'desc' },
     });
 
-    // Resolve assigner names in bulk
-    const assignerIds = [...new Set(tasks.map((t) => t.assignedBy))];
+    // Fetch legacy Tasks if employee exists
+    let legacyTasks: any[] = [];
+    if (employee) {
+      const legacyWhere: any = {
+        OR: [
+          { assignedToId: employee.id },
+          ...(user ? [{ assignedById: user.id }] : []),
+        ],
+      };
+      if (status) {
+        const sLower = status.toLowerCase();
+        if (sLower === 'completed') legacyWhere.status = 'COMPLETED';
+        else if (sLower === 'inprogress') legacyWhere.status = 'IN_PROGRESS';
+        else if (sLower === 'todo') legacyWhere.status = 'TODO';
+      }
+      if (priority) {
+        legacyWhere.priority = priority.toUpperCase();
+      }
+
+      legacyTasks = await prisma.task.findMany({
+        where: legacyWhere,
+        include: {
+          assignedBy: {
+            select: {
+              id: true,
+              email: true,
+              profile: { select: { fullName: true } },
+            },
+          },
+          assignedTo: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    // Resolve assigner names in bulk for HrTasks
+    const assignerIds = [...new Set(hrTasks.map((t) => t.assignedBy))];
     const assigners = await prisma.user.findMany({
       where: { id: { in: assignerIds } },
       select: { id: true, email: true, profile: { select: { fullName: true } } },
@@ -159,15 +212,34 @@ export const getMyHrTasks = async (
 
     const myName = employee ? `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() : (user.email || `User #${user.id}`);
 
+    const formattedHrTasks = hrTasks.map((t) =>
+      buildFlutterTask(
+        t,
+        myName,
+        assignerMap.get(t.assignedBy) ?? `User #${t.assignedBy}`,
+      )
+    );
+
+    const formattedLegacyTasks = legacyTasks.map((t) =>
+      buildFlutterTask(
+        t,
+        t.assignedTo ? `${t.assignedTo.firstName ?? ''} ${t.assignedTo.lastName ?? ''}`.trim() : myName,
+        t.assignedBy?.profile?.fullName || t.assignedBy?.email || `User #${t.assignedById}`,
+      )
+    );
+
+    // Merge and sort by createdAt descending
+    const allTasksMap = new Map<string, any>();
+    formattedHrTasks.forEach((t) => allTasksMap.set(`hr-${t.id}`, t));
+    formattedLegacyTasks.forEach((t) => allTasksMap.set(`legacy-${t.id}`, t));
+
+    const allTasks = Array.from(allTasksMap.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
     res.json({
       success: true,
-      tasks: tasks.map((t) =>
-        buildFlutterTask(
-          t,
-          myName,
-          assignerMap.get(t.assignedBy) ?? `User #${t.assignedBy}`,
-        )
-      ),
+      tasks: allTasks,
     });
   } catch (error) {
     console.error('[mobileHrTaskController.getMyHrTasks]', error);
@@ -184,13 +256,13 @@ export const updateMyHrTask = async (
 ): Promise<void> => {
   try {
     const id = req.params.id as string;
-    const { status, photoUrl, photoUrls } = req.body as {
+    const { status, comment, photoUrl, photoUrls } = req.body as {
       status?: string;
+      comment?: string;
       photoUrl?: string | string[];
       photoUrls?: string[];
     };
 
-    // Verify task belongs to this employee
     const user = req.user!;
     const employee = await prisma.employee.findFirst({
       where: {
@@ -217,56 +289,108 @@ export const updateMyHrTask = async (
 
     const uniqueIdentifiers = [...new Set(identifiers.filter((x): x is string => Boolean(x) && typeof x === 'string'))];
 
-    const task = await prisma.hrTask.findFirst({
+    // Try finding in HrTask first
+    const hrTask = await prisma.hrTask.findFirst({
       where: { id, assignedTo: { in: uniqueIdentifiers } },
     });
 
-    if (!task) {
-      res.status(404).json({ success: false, message: 'Task not found.' });
+    if (hrTask) {
+      const newStatus = fromFlutterStatus(status);
+      if (!newStatus) {
+        res.status(400).json({ success: false, message: 'Invalid status value.' });
+        return;
+      }
+
+      const updateData: any = { status: newStatus, updatedAt: new Date() };
+      if (Array.isArray(photoUrls) && photoUrls.length > 0) {
+        updateData.photoUrl = JSON.stringify(photoUrls);
+      } else if (Array.isArray(photoUrl) && photoUrl.length > 0) {
+        updateData.photoUrl = JSON.stringify(photoUrl);
+      } else if (typeof photoUrl === 'string' && photoUrl.trim().length > 0) {
+        updateData.photoUrl = photoUrl;
+      }
+
+      await prisma.$transaction([
+        prisma.hrTask.update({
+          where: { id },
+          data: updateData,
+        }),
+        prisma.hrTaskUpdate.create({
+          data: {
+            taskId: id,
+            byUserId: req.user!.id,
+            oldStatus: hrTask.status,
+            newStatus,
+            comment: comment || 'Updated via mobile app.',
+          },
+        }),
+      ]);
+
+      const updated = await prisma.hrTask.findUnique({ where: { id } });
+      const myName = employee ? `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() : (user.email || `User #${user.id}`);
+      const assignerName = await resolveUserName(hrTask.assignedBy);
+
+      res.json({
+        success: true,
+        message: 'Task updated successfully.',
+        data: buildFlutterTask(updated!, myName, assignerName),
+      });
       return;
     }
 
-    const newStatus = fromFlutterStatus(status);
-    if (!newStatus) {
-      res.status(400).json({ success: false, message: 'Invalid status value.' });
-      return;
-    }
-
-    const updateData: any = { status: newStatus, updatedAt: new Date() };
-    if (Array.isArray(photoUrls) && photoUrls.length > 0) {
-      updateData.photoUrl = JSON.stringify(photoUrls);
-    } else if (Array.isArray(photoUrl) && photoUrl.length > 0) {
-      updateData.photoUrl = JSON.stringify(photoUrl);
-    } else if (typeof photoUrl === 'string' && photoUrl.trim().length > 0) {
-      updateData.photoUrl = photoUrl;
-    }
-
-    // Write audit row + update in transaction
-    await prisma.$transaction([
-      prisma.hrTask.update({
-        where: { id },
-        data: updateData,
-      }),
-      prisma.hrTaskUpdate.create({
-        data: {
-          taskId: id,
-          byUserId: req.user!.id,
-          oldStatus: task.status,
-          newStatus,
-          comment: 'Updated via mobile app.',
+    // Fallback to legacy Task table if numeric ID
+    const isNum = !isNaN(Number(id));
+    if (isNum && employee) {
+      const legacyTask = await prisma.task.findFirst({
+        where: { id: Number(id), assignedToId: employee.id },
+        include: {
+          assignedBy: {
+            select: { id: true, email: true, profile: { select: { fullName: true } } },
+          },
+          assignedTo: true,
         },
-      }),
-    ]);
+      });
 
-    const updated = await prisma.hrTask.findUnique({ where: { id } });
-    const myName = employee ? `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() : (user.email || `User #${user.id}`);
-    const assignerName = await resolveUserName(task.assignedBy);
+      if (legacyTask) {
+        let legacyStatus = legacyTask.status;
+        if (status) {
+          const sLower = status.toLowerCase();
+          if (sLower === 'completed' || sLower === 'done') legacyStatus = 'COMPLETED';
+          else if (sLower === 'inprogress' || sLower === 'in_progress') legacyStatus = 'IN_PROGRESS';
+          else if (sLower === 'todo' || sLower === 'pending') legacyStatus = 'TODO';
+        }
 
-    res.json({
-      success: true,
-      message: 'Task updated successfully.',
-      data: buildFlutterTask(updated!, myName, assignerName),
-    });
+        const updateData: any = { status: legacyStatus, updatedAt: new Date() };
+        if (Array.isArray(photoUrls) && photoUrls.length > 0) {
+          updateData.photoUrl = JSON.stringify(photoUrls);
+        } else if (typeof photoUrl === 'string' && photoUrl.trim().length > 0) {
+          updateData.photoUrl = photoUrl;
+        }
+
+        const updated = await prisma.task.update({
+          where: { id: Number(id) },
+          data: updateData,
+          include: {
+            assignedBy: {
+              select: { id: true, email: true, profile: { select: { fullName: true } } },
+            },
+            assignedTo: true,
+          },
+        });
+
+        const myName = `${updated.assignedTo.firstName ?? ''} ${updated.assignedTo.lastName ?? ''}`.trim();
+        const assignerName = updated.assignedBy?.profile?.fullName || updated.assignedBy?.email || `User #${updated.assignedById}`;
+
+        res.json({
+          success: true,
+          message: 'Task updated successfully.',
+          data: buildFlutterTask(updated, myName, assignerName),
+        });
+        return;
+      }
+    }
+
+    res.status(404).json({ success: false, message: 'Task not found.' });
   } catch (error) {
     console.error('[mobileHrTaskController.updateMyHrTask]', error);
     res.status(500).json({ success: false, message: 'Failed to update task.' });
@@ -283,26 +407,35 @@ export const getHrTasksMobile = async (
   try {
     const { status, priority, assignedTo } = req.query as Record<string, string>;
 
-    const where: any = {};
-    if (assignedTo) where.assignedTo = assignedTo;
+    const hrWhere: any = {};
+    if (assignedTo) hrWhere.assignedTo = assignedTo;
     if (status) {
       const mapped = fromFlutterStatus(status);
-      if (mapped) where.status = mapped;
+      if (mapped) hrWhere.status = mapped;
     }
-    if (priority) where.priority = fromFlutterPriority(priority);
+    if (priority) hrWhere.priority = fromFlutterPriority(priority);
 
     const tasks = await prisma.hrTask.findMany({
-      where,
+      where: hrWhere,
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
 
-    if (!tasks.length) {
-      res.json({ success: true, tasks: [] });
-      return;
-    }
+    // Also fetch from legacy Task model
+    const legacyTasks = await prisma.task.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        assignedBy: {
+          select: { id: true, email: true, profile: { select: { fullName: true } } },
+        },
+        assignedTo: {
+          select: { id: true, employeeCode: true, firstName: true, lastName: true, employeeID: true },
+        },
+      },
+    });
 
-    // Resolve employee names
+    // Resolve employee names for HrTasks
     const assigneeIds = [...new Set(tasks.map((t) => t.assignedTo))];
     const numIds = assigneeIds.map(Number).filter((n) => !isNaN(n));
     const employees = await prisma.employee.findMany({
@@ -332,15 +465,33 @@ export const getHrTasksMobile = async (
       assigners.map((u) => [u.id, (u as any).profile?.fullName || u.email])
     );
 
+    const formattedHrTasks = tasks.map((t) =>
+      buildFlutterTask(
+        t,
+        empMap.get(t.assignedTo) ?? t.assignedTo,
+        assignerMap.get(t.assignedBy) ?? `User #${t.assignedBy}`,
+      )
+    );
+
+    const formattedLegacyTasks = legacyTasks.map((t) =>
+      buildFlutterTask(
+        t,
+        t.assignedTo ? `${t.assignedTo.firstName ?? ''} ${t.assignedTo.lastName ?? ''}`.trim() : `Employee #${t.assignedToId}`,
+        t.assignedBy?.profile?.fullName || t.assignedBy?.email || `User #${t.assignedById}`,
+      )
+    );
+
+    const allTasksMap = new Map<string, any>();
+    formattedHrTasks.forEach((t) => allTasksMap.set(`hr-${t.id}`, t));
+    formattedLegacyTasks.forEach((t) => allTasksMap.set(`legacy-${t.id}`, t));
+
+    const combinedTasks = Array.from(allTasksMap.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
     res.json({
       success: true,
-      tasks: tasks.map((t) =>
-        buildFlutterTask(
-          t,
-          empMap.get(t.assignedTo) ?? t.assignedTo,
-          assignerMap.get(t.assignedBy) ?? `User #${t.assignedBy}`,
-        )
-      ),
+      tasks: combinedTasks,
     });
   } catch (error) {
     console.error('[mobileHrTaskController.getHrTasksMobile]', error);
@@ -381,7 +532,7 @@ export const createHrTaskMobile = async (
       return;
     }
 
-    // Validate employee exists by employeeID, employeeCode, or id
+    // Validate employee exists by employeeID, employeeCode, id, userId, or user email
     const isNum = !isNaN(Number(assignedToId));
     const emp = await prisma.employee.findFirst({
       where: {
@@ -389,6 +540,8 @@ export const createHrTaskMobile = async (
           { employeeID: assignedToId },
           { employeeCode: assignedToId },
           ...(isNum ? [{ id: Number(assignedToId) }] : []),
+          ...(isNum ? [{ userId: Number(assignedToId) }] : []),
+          { user: { email: assignedToId } },
         ],
       },
       select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true, userId: true },
@@ -461,3 +614,4 @@ export const createHrTaskMobile = async (
     res.status(500).json({ success: false, message: 'Failed to create task.' });
   }
 };
+
