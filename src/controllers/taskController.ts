@@ -184,6 +184,27 @@ export const createTask = async (
   }
 };
 
+function parsePhotoUrls(photoUrlStr: string | null | undefined): { photoUrl: string | null; photoUrls: string[] } {
+  if (!photoUrlStr) return { photoUrl: null, photoUrls: [] };
+  let photoUrls: string[] = [];
+  try {
+    const parsed = JSON.parse(photoUrlStr);
+    if (Array.isArray(parsed)) {
+      photoUrls = parsed.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    } else if (typeof photoUrlStr === 'string' && photoUrlStr.trim().length > 0) {
+      photoUrls = [photoUrlStr];
+    }
+  } catch {
+    if (typeof photoUrlStr === 'string' && photoUrlStr.trim().length > 0) {
+      photoUrls = [photoUrlStr];
+    }
+  }
+  return {
+    photoUrl: photoUrls.length > 0 ? photoUrls[0] : photoUrlStr,
+    photoUrls,
+  };
+}
+
 // ─── GET /api/tasks ────────────────────────────────────────────────────────────
 
 export const listTasks = async (
@@ -283,11 +304,16 @@ export const listTasks = async (
       });
     }
 
-    const rows = tasks.map((t) => ({
-      ...t,
-      assigneeName: (t.assignedTo ? empMap.get(t.assignedTo) : null) ?? t.assignedTo ?? 'Unassigned',
-      overdue: isOverdue(t),
-    }));
+    const rows = tasks.map((t) => {
+      const photos = parsePhotoUrls(t.photoUrl);
+      return {
+        ...t,
+        photoUrl: photos.photoUrl,
+        photoUrls: photos.photoUrls,
+        assigneeName: (t.assignedTo ? empMap.get(t.assignedTo) : null) ?? t.assignedTo ?? 'Unassigned',
+        overdue: isOverdue(t),
+      };
+    });
 
     res.json({
       success: true,
@@ -394,11 +420,14 @@ export const getTask = async (
 
     const assigneeName = await resolveAssigneeName(task.assignedTo);
     const assignerName = await resolveActorName(task.assignedBy);
+    const photos = parsePhotoUrls(task.photoUrl);
 
     res.json({
       success: true,
       data: {
         ...task,
+        photoUrl: photos.photoUrl,
+        photoUrls: photos.photoUrls,
         assigneeName,
         assignerName,
         overdue: isOverdue(task),
