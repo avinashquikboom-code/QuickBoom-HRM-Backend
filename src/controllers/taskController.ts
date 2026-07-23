@@ -48,10 +48,17 @@ async function notifyEmployee(
   }
 }
 
-/** Resolve display name from Employee record for a given employeeID string */
+/** Resolve display name from Employee record for a given employeeID/code/id string */
 async function resolveAssigneeName(employeeId: string): Promise<string> {
+  const isNum = !isNaN(Number(employeeId));
   const emp = await prisma.employee.findFirst({
-    where: { employeeID: employeeId },
+    where: {
+      OR: [
+        { employeeID: employeeId },
+        { employeeCode: employeeId },
+        ...(isNum ? [{ id: Number(employeeId) }] : []),
+      ],
+    },
     select: { firstName: true, lastName: true, employeeCode: true },
   });
   if (!emp) return employeeId;
@@ -98,17 +105,26 @@ export const createTask = async (
       return;
     }
 
-    // Validate employee exists
+    // Validate employee exists by employeeID, employeeCode, or id
+    const isNum = !isNaN(Number(assignedTo));
     const emp = await prisma.employee.findFirst({
-      where: { employeeID: assignedTo },
+      where: {
+        OR: [
+          { employeeID: assignedTo },
+          { employeeCode: assignedTo },
+          ...(isNum ? [{ id: Number(assignedTo) }] : []),
+        ],
+      },
     });
     if (!emp) {
       res.status(404).json({
         success: false,
-        message: `No employee found with employeeID "${assignedTo}".`,
+        message: `No employee found matching "${assignedTo}".`,
       });
       return;
     }
+
+    const resolvedAssignedTo = emp.employeeID || emp.employeeCode || String(emp.id);
 
     // Resolve priority enum
     const priorityEnum: HrPriority =
@@ -121,7 +137,7 @@ export const createTask = async (
         data: {
           title: title.trim(),
           description: description?.trim(),
-          assignedTo,
+          assignedTo: resolvedAssignedTo,
           assignedBy: req.user!.id,
           priority: priorityEnum,
           dueDate: dueDate ? new Date(dueDate) : null,

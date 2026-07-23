@@ -247,13 +247,24 @@ export const getHrTasksMobile = async (
 
     // Resolve employee names
     const assigneeIds = [...new Set(tasks.map((t) => t.assignedTo))];
+    const numIds = assigneeIds.map(Number).filter((n) => !isNaN(n));
     const employees = await prisma.employee.findMany({
-      where: { employeeID: { in: assigneeIds } },
-      select: { employeeID: true, firstName: true, lastName: true },
+      where: {
+        OR: [
+          { employeeID: { in: assigneeIds } },
+          { employeeCode: { in: assigneeIds } },
+          ...(numIds.length ? [{ id: { in: numIds } }] : []),
+        ],
+      },
+      select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true },
     });
-    const empMap = new Map(
-      employees.map((e) => [e.employeeID, `${e.firstName} ${e.lastName}`.trim()])
-    );
+    const empMap = new Map<string, string>();
+    employees.forEach((e) => {
+      const name = `${e.firstName} ${e.lastName}`.trim() || e.employeeCode;
+      if (e.employeeID) empMap.set(e.employeeID, name);
+      if (e.employeeCode) empMap.set(e.employeeCode, name);
+      empMap.set(String(e.id), name);
+    });
 
     const assignerIds = [...new Set(tasks.map((t) => t.assignedBy))];
     const assigners = await prisma.user.findMany({
@@ -313,26 +324,35 @@ export const createHrTaskMobile = async (
       return;
     }
 
-    // Validate employee exists by employeeID
+    // Validate employee exists by employeeID, employeeCode, or id
+    const isNum = !isNaN(Number(assignedToId));
     const emp = await prisma.employee.findFirst({
-      where: { employeeID: assignedToId },
-      select: { employeeID: true, firstName: true, lastName: true, userId: true },
+      where: {
+        OR: [
+          { employeeID: assignedToId },
+          { employeeCode: assignedToId },
+          ...(isNum ? [{ id: Number(assignedToId) }] : []),
+        ],
+      },
+      select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true, userId: true },
     });
 
     if (!emp) {
       res.status(404).json({
         success: false,
-        message: `No employee found with employeeID "${assignedToId}".`,
+        message: `No employee found matching "${assignedToId}".`,
       });
       return;
     }
+
+    const resolvedAssignedTo = emp.employeeID || emp.employeeCode || String(emp.id);
 
     const [task] = await prisma.$transaction([
       prisma.hrTask.create({
         data: {
           title: title.trim(),
           description: description?.trim() ?? '',
-          assignedTo: assignedToId,
+          assignedTo: resolvedAssignedTo,
           assignedBy: req.user!.id,
           priority: fromFlutterPriority(priority),
           dueDate: dueDate ? new Date(dueDate) : null,
