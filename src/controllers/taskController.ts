@@ -193,12 +193,18 @@ export const listTasks = async (
 
     if (assignedTo) where.assignedTo = assignedTo;
 
-    if (status && Object.keys(HrTaskStatus).includes(status.toUpperCase())) {
-      where.status = status.toUpperCase() as HrTaskStatus;
+    if (status) {
+      const sUpper = status.toUpperCase();
+      if (Object.values(HrTaskStatus).includes(sUpper as HrTaskStatus)) {
+        where.status = sUpper as HrTaskStatus;
+      }
     }
 
-    if (priority && Object.keys(HrPriority).includes(priority.toUpperCase())) {
-      where.priority = priority.toUpperCase() as HrPriority;
+    if (priority) {
+      const pUpper = priority.toUpperCase();
+      if (Object.values(HrPriority).includes(pUpper as HrPriority)) {
+        where.priority = pUpper as HrPriority;
+      }
     }
 
     if (from || to) {
@@ -211,8 +217,8 @@ export const listTasks = async (
       where.title = { contains: search, mode: 'insensitive' };
     }
 
-    const pageNum = Math.max(1, parseInt(page));
-    const pageSize = Math.min(100, Math.max(1, parseInt(limit)));
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(limit) || 20));
     const skip = (pageNum - 1) * pageSize;
 
     const [tasks, total] = await Promise.all([
@@ -225,22 +231,42 @@ export const listTasks = async (
       prisma.hrTask.count({ where }),
     ]);
 
-    // Resolve assignee names in bulk
-    const assigneeIds = [...new Set(tasks.map((t) => t.assignedTo))];
-    const employees = await prisma.employee.findMany({
-      where: { employeeID: { in: assigneeIds } },
-      select: { employeeID: true, firstName: true, lastName: true, employeeCode: true },
-    });
-    const empMap = new Map(
-      employees.map((e) => [
-        e.employeeID,
-        `${e.firstName} ${e.lastName}`.trim() || e.employeeCode,
-      ])
-    );
+    // Resolve assignee names in bulk safely
+    const assigneeIds = [
+      ...new Set(
+        tasks
+          .map((t) => t.assignedTo)
+          .filter((id): id is string => Boolean(id) && typeof id === 'string')
+      ),
+    ];
+
+    const empMap = new Map<string, string>();
+    if (assigneeIds.length > 0) {
+      const numIds = assigneeIds.map(Number).filter((n) => !isNaN(n));
+      const employees = await prisma.employee
+        .findMany({
+          where: {
+            OR: [
+              { employeeID: { in: assigneeIds } },
+              { employeeCode: { in: assigneeIds } },
+              ...(numIds.length ? [{ id: { in: numIds } }] : []),
+            ],
+          },
+          select: { id: true, employeeID: true, employeeCode: true, firstName: true, lastName: true },
+        })
+        .catch(() => []);
+
+      employees.forEach((e) => {
+        const name = `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim() || e.employeeCode || `Employee #${e.id}`;
+        if (e.employeeID) empMap.set(e.employeeID, name);
+        if (e.employeeCode) empMap.set(e.employeeCode, name);
+        empMap.set(String(e.id), name);
+      });
+    }
 
     const rows = tasks.map((t) => ({
       ...t,
-      assigneeName: empMap.get(t.assignedTo) ?? t.assignedTo,
+      assigneeName: (t.assignedTo ? empMap.get(t.assignedTo) : null) ?? t.assignedTo ?? 'Unassigned',
       overdue: isOverdue(t),
     }));
 
