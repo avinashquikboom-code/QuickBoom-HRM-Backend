@@ -121,7 +121,7 @@ export const fetchPlatformUsers = async (
         : (emp.employeeCode ? `${emp.employeeCode.toLowerCase()}@hopkid.internal` : 'no-email');
 
       return {
-        id: -emp.id,
+        id: emp.employeeCode ? emp.employeeCode.toLowerCase() : String(emp.id),
         employeeId: emp.id,
         name: empName,
         email: fallbackEmail,
@@ -225,55 +225,91 @@ export const deletePlatformUser = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  
-  const userId = parseInt(id as string, 10);
-  if (isNaN(userId)) {
+  const rawStr = String(id || '').trim();
+
+  if (!rawStr) {
     res.status(400).json({ success: false, message: 'Invalid user ID' });
     return;
   }
 
   try {
-    if (userId < 0) {
-      const empId = Math.abs(userId);
-      await prisma.employee.delete({
-        where: { id: empId },
+    const numericId = parseInt(rawStr, 10);
+    
+    // 1. Try finding User by numeric ID
+    let user = null;
+    if (!isNaN(numericId) && numericId > 0) {
+      user = await prisma.user.findUnique({
+        where: { id: numericId },
+        include: { employee: true },
       });
+    }
+
+    if (user) {
+      if (user.employee) {
+        await prisma.employee.delete({
+          where: { id: user.employee.id },
+        });
+      }
+
+      await prisma.user.delete({
+        where: { id: user.id },
+      });
+
       res.json({
         success: true,
-        message: 'Employee deleted successfully.',
+        message: 'User and associated employee profile deleted successfully.',
       });
       return;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { employee: true },
-    });
-
-    if (!user) {
-      res.status(404).json({ success: false, message: 'User not found' });
-      return;
-    }
-
-    // Delete associated employee record first to avoid constraints
-    if (user.employee) {
-      await prisma.employee.delete({
-        where: { id: user.employee.id },
+    // 2. Try finding Employee directly (by numeric id or string employeeCode)
+    const empId = !isNaN(numericId) ? Math.abs(numericId) : null;
+    let emp = null;
+    if (empId !== null) {
+      emp = await prisma.employee.findUnique({
+        where: { id: empId },
+        include: { user: true },
       });
     }
 
-    // Delete the user record
-    await prisma.user.delete({
-      where: { id: userId },
+    if (!emp) {
+      emp = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { employeeCode: rawStr },
+            { employeeCode: rawStr.toUpperCase() },
+            { employeeCode: rawStr.toLowerCase() },
+          ],
+        },
+        include: { user: true },
+      });
+    }
+
+    if (!emp) {
+      res.status(404).json({ success: false, message: 'User or employee not found' });
+      return;
+    }
+
+    if (emp.user) {
+      await prisma.user.delete({
+        where: { id: emp.user.id },
+      });
+    }
+
+    await prisma.employee.delete({
+      where: { id: emp.id },
     });
 
     res.json({
       success: true,
-      message: 'User deleted successfully.',
+      message: 'Employee deleted successfully.',
     });
   } catch (error) {
     console.error('Delete platform user error:', error);
-    res.status(500).json({ success: false, message: 'Failed to delete user.' });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete user.',
+    });
   }
 };
 

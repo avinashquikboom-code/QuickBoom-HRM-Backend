@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import bcrypt from 'bcryptjs';
 
 // Get global permissions for all roles
 export const getGlobalPermissions = async (req: Request, res: Response) => {
@@ -50,33 +51,100 @@ export const updateGlobalPermissions = async (req: Request, res: Response) => {
   }
 };
 
+const resolveTargetUser = async (idParam: string) => {
+  const rawStr = String(idParam || '').trim();
+  if (!rawStr) return null;
+
+  const numericId = parseInt(rawStr, 10);
+
+  // 1. Check User table if numeric and positive
+  if (!isNaN(numericId) && numericId > 0) {
+    const user = await prisma.user.findUnique({ where: { id: numericId } });
+    if (user) return user;
+  }
+
+  // 2. Check Employee table by positive numeric id or string employeeCode
+  const empId = !isNaN(numericId) ? Math.abs(numericId) : null;
+  let emp = null;
+
+  if (empId !== null) {
+    emp = await prisma.employee.findUnique({
+      where: { id: empId },
+      include: { user: true },
+    });
+  }
+
+  if (!emp) {
+    emp = await prisma.employee.findFirst({
+      where: {
+        OR: [
+          { employeeCode: rawStr },
+          { employeeCode: rawStr.toUpperCase() },
+          { employeeCode: rawStr.toLowerCase() },
+        ],
+      },
+      include: { user: true },
+    });
+  }
+
+  if (!emp) return null;
+
+  if (emp.user) return emp.user;
+
+  // Auto-provision User account for unlinked Hopkid employee so permissions can be assigned
+  const fallbackEmail = emp.mobileNumber
+    ? `${emp.mobileNumber}@hopkid.internal`
+    : (emp.employeeCode ? `${emp.employeeCode.toLowerCase()}@hopkid.internal` : `emp_${emp.id}@hopkid.internal`);
+
+  const dummyPasswordHash = await bcrypt.hash(`Emp@${emp.employeeCode || emp.id}!`, 10);
+
+  const newUser = await prisma.user.create({
+    data: {
+      email: fallbackEmail,
+      password: dummyPasswordHash,
+      role: 'EMPLOYEE',
+      isActive: emp.status === 'active',
+      profile: {
+        create: {
+          email: fallbackEmail,
+          fullName: `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee',
+        },
+      },
+    },
+  });
+
+  await prisma.employee.update({
+    where: { id: emp.id },
+    data: { userId: newUser.id },
+  });
+
+  return newUser;
+};
+
 // Get custom user permissions
 export const getUserPermissions = async (req: Request, res: Response) => {
   try {
     const userIdStr = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
-    const userId = parseInt(userIdStr, 10);
-    if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+    if (!userIdStr) return res.status(400).json({ error: 'Invalid user ID' });
 
     const authReq = req as AuthenticatedRequest;
     if (!authReq.user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    const targetUser = await resolveTargetUser(userIdStr);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User or Employee not found' });
+    }
+
     if (authReq.user.role === 'HR' || authReq.user.role === 'PLATFORM_ADMIN') {
-      const targetUser = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { role: true },
-      });
-      if (!targetUser) {
-        return res.status(404).json({ error: 'User not found' });
-      }
       if (targetUser.role !== 'EMPLOYEE') {
         return res.status(403).json({ error: 'Forbidden. HR can only manage employee permissions.' });
       }
     }
 
     const userPerm = await prisma.userPermission.findUnique({
-      where: { userId },
+      where: { userId: targetUser.id },
     });
 
     res.json(userPerm ? userPerm.permissions : {});
@@ -90,22 +158,19 @@ export const getUserPermissions = async (req: Request, res: Response) => {
 export const updateUserPermissions = async (req: Request, res: Response) => {
   try {
     const userIdStr = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
-    const userId = parseInt(userIdStr, 10);
-    if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+    if (!userIdStr) return res.status(400).json({ error: 'Invalid user ID' });
 
     const authReq = req as AuthenticatedRequest;
     if (!authReq.user) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    const targetUser = await resolveTargetUser(userIdStr);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User or Employee not found' });
+    }
+
     if (authReq.user.role === 'HR' || authReq.user.role === 'PLATFORM_ADMIN') {
-      const targetUser = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { role: true },
-      });
-      if (!targetUser) {
-        return res.status(404).json({ error: 'User not found' });
-      }
       if (targetUser.role !== 'EMPLOYEE') {
         return res.status(403).json({ error: 'Forbidden. HR can only manage employee permissions.' });
       }
@@ -119,9 +184,9 @@ export const updateUserPermissions = async (req: Request, res: Response) => {
 
     // Upsert user's custom permissions
     const updated = await prisma.userPermission.upsert({
-      where: { userId },
+      where: { userId: targetUser.id },
       update: { permissions },
-      create: { userId, permissions },
+      create: { userId: targetUser.id, permissions },
     });
 
     res.json({ message: 'User permissions updated successfully', permissions: updated.permissions });
