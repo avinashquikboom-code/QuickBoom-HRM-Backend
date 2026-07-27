@@ -5,7 +5,7 @@ const REFRESH_SECRET = process.env.REFRESH_SECRET || 'quickboom_refresh_secret_k
 
 export interface UserJWTPayload {
   id: number;
-  email: string;
+  email?: string | null;
   role: string;
 }
 

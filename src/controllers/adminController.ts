@@ -55,14 +55,14 @@ export const fetchPlatformUsers = async (
     });
 
     const mappedUsers = users.map((user) => {
-      const emailName = user.email.split('@')[0];
+      const emailName = (user.email || 'user@internal').split('@')[0];
       const fallbackName =
         emailName.charAt(0).toUpperCase() + emailName.slice(1);
 
       return {
         id: user.id,
         name: user.profile?.fullName || fallbackName,
-        email: user.email,
+        email: user.email || '',
         role: user.role,
         isActive: user.isActive,
         registeredAt: user.createdAt.toISOString(),
@@ -825,7 +825,7 @@ export const createEmployee = async (
           },
           create: {
             userId: user.id,
-            email: user.email,
+            email: user.email || '',
             fullName: `${firstName} ${lastName || ''}`.trim(),
             phone: mobileNumber || '',
             pfNumber: pfNumber || '',
@@ -1144,7 +1144,7 @@ export const createAndAssignEmployee = async (
     if (!user.employee) {
       // Generate employee code based on role
       const employeeCode = await generateEmployeeCode(user.role);
-      const emailName = user.email.split('@')[0];
+      const emailName = (user.email || 'user@internal').split('@')[0];
       const fallbackName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
 
       console.log('[createAndAssignEmployee] Creating employee with code:', employeeCode);
@@ -2176,7 +2176,7 @@ export const fetchComments = async (
     });
 
     const mappedComments = comments.map((comm) => {
-      const emailName = comm.author.email.split('@')[0];
+      const emailName = (comm.author.email || 'user@internal').split('@')[0];
       const fallbackName =
         emailName.charAt(0).toUpperCase() + emailName.slice(1);
 
@@ -2189,7 +2189,7 @@ export const fetchComments = async (
         updatedAt: comm.updatedAt.toISOString(),
         author: {
           id: comm.author.id,
-          email: comm.author.email,
+          email: comm.author.email || '',
           fullName: comm.author.profile?.fullName || fallbackName,
           avatarUrl: comm.author.profile?.avatarUrl || null,
         },
@@ -2236,7 +2236,7 @@ export const createComment = async (
       },
     });
 
-    const emailName = newComment.author.email.split('@')[0];
+    const emailName = (newComment.author.email || 'user@internal').split('@')[0];
     const fallbackName =
       emailName.charAt(0).toUpperCase() + emailName.slice(1);
 

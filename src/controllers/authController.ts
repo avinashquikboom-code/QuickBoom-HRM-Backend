@@ -8,25 +8,24 @@ import userSessionService from '../services/userSessionService';
 import auditLogService from '../services/auditLogService';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
-  const { email, password } = req.body;
+  const { email, mobileNo, mobileNumber, identifier: rawId, password } = req.body;
+  const inputIdentifier = mobileNo || mobileNumber || rawId || email;
 
-  if (!email || !password) {
+  if (!inputIdentifier || !password) {
     res.status(400).json({
       success: false,
-      message: 'Email/Employee ID and password are required.',
+      message: 'Mobile number/Email/Employee ID and password are required.',
     });
     return;
   }
 
   try {
-    console.log('🔐 [LOGIN] Attempt for identifier:', email);
+    const identifier = String(inputIdentifier).trim();
+    console.log('🔐 [LOGIN] Attempt for identifier:', identifier);
     
-    // 1. Fetch user with basic relations (skip FCM tokens for now)
-    const identifier = email.trim();
+    // 1. Fetch user with basic relations
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let user: any = null;
-    
-    // Track employee separately for employee-code login path
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let employeeRecord: any = null;
 
@@ -46,9 +45,23 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       user = userWithEmployee;
       employeeRecord = userWithEmployee?.employee ?? null;
     } else {
-      // Login with employee code (e.g., EMP001, SALP0001, etc.)
-      const employee = await prisma.employee.findUnique({
-        where: { employeeCode: identifier.toUpperCase() },
+      // Login with employee code or mobile number
+      const cleanedMobile = identifier.replace(/\D/g, '');
+      const employee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { employeeCode: identifier.toUpperCase() },
+            { employeeCode: identifier },
+            { mobileNumber: identifier },
+            ...(cleanedMobile ? [{ mobileNumber: cleanedMobile }] : []),
+            ...(cleanedMobile.length >= 10 ? [
+              { mobileNumber: `+91${cleanedMobile.slice(-10)}` },
+              { mobileNumber: `+91 ${cleanedMobile.slice(-10)}` },
+              { mobileNumber: `91${cleanedMobile.slice(-10)}` }
+            ] : []),
+            ...(identifier.length >= 10 ? [{ mobileNumber: { contains: identifier.slice(-10) } }] : [])
+          ]
+        },
         include: {
           user: {
             include: {

@@ -6,31 +6,34 @@ import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import userSessionService from '../../services/userSessionService';
 import auditLogService from '../../services/auditLogService';
+import { syncHopkidEmployees } from '../../utils/employeeSync';
 
-// Mobile-specific login - simplified to email/employee ID and password only
+// Mobile-specific login - supports email, mobile number, or employee code + password
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
-  const { email, password } = req.body;
+  const { email, mobileNo, mobileNumber, identifier: rawId, password } = req.body;
+  const inputIdentifier = mobileNo || mobileNumber || rawId || email;
 
   console.log('[MOBILE_LOGIN] Request received at:', new Date().toISOString());
-  console.log('[MOBILE_LOGIN] Identifier:', email);
+  console.log('[MOBILE_LOGIN] Identifier:', inputIdentifier);
 
-  if (!email || !password) {
+  if (!inputIdentifier || !password) {
     console.log('[MOBILE_LOGIN] Missing credentials');
     res.status(400).json({
       success: false,
-      message: 'Email/Employee ID and password are required.',
+      message: 'Mobile number/Email/Employee ID and password are required.',
       errorCode: 'MISSING_CREDENTIALS'
     });
     return;
   }
 
   try {
-    const identifier = email.trim();
+    const identifier = String(inputIdentifier).trim();
     console.log('[MOBILE_LOGIN] Phase 1: Fetching user auth data...');
     const phase1Start = Date.now();
 
-    let userAuth;
+    let userAuth: any = null;
+    let employeeUnregistered = false;
 
     if (identifier.includes('@')) {
       // Login with email
@@ -49,16 +52,25 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       });
     } else {
       // Login with employee code or mobile number
-      const employee = await prisma.employee.findFirst({
+      const cleanedMobile = identifier.replace(/\D/g, '');
+      let employee = await prisma.employee.findFirst({
         where: {
           OR: [
             { employeeCode: identifier.toUpperCase() },
+            { employeeCode: identifier },
             { mobileNumber: identifier },
-            { mobileNumber: identifier.replace(/\D/g, '') }
+            ...(cleanedMobile ? [{ mobileNumber: cleanedMobile }] : []),
+            ...(cleanedMobile.length >= 10 ? [
+              { mobileNumber: `+91${cleanedMobile.slice(-10)}` },
+              { mobileNumber: `+91 ${cleanedMobile.slice(-10)}` },
+              { mobileNumber: `91${cleanedMobile.slice(-10)}` }
+            ] : []),
+            ...(identifier.length >= 10 ? [{ mobileNumber: { contains: identifier.slice(-10) } }] : [])
           ]
         },
         select: {
           id: true,
+          userId: true,
           user: {
             select: {
               id: true,
@@ -74,24 +86,76 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
         },
       });
 
-      if (employee && employee.user) {
-        userAuth = {
-          id: employee.user.id,
-          email: employee.user.email,
-          password: employee.user.password,
-          role: employee.user.role,
-          isActive: employee.user.isActive,
-          profile: employee.user.profile,
-          employee: {
-            id: employee.id,
-            officeId: employee.officeId,
-            storeId: employee.storeId,
+      if (!employee) {
+        // Try syncing from HopKid API on-the-fly if not cached locally
+        console.log('[MOBILE_LOGIN] Employee not found locally, running HopKid sync on-the-fly...');
+        await syncHopkidEmployees().catch(() => {});
+        employee = await prisma.employee.findFirst({
+          where: {
+            OR: [
+              { employeeCode: identifier.toUpperCase() },
+              { employeeCode: identifier },
+              { mobileNumber: identifier },
+              ...(cleanedMobile ? [{ mobileNumber: cleanedMobile }] : []),
+              ...(cleanedMobile.length >= 10 ? [
+                { mobileNumber: `+91${cleanedMobile.slice(-10)}` },
+                { mobileNumber: `+91 ${cleanedMobile.slice(-10)}` },
+                { mobileNumber: `91${cleanedMobile.slice(-10)}` }
+              ] : []),
+              ...(identifier.length >= 10 ? [{ mobileNumber: { contains: identifier.slice(-10) } }] : [])
+            ]
           },
-        };
+          select: {
+            id: true,
+            userId: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+                password: true,
+                role: true,
+                isActive: true,
+                profile: { select: { id: true } },
+              },
+            },
+            officeId: true,
+            storeId: true,
+          },
+        });
+      }
+
+      if (employee) {
+        if (!employee.user) {
+          employeeUnregistered = true;
+        } else {
+          userAuth = {
+            id: employee.user.id,
+            email: employee.user.email,
+            password: employee.user.password,
+            role: employee.user.role,
+            isActive: employee.user.isActive,
+            profile: employee.user.profile,
+            employee: {
+              id: employee.id,
+              officeId: employee.officeId,
+              storeId: employee.storeId,
+            },
+          };
+        }
       }
     }
 
     console.log('[MOBILE_LOGIN] Phase 1 completed in:', Date.now() - phase1Start, 'ms');
+
+    if (employeeUnregistered) {
+      console.log('[MOBILE_LOGIN] Employee found in directory but user row not registered yet');
+      res.status(401).json({
+        success: false,
+        message: 'Account not registered yet. Please register first using your mobile number and employee code.',
+        errorCode: 'ACCOUNT_NOT_REGISTERED'
+      });
+      return;
+    }
 
     if (!userAuth || !userAuth.isActive) {
       console.log('[MOBILE_LOGIN] User not found or inactive');
@@ -112,7 +176,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
       console.log('[MOBILE_LOGIN] Invalid password');
       res.status(401).json({
         success: false,
-        message: 'Invalid email or password.',
+        message: 'Invalid mobile number/email or password.',
         errorCode: 'INVALID_PASSWORD'
       });
       return;
@@ -833,6 +897,275 @@ export const fetchMobileDepartments = async (
       success: false,
       message: 'Failed to fetch departments.',
       errorCode: 'DEPARTMENTS_FETCH_ERROR',
+    });
+  }
+};
+
+// Mobile user registration endpoint - verify mobileNo + employeeCode against employee cache
+export const mobileRegister = async (req: Request, res: Response): Promise<void> => {
+  const startTime = Date.now();
+  const { mobileNo, mobileNumber, employeeCode, password, email } = req.body;
+  const rawMobile = mobileNo || mobileNumber;
+
+  console.log('[MOBILE_REGISTER] Request received at:', new Date().toISOString());
+
+  if (!rawMobile || !employeeCode || !password) {
+    res.status(400).json({
+      success: false,
+      message: 'Mobile number, employee code, and password are required for registration.',
+      errorCode: 'MISSING_FIELDS'
+    });
+    return;
+  }
+
+  if (password.length < 6) {
+    res.status(400).json({
+      success: false,
+      message: 'Password must be at least 6 characters long.',
+      errorCode: 'WEAK_PASSWORD'
+    });
+    return;
+  }
+
+  try {
+    const inputMobile = String(rawMobile).trim();
+    const cleanedMobile = inputMobile.replace(/\D/g, '');
+    const codeUpper = String(employeeCode).trim().toUpperCase();
+    const codeClean = String(employeeCode).trim();
+
+    // 1. Search employee directory matching both employeeCode AND mobileNumber
+    let employee = await prisma.employee.findFirst({
+      where: {
+        AND: [
+          {
+            OR: [
+              { employeeCode: codeUpper },
+              { employeeCode: codeClean },
+              ...(codeClean.length < 4 ? [{ employeeCode: codeClean.padStart(3, '0') }, { employeeCode: `EMP${codeClean}` }] : [])
+            ]
+          },
+          {
+            OR: [
+              { mobileNumber: inputMobile },
+              ...(cleanedMobile ? [{ mobileNumber: cleanedMobile }] : []),
+              ...(cleanedMobile.length >= 10 ? [
+                { mobileNumber: `+91${cleanedMobile.slice(-10)}` },
+                { mobileNumber: `+91 ${cleanedMobile.slice(-10)}` },
+                { mobileNumber: `91${cleanedMobile.slice(-10)}` }
+              ] : []),
+              ...(inputMobile.length >= 10 ? [{ mobileNumber: { contains: inputMobile.slice(-10) } }] : [])
+            ]
+          }
+        ]
+      },
+      include: {
+        user: true,
+        office: true,
+        store: true
+      }
+    });
+
+    // 2. If not found in local DB, sync from HopKid API on-the-fly and retry search
+    if (!employee) {
+      console.log('[MOBILE_REGISTER] Employee not found in local DB. Syncing HopKid employees...');
+      await syncHopkidEmployees().catch(err => console.error('[MOBILE_REGISTER] HopKid sync error:', err));
+
+      employee = await prisma.employee.findFirst({
+        where: {
+          AND: [
+            {
+              OR: [
+                { employeeCode: codeUpper },
+                { employeeCode: codeClean },
+                ...(codeClean.length < 4 ? [{ employeeCode: codeClean.padStart(3, '0') }, { employeeCode: `EMP${codeClean}` }] : [])
+              ]
+            },
+            {
+              OR: [
+                { mobileNumber: inputMobile },
+                ...(cleanedMobile ? [{ mobileNumber: cleanedMobile }] : []),
+                ...(cleanedMobile.length >= 10 ? [
+                  { mobileNumber: `+91${cleanedMobile.slice(-10)}` },
+                  { mobileNumber: `+91 ${cleanedMobile.slice(-10)}` },
+                  { mobileNumber: `91${cleanedMobile.slice(-10)}` }
+                ] : []),
+                ...(inputMobile.length >= 10 ? [{ mobileNumber: { contains: inputMobile.slice(-10) } }] : [])
+              ]
+            }
+          ]
+        },
+        include: {
+          user: true,
+          office: true,
+          store: true
+        }
+      });
+    }
+
+    if (!employee) {
+      console.log(`[MOBILE_REGISTER] Verification failed. Mobile: ${inputMobile}, Code: ${codeUpper}`);
+      res.status(400).json({
+        success: false,
+        message: 'Employee record not found. Please check your mobile number and employee code.',
+        errorCode: 'EMPLOYEE_NOT_FOUND'
+      });
+      return;
+    }
+
+    if (employee.status !== 'active') {
+      console.log(`[MOBILE_REGISTER] Inactive employee status: ${employee.status}`);
+      res.status(400).json({
+        success: false,
+        message: 'Your employee account is inactive. Please contact HR.',
+        errorCode: 'ACCOUNT_INACTIVE'
+      });
+      return;
+    }
+
+    if (employee.userId || employee.user) {
+      console.log(`[MOBILE_REGISTER] Employee ${employee.employeeCode} already linked to userId ${employee.userId}`);
+      res.status(400).json({
+        success: false,
+        message: 'Account is already registered. Please proceed to login.',
+        errorCode: 'ALREADY_REGISTERED'
+      });
+      return;
+    }
+
+    // Optional email uniqueness validation if email provided
+    let normalizedEmail: string | null = null;
+    if (email && typeof email === 'string' && email.trim() !== '') {
+      normalizedEmail = email.trim().toLowerCase();
+      const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+      if (existingUser) {
+        res.status(400).json({
+          success: false,
+          message: 'An account with this email address already exists.',
+          errorCode: 'EMAIL_IN_USE'
+        });
+        return;
+      }
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const fullName = `${employee.firstName} ${employee.lastName}`.trim();
+
+    // Create User & Profile
+    const newUser = await prisma.user.create({
+      data: {
+        email: normalizedEmail,
+        password: hashedPassword,
+        role: Role.EMPLOYEE,
+        isActive: true,
+        employeeID: employee.employeeID || employee.employeeCode,
+        profile: {
+          create: {
+            email: normalizedEmail || '',
+            fullName,
+            phone: employee.mobileNumber || inputMobile,
+            bio: '',
+            clearanceLevel: 1,
+            clearanceLabel: 'Level 1 (General)',
+            timezone: 'Asia/Kolkata',
+            timezoneLabel: '(GMT+5:30) Mumbai, New Delhi',
+            lastLoginLocation: 'Mobile App',
+          }
+        }
+      },
+      include: {
+        profile: true
+      }
+    });
+
+    // Link Employee to User
+    await prisma.employee.update({
+      where: { id: employee.id },
+      data: { userId: newUser.id }
+    });
+
+    // Allocate leave balance
+    try {
+      const leaveBalanceService = require('../../services/leaveBalanceService').default;
+      await leaveBalanceService.createOrUpdateLeaveBalance({
+        employeeId: employee.id,
+        departmentId: employee.departmentId || undefined,
+        createdBy: 'Mobile Registration'
+      });
+    } catch (lErr) {
+      console.error('[MOBILE_REGISTER] Leave balance error (non-fatal):', lErr);
+    }
+
+    // Issue JWT tokens
+    const token = signAccessToken({
+      id: newUser.id,
+      email: newUser.email || '',
+      role: newUser.role,
+    });
+
+    const refreshToken = signRefreshToken({
+      id: newUser.id,
+      email: newUser.email || '',
+      role: newUser.role,
+    });
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const deviceInfo = req.headers['user-agent'] || 'Mobile App';
+    await userSessionService.createSession(newUser.id, refreshToken, deviceInfo, ipAddress);
+    await auditLogService.log({
+      userId: newUser.id,
+      employeeId: employee.id,
+      branchId: employee.officeId || undefined,
+      ipAddress,
+      deviceInfo,
+      action: 'MOBILE_USER_REGISTER',
+    });
+
+    console.log(`[MOBILE_REGISTER] Successfully registered employee ${employee.employeeCode} (User ID: ${newUser.id})`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Registration successful!',
+      token,
+      refreshToken,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        role: newUser.role,
+        profile: newUser.profile ? {
+          id: newUser.profile.id,
+          fullName: newUser.profile.fullName,
+          phone: newUser.profile.phone,
+        } : null,
+        employee: {
+          id: employee.id,
+          employeeCode: employee.employeeCode,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          designation: employee.designation,
+          status: employee.status,
+          office: employee.office ? {
+            id: employee.office.id,
+            name: employee.office.name,
+            address: employee.office.address,
+            latitude: employee.office.latitude,
+            longitude: employee.office.longitude,
+            maxRadius: employee.office.maxPunchRadiusMeters,
+          } : null,
+          store: employee.store ? {
+            id: employee.store.id,
+            name: employee.store.name,
+          } : null,
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error('[MOBILE_REGISTER] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error during registration.',
+      errorCode: 'SERVER_ERROR',
+      ...(process.env.NODE_ENV !== 'production' && { details: error.message })
     });
   }
 };

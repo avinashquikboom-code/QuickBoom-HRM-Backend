@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import {
   mobileLogin,
+  mobileRegister,
   mobileLogout,
   mobileRefreshToken,
   getMobileProfile,
@@ -20,8 +21,9 @@ const forgotPassword = async (req: Request, res: Response) => {
   await adminForgotPassword(req, res);
 };
 
-// Login and refresh endpoints do not require auth middleware
+// Login, register, and refresh endpoints do not require auth middleware
 router.post('/login', mobileLogin);
+router.post('/register', mobileRegister);
 router.post('/refresh', mobileRefreshToken);
 router.post('/forgot-password', forgotPassword);
 

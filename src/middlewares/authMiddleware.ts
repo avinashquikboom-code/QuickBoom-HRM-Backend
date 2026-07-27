@@ -14,6 +14,7 @@ export const authMiddleware = async (
 ): Promise<void> => {
   const publicPaths = [
     '/api/mobile/auth/login',
+    '/api/mobile/auth/register',
     '/api/mobile/auth/refresh',
     '/api/mobile/auth/forgot-password',
     '/api/auth/login',
