@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
-import { prisma } from '../utils/db';
+import { prisma, ensureBankEditTable } from '../utils/db';
 import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import bcrypt from 'bcryptjs';
@@ -42,6 +42,11 @@ export const fetchPlatformUsers = async (
   res: Response
 ): Promise<void> => {
   try {
+    // Automatically trigger Hopkid employee sync to ensure local database is updated
+    await syncHopkidEmployees().catch((err) =>
+      console.error('Hopkid sync error in fetchPlatformUsers:', err)
+    );
+
     const users = await prisma.user.findMany({
       include: {
         profile: true,
@@ -54,19 +59,29 @@ export const fetchPlatformUsers = async (
       orderBy: { createdAt: 'desc' },
     });
 
+    const userEmployeeIds = new Set<number>();
+
     const mappedUsers = users.map((user) => {
+      if (user.employee) {
+        userEmployeeIds.add(user.employee.id);
+      }
       const emailName = (user.email || 'user@internal').split('@')[0];
       const fallbackName =
         emailName.charAt(0).toUpperCase() + emailName.slice(1);
+      const empName = user.employee
+        ? `${user.employee.firstName || ''} ${user.employee.lastName || ''}`.trim()
+        : '';
 
       return {
         id: user.id,
-        name: user.profile?.fullName || fallbackName,
+        name: user.profile?.fullName || empName || fallbackName,
         email: user.email || '',
         role: user.role,
         isActive: user.isActive,
         registeredAt: user.createdAt.toISOString(),
         hasEmployeeProfile: !!user.employee,
+        isUnlinkedEmployee: false,
+        source: user.employee?.source || 'MANUAL',
         employee: user.employee
           ? {
               id: user.employee.id,
@@ -75,6 +90,7 @@ export const fetchPlatformUsers = async (
               lastName: user.employee.lastName,
               designation: user.employee.designation,
               status: user.employee.status,
+              source: user.employee.source || 'HOPKID',
               office: user.employee.office
                 ? {
                     id: user.employee.office.id,
@@ -86,14 +102,62 @@ export const fetchPlatformUsers = async (
       };
     });
 
-    const totalCount = mappedUsers.length;
-    const withProfileCount = mappedUsers.filter((u) => u.hasEmployeeProfile).length;
+    // Also fetch all employees from Employee table (including Hopkid employees) that don't have a User account
+    const allEmployees = await prisma.employee.findMany({
+      include: {
+        office: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const unlinkedEmployees = allEmployees.filter(
+      (emp) => !emp.userId && !userEmployeeIds.has(emp.id)
+    );
+
+    const mappedUnlinkedEmployees = unlinkedEmployees.map((emp) => {
+      const empName = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee';
+      const fallbackEmail = emp.mobileNumber
+        ? `${emp.mobileNumber}@hopkid.internal`
+        : (emp.employeeCode ? `${emp.employeeCode.toLowerCase()}@hopkid.internal` : 'no-email');
+
+      return {
+        id: -emp.id,
+        employeeId: emp.id,
+        name: empName,
+        email: fallbackEmail,
+        role: 'EMPLOYEE',
+        isActive: emp.status === 'active',
+        registeredAt: emp.createdAt.toISOString(),
+        hasEmployeeProfile: true,
+        isUnlinkedEmployee: true,
+        source: emp.source || 'HOPKID',
+        employee: {
+          id: emp.id,
+          employeeCode: emp.employeeCode,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          designation: emp.designation,
+          status: emp.status,
+          source: emp.source || 'HOPKID',
+          office: emp.office
+            ? {
+                id: emp.office.id,
+                name: emp.office.name,
+              }
+            : null,
+        },
+      };
+    });
+
+    const allPlatformUsers = [...mappedUsers, ...mappedUnlinkedEmployees];
+    const totalCount = allPlatformUsers.length;
+    const withProfileCount = allPlatformUsers.filter((u) => u.hasEmployeeProfile).length;
 
     res.json({
       success: true,
       count: totalCount,
       withEmployeeProfile: withProfileCount,
-      employees: mappedUsers,
+      employees: allPlatformUsers,
     });
   } catch (error) {
     console.error('Fetch users error:', error);
@@ -121,6 +185,20 @@ export const updateUserStatus = async (
   }
 
   try {
+    if (userId < 0) {
+      const empId = Math.abs(userId);
+      const updatedEmp = await prisma.employee.update({
+        where: { id: empId },
+        data: { status: isActive ? 'active' : 'inactive' },
+      });
+      res.json({
+        success: true,
+        message: `Employee status updated to ${isActive ? 'Active' : 'Inactive'}.`,
+        user: updatedEmp,
+      });
+      return;
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { isActive },
@@ -155,6 +233,18 @@ export const deletePlatformUser = async (
   }
 
   try {
+    if (userId < 0) {
+      const empId = Math.abs(userId);
+      await prisma.employee.delete({
+        where: { id: empId },
+      });
+      res.json({
+        success: true,
+        message: 'Employee deleted successfully.',
+      });
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: { employee: true },
@@ -7497,40 +7587,47 @@ export const fetchBankEditRequests = async (
   res: Response
 ): Promise<void> => {
   try {
-    const requests = await prisma.bankEditRequest.findMany({
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            bankName: true,
-            accountNumber: true,
-            ifscCode: true,
-            accountType: true,
-            branchName: true,
-            department: { select: { name: true } },
+    await ensureBankEditTable().catch(() => {});
+
+    let requests: any[] = [];
+    try {
+      requests = await prisma.bankEditRequest.findMany({
+        include: {
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              bankName: true,
+              accountNumber: true,
+              ifscCode: true,
+              accountType: true,
+              branchName: true,
+              department: { select: { name: true } },
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      });
+    } catch (e) {
+      console.warn('BankEditRequest findMany warning in adminController:', e);
+    }
 
     res.json({
       success: true,
       requests: requests.map((r) => ({
         id: r.id,
         employeeId: r.employeeId,
-        employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
-        employeeCode: r.employee.employeeCode,
-        department: r.employee.department?.name || 'Operations',
+        employeeName: `${r.employee?.firstName || ''} ${r.employee?.lastName || ''}`.trim() || 'Employee',
+        employeeCode: r.employee?.employeeCode || '',
+        department: r.employee?.department?.name || 'Operations',
         currentBank: {
-          bankName: r.employee.bankName,
-          accountNumber: r.employee.accountNumber,
-          ifscCode: r.employee.ifscCode,
-          accountType: r.employee.accountType,
-          branchName: r.employee.branchName,
+          bankName: r.employee?.bankName,
+          accountNumber: r.employee?.accountNumber,
+          ifscCode: r.employee?.ifscCode,
+          accountType: r.employee?.accountType,
+          branchName: r.employee?.branchName,
         },
         requestedBank: {
           bankName: r.bankName,
@@ -7541,7 +7638,7 @@ export const fetchBankEditRequests = async (
         },
         reason: r.reason,
         status: r.status,
-        createdAt: r.createdAt.toISOString(),
+        createdAt: r.createdAt ? r.createdAt.toISOString() : new Date().toISOString(),
       })),
     });
   } catch (error) {

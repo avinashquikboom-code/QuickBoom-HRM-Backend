@@ -1,15 +1,46 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
-import { prisma } from '../../utils/db';
+import { prisma, ensureBankEditTable } from '../../utils/db';
 import { pushNotificationService } from '../../services/pushNotificationService';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
   if (!req.user) return null;
-  return await prisma.employee.findUnique({
-    where: { userId: req.user.id },
+
+  const userObj = req.user as any;
+
+  // 1. Primary lookup: Employee linked to User ID
+  let emp = await prisma.employee.findUnique({
+    where: { userId: userObj.id },
     include: { department: true, office: true, user: { include: { profile: true } } },
   });
+
+  if (emp) return emp;
+
+  // 2. Fallback lookup by employeeID if available on user object
+  if (userObj.employeeID) {
+    emp = await prisma.employee.findFirst({
+      where: { employeeID: userObj.employeeID },
+      include: { department: true, office: true, user: { include: { profile: true } } },
+    });
+    if (emp) return emp;
+  }
+
+  // 3. Fallback lookup by email or employee code
+  if (userObj.email) {
+    const code = userObj.email.split('@')[0];
+    emp = await prisma.employee.findFirst({
+      where: {
+        OR: [
+          { employeeCode: { equals: code, mode: 'insensitive' } },
+          { user: { email: { equals: userObj.email, mode: 'insensitive' } } },
+        ],
+      },
+      include: { department: true, office: true, user: { include: { profile: true } } },
+    });
+  }
+
+  return emp;
 };
 
 // ==========================================
@@ -1677,16 +1708,23 @@ export const fetchBankDetails = async (
   res: Response
 ): Promise<void> => {
   try {
+    await ensureBankEditTable();
+
     const employee = await getEmployeeFromRequest(req);
     if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found.' });
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
       return;
     }
 
-    const latestRequest = await prisma.bankEditRequest.findFirst({
-      where: { employeeId: employee.id },
-      orderBy: { createdAt: 'desc' },
-    });
+    let latestRequest = null;
+    try {
+      latestRequest = await prisma.bankEditRequest.findFirst({
+        where: { employeeId: employee.id },
+        orderBy: { createdAt: 'desc' },
+      });
+    } catch (dbErr) {
+      console.warn('BankEditRequest query exception ignored:', dbErr);
+    }
 
     res.json({
       success: true,
@@ -1694,9 +1732,9 @@ export const fetchBankDetails = async (
         bankName: employee.bankName || null,
         accountNumber: employee.accountNumber || null,
         ifscCode: employee.ifscCode || null,
-        accountType: employee.accountType || null,
+        accountType: employee.accountType || 'Savings',
         branchName: employee.branchName || null,
-        accountHolder: `${employee.firstName} ${employee.lastName}`,
+        accountHolder: `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Account Holder',
       },
       latestRequest: latestRequest
         ? {
@@ -1719,17 +1757,24 @@ export const requestBankDetailsEdit = async (
   res: Response
 ): Promise<void> => {
   try {
+    await ensureBankEditTable();
+
     const employee = await getEmployeeFromRequest(req);
     if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found.' });
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
       return;
     }
 
     const { reason, bankName, accountNumber, ifscCode, accountType, branchName } = req.body;
 
-    const existingPending = await prisma.bankEditRequest.findFirst({
-      where: { employeeId: employee.id, status: 'PENDING' },
-    });
+    let existingPending = null;
+    try {
+      existingPending = await prisma.bankEditRequest.findFirst({
+        where: { employeeId: employee.id, status: 'PENDING' },
+      });
+    } catch (e) {
+      console.warn('BankEditRequest existingPending check warning:', e);
+    }
 
     if (existingPending) {
       res.status(400).json({
@@ -1785,18 +1830,25 @@ export const updateBankDetails = async (
   res: Response
 ): Promise<void> => {
   try {
+    await ensureBankEditTable();
+
     const employee = await getEmployeeFromRequest(req);
     if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found.' });
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
       return;
     }
 
     const { bankName, accountNumber, ifscCode, accountType, branchName } = req.body;
 
-    const approvedRequest = await prisma.bankEditRequest.findFirst({
-      where: { employeeId: employee.id, status: 'APPROVED' },
-      orderBy: { createdAt: 'desc' },
-    });
+    let approvedRequest = null;
+    try {
+      approvedRequest = await prisma.bankEditRequest.findFirst({
+        where: { employeeId: employee.id, status: 'APPROVED' },
+        orderBy: { createdAt: 'desc' },
+      });
+    } catch (e) {
+      console.warn('BankEditRequest approved query warning:', e);
+    }
 
     const isHrOrAdmin = req.user?.role?.includes('HR') || req.user?.role?.includes('ADMIN');
 
@@ -1820,10 +1872,14 @@ export const updateBankDetails = async (
     });
 
     if (approvedRequest) {
-      await prisma.bankEditRequest.update({
-        where: { id: approvedRequest.id },
-        data: { status: 'COMPLETED', decidedAt: new Date() },
-      });
+      try {
+        await prisma.bankEditRequest.update({
+          where: { id: approvedRequest.id },
+          data: { status: 'COMPLETED', decidedAt: new Date() },
+        });
+      } catch (e) {
+        console.warn('BankEditRequest status update warning:', e);
+      }
     }
 
     res.json({
@@ -1835,7 +1891,7 @@ export const updateBankDetails = async (
         ifscCode: updatedEmployee.ifscCode,
         accountType: updatedEmployee.accountType,
         branchName: updatedEmployee.branchName,
-        accountHolder: `${updatedEmployee.firstName} ${updatedEmployee.lastName}`,
+        accountHolder: `${updatedEmployee.firstName || ''} ${updatedEmployee.lastName || ''}`.trim() || 'Account Holder',
       },
     });
   } catch (error) {

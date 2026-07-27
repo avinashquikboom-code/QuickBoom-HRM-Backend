@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import { pushNotificationService } from '../services/pushNotificationService';
 
 const router = Router();
 
@@ -85,48 +86,6 @@ router.post('/register', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-/**
- * @swagger
- * /api/devices/unregister:
- *   post:
- *     summary: Unregister device FCM token (POST)
- *     tags: [Devices]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - token
- *             properties:
- *               token:
- *                 type: string
- *     responses:
- *       200:
- *         description: Device unregistered successfully
- *   delete:
- *     summary: Unregister device FCM token (DELETE)
- *     tags: [Devices]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - token
- *             properties:
- *               token:
- *                 type: string
- *     responses:
- *       200:
- *         description: Device unregistered successfully
- */
 const unregisterDevice = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { token } = req.body;
@@ -154,5 +113,33 @@ const unregisterDevice = async (req: AuthenticatedRequest, res: Response) => {
 
 router.post('/unregister', unregisterDevice);
 router.delete('/unregister', unregisterDevice);
+
+router.post('/test-push', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const { targetUserId, title, body, data } = req.body;
+    const recipientIds = targetUserId ? [parseInt(String(targetUserId), 10)] : [userId];
+
+    await pushNotificationService.sendPush(
+      recipientIds,
+      title || 'Test Notification',
+      body || 'This is a test push notification from Hopkid HRM server',
+      data || { type: 'test' }
+    );
+
+    res.json({
+      success: true,
+      message: `Test push notification sent to user(s): ${recipientIds.join(', ')}`,
+    });
+  } catch (error) {
+    console.error('[DeviceRoutes] Test push failed:', error);
+    res.status(500).json({ success: false, message: 'Failed to send test push notification' });
+  }
+});
 
 export default router;

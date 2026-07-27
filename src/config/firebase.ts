@@ -1,5 +1,5 @@
 import admin from 'firebase-admin';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 // Firebase Admin SDK configuration
@@ -11,48 +11,92 @@ export const initializeFirebase = (): admin.app.App => {
   }
 
   try {
-    // Check if Firebase app already exists by trying to get it
+    // Check if Firebase app already exists
     try {
       const existingApp = admin.app();
       firebaseApp = existingApp;
-      console.log('✅ Firebase Admin SDK already initialized, using existing app');
+      console.log('✅ [FirebaseInit] Firebase Admin SDK already initialized, using existing app');
       return firebaseApp;
     } catch (appError) {
-      // App doesn't exist, continue with initialization
-      console.log('Firebase app not found, initializing new app');
+      // Continue initialization
     }
 
-    // Check if we have a service account key file
-    const serviceAccountPath = join(process.cwd(), 'firebase-service-account.json');
-    
-    let serviceAccount;
-    let useMock = false;
-    
-    try {
-      // Try to read service account file
-      serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
-    } catch (error) {
-      // Check if environment variables are fully present
-      if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
-        console.log('Firebase service account file not found, using environment variables');
-        serviceAccount = {
-          project_id: process.env.FIREBASE_PROJECT_ID,
-          private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-          client_email: process.env.FIREBASE_CLIENT_EMAIL,
-          client_id: process.env.FIREBASE_CLIENT_ID || '',
-          auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-          token_uri: 'https://oauth2.googleapis.com/token',
-        };
+    let serviceAccount: any = null;
+
+    // 1. Check FIREBASE_SERVICE_ACCOUNT env var (JSON string or file path)
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      const raw = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
+      if (raw.startsWith('{')) {
+        try {
+          serviceAccount = JSON.parse(raw);
+          console.log('✅ [FirebaseInit] Loaded credentials from FIREBASE_SERVICE_ACCOUNT env JSON');
+        } catch (e) {
+          console.error('❌ [FirebaseInit] Failed to parse FIREBASE_SERVICE_ACCOUNT JSON env:', e);
+        }
       } else {
-        useMock = true;
+        try {
+          if (existsSync(raw)) {
+            serviceAccount = JSON.parse(readFileSync(raw, 'utf8'));
+            console.log(`✅ [FirebaseInit] Loaded credentials from file path in FIREBASE_SERVICE_ACCOUNT: ${raw}`);
+          }
+        } catch (e) {
+          console.error(`❌ [FirebaseInit] Failed to read file at FIREBASE_SERVICE_ACCOUNT path (${raw}):`, e);
+        }
       }
     }
 
-    if (useMock) {
-      console.warn('⚠️ Firebase credentials not fully configured. Using mock Firebase for development.');
-      firebaseApp = admin.initializeApp({
-        projectId: 'quickboom-mock',
-      }, 'mock-app');
+    // 2. Check GOOGLE_APPLICATION_CREDENTIALS env var (file path)
+    if (!serviceAccount && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      const filePath = process.env.GOOGLE_APPLICATION_CREDENTIALS.trim();
+      try {
+        if (existsSync(filePath)) {
+          serviceAccount = JSON.parse(readFileSync(filePath, 'utf8'));
+          console.log(`✅ [FirebaseInit] Loaded credentials from GOOGLE_APPLICATION_CREDENTIALS: ${filePath}`);
+        }
+      } catch (e) {
+        console.error(`❌ [FirebaseInit] Failed to read GOOGLE_APPLICATION_CREDENTIALS file (${filePath}):`, e);
+      }
+    }
+
+    // 3. Check firebase-service-account.json in project root
+    if (!serviceAccount) {
+      const serviceAccountPath = join(process.cwd(), 'firebase-service-account.json');
+      if (existsSync(serviceAccountPath)) {
+        try {
+          serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
+          console.log(`✅ [FirebaseInit] Loaded credentials from local file: ${serviceAccountPath}`);
+        } catch (e) {
+          console.error('❌ [FirebaseInit] Failed to read firebase-service-account.json:', e);
+        }
+      }
+    }
+
+    // 4. Check explicit environment variables
+    if (
+      !serviceAccount &&
+      process.env.FIREBASE_PROJECT_ID &&
+      process.env.FIREBASE_PRIVATE_KEY &&
+      process.env.FIREBASE_CLIENT_EMAIL
+    ) {
+      console.log('✅ [FirebaseInit] Loaded credentials from FIREBASE_PROJECT_ID / PRIVATE_KEY / CLIENT_EMAIL env vars');
+      serviceAccount = {
+        project_id: process.env.FIREBASE_PROJECT_ID,
+        private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        client_email: process.env.FIREBASE_CLIENT_EMAIL,
+        client_id: process.env.FIREBASE_CLIENT_ID || '',
+        auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+        token_uri: 'https://oauth2.googleapis.com/token',
+      };
+    }
+
+    if (!serviceAccount) {
+      console.warn('⚠️ [FirebaseInit] No valid Firebase credentials configured. Notifications will be mocked.');
+      firebaseApp = admin.initializeApp(
+        {
+          projectId: 'quickboom-mock',
+        },
+        'mock-app'
+      );
       return firebaseApp;
     }
 
@@ -62,16 +106,17 @@ export const initializeFirebase = (): admin.app.App => {
       projectId: serviceAccount.project_id,
     });
 
-    console.log('✅ Firebase Admin SDK initialized successfully');
+    console.log(`✅ [FirebaseInit] Firebase Admin SDK initialized successfully for project: "${serviceAccount.project_id}"`);
     return firebaseApp;
-    
   } catch (error) {
-    console.error('❌ Failed to initialize Firebase:', error);
-    // For development, we'll create a mock app instead of throwing an error
-    console.warn('⚠️ Using mock Firebase for development - notifications will not be sent');
-    firebaseApp = admin.initializeApp({
-      projectId: 'quickboom-mock',
-    }, 'mock-app');
+    console.error('❌ [FirebaseInit] Failed to initialize Firebase:', error);
+    console.warn('⚠️ [FirebaseInit] Using fallback mock app for development.');
+    firebaseApp = admin.initializeApp(
+      {
+        projectId: 'quickboom-mock',
+      },
+      'mock-app'
+    );
     return firebaseApp;
   }
 };

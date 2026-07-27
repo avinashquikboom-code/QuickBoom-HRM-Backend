@@ -24,3 +24,30 @@ export const prisma = new PrismaClient({
   adapter,
   log: process.env.NODE_ENV === 'production' ? ['error', 'warn'] : ['query', 'error', 'warn'],
 });
+
+let isBankEditTableEnsured = false;
+export async function ensureBankEditTable(): Promise<void> {
+  if (isBankEditTableEnsured) return;
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "BankEditRequest" (
+        "id" SERIAL PRIMARY KEY,
+        "employeeId" INTEGER NOT NULL,
+        "bankName" TEXT,
+        "accountNumber" TEXT,
+        "ifscCode" TEXT,
+        "accountType" TEXT,
+        "branchName" TEXT,
+        "reason" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'PENDING',
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "decidedAt" TIMESTAMP(3),
+        "decidedBy" INTEGER
+      );
+    `);
+    isBankEditTableEnsured = true;
+    console.log('✅ [ensureBankEditTable] Verified BankEditRequest table exists.');
+  } catch (error) {
+    console.warn('⚠️ [ensureBankEditTable] Exception ignored:', error);
+  }
+}

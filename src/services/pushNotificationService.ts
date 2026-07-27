@@ -62,6 +62,7 @@ export class PushNotificationService {
           priority: 'high' as const,
           notification: {
             sound: 'default',
+            channelId: 'general_notifications',
             clickAction: 'FLUTTER_NOTIFICATION_CLICK',
           }
         },
