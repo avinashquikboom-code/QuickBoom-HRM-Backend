@@ -86,6 +86,17 @@ function buildFlutterTask(
     }
   }
 
+  // Extract latest HR remark / update comment
+  let hrRemark: string | null = null;
+  if (t.updates && Array.isArray(t.updates) && t.updates.length > 0) {
+    const updateWithComment = t.updates.find(
+      (u: any) => u.comment && typeof u.comment === 'string' && u.comment.trim().length > 0
+    );
+    if (updateWithComment) {
+      hrRemark = updateWithComment.comment.trim();
+    }
+  }
+
   return {
     id: String(t.id),
     title: t.title,
@@ -101,6 +112,8 @@ function buildFlutterTask(
     requiresPhoto: Boolean(t.requiresPhoto),
     photoUrl: photoUrls.length > 0 ? photoUrls[0] : (t.photoUrl ?? null),
     photoUrls: photoUrls,
+    hrRemark: hrRemark,
+    lastComment: hrRemark,
     createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString(),
     updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : new Date().toISOString(),
   };
@@ -155,6 +168,7 @@ export const getMyHrTasks = async (
     // Fetch HrTasks
     const hrTasks = await prisma.hrTask.findMany({
       where: hrWhere,
+      include: { updates: { orderBy: { at: 'desc' } } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -326,7 +340,7 @@ export const updateMyHrTask = async (
         }),
       ]);
 
-      const updated = await prisma.hrTask.findUnique({ where: { id } });
+      const updated = await prisma.hrTask.findUnique({ where: { id }, include: { updates: { orderBy: { at: 'desc' } } } });
       const myName = employee ? `${employee.firstName ?? ''} ${employee.lastName ?? ''}`.trim() : (user.email || `User #${user.id}`);
       const assignerName = await resolveUserName(hrTask.assignedBy);
 
@@ -417,6 +431,7 @@ export const getHrTasksMobile = async (
 
     const tasks = await prisma.hrTask.findMany({
       where: hrWhere,
+      include: { updates: { orderBy: { at: 'desc' } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });

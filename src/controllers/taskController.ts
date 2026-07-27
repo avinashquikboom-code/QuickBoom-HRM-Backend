@@ -580,12 +580,31 @@ export const updateTask = async (
       await prisma.hrTask.update({ where: { id }, data: updateData });
     }
 
-    // Fire notification if reassigned
-    if (newAssignee !== existing.assignedTo) {
+    // Fire notification if reassigned, status updated, or HR remarks provided
+    const isReassignedToNew = newAssignee !== existing.assignedTo;
+    const hrRemark = comment?.trim();
+
+    if (isReassignedToNew) {
+      const remarkBody = hrRemark ? `\nHR Remark: ${hrRemark}` : '';
       notifyEmployee(
         newAssignee,
         '📋 Task Reassigned to You',
-        `You have been assigned: ${updateData.title ?? existing.title}`
+        `You have been assigned: ${updateData.title ?? existing.title}${remarkBody}`
+      );
+    } else if (statusChanged || hrRemark) {
+      let notifTitle = '📋 Task Updated by HR';
+      if (statusEnum === HrTaskStatus.PENDING || statusEnum === HrTaskStatus.IN_PROGRESS) {
+        if (existing.status === HrTaskStatus.COMPLETED) {
+          notifTitle = '⚠️ Task Returned for Revision by HR';
+        } else {
+          notifTitle = '📋 Task Reassigned with HR Remarks';
+        }
+      }
+      const remarkBody = hrRemark ? `\nHR Remark: ${hrRemark}` : '';
+      notifyEmployee(
+        newAssignee,
+        notifTitle,
+        `Task "${updateData.title ?? existing.title}" has been updated by HR.${remarkBody}`
       );
     }
 
