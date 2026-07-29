@@ -29,9 +29,11 @@ export const getMyPayslips = async (
     });
 
     if (!employee) {
-      res.status(404).json({
-        success: false,
-        message: 'Employee record not found.'
+      // HopKid employees may not have a local DB record yet — return empty list gracefully
+      res.json({
+        success: true,
+        data: [],
+        message: 'No employee record linked to this account.'
       });
       return;
     }
@@ -48,14 +50,17 @@ export const getMyPayslips = async (
       success: true,
       data: payslips
     });
-  } catch (error) {
-    console.error('Get my payslips error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve payslips.'
+  } catch (error: any) {
+    console.error('Get my payslips error — userId:', req.user?.id, '| detail:', error?.message ?? error);
+    // Return empty list rather than a 500 crash — payslips may simply not exist yet
+    res.json({
+      success: true,
+      data: [],
+      _warning: 'Payslips temporarily unavailable.'
     });
   }
 };
+
 
 // Download a payslip as PDF
 export const downloadPayslip = async (

@@ -116,6 +116,8 @@ class GeofenceService {
           where: { isActive: true }
         });
         for (const office of activeOffices) {
+          // Skip offices with placeholder (0,0) coordinates — location not set yet
+          if (office.latitude === 0 && office.longitude === 0) continue;
           geofences.push({
             type: 'office',
             id: office.id,
@@ -127,16 +129,35 @@ class GeofenceService {
         }
       }
 
-      if (geofences.length === 0) {
-        throw new Error('No active office, store, or branch geofences found');
+      // Filter out any (0,0) placeholder coordinates from the employee-specific list too
+      const validGeofences = geofences.filter(
+        gf => !(gf.latitude === 0 && gf.longitude === 0)
+      );
+
+      if (validGeofences.length === 0) {
+        // No valid geofence coordinates configured — allow punch gracefully
+        console.warn(`[GeofenceService] No valid geofence coordinates found for employeeId=${employeeId}. Allowing punch.`);
+        return {
+          isWithinGeofence: true,
+          distance: 0,
+          officeId: undefined,
+          officeName: 'No location configured',
+          maxRadius: 0,
+          coordinates: {
+            userLat,
+            userLon,
+            officeLat: 0,
+            officeLon: 0
+          }
+        };
       }
 
       // Check all available geofences and find the closest one
-      let closestGeofence = geofences[0];
+      let closestGeofence = validGeofences[0];
       let minDistance = Infinity;
       let isWithinGeofence = false;
 
-      for (const gf of geofences) {
+      for (const gf of validGeofences) {
         const distance = this.calculateDistance(userLat, userLon, gf.latitude, gf.longitude);
         if (distance < minDistance) {
           minDistance = distance;
