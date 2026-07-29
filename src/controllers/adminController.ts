@@ -429,6 +429,12 @@ export const fetchEmployees = async (
               shift: true
             }
           },
+          wallet: {
+            select: {
+              advanceLimit: true,
+              availableBalance: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
         ...(skip !== undefined ? { skip } : {}),
@@ -502,6 +508,12 @@ export const fetchEmployees = async (
             code: emp.department.code,
           }
         : null,
+      wallet: (emp as any).wallet
+        ? {
+            advanceLimit: (emp as any).wallet.advanceLimit,
+            availableBalance: (emp as any).wallet.availableBalance,
+          }
+        : null,
     }));
 
     const count = total;
@@ -569,7 +581,8 @@ export const updateEmployee = async (
       branchName,
       storeId,
       customPunchRadius,
-      commissionPercentage
+      commissionPercentage,
+      advanceLimit
     } = req.body;
 
     if (!id) {
@@ -716,6 +729,24 @@ export const updateEmployee = async (
             employeeId: employeeId,
             shiftId: parseInt(shiftId),
             effectiveFrom: new Date(),
+          },
+        });
+      }
+    }
+
+    if (advanceLimit !== undefined && advanceLimit !== null && advanceLimit !== '') {
+      const parsedLimit = parseFloat(advanceLimit);
+      if (!isNaN(parsedLimit)) {
+        const phoneDigits = (updatedEmployee.mobileNumber || '').replace(/\D/g, '').slice(-4) || '0000';
+        await prisma.wallet.upsert({
+          where: { employeeId },
+          update: { advanceLimit: parsedLimit },
+          create: {
+            employeeId,
+            advanceLimit: parsedLimit,
+            availableBalance: 0,
+            pendingClaims: 0,
+            cardNumber: `HK-${updatedEmployee.employeeCode}-${phoneDigits}`,
           },
         });
       }

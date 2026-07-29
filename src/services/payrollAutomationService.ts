@@ -106,14 +106,62 @@ export class PayrollAutomationService {
     
     const totalEarnings = proratedBase + proratedHra + proratedAllowances + incentive + bonus;
 
-    // 6. Calculate deductions: PF and ESIC
+    // 6. Calculate deductions: PF, ESIC, and Salary Advance EMI
     // PF is calculated as % of pro-rated basic salary
     const pfDeduction = pfEnabled ? Math.round(proratedBase * (employeePfRate / 100)) : 0;
     
     // ESIC is calculated as % of total earnings
     const esicDeduction = esicEnabled ? Math.round(totalEarnings * (employeeEsicRate / 100)) : 0;
+
+    // Salary Advance EMI Deduction
+    let advanceDeduction = 0;
+    const activeAdvance = await prisma.salaryAdvance.findFirst({
+      where: {
+        wallet: { employeeId },
+        status: 'APPROVED',
+        remainingAmount: { gt: 0 },
+      },
+      orderBy: { approvedAt: 'asc' },
+    });
+
+    if (activeAdvance) {
+      const standardEmi = activeAdvance.monthlyEmi > 0 
+        ? activeAdvance.monthlyEmi 
+        : Math.round((activeAdvance.amount / (activeAdvance.months || 1)) * 100) / 100;
+      
+      advanceDeduction = Math.min(standardEmi, activeAdvance.remainingAmount);
+
+      const newPaidAmount = activeAdvance.paidAmount + advanceDeduction;
+      const newRemaining = Math.max(0, activeAdvance.remainingAmount - advanceDeduction);
+      const newPaidEmis = activeAdvance.paidEmis + 1;
+      const isPaidOff = newRemaining <= 0;
+
+      await prisma.salaryAdvance.update({
+        where: { id: activeAdvance.id },
+        data: {
+          paidAmount: newPaidAmount,
+          remainingAmount: newRemaining,
+          paidEmis: newPaidEmis,
+          status: isPaidOff ? 'PAID_OFF' : 'APPROVED',
+        },
+      });
+
+      // Log wallet debit transaction for salary advance EMI repayment
+      await prisma.walletTransaction.create({
+        data: {
+          walletId: activeAdvance.walletId,
+          title: `Salary Advance EMI (${newPaidEmis}/${activeAdvance.months})`,
+          category: 'Advance Repayment',
+          amount: advanceDeduction,
+          date: new Date(),
+          status: 'Success',
+          isCredit: false,
+          description: `Deducted EMI of ₹${advanceDeduction} for month ${month}/${year}. Remaining advance: ₹${newRemaining}.`,
+        },
+      });
+    }
     
-    const totalDeductions = pfDeduction + esicDeduction;
+    const totalDeductions = pfDeduction + esicDeduction + advanceDeduction;
 
     // 7. Calculate Net Salary
     const netSalary = Math.max(0, totalEarnings - totalDeductions);
@@ -137,6 +185,7 @@ export class PayrollAutomationService {
         baseSalary: proratedBase,
         allowance: totalEarnings - proratedBase, // allowance + HRA + incentive + bonus
         deductions: totalDeductions,
+        advanceDeduction,
         netSalary,
         status,
         employeeCode: employee.employeeCode,
@@ -153,6 +202,7 @@ export class PayrollAutomationService {
         baseSalary: proratedBase,
         allowance: totalEarnings - proratedBase,
         deductions: totalDeductions,
+        advanceDeduction,
         netSalary,
         status,
         employeeCode: employee.employeeCode,

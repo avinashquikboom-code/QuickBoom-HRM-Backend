@@ -477,6 +477,7 @@ model Payslip {
   department        String
   officeName        String
   netInWords        String
+  advanceDeduction  Float    @default(0)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
@@ -652,20 +653,24 @@ model WalletTransaction {
 }
 
 model SalaryAdvance {
-  id          Int      @id @default(autoincrement())
-  walletId    Int
-  amount      Float
-  months      Int
-  reason      String
-  status      String   @default("PENDING")
-  requestedOn DateTime @default(now())
-  reviewedBy  String?
-  reviewNote  String?
-  reviewedAt  DateTime?
-  approvedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  id              Int      @id @default(autoincrement())
+  walletId        Int
+  amount          Float
+  months          Int
+  reason          String
+  status          String   @default("PENDING")
+  monthlyEmi      Float    @default(0)
+  paidAmount      Float    @default(0)
+  remainingAmount Float    @default(0)
+  paidEmis        Int      @default(0)
+  requestedOn     DateTime @default(now())
+  reviewedBy      String?
+  reviewNote      String?
+  reviewedAt      DateTime?
+  approvedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([walletId])
   @@index([status])

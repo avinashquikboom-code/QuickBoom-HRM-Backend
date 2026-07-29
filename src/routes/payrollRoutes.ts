@@ -20,6 +20,11 @@ import {
   bulkDisbursePayroll,
 } from '../controllers/payrollController';
 
+import {
+  getAdminSalaryAdvances,
+  reviewSalaryAdvance,
+} from '../controllers/salaryAdvanceController';
+
 const router = Router();
 
 // Apply authentication middleware to all routes
@@ -53,5 +58,9 @@ router.get('/admin/runs', getAdminPayrollRuns);
 router.get('/admin/slips', getAdminPayrollSlips);
 router.post('/admin/slips/approve', approveAdminPayslip);
 router.post('/admin/disburse', bulkDisbursePayroll);
+
+// Salary Advance management endpoints
+router.get('/admin/advances', getAdminSalaryAdvances);
+router.put('/admin/advances/:id/review', reviewSalaryAdvance);
 
 export default router;

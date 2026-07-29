@@ -1580,6 +1580,14 @@ export const fetchEmployeeWallet = async (
       ? latestPayslip.netSalary
       : estimatedNetSalary;
 
+    const activeAdvance = await prisma.salaryAdvance.findFirst({
+      where: {
+        walletId: wallet.id,
+        status: { in: ['PENDING', 'APPROVED'] },
+      },
+      orderBy: { requestedOn: 'desc' },
+    });
+
     res.json({
       success: true,
       wallet: {
@@ -1593,6 +1601,21 @@ export const fetchEmployeeWallet = async (
         upcomingSalary,
         grossSalary: registeredSalary,
         netSalary: upcomingSalary,
+        activeAdvance: activeAdvance ? {
+          id: activeAdvance.id.toString(),
+          amount: activeAdvance.amount,
+          months: activeAdvance.months,
+          monthlyEmi: activeAdvance.monthlyEmi > 0 
+            ? activeAdvance.monthlyEmi 
+            : Math.round((activeAdvance.amount / (activeAdvance.months || 1)) * 100) / 100,
+          paidAmount: activeAdvance.paidAmount,
+          remainingAmount: activeAdvance.status === 'APPROVED' ? activeAdvance.remainingAmount : activeAdvance.amount,
+          paidEmis: activeAdvance.paidEmis,
+          pendingEmis: Math.max(0, (activeAdvance.months || 1) - activeAdvance.paidEmis),
+          status: activeAdvance.status,
+          requestedOn: activeAdvance.requestedOn.toISOString(),
+          approvedAt: activeAdvance.approvedAt ? activeAdvance.approvedAt.toISOString() : null,
+        } : null,
         transactions: wallet.transactions.map(tx => ({
           id: tx.id.toString(),
           title: tx.title,
