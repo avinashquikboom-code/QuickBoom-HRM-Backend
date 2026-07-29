@@ -2,13 +2,14 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { pushNotificationService } from '../services/pushNotificationService';
+import { resolveEmployeeId } from '../utils/commissionHelper';
 
 export const addSales = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const { billId, invoiceNumber, saleAmount, storeId, notes } = req.body;
+    const { billId, invoiceNumber, saleAmount, storeId, notes, employeeId, employeeCode, employeeID } = req.body;
 
     if (!billId && !invoiceNumber) {
       res.status(400).json({ success: false, message: 'Either billId or invoiceNumber is required.' });
@@ -20,19 +21,38 @@ export const addSales = async (
       return;
     }
 
-    // Identify logged in employee
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-      include: {
-        commissionPolicies: {
-          where: { isActive: true },
-          orderBy: { priority: 'asc' },
+    // Identify target employee (via payload GUID/code/int OR logged in user)
+    let employee = null;
+    const identifier = employeeId || employeeID || employeeCode;
+    if (identifier) {
+      const resolvedId = await resolveEmployeeId(identifier);
+      if (resolvedId !== null) {
+        employee = await prisma.employee.findUnique({
+          where: { id: resolvedId },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        });
+      }
+    }
+
+    if (!employee && req.user?.id) {
+      employee = await prisma.employee.findFirst({
+        where: { userId: req.user.id },
+        include: {
+          commissionPolicies: {
+            where: { isActive: true },
+            orderBy: { priority: 'asc' },
+          },
         },
-      },
-    });
+      });
+    }
 
     if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee record not found for the logged-in user.' });
+      res.status(404).json({ success: false, message: 'Employee record not found for the sale.' });
       return;
     }
 

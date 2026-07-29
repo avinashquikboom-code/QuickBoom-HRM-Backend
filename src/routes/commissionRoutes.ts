@@ -11,28 +11,13 @@ router.use(authMiddleware);
 // GET /api/commission/report
 router.get('/report', fetchCommissionReport);
 
-// POST /api/commission/sync-sales  (Admin: manually pull HopKid sales into commission transactions)
+// POST /api/commission/sync-sales
 router.post('/sync-sales', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { fromDate, toDate } = req.body;
-    const result = await syncHopkidSales({
-      fromDate: fromDate ? new Date(fromDate) : undefined,
-      toDate: toDate ? new Date(toDate) : undefined,
-      force: true,
-    });
-    res.json({
-      success: true,
-      message: `Sync complete. ${result.synced} new transactions created, ${result.skipped} already existed, ${result.errors} errors.`,
-      result,
-    });
-  } catch (error: any) {
-    console.error('Manual sales sync error:', error);
-    // Return 400 with the descriptive error so the frontend shows it clearly
-    res.status(400).json({
-      success: false,
-      message: error?.message || 'Sales sync failed. Check HopKid API configuration in Admin Settings.',
-    });
-  }
+  res.json({
+    success: true,
+    message: 'Local sales tracking active. Sales and commissions are recorded in real-time when logged via the mobile app.',
+    result: { synced: 0, skipped: 0, errors: 0 },
+  });
 });
 
 export default router;

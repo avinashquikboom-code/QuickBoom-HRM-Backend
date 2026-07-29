@@ -1,5 +1,36 @@
 import { prisma } from './db';
 
+/**
+ * Resolves an employee identifier (GUID string, employeeCode, or integer ID)
+ * to the canonical local Employee DB primary key (id).
+ */
+export async function resolveEmployeeId(identifier?: string | number | null): Promise<number | null> {
+  if (!identifier) return null;
+  const str = String(identifier).trim();
+  if (!str) return null;
+
+  // 1. Check for GUID match on employeeID (case-insensitive)
+  const byGuid = await prisma.employee.findFirst({
+    where: { employeeID: { equals: str, mode: 'insensitive' } },
+  });
+  if (byGuid) return byGuid.id;
+
+  // 2. Check for employeeCode match
+  const byCode = await prisma.employee.findFirst({
+    where: { employeeCode: { equals: str, mode: 'insensitive' } },
+  });
+  if (byCode) return byCode.id;
+
+  // 3. Check for DB integer primary key match
+  const parsedInt = parseInt(str, 10);
+  if (!isNaN(parsedInt)) {
+    const byPk = await prisma.employee.findUnique({ where: { id: parsedInt } });
+    if (byPk) return byPk.id;
+  }
+
+  return null;
+}
+
 export interface CommissionSummaryStats {
   today: {
     commission: number;

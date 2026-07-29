@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { getCommissionStats } from '../utils/commissionHelper';
+import { getCommissionStats, resolveEmployeeId } from '../utils/commissionHelper';
 
 // Commission Dashboard Stats
 export const getCommissionDashboard = async (
@@ -13,15 +13,8 @@ export const getCommissionDashboard = async (
 
     let targetEmpId: number | null = null;
     if (employeeId) {
-      const parsedId = parseInt(employeeId as string, 10);
-      if (!isNaN(parsedId)) {
-        targetEmpId = parsedId;
-      } else {
-        const employee = await prisma.employee.findFirst({
-          where: { employeeCode: employeeId as string }
-        });
-        targetEmpId = employee ? employee.id : -1;
-      }
+      targetEmpId = await resolveEmployeeId(employeeId as string);
+      if (targetEmpId === null) targetEmpId = -1;
     }
 
     const parsedStoreId = storeId ? parseInt(storeId as string, 10) : null;
@@ -224,19 +217,8 @@ export const getCommissionTransactions = async (
 
     const whereClause: any = {};
     if (employeeId) {
-      const parsedId = parseInt(employeeId as string, 10);
-      if (!isNaN(parsedId)) {
-        whereClause.employeeId = parsedId;
-      } else {
-        const employee = await prisma.employee.findFirst({
-          where: { employeeCode: employeeId as string }
-        });
-        if (employee) {
-          whereClause.employeeId = employee.id;
-        } else {
-          whereClause.employeeId = -1;
-        }
-      }
+      const resolvedId = await resolveEmployeeId(employeeId as string);
+      whereClause.employeeId = resolvedId !== null ? resolvedId : -1;
     }
     
     if (storeId) {
@@ -600,19 +582,8 @@ export const fetchCommissionReport = async (
       }
       targetEmployeeId = employee.id;
     } else if (req.query.employeeId) {
-      const parsedId = parseInt(req.query.employeeId as string, 10);
-      if (!isNaN(parsedId)) {
-        targetEmployeeId = parsedId;
-      } else {
-        const employee = await prisma.employee.findFirst({
-          where: { employeeCode: req.query.employeeId as string }
-        });
-        if (employee) {
-          targetEmployeeId = employee.id;
-        } else {
-          targetEmployeeId = -1;
-        }
-      }
+      const resolvedId = await resolveEmployeeId(req.query.employeeId as string);
+      targetEmployeeId = resolvedId !== null ? resolvedId : -1;
     }
 
     // Store filter — admin can pass storeId to scope the report

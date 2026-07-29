@@ -361,26 +361,16 @@ server.listen(port, host, () => {
     .then(() => console.log('✅ [Startup Patch] Role permissions verified/initialized.'))
     .catch(err => console.error('❌ [Startup Patch] Role permissions initialization failed:', err));
 
-  // Schedule background HopKid employee + sales sync (every 30 minutes)
+  // Schedule background HopKid employee sync (every 30 minutes)
   const THIRTY_MINUTES = 30 * 60 * 1000;
   setTimeout(() => {
     console.log('🔄 [Background Schedule] Running initial HopKid employee sync...');
-    syncHopkidEmployees()
-      .then(() => {
-        console.log('🔄 [Background Schedule] Running initial HopKid sales sync (current month)...');
-        return syncHopkidSales({ force: true });
-      })
-      .catch(err => console.error('Background sync error:', err));
+    syncHopkidEmployees().catch(err => console.error('Background sync error:', err));
   }, 5000);
 
   setInterval(() => {
     console.log('🔄 [Background Schedule] Running periodic 30-min HopKid employee sync...');
-    syncHopkidEmployees()
-      .then(() => {
-        console.log('🔄 [Background Schedule] Running periodic 30-min HopKid sales sync...');
-        return syncHopkidSales();
-      })
-      .catch(err => console.error('Background sync error:', err));
+    syncHopkidEmployees().catch(err => console.error('Background sync error:', err));
   }, THIRTY_MINUTES);
 });
 
