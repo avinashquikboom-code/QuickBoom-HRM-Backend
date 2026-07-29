@@ -217,7 +217,13 @@ export const getCommissionTransactions = async (
 
     const whereClause: any = {
       employee: {
-        source: 'HOPKID',
+        source: { not: 'MANUAL' },
+        NOT: [
+          { employeeCode: { startsWith: 'ADMIN' } },
+          { employeeCode: { startsWith: 'HR' } },
+          { designation: { contains: 'HR', mode: 'insensitive' } },
+          { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
+        ],
       },
     };
     if (employeeId) {
@@ -612,7 +618,13 @@ export const fetchCommissionReport = async (
         lte: lteDate,
       },
       employee: {
-        source: 'HOPKID',
+        source: { not: 'MANUAL' },
+        NOT: [
+          { employeeCode: { startsWith: 'ADMIN' } },
+          { employeeCode: { startsWith: 'HR' } },
+          { designation: { contains: 'HR', mode: 'insensitive' } },
+          { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
+        ],
       },
     };
     if (targetEmployeeId !== undefined) whereClause.employeeId = targetEmployeeId;
@@ -635,7 +647,7 @@ export const fetchCommissionReport = async (
 
     const empWhere: any = {
       status: 'active',
-      source: 'HOPKID',
+      source: { not: 'MANUAL' },
       NOT: [
         { employeeCode: { startsWith: 'ADMIN' } },
         { employeeCode: { startsWith: 'HR' } },

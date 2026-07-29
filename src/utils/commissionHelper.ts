@@ -90,9 +90,17 @@ export async function getCommissionStats(params?: {
     }
   }
 
-  // Filter out rejected or cancelled transactions, restrict strictly to HopKid employees
+  // Filter out rejected or cancelled transactions, restrict strictly to HopKid employees (exclude MANUAL & admin/HR)
   whereClause.status = { in: ['PENDING', 'APPROVED', 'PAID'] };
-  whereClause.employee = { source: 'HOPKID' };
+  whereClause.employee = {
+    source: { not: 'MANUAL' },
+    NOT: [
+      { employeeCode: { startsWith: 'ADMIN' } },
+      { employeeCode: { startsWith: 'HR' } },
+      { designation: { contains: 'HR', mode: 'insensitive' } },
+      { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
+    ],
+  };
 
   const allTransactions = await prisma.commissionTransaction.findMany({
     where: whereClause,
@@ -133,13 +141,13 @@ export async function getCommissionStats(params?: {
   const lifetimeComm = allTransactions.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
   const lifetimeSales = allTransactions.reduce((sum, t) => sum + (t.saleAmount || 0), 0);
 
-  // Group top performers — seed all active employees so full HopKid workforce is listed
+  // Group top performers — seed all active HopKid employees
   const performerMap = new Map<number, { employee: any; totalCommission: number; totalSales: number }>();
   
   const activeEmps = await prisma.employee.findMany({
     where: {
       status: 'active',
-      source: 'HOPKID',
+      source: { not: 'MANUAL' },
       NOT: [
         { employeeCode: { startsWith: 'ADMIN' } },
         { employeeCode: { startsWith: 'HR' } },
@@ -185,8 +193,7 @@ export async function getCommissionStats(params?: {
   });
 
   const topPerformers = Array.from(performerMap.values())
-    .filter((p) => p.totalCommission > 0)
-    .sort((a, b) => b.totalCommission - a.totalCommission)
+    .sort((a, b) => (b.totalCommission - a.totalCommission) || (b.totalSales - a.totalSales))
     .slice(0, 10);
 
   return {
