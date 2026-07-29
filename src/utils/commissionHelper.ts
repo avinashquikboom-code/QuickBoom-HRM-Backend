@@ -142,7 +142,9 @@ export async function getCommissionStats(params?: {
       source: 'HOPKID',
       NOT: [
         { employeeCode: { startsWith: 'ADMIN' } },
-        { user: { role: 'SUPER_ADMIN' } },
+        { employeeCode: { startsWith: 'HR' } },
+        { designation: { contains: 'HR', mode: 'insensitive' } },
+        { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
       ],
       ...(params?.storeId ? { storeId: params.storeId } : {}),
     },

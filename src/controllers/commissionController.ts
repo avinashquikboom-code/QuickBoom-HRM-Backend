@@ -638,7 +638,9 @@ export const fetchCommissionReport = async (
       source: 'HOPKID',
       NOT: [
         { employeeCode: { startsWith: 'ADMIN' } },
-        { user: { role: 'SUPER_ADMIN' } },
+        { employeeCode: { startsWith: 'HR' } },
+        { designation: { contains: 'HR', mode: 'insensitive' } },
+        { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
       ],
     };
     if (targetEmployeeId !== undefined) empWhere.id = targetEmployeeId;
