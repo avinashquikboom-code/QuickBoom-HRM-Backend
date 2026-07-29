@@ -1,4 +1,5 @@
 import { prisma } from './db';
+import { getIntegrationSettings } from './configService';
 
 let lastSyncTime = 0;
 const SYNC_COOLDOWN = 10 * 1000; // 10 seconds cooldown to prevent spamming the external API
@@ -92,10 +93,11 @@ export async function syncHopkidEmployees(): Promise<void> {
   console.log('🔄 [syncHopkidEmployees] Starting employee synchronization from external API...');
   
   try {
-    const response = await fetch('https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList', {
+    const { hopkidApiUrl, hopkidApiKey } = await getIntegrationSettings();
+    const response = await fetch(hopkidApiUrl, {
       method: 'GET',
       headers: {
-        'x-api-key': 'HOPKID-MOBILE-ACCESS-API-KEY',
+        'x-api-key': hopkidApiKey,
         'Content-Type': 'application/json',
       },
     });

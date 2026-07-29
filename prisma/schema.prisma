@@ -445,6 +445,7 @@ model SystemSetting {
   attendance    Json?
   leave         Json?
   payroll       Json?
+  integrations  Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

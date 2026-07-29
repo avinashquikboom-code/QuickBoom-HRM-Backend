@@ -929,33 +929,35 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
 
   try {
     const inputMobile = String(rawMobile).trim();
-    const cleanedMobile = inputMobile.replace(/\D/g, '');
+    const inputPhoneDigits = inputMobile.replace(/\D/g, '').slice(-10);
     const codeUpper = String(employeeCode).trim().toUpperCase();
     const codeClean = String(employeeCode).trim();
+    const candidateCodes = [
+      codeUpper,
+      codeClean,
+      ...(codeClean.length < 4 ? [codeClean.padStart(3, '0'), `EMP${codeClean}`] : [])
+    ];
 
-    // 1. Search employee directory matching both employeeCode AND mobileNumber
-    let employee = await prisma.employee.findFirst({
+    const normalizePhone = (p: string | null | undefined): string => {
+      if (!p) return '';
+      const digits = String(p).replace(/\D/g, '');
+      return digits.length >= 10 ? digits.slice(-10) : digits;
+    };
+
+    const findMatchingEmployee = (candidates: any[]) => {
+      return candidates.find(e => {
+        const codeMatches = candidateCodes.includes(e.employeeCode.toUpperCase()) || candidateCodes.includes(e.employeeCode);
+        const phoneMatches = inputPhoneDigits.length >= 10 && normalizePhone(e.mobileNumber) === inputPhoneDigits;
+        return codeMatches && phoneMatches;
+      });
+    };
+
+    // 1. Search employee directory matching both employeeCode AND normalized mobileNumber
+    let candidatePool = await prisma.employee.findMany({
       where: {
-        AND: [
-          {
-            OR: [
-              { employeeCode: codeUpper },
-              { employeeCode: codeClean },
-              ...(codeClean.length < 4 ? [{ employeeCode: codeClean.padStart(3, '0') }, { employeeCode: `EMP${codeClean}` }] : [])
-            ]
-          },
-          {
-            OR: [
-              { mobileNumber: inputMobile },
-              ...(cleanedMobile ? [{ mobileNumber: cleanedMobile }] : []),
-              ...(cleanedMobile.length >= 10 ? [
-                { mobileNumber: `+91${cleanedMobile.slice(-10)}` },
-                { mobileNumber: `+91 ${cleanedMobile.slice(-10)}` },
-                { mobileNumber: `91${cleanedMobile.slice(-10)}` }
-              ] : []),
-              ...(inputMobile.length >= 10 ? [{ mobileNumber: { contains: inputMobile.slice(-10) } }] : [])
-            ]
-          }
+        OR: [
+          { employeeCode: { in: candidateCodes } },
+          ...(inputPhoneDigits.length >= 10 ? [{ mobileNumber: { contains: inputPhoneDigits } }] : [])
         ]
       },
       include: {
@@ -965,33 +967,18 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
       }
     });
 
+    let employee = findMatchingEmployee(candidatePool);
+
     // 2. If not found in local DB, sync from HopKid API on-the-fly and retry search
     if (!employee) {
       console.log('[MOBILE_REGISTER] Employee not found in local DB. Syncing HopKid employees...');
       await syncHopkidEmployees().catch(err => console.error('[MOBILE_REGISTER] HopKid sync error:', err));
 
-      employee = await prisma.employee.findFirst({
+      candidatePool = await prisma.employee.findMany({
         where: {
-          AND: [
-            {
-              OR: [
-                { employeeCode: codeUpper },
-                { employeeCode: codeClean },
-                ...(codeClean.length < 4 ? [{ employeeCode: codeClean.padStart(3, '0') }, { employeeCode: `EMP${codeClean}` }] : [])
-              ]
-            },
-            {
-              OR: [
-                { mobileNumber: inputMobile },
-                ...(cleanedMobile ? [{ mobileNumber: cleanedMobile }] : []),
-                ...(cleanedMobile.length >= 10 ? [
-                  { mobileNumber: `+91${cleanedMobile.slice(-10)}` },
-                  { mobileNumber: `+91 ${cleanedMobile.slice(-10)}` },
-                  { mobileNumber: `91${cleanedMobile.slice(-10)}` }
-                ] : []),
-                ...(inputMobile.length >= 10 ? [{ mobileNumber: { contains: inputMobile.slice(-10) } }] : [])
-              ]
-            }
+          OR: [
+            { employeeCode: { in: candidateCodes } },
+            ...(inputPhoneDigits.length >= 10 ? [{ mobileNumber: { contains: inputPhoneDigits } }] : [])
           ]
         },
         include: {
@@ -1000,6 +987,8 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
           store: true
         }
       });
+
+      employee = findMatchingEmployee(candidatePool);
     }
 
     if (!employee) {
@@ -1050,6 +1039,7 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
     const fullName = `${employee.firstName} ${employee.lastName}`.trim();
+    const finalEmployeeID = (employee.employeeID || employee.employeeCode).toLowerCase();
 
     // Create User & Profile
     const newUser = await prisma.user.create({
@@ -1058,7 +1048,7 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
         password: hashedPassword,
         role: Role.EMPLOYEE,
         isActive: true,
-        employeeID: employee.employeeID || employee.employeeCode,
+        employeeID: finalEmployeeID,
         profile: {
           create: {
             email: normalizedEmail || '',

@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import { syncHopkidEmployees } from '../../utils/employeeSync';
@@ -376,9 +377,19 @@ export const fetchHREmployees = async (
         take: limitInt,
         orderBy: { createdAt: 'desc' },
         include: {
-          department: { select: { name: true } },
-          office: { select: { name: true } },
-          user: { select: { email: true, isActive: true } },
+          department: { select: { id: true, name: true } },
+          office: { select: { id: true, name: true } },
+          store: { select: { id: true, name: true } },
+          salaryStructure: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+              role: true,
+              isActive: true,
+              profile: true
+            }
+          },
           shiftAssignments: {
             where: {
               effectiveTo: null
@@ -409,7 +420,7 @@ export const fetchHREmployees = async (
         employeeCode: emp.employeeCode,
         firstName: emp.firstName,
         lastName: emp.lastName,
-        fullName: `${emp.firstName} ${emp.lastName}`,
+        fullName: `${emp.firstName} ${emp.lastName || ''}`.trim(),
         designation: emp.designation || 'Employee',
         status: emp.status,
         workMode: emp.workModeId,
@@ -425,9 +436,42 @@ export const fetchHREmployees = async (
               color: emp.shiftAssignments[0].shift.color,
             }
           : null,
-        department: emp.department?.name || 'Unassigned',
-        office: emp.office?.name || 'Remote',
+        department: emp.department || 'Unassigned',
+        office: emp.office || 'Remote',
+        store: emp.store || null,
+        storeId: emp.storeId || undefined,
+        officeId: emp.officeId || undefined,
+        departmentId: emp.departmentId || undefined,
         email: emp.user?.email || null,
+        phone: emp.mobileNumber || emp.user?.profile?.phone || '',
+        aadharNumber: emp.user?.profile?.aadharNumber || '',
+        pfNumber: emp.user?.profile?.pfNumber || '',
+        esicNumber: emp.user?.profile?.esicNumber || '',
+        isHandicapped: emp.user?.profile?.isHandicapped || false,
+        currentAddress: emp.user?.profile?.currentAddress || '',
+        permanentAddress: emp.user?.profile?.permanentAddress || '',
+        bankName: emp.bankName || '',
+        accountNumber: emp.accountNumber || '',
+        ifscCode: emp.ifscCode || '',
+        accountType: emp.accountType || 'Savings',
+        branchName: emp.branchName || '',
+        role: emp.user?.role || '',
+        commissionPercentage: emp.commissionPercentage || 0,
+        customPunchRadius: emp.customPunchRadius || undefined,
+        basicSalary: emp.salaryStructure?.basicSalary || 0,
+        grossSalary: emp.salaryStructure?.grossSalary || 0,
+        hra: emp.salaryStructure?.hra || 0,
+        medicalAllowance: emp.salaryStructure?.medicalAllowance || 0,
+        travelAllowance: emp.salaryStructure?.travelAllowance || 0,
+        specialAllowance: emp.salaryStructure?.specialAllowance || 0,
+        incentive: emp.salaryStructure?.incentive || 0,
+        bonus: emp.salaryStructure?.bonus || 0,
+        pfEnabled: emp.salaryStructure?.pfEnabled || false,
+        employeePfRate: emp.salaryStructure?.employeePfRate || 12.0,
+        employerPfRate: emp.salaryStructure?.employerPfRate || 12.0,
+        esicEnabled: emp.salaryStructure?.esicEnabled || false,
+        employeeEsicRate: emp.salaryStructure?.employeeEsicRate || 0.75,
+        employerEsicRate: emp.salaryStructure?.employerEsicRate || 3.25,
         isActive: emp.user?.isActive ?? true,
         leaveCount: emp._count.leaveRequests,
         taskCount: emp._count.assignedTasks,
@@ -435,7 +479,6 @@ export const fetchHREmployees = async (
         joinedAt: emp.createdAt.toISOString(),
         source: emp.source || 'HOPKID',
       };
-      console.log(`👥 [HR EMPLOYEES] Mapped employee:`, result);
       return result;
     });
 
@@ -1660,6 +1703,25 @@ export const updateHREmployee = async (
       }
     }
     
+    const { 
+      basicSalary, 
+      grossSalary, 
+      hra, 
+      medicalAllowance, 
+      travelAllowance, 
+      specialAllowance, 
+      incentive, 
+      bonus, 
+      pfEnabled, 
+      employeePfRate, 
+      employerPfRate, 
+      esicEnabled, 
+      employeeEsicRate, 
+      employerEsicRate, 
+      role, 
+      commissionPercentage 
+    } = req.body;
+
     const updatedEmployee = await prisma.employee.update({
       where: { id: employeeId },
       data: {
@@ -1672,6 +1734,8 @@ export const updateHREmployee = async (
         shiftTypeId: finalShiftTypeId,
         officeId: officeId ? parseInt(officeId, 10) : null,
         departmentId: departmentId ? parseInt(departmentId, 10) : null,
+        ...(phone !== undefined && { mobileNumber: phone ? phone.trim() : null }),
+        ...(commissionPercentage !== undefined && { commissionPercentage: commissionPercentage ? parseFloat(commissionPercentage) : null }),
         ...(bankName !== undefined && { bankName: bankName || null }),
         ...(accountNumber !== undefined && { accountNumber: accountNumber || null }),
         ...(ifscCode !== undefined && { ifscCode: ifscCode || null }),
@@ -1683,7 +1747,7 @@ export const updateHREmployee = async (
       include: {
         office: true,
         user: {
-          select: { email: true, isActive: true }
+          select: { email: true, isActive: true, role: true }
         },
         department: {
           select: { name: true }
@@ -1691,7 +1755,58 @@ export const updateHREmployee = async (
       },
     });
 
-    // Update profile with new fields
+    // Upsert Salary Structure if salary values are provided
+    if (basicSalary !== undefined || grossSalary !== undefined || hra !== undefined) {
+      const parsedBasic = basicSalary ? parseFloat(basicSalary) : 0;
+      const parsedGross = grossSalary ? parseFloat(grossSalary) : 0;
+      const parsedHra = hra ? parseFloat(hra) : 0;
+      const parsedMedical = medicalAllowance ? parseFloat(medicalAllowance) : 0;
+      const parsedTravel = travelAllowance ? parseFloat(travelAllowance) : 0;
+      const parsedSpecial = specialAllowance ? parseFloat(specialAllowance) : 0;
+      const parsedIncentive = incentive ? parseFloat(incentive) : 0;
+      const parsedBonus = bonus ? parseFloat(bonus) : 0;
+
+      await prisma.salaryStructure.upsert({
+        where: { employeeId: employeeId },
+        update: {
+          basicSalary: parsedBasic,
+          grossSalary: parsedGross,
+          hra: parsedHra,
+          medicalAllowance: parsedMedical,
+          travelAllowance: parsedTravel,
+          specialAllowance: parsedSpecial,
+          incentive: parsedIncentive,
+          bonus: parsedBonus,
+          monthlySalary: parsedGross || parsedBasic,
+          pfEnabled: pfEnabled !== undefined ? Boolean(pfEnabled) : false,
+          employeePfRate: employeePfRate ? parseFloat(employeePfRate) : 12.0,
+          employerPfRate: employerPfRate ? parseFloat(employerPfRate) : 12.0,
+          esicEnabled: esicEnabled !== undefined ? Boolean(esicEnabled) : false,
+          employeeEsicRate: employeeEsicRate ? parseFloat(employeeEsicRate) : 0.75,
+          employerEsicRate: employerEsicRate ? parseFloat(employerEsicRate) : 3.25,
+        },
+        create: {
+          employeeId: employeeId,
+          basicSalary: parsedBasic,
+          grossSalary: parsedGross,
+          hra: parsedHra,
+          medicalAllowance: parsedMedical,
+          travelAllowance: parsedTravel,
+          specialAllowance: parsedSpecial,
+          incentive: parsedIncentive,
+          bonus: parsedBonus,
+          monthlySalary: parsedGross || parsedBasic,
+          pfEnabled: pfEnabled !== undefined ? Boolean(pfEnabled) : false,
+          employeePfRate: employeePfRate ? parseFloat(employeePfRate) : 12.0,
+          employerPfRate: employerPfRate ? parseFloat(employerPfRate) : 12.0,
+          esicEnabled: esicEnabled !== undefined ? Boolean(esicEnabled) : false,
+          employeeEsicRate: employeeEsicRate ? parseFloat(employeeEsicRate) : 0.75,
+          employerEsicRate: employerEsicRate ? parseFloat(employerEsicRate) : 3.25,
+        }
+      });
+    }
+
+    // Update profile & user with new fields
     if (updatedEmployee.userId) {
       const profileUpdateData: any = {
         fullName: `${firstName || updatedEmployee.firstName} ${lastName || updatedEmployee.lastName || ''}`.trim(),
@@ -1710,12 +1825,23 @@ export const updateHREmployee = async (
         data: profileUpdateData,
       });
 
-      // Update password if HR provided a new one
+      const userUpdateData: any = {};
+
+      if (role !== undefined && role !== null && String(role).trim() !== '') {
+        const validRoles = ['SUPER_ADMIN', 'HR', 'STORE_MANAGER', 'SALESMAN', 'HELPER', 'EMPLOYEE'];
+        if (validRoles.includes(String(role).toUpperCase())) {
+          userUpdateData.role = String(role).toUpperCase() as Role;
+        }
+      }
+
       if (password !== undefined && password !== null && String(password).trim() !== '') {
-        const hashedPassword = await securityService.hashPassword(password.trim());
+        userUpdateData.password = await securityService.hashPassword(password.trim());
+      }
+
+      if (Object.keys(userUpdateData).length > 0) {
         await prisma.user.update({
           where: { id: updatedEmployee.userId },
-          data: { password: hashedPassword },
+          data: userUpdateData,
         });
       }
     }

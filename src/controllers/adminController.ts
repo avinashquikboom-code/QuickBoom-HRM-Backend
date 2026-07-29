@@ -8,6 +8,7 @@ import { pushNotificationService } from '../services/pushNotificationService';
 import { syncHopkidEmployees } from '../utils/employeeSync';
 import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
+import { clearIntegrationCache } from '../utils/configService';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -6005,6 +6006,12 @@ export const fetchAdminSettings = async (
         includeTax: true,
         includeProvidentFund: true,
       },
+      integrations: (settingsRecord as any).integrations || {
+        hopkidApiUrl: 'https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList',
+        hopkidApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
+        mobileApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
+        firebaseServerKey: '',
+      },
     };
 
     res.json({ success: true, settings });
@@ -6025,7 +6032,7 @@ export const updateAdminSettings = async (
     return;
   }
 
-  const validCategories = ['company', 'attendance', 'leave', 'payroll', 'notifications'];
+  const validCategories = ['company', 'attendance', 'leave', 'payroll', 'notifications', 'integrations'];
   if (!validCategories.includes(category)) {
     res.status(400).json({ success: false, message: `Invalid settings category: ${category}` });
     return;
@@ -6043,6 +6050,10 @@ export const updateAdminSettings = async (
         ...updateData,
       },
     });
+
+    if (category === 'integrations') {
+      clearIntegrationCache();
+    }
 
     res.json({ 
       success: true, 

@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { syncHopkidEmployees } from '../utils/employeeSync';
+import { getIntegrationSettings } from '../utils/configService';
 
 export const getEmployeeList = async (
   req: AuthenticatedRequest,
@@ -11,10 +12,11 @@ export const getEmployeeList = async (
     // Run the sync to keep the local database up to date
     await syncHopkidEmployees();
 
-    const response = await fetch('https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList', {
+    const { hopkidApiUrl, hopkidApiKey } = await getIntegrationSettings();
+    const response = await fetch(hopkidApiUrl, {
       method: 'GET',
       headers: {
-        'x-api-key': 'HOPKID-MOBILE-ACCESS-API-KEY',
+        'x-api-key': hopkidApiKey,
         'Content-Type': 'application/json',
       },
     });
