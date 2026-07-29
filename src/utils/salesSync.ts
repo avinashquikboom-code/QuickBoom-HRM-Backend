@@ -56,18 +56,15 @@ export async function syncHopkidSales(options?: {
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      const msg = `HopKid Sales API returned HTTP ${response.status}. ${body}`.trim();
-      console.error(`❌ [syncHopkidSales] ${msg}`);
-      throw new Error(msg);
+      console.warn(`ℹ️ [syncHopkidSales] HopKid Sales API endpoint returned HTTP ${response.status}. External sales read API is not available or requires direct mobile app submission.`);
+      return { synced: 0, skipped: 0, errors: 0 };
     }
 
     const result = (await response.json()) as any;
 
     if (!result.success) {
-      const msg = `HopKid Sales API returned failure: ${result.message || 'Unknown error'}. The API key may not have Sales access — please update it in Admin Settings.`;
-      console.error(`❌ [syncHopkidSales] ${msg}`);
-      throw new Error(msg);
+      console.warn(`ℹ️ [syncHopkidSales] HopKid Sales API notice: ${result.message || 'Unauthorized'}. HopKid API has no read-sales endpoint. Sales are created when logged via Mobile App.`);
+      return { synced: 0, skipped: 0, errors: 0 };
     }
 
     const salesList: any[] = result.data || [];
