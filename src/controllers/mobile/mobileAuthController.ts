@@ -901,7 +901,127 @@ export const fetchMobileDepartments = async (
   }
 };
 
-// Mobile user registration endpoint - verify mobileNo + employeeCode against employee cache
+// Step 1: Verify mobile number against HopKid employee directory
+export const verifyMobileNumber = async (req: Request, res: Response): Promise<void> => {
+  const { mobileNo, mobileNumber } = req.body;
+  const rawMobile = mobileNo || mobileNumber;
+
+  if (!rawMobile) {
+    res.status(400).json({
+      success: false,
+      message: 'Mobile number is required for verification.',
+      errorCode: 'MISSING_MOBILE'
+    });
+    return;
+  }
+
+  try {
+    const inputMobile = String(rawMobile).trim();
+    const inputPhoneDigits = inputMobile.replace(/\D/g, '').slice(-10);
+
+    if (inputPhoneDigits.length < 10) {
+      res.status(400).json({
+        success: false,
+        message: 'Please enter a valid 10-digit mobile number.',
+        errorCode: 'INVALID_MOBILE'
+      });
+      return;
+    }
+
+    const normalizePhone = (p: string | null | undefined): string => {
+      if (!p) return '';
+      const digits = String(p).replace(/\D/g, '');
+      return digits.length >= 10 ? digits.slice(-10) : digits;
+    };
+
+    // 1. Query employee table by containing last 10 digits
+    let candidatePool = await prisma.employee.findMany({
+      where: {
+        mobileNumber: { contains: inputPhoneDigits }
+      },
+      include: {
+        user: true,
+        office: true,
+        store: true
+      }
+    });
+
+    let employee = candidatePool.find(e => normalizePhone(e.mobileNumber) === inputPhoneDigits);
+
+    // 2. On-the-fly sync from HopKid API if not found in local DB
+    if (!employee) {
+      console.log('[VERIFY_MOBILE] Mobile not in local DB. Syncing HopKid directory...');
+      await syncHopkidEmployees().catch(err => console.error('[VERIFY_MOBILE] HopKid sync error:', err));
+
+      candidatePool = await prisma.employee.findMany({
+        where: {
+          mobileNumber: { contains: inputPhoneDigits }
+        },
+        include: {
+          user: true,
+          office: true,
+          store: true
+        }
+      });
+
+      employee = candidatePool.find(e => normalizePhone(e.mobileNumber) === inputPhoneDigits);
+    }
+
+    // 3. Fallback scan all employees if contains missed formatting
+    if (!employee) {
+      const allEmployees = await prisma.employee.findMany({
+        include: { user: true, office: true, store: true }
+      });
+      employee = allEmployees.find(e => normalizePhone(e.mobileNumber) === inputPhoneDigits);
+    }
+
+    if (!employee) {
+      res.status(400).json({
+        success: false,
+        message: 'This mobile number is not registered as a HopKid employee. Contact HR.',
+        errorCode: 'NOT_HOPKID_EMPLOYEE'
+      });
+      return;
+    }
+
+    if (employee.status !== 'active') {
+      res.status(400).json({
+        success: false,
+        message: 'Your account is inactive. Contact HR.',
+        errorCode: 'ACCOUNT_INACTIVE'
+      });
+      return;
+    }
+
+    if (employee.userId || employee.user) {
+      res.status(400).json({
+        success: false,
+        message: 'Account exists, please login.',
+        errorCode: 'ALREADY_REGISTERED'
+      });
+      return;
+    }
+
+    const fullName = `${employee.firstName} ${employee.lastName || ''}`.trim();
+
+    res.json({
+      success: true,
+      verified: true,
+      employeeName: fullName,
+      employeeCode: employee.employeeCode,
+      message: `Registered employee found: ${fullName}`
+    });
+  } catch (error: any) {
+    console.error('[VERIFY_MOBILE] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify mobile number. Please try again.',
+      errorCode: 'SERVER_ERROR'
+    });
+  }
+};
+
+// Mobile user registration endpoint - Step 2 completion
 export const mobileRegister = async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   const { mobileNo, mobileNumber, employeeCode, password, email } = req.body;
@@ -930,13 +1050,6 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
   try {
     const inputMobile = String(rawMobile).trim();
     const inputPhoneDigits = inputMobile.replace(/\D/g, '').slice(-10);
-    const codeUpper = String(employeeCode).trim().toUpperCase();
-    const codeClean = String(employeeCode).trim();
-    const candidateCodes = [
-      codeUpper,
-      codeClean,
-      ...(codeClean.length < 4 ? [codeClean.padStart(3, '0'), `EMP${codeClean}`] : [])
-    ];
 
     const normalizePhone = (p: string | null | undefined): string => {
       if (!p) return '';
@@ -944,21 +1057,10 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
       return digits.length >= 10 ? digits.slice(-10) : digits;
     };
 
-    const findMatchingEmployee = (candidates: any[]) => {
-      return candidates.find(e => {
-        const codeMatches = candidateCodes.includes(e.employeeCode.toUpperCase()) || candidateCodes.includes(e.employeeCode);
-        const phoneMatches = inputPhoneDigits.length >= 10 && normalizePhone(e.mobileNumber) === inputPhoneDigits;
-        return codeMatches && phoneMatches;
-      });
-    };
-
-    // 1. Search employee directory matching both employeeCode AND normalized mobileNumber
+    // 1. Search employee by mobile number
     let candidatePool = await prisma.employee.findMany({
       where: {
-        OR: [
-          { employeeCode: { in: candidateCodes } },
-          ...(inputPhoneDigits.length >= 10 ? [{ mobileNumber: { contains: inputPhoneDigits } }] : [])
-        ]
+        mobileNumber: { contains: inputPhoneDigits }
       },
       include: {
         user: true,
@@ -967,7 +1069,7 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
       }
     });
 
-    let employee = findMatchingEmployee(candidatePool);
+    let employee = candidatePool.find(e => normalizePhone(e.mobileNumber) === inputPhoneDigits);
 
     // 2. If not found in local DB, sync from HopKid API on-the-fly and retry search
     if (!employee) {
@@ -976,10 +1078,7 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
 
       candidatePool = await prisma.employee.findMany({
         where: {
-          OR: [
-            { employeeCode: { in: candidateCodes } },
-            ...(inputPhoneDigits.length >= 10 ? [{ mobileNumber: { contains: inputPhoneDigits } }] : [])
-          ]
+          mobileNumber: { contains: inputPhoneDigits }
         },
         include: {
           user: true,
@@ -988,35 +1087,56 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
         }
       });
 
-      employee = findMatchingEmployee(candidatePool);
+      employee = candidatePool.find(e => normalizePhone(e.mobileNumber) === inputPhoneDigits);
     }
 
     if (!employee) {
-      console.log(`[MOBILE_REGISTER] Verification failed. Mobile: ${inputMobile}, Code: ${codeUpper}`);
+      const allEmployees = await prisma.employee.findMany({
+        include: { user: true, office: true, store: true }
+      });
+      employee = allEmployees.find(e => normalizePhone(e.mobileNumber) === inputPhoneDigits);
+    }
+
+    if (!employee) {
       res.status(400).json({
         success: false,
-        message: 'Employee record not found. Please check your mobile number and employee code.',
-        errorCode: 'EMPLOYEE_NOT_FOUND'
+        message: 'This mobile number is not registered as a HopKid employee. Contact HR.',
+        errorCode: 'NOT_HOPKID_EMPLOYEE'
       });
       return;
     }
 
     if (employee.status !== 'active') {
-      console.log(`[MOBILE_REGISTER] Inactive employee status: ${employee.status}`);
       res.status(400).json({
         success: false,
-        message: 'Your employee account is inactive. Please contact HR.',
+        message: 'Your account is inactive. Contact HR.',
         errorCode: 'ACCOUNT_INACTIVE'
       });
       return;
     }
 
     if (employee.userId || employee.user) {
-      console.log(`[MOBILE_REGISTER] Employee ${employee.employeeCode} already linked to userId ${employee.userId}`);
       res.status(400).json({
         success: false,
-        message: 'Account is already registered. Please proceed to login.',
+        message: 'Account exists, please login.',
         errorCode: 'ALREADY_REGISTERED'
+      });
+      return;
+    }
+
+    // 3. Employee code verification
+    const cleanInputCode = String(employeeCode).trim().replace(/^EMP/i, '').replace(/^0+/, '').toUpperCase();
+    const cleanEmpCode = String(employee.employeeCode).trim().replace(/^EMP/i, '').replace(/^0+/, '').toUpperCase();
+    const exactEmpCode = String(employee.employeeCode).trim().toUpperCase();
+    const inputUpper = String(employeeCode).trim().toUpperCase();
+
+    const codeMatches = (inputUpper === exactEmpCode) || (cleanInputCode === cleanEmpCode);
+
+    if (!codeMatches) {
+      res.status(400).json({
+        success: false,
+        message: 'Employee code does not match the registered mobile number.',
+        errorCode: 'CODE_MISMATCH'
       });
       return;
     }
