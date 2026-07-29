@@ -1658,6 +1658,15 @@ export const requestSalaryAdvance = async (
       return;
     }
 
+    const numAmount = Number(amount);
+    const numMonths = Number(months) || 1;
+    const cleanReason = reason ? String(reason).trim() : 'Salary Advance Request';
+
+    if (isNaN(numAmount) || numAmount <= 0) {
+      res.status(400).json({ success: false, message: 'Please enter a valid amount.' });
+      return;
+    }
+
     // Get or create wallet
     let wallet = await prisma.wallet.findUnique({
       where: { employeeId: employee.id },
@@ -1679,18 +1688,44 @@ export const requestSalaryAdvance = async (
     }
 
     // Validate advance limit
-    if (amount > wallet.advanceLimit) {
-      res.status(400).json({ success: false, message: 'Amount exceeds advance limit.' });
+    if (numAmount > wallet.advanceLimit) {
+      res.status(400).json({
+        success: false,
+        message: `Amount (₹${numAmount}) exceeds your advance limit (₹${wallet.advanceLimit}).`,
+      });
       return;
     }
+
+    // Check if employee already has a pending or active advance
+    const existingActive = await prisma.salaryAdvance.findFirst({
+      where: {
+        walletId: wallet.id,
+        status: { in: ['PENDING', 'APPROVED'] },
+      },
+    });
+
+    if (existingActive) {
+      res.status(400).json({
+        success: false,
+        message:
+          existingActive.status === 'PENDING'
+            ? 'You already have a salary advance request pending HR approval.'
+            : 'You already have an active running salary advance.',
+      });
+      return;
+    }
+
+    const calculatedEmi = Math.round((numAmount / numMonths) * 100) / 100;
 
     // Create salary advance request
     const advance = await prisma.salaryAdvance.create({
       data: {
         walletId: wallet.id,
-        amount,
-        months,
-        reason,
+        amount: numAmount,
+        months: numMonths,
+        monthlyEmi: calculatedEmi,
+        remainingAmount: numAmount,
+        reason: cleanReason,
         status: 'PENDING',
       },
     });
@@ -1701,11 +1736,11 @@ export const requestSalaryAdvance = async (
         walletId: wallet.id,
         title: 'Salary Advance Request',
         category: 'Advance',
-        amount,
+        amount: numAmount,
         date: new Date(),
         status: 'Processing',
         isCredit: false,
-        description: reason,
+        description: cleanReason,
       },
     });
 
@@ -1716,13 +1751,17 @@ export const requestSalaryAdvance = async (
         id: advance.id.toString(),
         amount: advance.amount,
         months: advance.months,
+        monthlyEmi: advance.monthlyEmi,
         status: advance.status,
         requestedOn: advance.requestedOn.toISOString(),
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Request salary advance error:', error);
-    res.status(500).json({ success: false, message: 'Failed to submit advance request.' });
+    res.status(500).json({
+      success: false,
+      message: error?.message || 'Failed to submit advance request.',
+    });
   }
 };
 
