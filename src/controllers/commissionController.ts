@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import { getCommissionStats } from '../utils/commissionHelper';
 
 // Commission Dashboard Stats
 export const getCommissionDashboard = async (
@@ -10,133 +11,29 @@ export const getCommissionDashboard = async (
   try {
     const { employeeId, storeId, startDate, endDate } = req.query;
 
-    const whereClause: any = {};
+    let targetEmpId: number | null = null;
     if (employeeId) {
       const parsedId = parseInt(employeeId as string, 10);
       if (!isNaN(parsedId)) {
-        whereClause.employeeId = parsedId;
+        targetEmpId = parsedId;
       } else {
         const employee = await prisma.employee.findFirst({
           where: { employeeCode: employeeId as string }
         });
-        if (employee) {
-          whereClause.employeeId = employee.id;
-        } else {
-          whereClause.employeeId = -1;
-        }
+        targetEmpId = employee ? employee.id : -1;
       }
     }
-    
-    if (storeId) {
-      whereClause.storeId = parseInt(storeId as string, 10);
-    }
-    if (startDate && endDate) {
-      whereClause.createdAt = {
-        gte: new Date(startDate as string),
-        lte: new Date(endDate as string),
-      };
-    }
 
-    // Get today's stats
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
+    const parsedStoreId = storeId ? parseInt(storeId as string, 10) : null;
+    const start = startDate ? new Date(startDate as string) : undefined;
+    const end = endDate ? new Date(endDate as string) : undefined;
 
-    const todayTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        ...whereClause,
-        createdAt: { gte: today, lte: todayEnd },
-      },
+    const stats = await getCommissionStats({
+      employeeId: targetEmpId,
+      storeId: parsedStoreId,
+      startDate: start,
+      endDate: end,
     });
-
-    const todayCommission = todayTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const todaySales = todayTransactions.reduce((sum, t) => sum + t.saleAmount, 0);
-
-    // Get month's stats
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-
-    const monthTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        ...whereClause,
-        createdAt: { gte: monthStart },
-      },
-    });
-
-    const monthCommission = monthTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const monthSales = monthTransactions.reduce((sum, t) => sum + t.saleAmount, 0);
-
-    // Get pending stats
-    const pendingTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        ...whereClause,
-        status: 'PENDING',
-      },
-    });
-
-    const pendingCommission = pendingTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-
-    // Get paid stats
-    const paidTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        ...whereClause,
-        status: 'PAID',
-      },
-    });
-
-    const paidCommission = paidTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-
-    // Get top performers
-    const allTransactions = await prisma.commissionTransaction.findMany({
-      where: whereClause,
-      include: {
-        employee: true,
-      },
-    });
-
-    const performerMap = new Map();
-    allTransactions.forEach((t) => {
-      if (!t.employee) return;
-      const existing = performerMap.get(t.employeeId);
-      if (existing) {
-        existing.totalCommission += t.commissionAmount;
-        existing.totalSales += t.saleAmount;
-      } else {
-        performerMap.set(t.employeeId, {
-          employee: t.employee,
-          totalCommission: t.commissionAmount,
-          totalSales: t.saleAmount,
-        });
-      }
-    });
-
-    const topPerformers = Array.from(performerMap.values())
-      .sort((a, b) => b.totalCommission - a.totalCommission)
-      .slice(0, 10);
-
-    const stats = {
-      today: {
-        commission: todayCommission,
-        sales: todaySales,
-        transactions: todayTransactions.length,
-      },
-      month: {
-        commission: monthCommission,
-        sales: monthSales,
-        transactions: monthTransactions.length,
-      },
-      pending: {
-        commission: pendingCommission,
-        transactions: pendingTransactions.length,
-      },
-      paid: {
-        commission: paidCommission,
-        transactions: paidTransactions.length,
-      },
-      topPerformers,
-    };
 
     res.json({ success: true, stats });
   } catch (error) {
@@ -708,20 +605,33 @@ export const fetchCommissionReport = async (
       }
     }
 
-    const transactions = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: targetEmployeeId,
-        createdAt: {
-          gte: gteDate,
-          lte: lteDate,
-        },
+    // Store filter — admin can pass storeId to scope the report
+    let targetStoreId: number | undefined;
+    if (req.query.storeId) {
+      const parsedStoreId = parseInt(req.query.storeId as string, 10);
+      if (!isNaN(parsedStoreId)) {
+        targetStoreId = parsedStoreId;
+      }
+    }
+
+    const whereClause: any = {
+      createdAt: {
+        gte: gteDate,
+        lte: lteDate,
       },
+    };
+    if (targetEmployeeId !== undefined) whereClause.employeeId = targetEmployeeId;
+    if (targetStoreId !== undefined) whereClause.storeId = targetStoreId;
+
+    const transactions = await prisma.commissionTransaction.findMany({
+      where: whereClause,
       include: {
         employee: {
           include: {
             store: true,
           },
         },
+        store: true,
       },
       orderBy: {
         createdAt: 'asc',
@@ -787,7 +697,8 @@ export const fetchCommissionReport = async (
       if (tx.employee) {
         empName = `${tx.employee.firstName || ''} ${tx.employee.lastName || ''}`.trim() || 'Employee';
         empCode = tx.employee.employeeCode || '';
-        branchName = tx.employee.store?.name || '';
+        // Prefer the transaction's own store, fallback to employee's assigned store
+        branchName = (tx as any).store?.name || tx.employee.store?.name || '';
       }
 
       const key = `${empId}_${start}`;

@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { Role } from '@prisma/client';
+import { getCommissionStats } from '../../utils/commissionHelper';
 
 // Get commission dashboard stats for logged-in user
 export const getMobileCommissionDashboard = async (
@@ -9,15 +9,6 @@ export const getMobileCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Only Salesman can access commission
-    if (req.user?.role !== Role.SALESMAN) {
-      res.status(403).json({
-        success: false,
-        message: 'Commission data is only available for Salesman role.'
-      });
-      return;
-    }
-
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: { store: true }
@@ -31,56 +22,7 @@ export const getMobileCommissionDashboard = async (
       return;
     }
 
-    // Get today's stats
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
-    const todayTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: employee.id,
-        createdAt: { gte: today, lte: todayEnd },
-      },
-    });
-
-    const todayCommission = todayTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const todaySales = todayTransactions.reduce((sum, t) => sum + t.saleAmount, 0);
-
-    // Get month's stats
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-
-    const monthTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: employee.id,
-        createdAt: { gte: monthStart },
-      },
-    });
-
-    const monthCommission = monthTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const monthSales = monthTransactions.reduce((sum, t) => sum + t.saleAmount, 0);
-
-    // Get pending stats
-    const pendingTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: employee.id,
-        status: 'PENDING',
-      },
-    });
-
-    const pendingCommission = pendingTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-
-    // Get paid stats
-    const paidTransactions = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: employee.id,
-        status: 'PAID',
-      },
-    });
-
-    const paidCommission = paidTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const stats = await getCommissionStats({ employeeId: employee.id });
 
     // Get targets
     const targets = await prisma.commissionTarget.findMany({
@@ -96,20 +38,20 @@ export const getMobileCommissionDashboard = async (
       success: true,
       data: {
         today: {
-          commission: todayCommission,
-          sales: todaySales,
+          commission: stats.today.commission,
+          sales: stats.today.sales,
         },
         month: {
-          commission: monthCommission,
-          sales: monthSales,
+          commission: stats.month.commission,
+          sales: stats.month.sales,
         },
         pending: {
-          commission: pendingCommission,
-          count: pendingTransactions.length,
+          commission: stats.pending.commission,
+          count: stats.pending.transactions,
         },
         paid: {
-          commission: paidCommission,
-          count: paidTransactions.length,
+          commission: stats.paid.commission,
+          count: stats.paid.transactions,
         },
         targets: targets.map(t => ({
           id: t.id,
@@ -139,15 +81,6 @@ export const getMobileCommissionTransactions = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Only Salesman can access commission
-    if (req.user?.role !== Role.SALESMAN) {
-      res.status(403).json({
-        success: false,
-        message: 'Commission data is only available for Salesman role.'
-      });
-      return;
-    }
-
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id }
     });
@@ -263,15 +196,6 @@ export const getMobileCommissionSettlements = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Only Salesman can access commission
-    if (req.user?.role !== Role.SALESMAN) {
-      res.status(403).json({
-        success: false,
-        message: 'Commission data is only available for Salesman role.'
-      });
-      return;
-    }
-
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id }
     });

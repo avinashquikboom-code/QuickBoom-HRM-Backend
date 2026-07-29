@@ -324,9 +324,6 @@ export const fetchEmployees = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Sync external Hopkid employees to keep DB up to date
-    await syncHopkidEmployees();
-
     const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
     const skip = page && limit ? (page - 1) * limit : undefined;
@@ -359,6 +356,7 @@ export const fetchEmployees = async (
         { firstName: { contains: search, mode: 'insensitive' } },
         { lastName: { contains: search, mode: 'insensitive' } },
         { employeeCode: { contains: search, mode: 'insensitive' } },
+        { mobileNumber: { contains: search, mode: 'insensitive' } },
         { designation: { contains: search, mode: 'insensitive' } },
         { user: { email: { contains: search, mode: 'insensitive' } } },
         { office: { name: { contains: search, mode: 'insensitive' } } },
@@ -375,6 +373,7 @@ export const fetchEmployees = async (
           employeeCode: true,
           firstName: true,
           lastName: true,
+          mobileNumber: true,
           designation: true,
           designationId: true,
           designationRelation: {
@@ -451,6 +450,8 @@ export const fetchEmployees = async (
       employeeCode: emp.employeeCode,
       firstName: emp.firstName,
       lastName: emp.lastName,
+      mobileNumber: emp.mobileNumber || '',
+      phone: emp.mobileNumber || '',
       designation: emp.designation,
       designationId: emp.designationId,
       designationRelation: emp.designationRelation ?? null,

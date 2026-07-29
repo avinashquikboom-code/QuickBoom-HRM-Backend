@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import { getCommissionStats } from '../utils/commissionHelper';
 
 export const fetchCommissionWallet = async (
   req: AuthenticatedRequest,
@@ -275,36 +276,15 @@ export const fetchCommissionDashboardWidget = async (
       return;
     }
 
-    const allTransactions = await prisma.commissionTransaction.findMany({
-      where: { employeeId: employee.id }
-    });
-
-    const approvedOrPaid = allTransactions.filter(t => t.status !== 'REJECTED' && t.status !== 'CANCELLED');
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-    const todayTxns = approvedOrPaid.filter(t => {
-      const dt = new Date(t.createdAt);
-      return dt >= today && dt <= todayEnd;
-    });
-
-    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const monthTxns = approvedOrPaid.filter(t => new Date(t.createdAt) >= currentMonthStart);
-
-    const todayCommission = todayTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const currentMonthCommission = monthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const pendingCommission = approvedOrPaid.filter(t => t.status === 'PENDING' || t.status === 'APPROVED').reduce((sum, t) => sum + t.commissionAmount, 0);
-    const lifetimeCommission = approvedOrPaid.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const stats = await getCommissionStats({ employeeId: employee.id });
 
     res.json({
       success: true,
       data: {
-        todayCommission,
-        currentMonthCommission,
-        pendingCommission,
-        lifetimeCommission,
+        todayCommission: stats.today.commission,
+        currentMonthCommission: stats.month.commission,
+        pendingCommission: stats.pending.commission,
+        lifetimeCommission: stats.lifetime.commission,
       }
     });
   } catch (error) {

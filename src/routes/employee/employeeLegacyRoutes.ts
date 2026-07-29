@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getEmployeeList } from '../../controllers/employeeLegacyController';
+import { getEmployeeList, triggerEmployeeSync } from '../../controllers/employeeLegacyController';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { apiKeyMiddleware } from '../../middlewares/apiKeyMiddleware';
 
@@ -76,5 +76,7 @@ router.use(apiKeyMiddleware);
  *         description: Server error
  */
 router.get('/GetEmployeeList', getEmployeeList);
+router.post('/sync', triggerEmployeeSync);
+router.get('/sync', triggerEmployeeSync);
 
 export default router;

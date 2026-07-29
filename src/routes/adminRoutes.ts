@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
+import { triggerEmployeeSync } from '../controllers/employeeLegacyController';
 import {
   fetchPlatformUsers,
   updateUserStatus,
@@ -127,6 +128,7 @@ import {
   updateCommissionTarget,
   calculateCommission,
   createCommissionSettlement,
+  fetchCommissionReport,
 } from '../controllers/commissionController';
 import { fetchWorkModes } from '../controllers/workModeController';
 
@@ -177,6 +179,8 @@ router.post('/commission/targets', roleMiddleware(adminOnlyRoles), createCommiss
 router.put('/commission/targets/:id', roleMiddleware(adminOnlyRoles), updateCommissionTarget);
 router.post('/commission/calculate', roleMiddleware(storeManagerAllowedRoles), calculateCommission);
 router.post('/commission/settlements', roleMiddleware(adminOnlyRoles), createCommissionSettlement);
+// Commission Report (grouped ledger view) — also exposed under /api/admin for consistency
+router.get('/commission/report', roleMiddleware(storeManagerAllowedRoles), fetchCommissionReport);
 
 // WorkMode Routes
 /**
@@ -202,6 +206,8 @@ router.get('/work-modes', roleMiddleware(storeManagerAllowedRoles), fetchWorkMod
 // Store Manager / Admin Shared Routes
 router.get('/dashboard/stats', roleMiddleware(storeManagerAllowedRoles), fetchDashboardStats);
 router.get('/employees', roleMiddleware(storeManagerAllowedRoles), fetchEmployees);
+router.post('/employees/sync', roleMiddleware(storeManagerAllowedRoles), triggerEmployeeSync);
+router.get('/employees/sync', roleMiddleware(storeManagerAllowedRoles), triggerEmployeeSync);
 router.get('/attendance/today', roleMiddleware(storeManagerAllowedRoles), fetchTodayAttendance);
 router.get('/attendance/history', roleMiddleware(storeManagerAllowedRoles), fetchAttendanceHistory);
 router.get('/location/live', roleMiddleware(storeManagerAllowedRoles), fetchLiveLocations);
