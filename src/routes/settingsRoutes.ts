@@ -6,9 +6,9 @@ import { Role } from '@prisma/client';
 
 const router = express.Router();
 
-// SUPER_ADMIN, PLATFORM_ADMIN, and ADMIN can manage settings
+// SUPER_ADMIN, PLATFORM_ADMIN, ADMIN, and HR can access settings
 router.use(authMiddleware);
-router.use(roleMiddleware([Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.ADMIN]));
+router.use(roleMiddleware([Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.ADMIN, Role.HR]));
 
 router.get('/', getSettings);
 router.put('/', updateSettings);
