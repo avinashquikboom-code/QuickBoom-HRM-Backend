@@ -225,11 +225,18 @@ export const getCommissionTransactions = async (
       whereClause.storeId = parseInt(storeId as string, 10);
     }
     if (status) whereClause.status = status;
-    if (startDate && endDate) {
-      whereClause.createdAt = {
-        gte: new Date(startDate as string),
-        lte: new Date(endDate as string),
-      };
+    if (startDate || endDate) {
+      whereClause.createdAt = {};
+      if (startDate) {
+        const startOf = new Date(startDate as string);
+        startOf.setHours(0, 0, 0, 0);
+        whereClause.createdAt.gte = startOf;
+      }
+      if (endDate) {
+        const endOf = new Date(endDate as string);
+        endOf.setHours(23, 59, 59, 999);
+        whereClause.createdAt.lte = endOf;
+      }
     }
 
     const transactions = await prisma.commissionTransaction.findMany({

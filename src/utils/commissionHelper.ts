@@ -78,8 +78,16 @@ export async function getCommissionStats(params?: {
 
   if (params?.startDate || params?.endDate) {
     whereClause.createdAt = {};
-    if (params.startDate) whereClause.createdAt.gte = params.startDate;
-    if (params.endDate) whereClause.createdAt.lte = params.endDate;
+    if (params.startDate) {
+      const startOf = new Date(params.startDate);
+      startOf.setHours(0, 0, 0, 0);
+      whereClause.createdAt.gte = startOf;
+    }
+    if (params.endDate) {
+      const endOf = new Date(params.endDate);
+      endOf.setHours(23, 59, 59, 999);
+      whereClause.createdAt.lte = endOf;
+    }
   }
 
   // Filter out rejected or cancelled transactions
