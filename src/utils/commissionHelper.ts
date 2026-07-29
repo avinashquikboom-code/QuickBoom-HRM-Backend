@@ -132,8 +132,31 @@ export async function getCommissionStats(params?: {
   const lifetimeComm = allTransactions.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
   const lifetimeSales = allTransactions.reduce((sum, t) => sum + (t.saleAmount || 0), 0);
 
-  // Group top performers
+  // Group top performers — seed all active employees so full HopKid workforce is listed
   const performerMap = new Map<number, { employee: any; totalCommission: number; totalSales: number }>();
+  
+  const activeEmps = await prisma.employee.findMany({
+    where: params?.storeId ? { status: 'active', storeId: params.storeId } : { status: 'active' },
+    select: {
+      id: true,
+      employeeID: true,
+      employeeCode: true,
+      firstName: true,
+      lastName: true,
+      commissionPercentage: true,
+      status: true,
+      store: { select: { id: true, name: true } },
+    },
+  });
+
+  activeEmps.forEach((emp) => {
+    performerMap.set(emp.id, {
+      employee: emp,
+      totalCommission: 0,
+      totalSales: 0,
+    });
+  });
+
   allTransactions.forEach((t) => {
     if (!t.employee) return;
     const empId = t.employeeId;
@@ -151,8 +174,7 @@ export async function getCommissionStats(params?: {
   });
 
   const topPerformers = Array.from(performerMap.values())
-    .sort((a, b) => b.totalCommission - a.totalCommission)
-    .slice(0, 10);
+    .sort((a, b) => b.totalCommission - a.totalCommission);
 
   return {
     today: {

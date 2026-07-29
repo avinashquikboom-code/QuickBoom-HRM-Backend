@@ -626,6 +626,15 @@ export const fetchCommissionReport = async (
       },
     });
 
+    const empWhere: any = { status: 'active' };
+    if (targetEmployeeId !== undefined) empWhere.id = targetEmployeeId;
+    if (targetStoreId !== undefined) empWhere.storeId = targetStoreId;
+
+    const allEmployees = await prisma.employee.findMany({
+      where: empWhere,
+      include: { store: true },
+    });
+
     const groups: {
       [key: string]: {
         periodStart: string;
@@ -644,6 +653,29 @@ export const fetchCommissionReport = async (
     const formatDateString = (d: Date) => {
       return d.toISOString().split('T')[0];
     };
+
+    const defaultStart = fromStr || formatDateString(new Date());
+    const defaultEnd = toStr || formatDateString(new Date());
+
+    for (const emp of allEmployees) {
+      const empName = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee';
+      const empCode = emp.employeeCode || '';
+      const branchName = emp.store?.name || 'Unassigned';
+      const key = `${emp.id}_${defaultStart}`;
+
+      groups[key] = {
+        periodStart: defaultStart,
+        periodEnd: defaultEnd,
+        employeeId: emp.id,
+        employeeName: empName,
+        employeeCode: empCode,
+        branchName: branchName,
+        sales: 0,
+        credits: 0,
+        commissionAmount: 0,
+        rates: emp.commissionPercentage !== null && emp.commissionPercentage !== undefined ? [emp.commissionPercentage] : [0],
+      };
+    }
 
     const getPeriodBoundaries = (date: Date, type: string) => {
       const istDate = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
