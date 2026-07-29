@@ -5,6 +5,11 @@ export interface IntegrationSettings {
   hopkidApiKey: string;
   mobileApiKey: string;
   firebaseServerKey: string;
+  googleMapsApiKey: string;
+  awsAccessKeyId: string;
+  awsSecretAccessKey: string;
+  awsRegion: string;
+  awsBucketName: string;
 }
 
 const DEFAULT_SETTINGS: IntegrationSettings = {
@@ -12,6 +17,11 @@ const DEFAULT_SETTINGS: IntegrationSettings = {
   hopkidApiKey: process.env.HOPKID_API_KEY || 'HOPKID-MOBILE-ACCESS-API-KEY',
   mobileApiKey: process.env.MOBILE_API_KEY || 'HOPKID-MOBILE-ACCESS-API-KEY',
   firebaseServerKey: process.env.FIREBASE_SERVER_KEY || '',
+  googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
+  awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+  awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+  awsRegion: process.env.AWS_REGION || 'ap-south-1',
+  awsBucketName: process.env.AWS_BUCKET_NAME || '',
 };
 
 let cachedSettings: IntegrationSettings | null = null;
@@ -25,9 +35,7 @@ export async function getIntegrationSettings(): Promise<IntegrationSettings> {
   }
 
   try {
-    const systemSetting = await prisma.systemSetting.findUnique({
-      where: { id: 1 },
-    });
+    const systemSetting = await prisma.systemSetting.findFirst();
 
     const rawIntegrations = (systemSetting?.integrations as any) || {};
 
@@ -36,6 +44,11 @@ export async function getIntegrationSettings(): Promise<IntegrationSettings> {
       hopkidApiKey: rawIntegrations.hopkidApiKey?.trim() || DEFAULT_SETTINGS.hopkidApiKey,
       mobileApiKey: rawIntegrations.mobileApiKey?.trim() || DEFAULT_SETTINGS.mobileApiKey,
       firebaseServerKey: rawIntegrations.firebaseServerKey?.trim() || DEFAULT_SETTINGS.firebaseServerKey,
+      googleMapsApiKey: rawIntegrations.googleMapsApiKey?.trim() || DEFAULT_SETTINGS.googleMapsApiKey,
+      awsAccessKeyId: rawIntegrations.awsAccessKeyId?.trim() || DEFAULT_SETTINGS.awsAccessKeyId,
+      awsSecretAccessKey: rawIntegrations.awsSecretAccessKey?.trim() || DEFAULT_SETTINGS.awsSecretAccessKey,
+      awsRegion: rawIntegrations.awsRegion?.trim() || DEFAULT_SETTINGS.awsRegion,
+      awsBucketName: rawIntegrations.awsBucketName?.trim() || DEFAULT_SETTINGS.awsBucketName,
     };
 
     lastFetchTime = now;

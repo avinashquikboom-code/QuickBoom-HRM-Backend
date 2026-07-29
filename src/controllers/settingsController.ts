@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
+import { clearIntegrationCache } from '../utils/configService';
 
 export const getSettings = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -26,6 +27,7 @@ export const getSettings = async (req: Request, res: Response): Promise<void> =>
 
     res.json({
       success: true,
+      settings,
       data: settings,
     });
   } catch (error: any) {
@@ -57,6 +59,11 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
       'integrations',
     ];
 
+    // If payload sent as { category: 'integrations', settings: { ... } }
+    if (req.body.category && req.body.settings && allowedFields.includes(req.body.category)) {
+      fieldsToUpdate[req.body.category] = req.body.settings;
+    }
+
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) {
         fieldsToUpdate[field] = req.body[field];
@@ -80,9 +87,12 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
       });
     }
 
+    clearIntegrationCache();
+
     res.json({
       success: true,
       message: 'Settings updated successfully',
+      settings: updatedSettings,
       data: updatedSettings,
     });
   } catch (error: any) {
