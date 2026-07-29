@@ -790,6 +790,16 @@ export const fetchCommissionReport = async (
       };
     });
 
+    report.sort((a, b) => {
+      if (b.commissionAmount !== a.commissionAmount) {
+        return b.commissionAmount - a.commissionAmount;
+      }
+      if (b.netSales !== a.netSales) {
+        return b.netSales - a.netSales;
+      }
+      return a.employeeName.localeCompare(b.employeeName);
+    });
+
     res.json({
       success: true,
       data: report,
