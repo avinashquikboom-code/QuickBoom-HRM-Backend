@@ -90,8 +90,9 @@ export async function getCommissionStats(params?: {
     }
   }
 
-  // Filter out rejected or cancelled transactions
+  // Filter out rejected or cancelled transactions, restrict strictly to HopKid employees
   whereClause.status = { in: ['PENDING', 'APPROVED', 'PAID'] };
+  whereClause.employee = { source: 'HOPKID' };
 
   const allTransactions = await prisma.commissionTransaction.findMany({
     where: whereClause,
@@ -136,7 +137,15 @@ export async function getCommissionStats(params?: {
   const performerMap = new Map<number, { employee: any; totalCommission: number; totalSales: number }>();
   
   const activeEmps = await prisma.employee.findMany({
-    where: params?.storeId ? { status: 'active', storeId: params.storeId } : { status: 'active' },
+    where: {
+      status: 'active',
+      source: 'HOPKID',
+      NOT: [
+        { employeeCode: { startsWith: 'ADMIN' } },
+        { user: { role: 'SUPER_ADMIN' } },
+      ],
+      ...(params?.storeId ? { storeId: params.storeId } : {}),
+    },
     select: {
       id: true,
       employeeID: true,
@@ -174,7 +183,9 @@ export async function getCommissionStats(params?: {
   });
 
   const topPerformers = Array.from(performerMap.values())
-    .sort((a, b) => b.totalCommission - a.totalCommission);
+    .filter((p) => p.totalCommission > 0)
+    .sort((a, b) => b.totalCommission - a.totalCommission)
+    .slice(0, 10);
 
   return {
     today: {

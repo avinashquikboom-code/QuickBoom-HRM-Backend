@@ -215,7 +215,11 @@ export const getCommissionTransactions = async (
   try {
     const { employeeId, storeId, status, startDate, endDate } = req.query;
 
-    const whereClause: any = {};
+    const whereClause: any = {
+      employee: {
+        source: 'HOPKID',
+      },
+    };
     if (employeeId) {
       const resolvedId = await resolveEmployeeId(employeeId as string);
       whereClause.employeeId = resolvedId !== null ? resolvedId : -1;
@@ -607,6 +611,9 @@ export const fetchCommissionReport = async (
         gte: gteDate,
         lte: lteDate,
       },
+      employee: {
+        source: 'HOPKID',
+      },
     };
     if (targetEmployeeId !== undefined) whereClause.employeeId = targetEmployeeId;
     if (targetStoreId !== undefined) whereClause.storeId = targetStoreId;
@@ -626,7 +633,14 @@ export const fetchCommissionReport = async (
       },
     });
 
-    const empWhere: any = { status: 'active' };
+    const empWhere: any = {
+      status: 'active',
+      source: 'HOPKID',
+      NOT: [
+        { employeeCode: { startsWith: 'ADMIN' } },
+        { user: { role: 'SUPER_ADMIN' } },
+      ],
+    };
     if (targetEmployeeId !== undefined) empWhere.id = targetEmployeeId;
     if (targetStoreId !== undefined) empWhere.storeId = targetStoreId;
 
