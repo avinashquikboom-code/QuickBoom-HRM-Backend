@@ -12,18 +12,27 @@ export const authMiddleware = async (
   res: Response,
   next: NextFunction
 ): Promise<void> => {
+  // Bypass CORS Preflight OPTIONS requests
+  if (req.method === 'OPTIONS') {
+    next();
+    return;
+  }
+
   const publicPaths = [
     '/api/mobile/auth/login',
     '/api/mobile/auth/register',
     '/api/mobile/auth/refresh',
     '/api/mobile/auth/forgot-password',
+    '/api/mobile/auth/verify-mobile',
+    '/api/mobile/auth/reset-password',
     '/api/auth/login',
     '/api/auth/employee/login',
     '/api/auth/hr/login',
     '/api/auth/super-admin/login',
     '/api/auth/refresh',
+    '/api/auth/forgot-password',
     '/api/health',
-    '/api-docs/swagger.json',
+    '/api-docs',
   ];
 
   const requestPath = req.path;
@@ -32,13 +41,27 @@ export const authMiddleware = async (
     return;
   }
 
-  const authHeader = req.headers.authorization;
+  // Extract token from Authorization header, x-access-token, x-auth-token, query param, or cookies
+  const authHeader =
+    req.headers.authorization ||
+    (req.headers as any)['x-access-token'] ||
+    (req.headers as any)['x-auth-token'];
+
   let token = '';
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.split(' ')[1];
+
+  if (authHeader && typeof authHeader === 'string') {
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    } else {
+      token = authHeader.trim();
+    }
   } else if (req.query.token && typeof req.query.token === 'string') {
     token = req.query.token;
-  } else {
+  } else if ((req as any).cookies?.token) {
+    token = (req as any).cookies.token;
+  }
+
+  if (!token) {
     res.status(401).json({
       success: false,
       message: 'Authorization token required. Please sign in.',
