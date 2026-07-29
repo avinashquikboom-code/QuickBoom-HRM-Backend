@@ -14,50 +14,58 @@ export const checkGeofence = async (
   try {
     const { latitude, longitude, officeId } = req.body;
 
-    if (!latitude || !longitude) {
+    const userLat = Number(latitude);
+    const userLon = Number(longitude);
+
+    if (isNaN(userLat) || isNaN(userLon)) {
       res.status(400).json({
         success: false,
-        message: 'Latitude and longitude are required.',
+        message: 'Latitude and longitude coordinates are required.',
         errorCode: 'MISSING_COORDINATES'
       });
       return;
     }
 
-    // Get employee information
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-      include: { office: true }
-    });
-
-    if (!employee) {
-      res.status(404).json({
-        success: false,
-        message: 'Employee record not found.',
-        errorCode: 'EMPLOYEE_NOT_FOUND'
+    // Get employee information safely
+    let employee = null;
+    if (req.user?.id) {
+      employee = await prisma.employee.findFirst({
+        where: { userId: req.user.id },
+        include: { office: true }
       });
-      return;
     }
 
     const result = await geofenceService.checkGeofence(
-      latitude,
-      longitude,
-      employee.id,
-      officeId ? parseInt(officeId, 10) : undefined
+      userLat,
+      userLon,
+      employee?.id,
+      officeId ? parseInt(String(officeId), 10) : undefined
     );
 
-    // Fetch enableGeofence from settings
-    const systemSettings = await prisma.systemSetting.findUnique({
-      where: { id: 1 }
-    });
-    const rawAttendance = (systemSettings?.attendance as any) || {};
-    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
-    const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
+    // Fetch enableGeofence from settings safely
+    let enableGeofence = true;
+    let enablePunchOutGeofence = false;
 
-    const isWithinRadius = (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production')
+    try {
+      const systemSettings = await prisma.systemSetting.findFirst();
+      if (systemSettings?.attendance) {
+        const rawAttendance = systemSettings.attendance as any;
+        if (rawAttendance.enableGeofence !== undefined) {
+          enableGeofence = Boolean(rawAttendance.enableGeofence);
+        }
+        if (rawAttendance.enablePunchOutGeofence !== undefined) {
+          enablePunchOutGeofence = Boolean(rawAttendance.enablePunchOutGeofence);
+        }
+      }
+    } catch (settingErr) {
+      console.warn('[GeofenceController] SystemSetting check failed, using default values:', settingErr);
+    }
+
+    const isWithinRadius = (userLat === 0 && userLon === 0 && process.env.NODE_ENV !== 'production')
       ? true
       : (process.env.NODE_ENV === 'production'
           ? result.isWithinGeofence
-          : result.distance <= (result.maxRadius * 50));
+          : (result.distance <= (result.maxRadius * 50) || result.isWithinGeofence));
 
     res.json({
       success: true,
@@ -69,11 +77,11 @@ export const checkGeofence = async (
         enablePunchOutGeofence
       }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Check geofence error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to check geofence.',
+      message: error?.message || 'Failed to check geofence.',
       errorCode: 'CHECK_GEOFENCE_ERROR'
     });
   }
