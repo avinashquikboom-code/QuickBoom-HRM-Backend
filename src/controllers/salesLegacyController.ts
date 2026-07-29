@@ -419,6 +419,11 @@ export const syncSalesBatch = async (
           } else if (policy.commissionType === 'FIXED') {
             commissionAmount = policy.commissionValue;
           }
+        } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
+          // Fallback: use per-employee commissionPercentage when no CommissionPolicy exists
+          commissionType = 'PERCENTAGE';
+          commissionPercent = employee.commissionPercentage;
+          commissionAmount = (Number(resolvedSaleAmount) * employee.commissionPercentage) / 100;
         }
 
         const transaction = await prisma.commissionTransaction.create({
