@@ -63,7 +63,7 @@ async function testAuth() {
         availableBalance: 0,
         advanceLimit: 25000,
         pendingClaims: 0,
-        cardNumber: `HK${employee.mobileNumber.slice(-4)}-${employee.employeeCode}`,
+        cardNumber: `HK${(employee.mobileNumber || '0000').slice(-4)}-${employee.employeeCode}`,
         isActive: true,
       }
     });
