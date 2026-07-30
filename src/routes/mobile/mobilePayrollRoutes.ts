@@ -8,8 +8,17 @@ const router = Router();
 // Apply auth middleware to protect all mobile payroll routes
 router.use(authMiddleware);
 
-// Restrict access to mobile roles only (Store Manager, Salesman, Helper, Employee)
-const allowedRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER', 'EMPLOYEE'];
+// Allow all authenticated employee/manager/admin roles to view their own mobile payslips
+const allowedRoles = [
+  'STORE_MANAGER',
+  'SALESMAN',
+  'HELPER',
+  'EMPLOYEE',
+  'HR',
+  'ADMIN',
+  'SUPER_ADMIN',
+  'PLATFORM_ADMIN',
+];
 router.use(roleMiddleware(allowedRoles));
 
 /**
@@ -29,6 +38,8 @@ router.use(roleMiddleware(allowedRoles));
  *         description: Server error
  */
 router.get('/slips', getMyPayslips);
+router.get('/payslips', getMyPayslips);
+router.get('/payslips/:id/download', downloadPayslip);
 
 /**
  * @swagger
