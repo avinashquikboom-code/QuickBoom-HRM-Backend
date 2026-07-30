@@ -1279,3 +1279,192 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
     });
   }
 };
+
+// Helper to lookup employee by Employee Code, Mobile Number, or Email
+const findEmployeeByIdentifier = async (inputStr: string) => {
+  const cleanInput = String(inputStr).trim();
+  if (!cleanInput) return null;
+
+  // 1. Email lookup
+  if (cleanInput.includes('@')) {
+    const normEmail = cleanInput.toLowerCase();
+    const user = await prisma.user.findFirst({
+      where: { email: normEmail },
+      include: { employee: true }
+    });
+    if (user && user.employee) {
+      return { employee: user.employee, user };
+    }
+  }
+
+  // 2. Mobile Number lookup
+  const phoneDigits = cleanInput.replace(/\D/g, '');
+  if (phoneDigits.length >= 10) {
+    const last10 = phoneDigits.slice(-10);
+    const candidatePool = await prisma.employee.findMany({
+      where: { mobileNumber: { contains: last10 } },
+      include: { user: true }
+    });
+    const match = candidatePool.find(e => e.mobileNumber?.replace(/\D/g, '').slice(-10) === last10);
+    if (match) {
+      return { employee: match, user: match.user };
+    }
+  }
+
+  // 3. Employee Code / ID lookup
+  const cleanCode = cleanInput.replace(/^EMP/i, '').replace(/^0+/, '').toUpperCase();
+  const allEmployees = await prisma.employee.findMany({ include: { user: true } });
+  const codeMatch = allEmployees.find(e => {
+    const eCode = String(e.employeeCode || '').trim().replace(/^EMP/i, '').replace(/^0+/, '').toUpperCase();
+    return eCode === cleanCode || e.employeeCode.toUpperCase() === cleanInput.toUpperCase() || String(e.id) === cleanInput;
+  });
+  if (codeMatch) {
+    return { employee: codeMatch, user: codeMatch.user };
+  }
+
+  return null;
+};
+
+// Verify user account identifier (Step 1 of reset password)
+export const verifyResetIdentifier = async (req: Request, res: Response): Promise<void> => {
+  const { identifier, mobileNo, employeeCode, email } = req.body;
+  const input = identifier || mobileNo || employeeCode || email;
+
+  if (!input) {
+    res.status(400).json({
+      success: false,
+      message: 'Please enter your Employee Code, Mobile Number, or Email.',
+      errorCode: 'MISSING_IDENTIFIER'
+    });
+    return;
+  }
+
+  try {
+    const result = await findEmployeeByIdentifier(String(input));
+
+    if (!result || !result.employee) {
+      res.status(400).json({
+        success: false,
+        message: 'No account found matching this Employee Code, Mobile Number, or Email.',
+        errorCode: 'ACCOUNT_NOT_FOUND'
+      });
+      return;
+    }
+
+    const { employee } = result;
+    const fullName = `${employee.firstName} ${employee.lastName || ''}`.trim();
+
+    res.status(200).json({
+      success: true,
+      verified: true,
+      employeeName: fullName,
+      employeeCode: employee.employeeCode,
+      mobileNumber: employee.mobileNumber,
+      message: `Account verified for ${fullName} (${employee.employeeCode}). You can now reset your password.`
+    });
+  } catch (error: any) {
+    console.error('[VERIFY_RESET_IDENTIFIER] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify account details.',
+      errorCode: 'SERVER_ERROR'
+    });
+  }
+};
+
+// Mobile Reset / Forgot Password with Employee Code / Mobile No / Email + New Password
+export const mobileResetPassword = async (req: Request, res: Response): Promise<void> => {
+  const { identifier, mobileNo, employeeCode, email, newPassword, password } = req.body;
+  const input = identifier || mobileNo || employeeCode || email;
+  const finalPassword = newPassword || password;
+
+  if (!input || !finalPassword) {
+    res.status(400).json({
+      success: false,
+      message: 'Employee Code / Mobile No / Email and new password are required.',
+      errorCode: 'MISSING_FIELDS'
+    });
+    return;
+  }
+
+  if (finalPassword.length < 6) {
+    res.status(400).json({
+      success: false,
+      message: 'New password must be at least 6 characters long.',
+      errorCode: 'WEAK_PASSWORD'
+    });
+    return;
+  }
+
+  try {
+    const result = await findEmployeeByIdentifier(String(input));
+
+    if (!result || !result.employee) {
+      res.status(400).json({
+        success: false,
+        message: 'No account found matching this Employee Code, Mobile Number, or Email.',
+        errorCode: 'ACCOUNT_NOT_FOUND'
+      });
+      return;
+    }
+
+    const { employee, user } = result;
+    const hashedPassword = await bcrypt.hash(finalPassword, 10);
+
+    if (user || employee.userId) {
+      const targetUserId = user?.id || employee.userId;
+      if (targetUserId) {
+        await prisma.user.update({
+          where: { id: targetUserId },
+          data: { password: hashedPassword, isActive: true }
+        });
+      }
+    } else {
+      const fullName = `${employee.firstName} ${employee.lastName || ''}`.trim();
+      const finalEmployeeID = (employee.employeeID || employee.employeeCode).toLowerCase();
+      const empEmail = (employee as any).email || null;
+
+      const newUser = await prisma.user.create({
+        data: {
+          email: empEmail,
+          password: hashedPassword,
+          role: Role.EMPLOYEE,
+          isActive: true,
+          employeeID: finalEmployeeID,
+          profile: {
+            create: {
+              email: empEmail || '',
+              fullName,
+              phone: employee.mobileNumber || '',
+              bio: '',
+              clearanceLevel: 1,
+              clearanceLabel: 'Level 1 (General)',
+              timezone: 'Asia/Kolkata',
+              timezoneLabel: '(GMT+5:30) Mumbai, New Delhi',
+              lastLoginLocation: 'Mobile App',
+            }
+          }
+        }
+      });
+
+      await prisma.employee.update({
+        where: { id: employee.id },
+        data: { userId: newUser.id }
+      });
+    }
+
+    console.log(`[MOBILE_RESET_PASSWORD] Successfully reset password for employee ${employee.employeeCode}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successfully! You can now login with your new password.'
+    });
+  } catch (error: any) {
+    console.error('[MOBILE_RESET_PASSWORD] Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reset password. Please try again.',
+      errorCode: 'SERVER_ERROR'
+    });
+  }
+};

@@ -11,23 +11,22 @@ import {
   mobileLogoutAll,
   uploadMobileAvatar,
   removeMobileAvatar,
-  fetchMobileDepartments
+  fetchMobileDepartments,
+  mobileResetPassword,
+  verifyResetIdentifier
 } from '../../controllers/mobile/mobileAuthController';
 import { forgotPassword as adminForgotPassword } from '../../controllers/adminController';
 
 const router = Router();
 
-// Forgot password wrapper for mobile auth routes
-const forgotPassword = async (req: Request, res: Response) => {
-  await adminForgotPassword(req, res);
-};
-
-// Login, register, and refresh endpoints do not require auth middleware
+// Login, register, verify-identifier, forgot-password and refresh endpoints do not require auth middleware
 router.post('/login', mobileLogin);
 router.post('/verify-mobile', verifyMobileNumber);
 router.post('/register', mobileRegister);
 router.post('/refresh', mobileRefreshToken);
-router.post('/forgot-password', forgotPassword);
+router.post('/verify-identifier', verifyResetIdentifier);
+router.post('/forgot-password', mobileResetPassword);
+router.post('/reset-password', mobileResetPassword);
 
 // Apply auth middleware to protected routes
 import { authMiddleware } from '../../middlewares/authMiddleware';
