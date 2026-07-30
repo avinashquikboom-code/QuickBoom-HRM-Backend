@@ -320,6 +320,16 @@ export const generatePayslipPDF = async (
     const statusColor = payslip.status === 'PAID' ? '#059669' : payslip.status === 'PENDING' ? '#D97706' : '#6B7280';
     const fmt = (n: number) => `\u20b9${n.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
+    const totalDaysInMonth = new Date(yearNum, monthNum, 0).getDate();
+    const joinDate = payslip.employee?.joiningDate || payslip.employee?.createdAt;
+    let totalServiceMonths = 1;
+    if (joinDate) {
+      const pDate = new Date(yearNum, monthNum - 1, 1);
+      const jDate = new Date(joinDate);
+      const diffMonths = (pDate.getFullYear() - jDate.getFullYear()) * 12 + (pDate.getMonth() - jDate.getMonth()) + 1;
+      totalServiceMonths = Math.max(1, diffMonths);
+    }
+
     const docDefinition: any = {
       pageSize: 'A4',
       pageMargins: [36, 36, 36, 56],
@@ -366,11 +376,13 @@ export const generatePayslipPDF = async (
             { text: [{ text: 'Department: ', bold: true, fontSize: 8 },  { text: payslip.department  || '\u2014', fontSize: 8, color: '#374151' }] },
           ], width: '50%' },
           { stack: [
-            { text: 'PAY PERIOD', fontSize: 8, bold: true, color: PRIMARY, margin: [0,0,0,6] },
-            { text: [{ text: 'Month: ',    bold: true, fontSize: 8 }, { text: monthLabel,                  fontSize: 8, color: '#374151' }] },
-            { text: [{ text: 'Office: ',   bold: true, fontSize: 8 }, { text: payslip.officeName || '\u2014', fontSize: 8, color: '#374151' }] },
-            { text: [{ text: 'Pay Date: ', bold: true, fontSize: 8 }, { text: generatedOn,                 fontSize: 8, color: '#374151' }] },
-            { text: [{ text: 'Status: ',   bold: true, fontSize: 8 }, { text: payslip.status, fontSize: 8, bold: true, color: statusColor }] },
+            { text: 'PAY PERIOD DETAILS', fontSize: 8, bold: true, color: PRIMARY, margin: [0,0,0,6] },
+            { text: [{ text: 'Month: ',               bold: true, fontSize: 8 }, { text: monthLabel,                  fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Office: ',              bold: true, fontSize: 8 }, { text: payslip.officeName || '\u2014', fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Total Days of Month: ', bold: true, fontSize: 8 }, { text: `${totalDaysInMonth} Days`,  fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Total Months: ',        bold: true, fontSize: 8 }, { text: `${totalServiceMonths} ${totalServiceMonths === 1 ? 'Month' : 'Months'}`, fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Pay Date: ',            bold: true, fontSize: 8 }, { text: generatedOn,                 fontSize: 8, color: '#374151' }] },
+            { text: [{ text: 'Status: ',              bold: true, fontSize: 8 }, { text: payslip.status, fontSize: 8, bold: true, color: statusColor }] },
           ], width: '50%' },
         ], margin: [0,0,0,16] },
         { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E5E7EB' }], margin: [0,0,0,16] },

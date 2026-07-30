@@ -145,6 +145,16 @@ export const downloadPayslip = async (
     const otherDeductions = Math.max(0, payslip.deductions - pf - esic);
     const totalDeductions = payslip.deductions;
 
+    const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
+    const joinDate = payslip.employee?.joiningDate || payslip.employee?.createdAt;
+    let totalServiceMonths = 1;
+    if (joinDate) {
+      const pDate = new Date(payslip.year, payslip.month - 1, 1);
+      const jDate = new Date(joinDate);
+      const diffMonths = (pDate.getFullYear() - jDate.getFullYear()) * 12 + (pDate.getMonth() - jDate.getMonth()) + 1;
+      totalServiceMonths = Math.max(1, diffMonths);
+    }
+
     const docDefinition = {
       content: [
         // Title Header
@@ -171,10 +181,12 @@ export const downloadPayslip = async (
                 },
                 {
                   text: [
-                    { text: 'Office / Branch: ', bold: true }, payslip.officeName, '\n',
-                    { text: 'Pay Period:      ', bold: true }, periodLabel, '\n',
-                    { text: 'Document ID:     ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
-                    { text: 'Status:          ', bold: true }, 'PAID'
+                    { text: 'Office / Branch:     ', bold: true }, payslip.officeName, '\n',
+                    { text: 'Pay Period:          ', bold: true }, periodLabel, '\n',
+                    { text: 'Total Days of Month: ', bold: true }, `${totalDaysInMonth} Days`, '\n',
+                    { text: 'Total Months:        ', bold: true }, `${totalServiceMonths} ${totalServiceMonths === 1 ? 'Month' : 'Months'}`, '\n',
+                    { text: 'Document ID:         ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
+                    { text: 'Status:              ', bold: true }, 'PAID'
                   ],
                   margin: [5, 5, 5, 5]
                 }
