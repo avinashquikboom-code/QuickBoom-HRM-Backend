@@ -599,9 +599,13 @@ export const fetchCommissionReport = async (
         return;
       }
       targetEmployeeId = employee.id;
+      console.log(`[COMMISSION-DIAG] fetchCommissionReport | MOBILE user role=${req.user.role}, scoped to employeeId=${targetEmployeeId}`);
     } else if (req.query.employeeId) {
       const resolvedId = await resolveEmployeeId(req.query.employeeId as string);
       targetEmployeeId = resolvedId !== null ? resolvedId : -1;
+      console.log(`[COMMISSION-DIAG] fetchCommissionReport | ADMIN/HR, explicit employeeId filter=${targetEmployeeId}`);
+    } else {
+      console.log(`[COMMISSION-DIAG] fetchCommissionReport | ADMIN/HR, no employeeId filter — returning ALL employees`);
     }
 
     // Store filter — admin can pass storeId to scope the report

@@ -311,12 +311,46 @@ export const fetchSalarySlipCommission = async (
       return;
     }
 
-    const transactions = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: employee.id,
-        payrollId: parsedPayrollId,
+    let transactions: any[] = [];
+    let queryDescription = '';
+
+    if (!isNaN(parsedPayrollId)) {
+      // Strategy 1: exact payrollId (formal payroll run exists)
+      queryDescription = `payrollId=${parsedPayrollId}`;
+      transactions = await prisma.commissionTransaction.findMany({
+        where: {
+          employeeId: employee.id,
+          payrollId: parsedPayrollId,
+        }
+      });
+      console.log(`[COMMISSION-DIAG] fetchSalarySlipCommission | employee.id=${employee.id}, ${queryDescription}, found ${transactions.length} txns`);
+    }
+
+    // Strategy 2: if no results from payrollId (or payrollId was NaN/month-string),
+    // fallback to current-month date range so salary slip always shows real commission.
+    if (transactions.length === 0) {
+      const now = new Date();
+      // If payrollIdString looks like "YYYY-MM", use that month; otherwise use current month.
+      let year = now.getFullYear();
+      let month = now.getMonth(); // 0-based
+      const monthMatch = /^(\d{4})-(\d{2})$/.exec(payrollIdString);
+      if (monthMatch) {
+        year = parseInt(monthMatch[1], 10);
+        month = parseInt(monthMatch[2], 10) - 1;
       }
-    });
+      const monthStart = new Date(year, month, 1, 0, 0, 0, 0);
+      const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
+      queryDescription = `month=${year}-${String(month + 1).padStart(2, '0')} (${monthStart.toISOString()} to ${monthEnd.toISOString()})`;
+
+      transactions = await prisma.commissionTransaction.findMany({
+        where: {
+          employeeId: employee.id,
+          status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+          createdAt: { gte: monthStart, lte: monthEnd },
+        }
+      });
+      console.log(`[COMMISSION-DIAG] fetchSalarySlipCommission fallback | employee.id=${employee.id}, ${queryDescription}, found ${transactions.length} txns`);
+    }
 
     const totalSalesAmount = transactions.reduce((sum, t) => sum + t.saleAmount, 0);
     const totalCommissionEarned = transactions.reduce((sum, t) => sum + t.commissionAmount, 0);
@@ -326,6 +360,8 @@ export const fetchSalarySlipCommission = async (
     const avgPercentage = transactions.length > 0
       ? transactions.reduce((sum, t) => sum + (t.commissionPercent || 0), 0) / transactions.length
       : 0;
+
+    console.log(`[COMMISSION-DIAG] fetchSalarySlipCommission result | totalSalesAmount=${totalSalesAmount}, totalCommissionEarned=${totalCommissionEarned}, avgPercentage=${avgPercentage}`);
 
     res.json({
       success: true,

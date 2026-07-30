@@ -79,19 +79,33 @@ export const addSales = async (
     let commissionPercent = 0;
     let commissionType = 'PERCENTAGE';
 
+    // ── COMMISSION-DIAG: amount tracing ──────────────────────────────────────
+    const parsedSaleAmount = parseFloat(saleAmount);
+    console.log(`[COMMISSION-DIAG] addSales called | raw saleAmount from body: ${JSON.stringify(saleAmount)} | parsed: ${parsedSaleAmount}`);
+    console.log(`[COMMISSION-DIAG] employee: id=${employee.id}, code=${employee.employeeCode}, commissionPercentage=${employee.commissionPercentage}`);
+    console.log(`[COMMISSION-DIAG] policy resolved: ${policy ? `id=${policy.id}, type=${policy.commissionType}, value=${policy.commissionValue}` : 'null (no active policy)'}`);
+    // ─────────────────────────────────────────────────────────────────────────
+
     if (policy) {
       commissionType = policy.commissionType;
       if (policy.commissionType === 'PERCENTAGE') {
-        commissionAmount = (Number(saleAmount) * policy.commissionValue) / 100;
+        commissionAmount = (parsedSaleAmount * policy.commissionValue) / 100;
         commissionPercent = policy.commissionValue;
+        console.log(`[COMMISSION-DIAG] Branch: POLICY PERCENTAGE | ${parsedSaleAmount} × ${policy.commissionValue}% / 100 = ${commissionAmount}`);
       } else if (policy.commissionType === 'FIXED') {
         commissionAmount = policy.commissionValue;
+        console.log(`[COMMISSION-DIAG] Branch: POLICY FIXED | commissionAmount = ${commissionAmount}`);
       }
     } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
       commissionType = 'PERCENTAGE';
       commissionPercent = employee.commissionPercentage;
-      commissionAmount = (Number(saleAmount) * employee.commissionPercentage) / 100;
+      commissionAmount = (parsedSaleAmount * employee.commissionPercentage) / 100;
+      console.log(`[COMMISSION-DIAG] Branch: EMPLOYEE commissionPercentage | ${parsedSaleAmount} × ${employee.commissionPercentage}% / 100 = ${commissionAmount}`);
+    } else {
+      console.warn(`[COMMISSION-DIAG] Branch: NO POLICY & NO commissionPercentage — commissionAmount=0 for employee id=${employee.id}`);
     }
+
+    console.log(`[COMMISSION-DIAG] Final stored values → saleAmount=${parsedSaleAmount}, commissionAmount=${commissionAmount}, commissionPercent=${commissionPercent}`);
 
     // Create the transaction
     const transaction = await prisma.commissionTransaction.create({
@@ -99,7 +113,7 @@ export const addSales = async (
         employeeId: employee.id,
         storeId: targetStoreId,
         policyId: policy ? policy.id : null,
-        saleAmount: parseFloat(saleAmount),
+        saleAmount: parsedSaleAmount,
         commissionType,
         commissionPercent: commissionPercent || null,
         commissionAmount,
@@ -114,6 +128,8 @@ export const addSales = async (
         policy: true,
       },
     });
+
+    console.log(`[COMMISSION-DIAG] DB row created → id=${transaction.id}, saleAmount=${transaction.saleAmount}, commissionAmount=${transaction.commissionAmount}`);
 
     res.status(201).json({
       success: true,
@@ -407,6 +423,12 @@ export const syncSalesBatch = async (
         const resolvedBillId = payload.billId;
         const { storeId, notes } = payload;
 
+        // ── COMMISSION-DIAG: sync batch amount tracing ────────────────────────
+        console.log(`[COMMISSION-DIAG] syncSalesBatch addSales | endpoint: ${endpoint}`);
+        console.log(`[COMMISSION-DIAG] payload.saleAmount=${payload.saleAmount}, payload.NetAmount=${payload.NetAmount}, payload.FinalAmount=${payload.FinalAmount}`);
+        console.log(`[COMMISSION-DIAG] resolvedSaleAmount=${resolvedSaleAmount}, resolvedInvoiceNumber=${resolvedInvoiceNumber}`);
+        // ─────────────────────────────────────────────────────────────────────
+
         if (resolvedSaleAmount === undefined || isNaN(Number(resolvedSaleAmount))) continue;
 
         let policy = employee.commissionPolicies[0];
@@ -431,27 +453,37 @@ export const syncSalesBatch = async (
         let commissionPercent = 0;
         let commissionType = 'PERCENTAGE';
 
+        const parsedBatchAmount = parseFloat(resolvedSaleAmount);
+        console.log(`[COMMISSION-DIAG] syncSalesBatch calc | employee.id=${employee.id}, commissionPercentage=${employee.commissionPercentage}, policy=${policy ? `id=${policy.id} val=${policy.commissionValue}` : 'null'}`);
+
         if (policy) {
           commissionType = policy.commissionType;
           if (policy.commissionType === 'PERCENTAGE') {
-            commissionAmount = (Number(resolvedSaleAmount) * policy.commissionValue) / 100;
+            commissionAmount = (parsedBatchAmount * policy.commissionValue) / 100;
             commissionPercent = policy.commissionValue;
+            console.log(`[COMMISSION-DIAG] Branch: POLICY PERCENTAGE | ${parsedBatchAmount} × ${policy.commissionValue}% / 100 = ${commissionAmount}`);
           } else if (policy.commissionType === 'FIXED') {
             commissionAmount = policy.commissionValue;
+            console.log(`[COMMISSION-DIAG] Branch: POLICY FIXED | commissionAmount=${commissionAmount}`);
           }
         } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
           // Fallback: use per-employee commissionPercentage when no CommissionPolicy exists
           commissionType = 'PERCENTAGE';
           commissionPercent = employee.commissionPercentage;
-          commissionAmount = (Number(resolvedSaleAmount) * employee.commissionPercentage) / 100;
+          commissionAmount = (parsedBatchAmount * employee.commissionPercentage) / 100;
+          console.log(`[COMMISSION-DIAG] Branch: EMPLOYEE commissionPercentage | ${parsedBatchAmount} × ${employee.commissionPercentage}% / 100 = ${commissionAmount}`);
+        } else {
+          console.warn(`[COMMISSION-DIAG] Branch: NO POLICY & NO commissionPercentage — commissionAmount=0 for employee id=${employee.id}`);
         }
+
+        console.log(`[COMMISSION-DIAG] syncSalesBatch → saleAmount=${parsedBatchAmount}, commissionAmount=${commissionAmount}`);
 
         const transaction = await prisma.commissionTransaction.create({
           data: {
             employeeId: employee.id,
             storeId: targetStoreId,
             policyId: policy ? policy.id : null,
-            saleAmount: parseFloat(resolvedSaleAmount),
+            saleAmount: parsedBatchAmount,
             commissionType,
             commissionPercent: commissionPercent || null,
             commissionAmount,
@@ -462,6 +494,7 @@ export const syncSalesBatch = async (
           }
         });
 
+        console.log(`[COMMISSION-DIAG] syncSalesBatch DB row created → id=${transaction.id}, saleAmount=${transaction.saleAmount}, commissionAmount=${transaction.commissionAmount}`);
         results.push({ success: true, transactionId: transaction.id, endpoint });
         syncedCount++;
 
