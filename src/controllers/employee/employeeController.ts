@@ -146,7 +146,7 @@ export const updateEmployeeProfile = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { fullName, phone, bio } = req.body;
+  const { fullName, phone, bio, email } = req.body;
 
   try {
     const employee = await getEmployeeFromRequest(req);
@@ -161,6 +161,7 @@ export const updateEmployeeProfile = async (
         fullName: fullName !== undefined ? fullName.trim() : employee.user.profile.fullName,
         phone: phone !== undefined ? phone.trim() : employee.user.profile.phone,
         bio: bio !== undefined ? bio.trim() : employee.user.profile.bio,
+        ...(email !== undefined && email.trim() !== '' ? { email: email.trim().toLowerCase() } : {}),
       },
     });
 
