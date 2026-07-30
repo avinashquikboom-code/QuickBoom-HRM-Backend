@@ -31,3 +31,8 @@ export const verifyToken = (token: string): UserJWTPayload => {
 export const verifyRefreshToken = (token: string): UserJWTPayload => {
   return jwt.verify(token, REFRESH_SECRET) as UserJWTPayload;
 };
+
+export const verifyTokenIgnoreExpiration = (token: string): UserJWTPayload => {
+  return jwt.verify(token, JWT_SECRET, { ignoreExpiration: true }) as UserJWTPayload;
+};
+

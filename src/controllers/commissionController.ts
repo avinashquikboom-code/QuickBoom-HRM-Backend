@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { getCommissionStats, resolveEmployeeId } from '../utils/commissionHelper';
+import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee } from '../utils/commissionHelper';
 
 // Commission Dashboard Stats
 export const getCommissionDashboard = async (
@@ -218,12 +218,6 @@ export const getCommissionTransactions = async (
     const whereClause: any = {
       employee: {
         source: { not: 'MANUAL' },
-        NOT: [
-          { employeeCode: { startsWith: 'ADMIN' } },
-          { employeeCode: { startsWith: 'HR' } },
-          { designation: { contains: 'HR', mode: 'insensitive' } },
-          { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
-        ],
       },
     };
     if (employeeId) {
@@ -249,15 +243,22 @@ export const getCommissionTransactions = async (
       }
     }
 
-    const transactions = await prisma.commissionTransaction.findMany({
+    const rawTransactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
       include: {
-        employee: true,
+        employee: {
+          include: {
+            store: true,
+            user: true,
+          },
+        },
         store: true,
         policy: true,
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    const transactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
 
     res.json({ success: true, transactions });
   } catch (error) {
@@ -619,23 +620,18 @@ export const fetchCommissionReport = async (
       },
       employee: {
         source: { not: 'MANUAL' },
-        NOT: [
-          { employeeCode: { startsWith: 'ADMIN' } },
-          { employeeCode: { startsWith: 'HR' } },
-          { designation: { contains: 'HR', mode: 'insensitive' } },
-          { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
-        ],
       },
     };
     if (targetEmployeeId !== undefined) whereClause.employeeId = targetEmployeeId;
     if (targetStoreId !== undefined) whereClause.storeId = targetStoreId;
 
-    const transactions = await prisma.commissionTransaction.findMany({
+    const rawTransactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
       include: {
         employee: {
           include: {
             store: true,
+            user: true,
           },
         },
         store: true,
@@ -645,23 +641,21 @@ export const fetchCommissionReport = async (
       },
     });
 
+    const transactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
+
     const empWhere: any = {
       status: 'active',
       source: { not: 'MANUAL' },
-      NOT: [
-        { employeeCode: { startsWith: 'ADMIN' } },
-        { employeeCode: { startsWith: 'HR' } },
-        { designation: { contains: 'HR', mode: 'insensitive' } },
-        { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
-      ],
     };
     if (targetEmployeeId !== undefined) empWhere.id = targetEmployeeId;
     if (targetStoreId !== undefined) empWhere.storeId = targetStoreId;
 
-    const allEmployees = await prisma.employee.findMany({
+    const rawAllEmployees = await prisma.employee.findMany({
       where: empWhere,
-      include: { store: true },
+      include: { store: true, user: true },
     });
+
+    const allEmployees = rawAllEmployees.filter(isEligibleCommissionEmployee);
 
     const groups: {
       [key: string]: {

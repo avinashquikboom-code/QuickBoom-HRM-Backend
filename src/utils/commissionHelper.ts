@@ -31,6 +31,28 @@ export async function resolveEmployeeId(identifier?: string | number | null): Pr
   return null;
 }
 
+export function isEligibleCommissionEmployee(emp: any): boolean {
+  if (!emp) return false;
+
+  // Must not be MANUAL source
+  const source = String(emp.source || 'HOPKID').toUpperCase();
+  if (source === 'MANUAL') return false;
+
+  // Must not be ADMIN or HR employee code
+  const code = String(emp.employeeCode || '').trim().toUpperCase();
+  if (code.startsWith('ADMIN') || code.startsWith('HR')) return false;
+
+  // Must not have HR designation
+  const des = String(emp.designation || '').toUpperCase();
+  if (des.includes('HR')) return false;
+
+  // Must not be admin or HR user role
+  const role = String(emp.user?.role || emp.role || '').toUpperCase();
+  if (['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'].includes(role)) return false;
+
+  return true;
+}
+
 export interface CommissionSummaryStats {
   today: {
     commission: number;
@@ -90,30 +112,27 @@ export async function getCommissionStats(params?: {
     }
   }
 
-  // Filter out rejected or cancelled transactions, restrict strictly to HopKid employees (exclude MANUAL & admin/HR)
+  // Filter out rejected or cancelled transactions
   whereClause.status = { in: ['PENDING', 'APPROVED', 'PAID'] };
   whereClause.employee = {
     source: { not: 'MANUAL' },
-    NOT: [
-      { employeeCode: { startsWith: 'ADMIN' } },
-      { employeeCode: { startsWith: 'HR' } },
-      { designation: { contains: 'HR', mode: 'insensitive' } },
-      { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
-    ],
   };
 
-  const allTransactions = await prisma.commissionTransaction.findMany({
+  const rawTransactions = await prisma.commissionTransaction.findMany({
     where: whereClause,
     include: {
       employee: {
         include: {
           store: true,
+          user: true,
         },
       },
       store: true,
     },
     orderBy: { createdAt: 'desc' },
   });
+
+  const allTransactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
 
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
@@ -144,16 +163,10 @@ export async function getCommissionStats(params?: {
   // Group top performers — seed all active HopKid employees
   const performerMap = new Map<number, { employee: any; totalCommission: number; totalSales: number }>();
   
-  const activeEmps = await prisma.employee.findMany({
+  const rawActiveEmps = await prisma.employee.findMany({
     where: {
       status: 'active',
       source: { not: 'MANUAL' },
-      NOT: [
-        { employeeCode: { startsWith: 'ADMIN' } },
-        { employeeCode: { startsWith: 'HR' } },
-        { designation: { contains: 'HR', mode: 'insensitive' } },
-        { user: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] } } },
-      ],
       ...(params?.storeId ? { storeId: params.storeId } : {}),
     },
     select: {
@@ -162,11 +175,16 @@ export async function getCommissionStats(params?: {
       employeeCode: true,
       firstName: true,
       lastName: true,
+      designation: true,
+      source: true,
       commissionPercentage: true,
       status: true,
       store: { select: { id: true, name: true } },
+      user: { select: { role: true } },
     },
   });
+
+  const activeEmps = rawActiveEmps.filter(isEligibleCommissionEmployee);
 
   activeEmps.forEach((emp) => {
     performerMap.set(emp.id, {

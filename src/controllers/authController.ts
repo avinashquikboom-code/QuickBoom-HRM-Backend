@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../utils/db';
-import { signToken, signRefreshToken, signAccessToken, verifyRefreshToken, verifyToken, UserJWTPayload } from '../utils/jwt';
+import { signToken, signRefreshToken, signAccessToken, verifyRefreshToken, verifyToken, verifyTokenIgnoreExpiration, UserJWTPayload } from '../utils/jwt';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import userSessionService from '../services/userSessionService';
@@ -692,12 +692,25 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
 
     let legacyUser: UserJWTPayload;
     try {
-      // Try access-token secret first, then refresh-token secret
       try {
         legacyUser = verifyToken(bearerToken);
       } catch {
-        legacyUser = verifyRefreshToken(bearerToken);
+        try {
+          legacyUser = verifyTokenIgnoreExpiration(bearerToken);
+        } catch {
+          legacyUser = verifyRefreshToken(bearerToken);
+        }
       }
+
+      const userObj = await prisma.user.findUnique({ where: { id: legacyUser.id } });
+      if (!userObj || !userObj.isActive) {
+        res.status(401).json({
+          success: false,
+          message: 'User account inactive or non-existent.',
+        });
+        return;
+      }
+      legacyUser.role = userObj.role;
     } catch {
       res.status(401).json({
         success: false,
@@ -711,10 +724,16 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
       email: legacyUser.email,
       role: legacyUser.role,
     });
+    const newRefreshToken = signRefreshToken({
+      id: legacyUser.id,
+      email: legacyUser.email,
+      role: legacyUser.role,
+    });
 
     res.json({
       success: true,
       token: newToken,
+      refreshToken: newRefreshToken,
       user: {
         id: legacyUser.id,
         email: legacyUser.email,
