@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+import payrollService from '../../services/payrollService';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -38,13 +39,95 @@ export const getMyPayslips = async (
       return;
     }
 
-    const payslips = await prisma.payslip.findMany({
+    const rawPayslips = await prisma.payslip.findMany({
       where: { employeeId: employee.id },
       orderBy: [
         { year: 'desc' },
         { month: 'desc' }
       ]
     });
+
+    let payslips = await Promise.all(rawPayslips.map(async (ps) => {
+      const monthStart = new Date(ps.year, ps.month - 1, 1, 0, 0, 0, 0);
+      const monthEnd = new Date(ps.year, ps.month, 0, 23, 59, 59, 999);
+
+      // Commission sum
+      const commAggregate = await prisma.commissionTransaction.aggregate({
+        where: {
+          employeeId: employee.id,
+          createdAt: { gte: monthStart, lte: monthEnd },
+          status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+        },
+        _sum: { commissionAmount: true }
+      });
+      const commissionEarned = commAggregate._sum.commissionAmount || 0;
+
+      const startDateStr = monthStart.toISOString().split('T')[0];
+      const endDateStr = monthEnd.toISOString().split('T')[0];
+
+      // Attendance records for month
+      const attendance = await prisma.attendance.findMany({
+        where: {
+          employeeId: employee.id,
+          date: { gte: startDateStr, lte: endDateStr }
+        }
+      });
+
+      const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
+      const halfDays = attendance.filter(a => a.status === 'HALF_DAY').length;
+      const leaveDays = attendance.filter(a => a.status === 'LEAVE' || a.status === 'UNPLANNED_LEAVE').length;
+      const absentDays = attendance.filter(a => a.status === 'ABSENT').length;
+
+      const workingDays = 30;
+      const dailySalary = ps.baseSalary > 0 ? (ps.baseSalary / workingDays) : 0;
+      const halfDayDeduction = halfDays * (dailySalary * 0.5);
+      const leaveDeduction = leaveDays * dailySalary;
+
+      return {
+        ...ps,
+        commissionEarned,
+        presentDays,
+        halfDays,
+        halfDayDeduction,
+        leaveDays,
+        leaveDeduction,
+        absentDays
+      };
+    }));
+
+    if (payslips.length === 0) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
+      const calculation = await payrollService.calculatePayroll(employee.id, month, year);
+
+      const previewPayslip = {
+        id: 0,
+        employeeId: employee.id,
+        month,
+        year,
+        baseSalary: calculation.baseSalary,
+        allowance: calculation.allowance,
+        deductions: calculation.deductions,
+        netSalary: calculation.netSalary,
+        status: 'Pending Approval',
+        employeeCode: employee.employeeCode,
+        employeeName: `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || employee.employeeCode,
+        designation: employee.designation || 'Sales Employee',
+        department: 'Sales',
+        officeName: 'Main Store',
+        netInWords: '',
+        createdAt: new Date().toISOString(),
+        commissionEarned: calculation.commissionEarned,
+        presentDays: calculation.presentDays,
+        halfDays: calculation.halfDays,
+        halfDayDeduction: calculation.halfDayDeduction,
+        leaveDays: calculation.leaveDays,
+        leaveDeduction: calculation.leaveDeduction,
+        workingDays: calculation.workingDays
+      };
+      payslips = [previewPayslip as any];
+    }
 
     res.json({
       success: true,

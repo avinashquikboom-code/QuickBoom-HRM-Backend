@@ -17,6 +17,10 @@ export interface PayrollCalculation {
   presentDays: number;
   absentDays: number;
   leaveDays: number;
+  halfDays: number;
+  halfDayDeduction: number;
+  leaveDeduction: number;
+  commissionEarned: number;
   overtimeHours: number;
 }
 
@@ -81,22 +85,40 @@ class PayrollService {
 
       // Calculate salary based on present days
       // Formula: (baseSalary / workingDays) * presentDays
-      const dailySalary = salaryStructure.baseSalary / attendanceData.workingDays;
+      const workingDays = attendanceData.workingDays || 30;
+      const dailySalary = salaryStructure.baseSalary / workingDays;
       const calculatedBaseSalary = dailySalary * attendanceData.presentDays;
 
       // Calculate allowance (pro-rated based on present days)
       const totalAllowance = salaryStructure.hra + salaryStructure.da + salaryStructure.conveyance + salaryStructure.medical + salaryStructure.special;
-      const dailyAllowance = totalAllowance / attendanceData.workingDays;
+      const dailyAllowance = totalAllowance / workingDays;
       const calculatedAllowance = dailyAllowance * attendanceData.presentDays;
+
+      // Calculate half-day and leave deductions
+      const halfDayDeduction = attendanceData.halfDays * (dailySalary * 0.5);
+      const leaveDeduction = attendanceData.leaveDays * dailySalary;
       
       // Calculate overtime
       const overtime = this.calculateOvertime(attendanceData, salaryStructure);
       
       // Calculate bonus (if any)
       const bonus = await this.calculateBonus(employeeId, month, year);
+
+      // Fetch commission earned for this month
+      const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+      const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+      const commAggregate = await prisma.commissionTransaction.aggregate({
+        where: {
+          employeeId,
+          createdAt: { gte: monthStart, lte: monthEnd },
+          status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+        },
+        _sum: { commissionAmount: true }
+      });
+      const commissionEarned = commAggregate._sum.commissionAmount || 0;
       
       // Calculate gross salary
-      const grossSalary = calculatedBaseSalary + calculatedAllowance + overtime + bonus;
+      const grossSalary = calculatedBaseSalary + calculatedAllowance + overtime + bonus + commissionEarned;
       
       // Calculate statutory deductions
       const statutoryDeductions = this.calculateDeductions(grossSalary, salaryStructure, attendanceData);
@@ -104,11 +126,11 @@ class PayrollService {
       // Calculate policy-based deductions (late marks, leaves, absences)
       const policyDeductions = await this.applyPolicyDeductions(employeeId, attendanceData, grossSalary);
       
-      // Total deductions
-      const deductions = statutoryDeductions + policyDeductions;
+      // Total deductions (including half-day & leave deductions)
+      const deductions = statutoryDeductions + policyDeductions + halfDayDeduction + leaveDeduction;
       
       // Calculate net salary
-      const netSalary = grossSalary - deductions;
+      const netSalary = Math.max(0, grossSalary - deductions);
 
       const calculation: PayrollCalculation = {
         employeeId,
@@ -121,10 +143,14 @@ class PayrollService {
         bonus,
         netSalary,
         grossSalary,
-        workingDays: attendanceData.workingDays,
+        workingDays,
         presentDays: attendanceData.presentDays,
         absentDays: attendanceData.absentDays,
         leaveDays: attendanceData.leaveDays,
+        halfDays: attendanceData.halfDays,
+        halfDayDeduction,
+        leaveDeduction,
+        commissionEarned,
         overtimeHours: attendanceData.overtimeHours
       };
 
@@ -405,7 +431,8 @@ class PayrollService {
 
       const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
       const absentDays = attendance.filter(a => a.status === 'ABSENT').length;
-      const leaveDays = attendance.filter(a => a.status === 'LEAVE').length;
+      const leaveDays = attendance.filter(a => a.status === 'LEAVE' || a.status === 'UNPLANNED_LEAVE').length;
+      const halfDays = attendance.filter(a => a.status === 'HALF_DAY').length;
       
       // Count late marks (check-in after office start time)
       const officeStartTime = office?.workingHoursStart || '09:00';
@@ -426,6 +453,7 @@ class PayrollService {
         presentDays,
         absentDays,
         leaveDays,
+        halfDays,
         lateMarks,
         holidays: holidays.length,
         overtimeHours
