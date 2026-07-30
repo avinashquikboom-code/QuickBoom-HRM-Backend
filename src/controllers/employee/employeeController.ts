@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma, ensureBankEditTable } from '../../utils/db';
 import { pushNotificationService } from '../../services/pushNotificationService';
+import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -1588,6 +1589,13 @@ export const fetchEmployeeWallet = async (
       orderBy: { requestedOn: 'desc' },
     });
 
+    const allAdvances = await prisma.salaryAdvance.findMany({
+      where: {
+        walletId: wallet.id,
+      },
+      orderBy: { requestedOn: 'desc' },
+    });
+
     res.json({
       success: true,
       wallet: {
@@ -1616,6 +1624,25 @@ export const fetchEmployeeWallet = async (
           requestedOn: activeAdvance.requestedOn.toISOString(),
           approvedAt: activeAdvance.approvedAt ? activeAdvance.approvedAt.toISOString() : null,
         } : null,
+        advances: allAdvances.map(adv => ({
+          id: adv.id.toString(),
+          amount: adv.amount,
+          months: adv.months,
+          reason: adv.reason,
+          monthlyEmi: adv.monthlyEmi > 0 
+            ? adv.monthlyEmi 
+            : Math.round((adv.amount / (adv.months || 1)) * 100) / 100,
+          paidAmount: adv.paidAmount,
+          remainingAmount: adv.status === 'APPROVED' ? adv.remainingAmount : adv.amount,
+          paidEmis: adv.paidEmis,
+          pendingEmis: Math.max(0, (adv.months || 1) - adv.paidEmis),
+          status: adv.status,
+          requestedOn: adv.requestedOn.toISOString(),
+          approvedAt: adv.approvedAt ? adv.approvedAt.toISOString() : null,
+          reviewedAt: adv.reviewedAt ? adv.reviewedAt.toISOString() : null,
+          reviewedBy: adv.reviewedBy,
+          reviewNote: adv.reviewNote,
+        })),
         transactions: wallet.transactions.map(tx => ({
           id: tx.id.toString(),
           title: tx.title,
@@ -1740,9 +1767,19 @@ export const requestSalaryAdvance = async (
         date: new Date(),
         status: 'Processing',
         isCredit: false,
-        description: cleanReason,
       },
     });
+
+    // Notify HR of new salary advance request (in-app & FCM push outside app)
+    firebaseNotificationService.sendAppNotification({
+      role: 'HR',
+      title: 'New Salary Advance Request',
+      body: `${employee.firstName} ${employee.lastName || ''} requested a salary advance of ₹${numAmount}.`,
+      category: 'advance',
+      screen: 'salary_advance',
+      type: 'salary_advance_request',
+      actionId: advance.id.toString(),
+    }).catch(err => console.error('Advance request notification error:', err));
 
     res.json({
       success: true,

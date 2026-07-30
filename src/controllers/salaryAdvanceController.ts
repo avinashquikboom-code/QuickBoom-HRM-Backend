@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import { firebaseNotificationService } from '../services/firebaseNotificationService';
 
 /**
  * GET /api/payroll/admin/advances
@@ -103,7 +104,7 @@ export const reviewSalaryAdvance = async (
     const advanceId = parseInt(id as string, 10);
     const advance = await prisma.salaryAdvance.findUnique({
       where: { id: advanceId },
-      include: { wallet: true },
+      include: { wallet: { include: { employee: true } } },
     });
 
     if (!advance) {
@@ -137,6 +138,19 @@ export const reviewSalaryAdvance = async (
           description: reviewNote || 'Salary advance request was rejected by Admin.',
         },
       });
+
+      // Notify Employee (in-app & FCM push outside app)
+      if (advance.wallet?.employee?.userId) {
+        firebaseNotificationService.sendAppNotification({
+          userId: advance.wallet.employee.userId,
+          title: 'Salary Advance Rejected',
+          body: `Your salary advance request of ₹${advance.amount} was rejected. Reason: ${reviewNote || 'No remark'}`,
+          category: 'advance',
+          screen: 'salary_advance',
+          type: 'salary_advance_rejected',
+          actionId: advance.id.toString(),
+        }).catch(err => console.error('Advance reject notification error:', err));
+      }
 
       res.json({
         success: true,
@@ -188,6 +202,19 @@ export const reviewSalaryAdvance = async (
           description: `Disbursed ₹${advance.amount} with ${finalMonths} EMI monthly deductions (₹${monthlyEmi}/month).`,
         },
       });
+
+      // Notify Employee (in-app & FCM push outside app)
+      if (advance.wallet?.employee?.userId) {
+        firebaseNotificationService.sendAppNotification({
+          userId: advance.wallet.employee.userId,
+          title: 'Salary Advance Approved',
+          body: `Your salary advance request of ₹${advance.amount} has been approved by HR with ${finalMonths} EMIs.`,
+          category: 'advance',
+          screen: 'salary_advance',
+          type: 'salary_advance_approved',
+          actionId: advance.id.toString(),
+        }).catch(err => console.error('Advance approve notification error:', err));
+      }
 
       res.json({
         success: true,

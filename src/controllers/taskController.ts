@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { HrPriority, HrTaskStatus } from '@prisma/client';
 import { pushNotificationService } from '../services/pushNotificationService';
+import { firebaseNotificationService } from '../services/firebaseNotificationService';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,15 @@ async function notifyEmployee(
       type: 'task',
       screen: 'tasks',
       actionType: 'TASK_ASSIGNED',
+    }).catch(() => {});
+
+    firebaseNotificationService.sendAppNotification({
+      userId: employee.userId,
+      title,
+      body,
+      category: 'task',
+      screen: 'task',
+      type: 'task_assigned',
     }).catch(() => {});
   } catch {
     // fire-and-forget — never throw

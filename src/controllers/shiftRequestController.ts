@@ -255,16 +255,27 @@ export const decideShiftRequest = async (
           }
         });
 
-        // Send push notification via standard pushNotificationService
+        // Send push notification via standard pushNotificationService & firebaseNotificationService
         pushNotificationService.sendPush(
           [request.employee.userId],
           `Shift Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
           `Your shift change request has been ${status.toLowerCase()}.${note ? ` Reason: ${note}` : ''}`,
           {
-            click_action: 'SHIFT_CHANGE',
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            screen: 'shift',
             status: status
           }
         ).catch(err => console.error('Failed to send shift request push:', err));
+
+        firebaseNotificationService.sendAppNotification({
+          userId: request.employee.userId,
+          title: `Shift Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
+          body: `Your shift change request has been ${status.toLowerCase()}.${note ? ` Reason: ${note}` : ''}`,
+          category: 'shift',
+          screen: 'shift',
+          type: 'shift_updated',
+          actionId: requestId.toString(),
+        }).catch(err => console.error('Shift decision push error:', err));
       }
     } catch (fcmError) {
       console.error('Failed to send FCM notification for shift request decision:', fcmError);

@@ -1,4 +1,5 @@
 import { prisma } from '../utils/db';
+import { firebaseNotificationService } from './firebaseNotificationService';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -633,19 +634,16 @@ class PayrollService {
           }
         });
 
-        // Broadcast real-time update
-        try {
-          await getWebSocketInstance().broadcastNotification(employeeId, {
-            title: 'Payslip Generated',
-            body: `Your payslip for ${calculation.month}/${calculation.year} is now available.`,
-            type: 'payslip_generated',
-            employeeId,
-            month: calculation.month,
-            year: calculation.year
-          });
-        } catch (wsError) {
-          console.error('❌ Failed to broadcast payslip notification:', wsError);
-        }
+        // Send FCM push notification (outside app)
+        firebaseNotificationService.sendAppNotification({
+          userId: employee.user.id,
+          title: 'Salary Slip Generated',
+          body: `Your salary slip for ${calculation.month}/${calculation.year} is now available. Net pay: ₹${calculation.netSalary}`,
+          category: 'payroll',
+          screen: 'salary_slip',
+          type: 'salary',
+          actionId: `${employeeId}-${calculation.month}-${calculation.year}`,
+        }).catch(err => console.error('Payslip FCM push error:', err));
       }
     } catch (error) {
       console.error('Send payroll notification error:', error);

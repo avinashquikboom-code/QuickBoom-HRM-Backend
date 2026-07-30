@@ -234,6 +234,91 @@ export class FirebaseNotificationService {
     }
   }
 
+  // Helper to send full notification (In-app DB + FCM Push outside app)
+  async sendAppNotification(params: {
+    userId?: number;
+    role?: string;
+    title: string;
+    body: string;
+    category: string;
+    screen: string;
+    type: string;
+    actionId?: string;
+  }): Promise<void> {
+    const { userId, role, title, body, category, screen, type, actionId } = params;
+    const payloadData: Record<string, string> = {
+      screen,
+      type,
+      category,
+      title,
+      body,
+      actionId: actionId || '',
+      click_action: 'FLUTTER_NOTIFICATION_CLICK',
+    };
+
+    if (userId) {
+      try {
+        const employee = await prisma.employee.findUnique({
+          where: { userId },
+        });
+
+        // 1. In-App DB Notification
+        await prisma.notification.create({
+          data: {
+            userId,
+            employeeId: employee?.id ?? null,
+            title,
+            body,
+            category: category.toUpperCase(),
+            actionType: type,
+            actionId: actionId || '',
+            isRead: false,
+          },
+        });
+      } catch (err) {
+        console.error('Failed to create in-app notification for user:', err);
+      }
+
+      // 2. FCM Push (Outside App)
+      try {
+        await this.sendNotificationToUser(userId, title, body, payloadData, { priority: { high: true } });
+      } catch (fcmErr: any) {
+        console.warn(`FCM push to user ${userId} skipped or failed:`, fcmErr?.message || fcmErr);
+      }
+    } else if (role) {
+      try {
+        const targetUsers = await prisma.user.findMany({
+          where: { role: role as any, isActive: true },
+          include: { employee: true },
+        });
+
+        for (const u of targetUsers) {
+          await prisma.notification.create({
+            data: {
+              userId: u.id,
+              employeeId: u.employee?.id ?? null,
+              title,
+              body,
+              category: category.toUpperCase(),
+              actionType: type,
+              actionId: actionId || '',
+              isRead: false,
+            },
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to create in-app notification for role ${role}:`, err);
+      }
+
+      // FCM Push to Role (Outside App)
+      try {
+        await this.sendNotificationToRole(role, title, body, payloadData, { priority: { high: true } });
+      } catch (fcmErr: any) {
+        console.warn(`FCM push to role ${role} skipped or failed:`, fcmErr?.message || fcmErr);
+      }
+    }
+  }
+
   // Test Firebase connection
   async testConnection(): Promise<boolean> {
     try {
