@@ -38,14 +38,22 @@ router.use(authMiddleware);
 // GET /api/mobile/store/all — all active stores (any authenticated role)
 router.get('/all', getAllMobileStores);
 
-router.get('/', roleMiddleware([Role.STORE_MANAGER]), getMobileStoreDetails);
-router.get('/dashboard', roleMiddleware([Role.STORE_MANAGER]), getMobileStoreDashboard);
+const ALLOWED_STORE_ROLES = [
+  Role.STORE_MANAGER,
+  Role.HR,
+  Role.ADMIN,
+  Role.SUPER_ADMIN,
+  Role.PLATFORM_ADMIN,
+];
+
+router.get('/', roleMiddleware(ALLOWED_STORE_ROLES), getMobileStoreDetails);
+router.get('/dashboard', roleMiddleware(ALLOWED_STORE_ROLES), getMobileStoreDashboard);
 
 /**
  * @swagger
  * /api/mobile/store/employees:
  *   get:
- *     summary: Get employees of assigned store (Store Manager only) (Mobile)
+ *     summary: Get employees of assigned store (Store Manager & HR) (Mobile)
  *     tags: [Mobile - Store]
  *     security:
  *       - bearerAuth: []
@@ -61,19 +69,19 @@ router.get('/dashboard', roleMiddleware([Role.STORE_MANAGER]), getMobileStoreDas
  *       401:
  *         description: Unauthorized
  *       403:
- *         description: Forbidden (Store Manager only)
+ *         description: Forbidden (Store Manager / HR only)
  *       404:
  *         description: Store not found
  *       500:
  *         description: Server error
  */
-router.get('/employees', roleMiddleware([Role.STORE_MANAGER]), getMobileStoreEmployees);
+router.get('/employees', roleMiddleware(ALLOWED_STORE_ROLES), getMobileStoreEmployees);
 
 /**
  * @swagger
  * /api/mobile/store/reports:
  *   get:
- *     summary: Get store reports (Store Manager only) (Mobile)
+ *     summary: Get store reports (Store Manager & HR) (Mobile)
  *     tags: [Mobile - Store]
  *     security:
  *       - bearerAuth: []
@@ -96,12 +104,12 @@ router.get('/employees', roleMiddleware([Role.STORE_MANAGER]), getMobileStoreEmp
  *       401:
  *         description: Unauthorized
  *       403:
- *         description: Forbidden (Store Manager only)
+ *         description: Forbidden (Store Manager / HR only)
  *       404:
  *         description: Store not found
  *       500:
  *         description: Server error
  */
-router.get('/reports', roleMiddleware([Role.STORE_MANAGER]), getMobileStoreReports);
+router.get('/reports', roleMiddleware(ALLOWED_STORE_ROLES), getMobileStoreReports);
 
 export default router;

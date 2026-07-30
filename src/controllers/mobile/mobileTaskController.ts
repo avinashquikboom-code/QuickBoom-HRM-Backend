@@ -187,23 +187,33 @@ export const createMobileTask = async (
   res: Response
 ): Promise<void> => {
   try {
-    if (req.user?.role !== Role.STORE_MANAGER) {
+    const ALLOWED_TASK_CREATORS: string[] = [Role.STORE_MANAGER, Role.HR, Role.ADMIN, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN];
+    if (!req.user || !ALLOWED_TASK_CREATORS.includes(req.user.role)) {
       res.status(403).json({
         success: false,
-        message: 'Only Store Managers can create tasks.'
+        message: 'Forbidden. You do not have permissions to create tasks.'
       });
       return;
     }
 
-    const employee = await prisma.employee.findFirst({
+    let employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: { store: true }
     });
 
-    if (!employee || !employee.storeId) {
+    let storeId = employee?.storeId;
+    if (!storeId && req.body.storeId) {
+      storeId = parseInt(req.body.storeId, 10);
+    }
+    if (!storeId) {
+      const activeStore = await prisma.store.findFirst({ where: { isActive: true } });
+      storeId = activeStore?.id;
+    }
+
+    if (!storeId) {
       res.status(404).json({
         success: false,
-        message: 'Store Manager must be assigned to a store.'
+        message: 'No store found for assigning tasks.'
       });
       return;
     }
@@ -224,7 +234,7 @@ export const createMobileTask = async (
       where: { id: parseInt(assignedEmployeeId) }
     });
 
-    if (!assignedEmployee || assignedEmployee.storeId !== employee.storeId) {
+    if (!assignedEmployee || (employee && assignedEmployee.storeId !== storeId)) {
       res.status(400).json({
         success: false,
         message: 'Can only assign tasks to employees in the same store.'
@@ -427,10 +437,11 @@ export const deleteMobileTask = async (
   res: Response
 ): Promise<void> => {
   try {
-    if (req.user?.role !== Role.STORE_MANAGER) {
+    const ALLOWED_TASK_CREATORS: string[] = [Role.STORE_MANAGER, Role.HR, Role.ADMIN, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN];
+    if (!req.user || !ALLOWED_TASK_CREATORS.includes(req.user.role)) {
       res.status(403).json({
         success: false,
-        message: 'Only Store Managers can delete tasks.'
+        message: 'Forbidden. You do not have permissions to delete tasks.'
       });
       return;
     }

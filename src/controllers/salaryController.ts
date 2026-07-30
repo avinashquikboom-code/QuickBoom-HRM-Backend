@@ -91,7 +91,7 @@ export const getSalarySlip = async (
 
     // Count distinct present dates
     const presentRecords = attendances.filter(a =>
-      a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'HALF_DAY' || a.checkInTime !== null
+      a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'HALF_DAY' || a.checkIn !== null
     );
     const presentDays = presentRecords.length;
 
