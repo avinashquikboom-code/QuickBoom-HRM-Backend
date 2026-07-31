@@ -2025,7 +2025,7 @@ export const repaySalaryAdvance = async (
       return;
     }
 
-    const advanceId = parseInt(id, 10);
+    const advanceId = parseInt(id as string, 10);
     if (isNaN(advanceId)) {
       res.status(400).json({ success: false, message: 'Invalid advance ID.' });
       return;
@@ -2088,7 +2088,7 @@ export const repaySalaryAdvance = async (
           date: new Date(),
           status: 'Success',
           isCredit: false,
-          description: \`Manual repayment via \${paymentMethod || 'API'} for Advance #\${advance.id}\`,
+          description: `Manual repayment via ${paymentMethod || 'API'} for Advance #${advance.id}`,
         }
       });
       
