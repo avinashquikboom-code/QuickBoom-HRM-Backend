@@ -1999,3 +1999,120 @@ export const updateBankDetails = async (
     res.status(500).json({ success: false, message: 'Failed to update bank details.' });
   }
 };
+
+
+/**
+ * POST /api/employee/wallet/advance/:id/repay
+ * Manually repay a portion of an active salary advance
+ */
+export const repaySalaryAdvance = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { amount, paymentMethod } = req.body;
+    const employee = await getEmployeeFromRequest(req);
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    const numAmount = Number(amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      res.status(400).json({ success: false, message: 'Please enter a valid repayment amount.' });
+      return;
+    }
+
+    const advanceId = parseInt(id, 10);
+    if (isNaN(advanceId)) {
+      res.status(400).json({ success: false, message: 'Invalid advance ID.' });
+      return;
+    }
+
+    const advance = await prisma.salaryAdvance.findFirst({
+      where: {
+        id: advanceId,
+        wallet: { employeeId: employee.id }
+      },
+      include: { wallet: true }
+    });
+
+    if (!advance) {
+      res.status(404).json({ success: false, message: 'Salary advance not found or unauthorized.' });
+      return;
+    }
+
+    if (advance.status !== 'APPROVED') {
+      res.status(400).json({ success: false, message: 'Only approved advances can be repaid.' });
+      return;
+    }
+
+    if (advance.remainingAmount <= 0) {
+      res.status(400).json({ success: false, message: 'This advance is already fully repaid.' });
+      return;
+    }
+
+    const repayAmount = Math.min(numAmount, advance.remainingAmount);
+    const newPaidAmount = advance.paidAmount + repayAmount;
+    const newRemainingAmount = advance.remainingAmount - repayAmount;
+    
+    const emisPaidThisTime = advance.monthlyEmi > 0 ? Math.floor(repayAmount / advance.monthlyEmi) : 1;
+    const newPaidEmis = advance.paidEmis + Math.max(1, emisPaidThisTime);
+
+    let newStatus = advance.status;
+    if (newRemainingAmount <= 0) {
+      newStatus = 'COMPLETED';
+    }
+
+    const updatedAdvance = await prisma.$transaction(async (tx) => {
+      // 1. Update the advance record
+      const adv = await tx.salaryAdvance.update({
+        where: { id: advance.id },
+        data: {
+          paidAmount: newPaidAmount,
+          remainingAmount: newRemainingAmount,
+          paidEmis: newPaidEmis,
+          status: newStatus
+        }
+      });
+
+      // 2. Log transaction in wallet history
+      await tx.walletTransaction.create({
+        data: {
+          walletId: advance.walletId,
+          title: 'Advance EMI Repayment',
+          category: 'Repayment',
+          amount: repayAmount,
+          date: new Date(),
+          status: 'Success',
+          isCredit: false,
+          description: \`Manual repayment via \${paymentMethod || 'API'} for Advance #\${advance.id}\`,
+        }
+      });
+      
+      // Optionally deduct from wallet availableBalance if they are paying from wallet
+      if (paymentMethod === 'WALLET') {
+         await tx.wallet.update({
+           where: { id: advance.walletId },
+           data: {
+             availableBalance: { decrement: repayAmount }
+           }
+         });
+      }
+
+      return adv;
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Repayment processed successfully',
+      advance: updatedAdvance
+    });
+
+  } catch (error) {
+    console.error('Error in repaySalaryAdvance:', error);
+    res.status(500).json({ success: false, message: 'Failed to process repayment.' });
+  }
+};

@@ -28,6 +28,7 @@ import {
   fetchEmployeeDocuments,
   fetchEmployeeWallet,
   requestSalaryAdvance,
+  repaySalaryAdvance,
   fetchBankDetails,
   updateBankDetails,
   requestBankDetailsEdit,
@@ -401,6 +402,7 @@ router.put('/notifications/read-all', markAllEmployeeNotificationsRead);
 // Wallet Management
 router.get('/wallet', fetchEmployeeWallet);
 router.post('/wallet/advance', requestSalaryAdvance);
+router.post('/wallet/advance/:id/repay', repaySalaryAdvance);
 router.get('/wallet/bank-details', fetchBankDetails);
 router.post('/wallet/bank-details/request', requestBankDetailsEdit);
 router.post('/wallet/bank-details', updateBankDetails);
