@@ -13,7 +13,7 @@ const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
   // 1. Primary lookup: Employee linked to User ID
   let emp = await prisma.employee.findUnique({
     where: { userId: userObj.id },
-    include: { department: true, office: true, user: { include: { profile: true } } },
+    include: { department: true, office: true, store: true, user: { include: { profile: true } } },
   });
 
   if (emp) return emp;
@@ -22,7 +22,7 @@ const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
   if (userObj.employeeID) {
     emp = await prisma.employee.findFirst({
       where: { employeeID: userObj.employeeID },
-      include: { department: true, office: true, user: { include: { profile: true } } },
+      include: { department: true, office: true, store: true, user: { include: { profile: true } } },
     });
     if (emp) return emp;
   }
@@ -37,7 +37,7 @@ const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
           { user: { email: { equals: userObj.email, mode: 'insensitive' } } },
         ],
       },
-      include: { department: true, office: true, user: { include: { profile: true } } },
+      include: { department: true, office: true, store: true, user: { include: { profile: true } } },
     });
   }
 
@@ -69,6 +69,8 @@ export const fetchEmployeeProfile = async (
           status: employee.status,
           department: employee.department?.name || 'Unassigned',
           office: employee.office?.name || 'Unassigned',
+          storeId: employee.storeId ? employee.storeId.toString() : (employee.store?.id ? employee.store.id.toString() : null),
+          storeName: employee.store?.name || null,
           joinDate: employee.createdAt.toISOString(),
         },
         profile: {
@@ -1597,13 +1599,24 @@ export const fetchEmployeeWallet = async (
       orderBy: { requestedOn: 'desc' },
     });
 
+    const pendingExpenses = await prisma.expense.aggregate({
+      where: {
+        employeeId: employee.id,
+        status: { in: ['PENDING', 'pending'] },
+      },
+      _sum: {
+        amount: true,
+      },
+    });
+    const calculatedPendingClaims = (pendingExpenses._sum.amount || 0) + (wallet.pendingClaims || 0);
+
     res.json({
       success: true,
       wallet: {
         id: wallet.id.toString(),
         availableBalance: wallet.availableBalance,
         advanceLimit: wallet.advanceLimit,
-        pendingClaims: wallet.pendingClaims,
+        pendingClaims: calculatedPendingClaims,
         cardNumber: wallet.cardNumber,
         isActive: wallet.isActive,
         registeredSalary,
