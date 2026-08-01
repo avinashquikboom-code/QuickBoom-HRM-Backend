@@ -9,12 +9,14 @@ export const getMobileCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
+    console.log(`[MOBILE-COMMISSION-DIAG] getMobileCommissionDashboard | user id=${req.user?.id}, role=${req.user?.role}`);
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: { store: true }
     });
 
     if (!employee) {
+      console.warn(`[MOBILE-COMMISSION-DIAG] getMobileCommissionDashboard | Employee NOT found for userId=${req.user?.id}`);
       res.status(404).json({
         success: false,
         message: 'Employee record not found.'
@@ -23,6 +25,7 @@ export const getMobileCommissionDashboard = async (
     }
 
     const stats = await getCommissionStats({ employeeId: employee.id });
+    console.log(`[MOBILE-COMMISSION-DIAG] Dashboard stats retrieved for employee id=${employee.id} (${employee.firstName} ${employee.lastName}) | todaySales=${stats.today.sales}, monthSales=${stats.month.sales}, monthComm=${stats.month.commission}`);
 
     // Get targets
     const targets = await prisma.commissionTarget.findMany({
@@ -81,11 +84,13 @@ export const getMobileCommissionTransactions = async (
   res: Response
 ): Promise<void> => {
   try {
+    console.log(`[MOBILE-COMMISSION-DIAG] getMobileCommissionTransactions | user id=${req.user?.id}, role=${req.user?.role}`);
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id }
     });
 
     if (!employee) {
+      console.warn(`[MOBILE-COMMISSION-DIAG] getMobileCommissionTransactions | Employee NOT found for userId=${req.user?.id}`);
       res.status(404).json({
         success: false,
         message: 'Employee record not found.'
@@ -107,6 +112,8 @@ export const getMobileCommissionTransactions = async (
     const total = await prisma.commissionTransaction.count({
       where: whereClause,
     });
+
+    console.log(`[MOBILE-COMMISSION-DIAG] Transactions retrieved for employee id=${employee.id} | found=${transactions.length}, total=${total}`);
 
     res.json({
       success: true,
