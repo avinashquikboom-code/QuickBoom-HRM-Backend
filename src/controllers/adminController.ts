@@ -3685,11 +3685,12 @@ export const clearTasksData = async (
       return;
     }
 
-    const result = await prisma.task.deleteMany({});
+    await prisma.task.deleteMany({});
+    const result = await (prisma as any).hrTask.deleteMany({});
 
     res.json({
       success: true,
-      message: `Cleared ${result.count} task records successfully.`,
+      message: `Cleared task records successfully.`,
       count: result.count
     });
   } catch (error) {
