@@ -116,7 +116,7 @@ export const getSalarySlip = async (
 
     // Gross salary: (present_days / total_working_days) * base_salary + commission_amount
     const grossRatio = Math.min(1.0, presentDays / totalWorkingDays);
-    const gross = Math.round((grossRatio * baseSalary) + commissionAmount);
+    const calculatedGross = Math.round((grossRatio * baseSalary) + commissionAmount);
 
     // Deductions: (half_days * dailyRate / 2) + (leave_days * dailyRate)
     const halfDayDeduction = halfDays * (dailyRate / 2);
@@ -124,7 +124,11 @@ export const getSalarySlip = async (
     const totalDeductions = Math.round(halfDayDeduction + leaveDeduction);
 
     // Net salary: Gross - Deductions (No negative net)
-    const net = Math.max(0, gross - totalDeductions);
+    const calculatedNet = Math.max(0, calculatedGross - totalDeductions);
+
+    // Display values: fallback to baseSalary if no attendance/sales recorded yet
+    const displayGross = calculatedGross > 0 ? calculatedGross : baseSalary;
+    const displayNet = calculatedNet > 0 ? calculatedNet : Math.max(0, displayGross - totalDeductions);
 
     const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
 
@@ -139,9 +143,12 @@ export const getSalarySlip = async (
         half_days: halfDays,
         leave_days: leaveDays,
         commission_amount: commissionAmount,
-        gross,
+        gross: displayGross,
         deductions: totalDeductions,
-        net,
+        net: displayNet,
+        grossSalary: displayGross,
+        netSalary: displayNet,
+        registeredSalary: baseSalary,
         month: targetMonth,
         year: targetYear,
       }
