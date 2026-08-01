@@ -37,6 +37,9 @@ import {
   clearLiveLocationLogs,
   clearAttendanceData,
   clearShiftRequestsData,
+  clearLeaveRequestsData,
+  clearPayrollData,
+  clearTasksData,
   fetchAdminLeaves,
   updateAdminLeaveStatus,
   fetchAdminLeaveBalances,
@@ -489,9 +492,12 @@ router.put('/pricing-plans/:id', updatePricingPlan);
 // Telemetry Location Tracking
 router.post('/location/logs/clear', clearLiveLocationLogs);
 
-// Clear Attendance & Shift Request Data
+// Clear Data Routes
 router.delete('/attendance/clear', clearAttendanceData);
 router.delete('/shift-requests/clear', clearShiftRequestsData);
+router.delete('/leave-requests/clear', clearLeaveRequestsData);
+router.delete('/payroll/clear', clearPayrollData);
+router.delete('/tasks/clear', clearTasksData);
 
 // Leave Management
 router.get('/leaves/balances', fetchAdminLeaveBalances);

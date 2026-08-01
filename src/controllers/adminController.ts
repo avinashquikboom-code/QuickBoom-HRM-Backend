@@ -3619,6 +3619,86 @@ export const clearShiftRequestsData = async (
   }
 };
 
+export const clearLeaveRequestsData = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Store managers cannot clear leave request data.'
+      });
+      return;
+    }
+
+    const result = await prisma.leaveRequest.deleteMany({});
+
+    res.json({
+      success: true,
+      message: `Cleared ${result.count} leave request records successfully.`,
+      count: result.count
+    });
+  } catch (error) {
+    console.error('Clear leave requests data error:', error);
+    res.status(500).json({ success: false, message: 'Failed to clear leave requests data.' });
+  }
+};
+
+export const clearPayrollData = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Store managers cannot clear payroll data.'
+      });
+      return;
+    }
+
+    await prisma.salaryAdvance.deleteMany({});
+    const result = await prisma.payslip.deleteMany({});
+
+    res.json({
+      success: true,
+      message: `Cleared ${result.count} payslip records successfully.`,
+      count: result.count
+    });
+  } catch (error) {
+    console.error('Clear payroll data error:', error);
+    res.status(500).json({ success: false, message: 'Failed to clear payroll data.' });
+  }
+};
+
+export const clearTasksData = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Store managers cannot clear task data.'
+      });
+      return;
+    }
+
+    const result = await prisma.task.deleteMany({});
+
+    res.json({
+      success: true,
+      message: `Cleared ${result.count} task records successfully.`,
+      count: result.count
+    });
+  } catch (error) {
+    console.error('Clear tasks data error:', error);
+    res.status(500).json({ success: false, message: 'Failed to clear tasks data.' });
+  }
+};
+
+
 
 // ==========================================
 // 10. Admin Leave Management
