@@ -10,7 +10,10 @@ RUN apk add --no-cache git python3 make g++
 # --ignore-scripts: the postinstall (`prisma generate`) needs prisma/schema,
 # which isn't copied yet — we run prisma generate explicitly below.
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps --ignore-scripts
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && (npm ci --legacy-peer-deps --ignore-scripts || npm install --legacy-peer-deps --ignore-scripts)
 
 COPY prisma ./prisma/
 RUN npx prisma generate
@@ -25,7 +28,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps --omit=dev --ignore-scripts && npm cache clean --force
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && (npm ci --legacy-peer-deps --omit=dev --ignore-scripts || npm install --legacy-peer-deps --omit=dev --ignore-scripts) \
+ && npm cache clean --force
 
 # Prisma schema, config, generated client, AND the prisma CLI from the builder.
 # prisma.config.ts supplies the datasource URL for `migrate deploy` (Prisma 7
