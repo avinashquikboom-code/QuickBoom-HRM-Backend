@@ -4896,23 +4896,16 @@ export const fetchPayrollStats = async (
   res: Response
 ): Promise<void> => {
   try {
-    const employeeCount = await prisma.employee.count();
-    
-    // Scale stats based on actual employee count in DB
-    const mtdVolume = employeeCount * 45000 || 4128400;
-    const disbursed = employeeCount * 42000 || 3842100;
-    const pending = employeeCount * 3000 || 210450;
-    const errors = 0;
+    const payslips = await prisma.payslip.findMany();
 
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May'];
-    const statsData = months.map((m, idx) => {
-      const multiplier = (idx + 1) * 800000;
-      return {
-        name: m,
-        amount: multiplier + (employeeCount * 15000),
-        trend: multiplier * 0.75 + (employeeCount * 10000),
-      };
-    });
+    const mtdVolume = payslips.reduce((sum, p) => sum + (p.netSalary || 0), 0);
+    const disbursed = payslips
+      .filter((p) => p.status === 'Disbursed' || p.status === 'Completed')
+      .reduce((sum, p) => sum + (p.netSalary || 0), 0);
+    const pending = payslips
+      .filter((p) => p.status !== 'Disbursed' && p.status !== 'Completed')
+      .reduce((sum, p) => sum + (p.netSalary || 0), 0);
+    const errors = 0;
 
     res.json({
       success: true,
@@ -4922,7 +4915,7 @@ export const fetchPayrollStats = async (
         pending,
         errors,
       },
-      trend: statsData,
+      trend: [],
     });
   } catch (error) {
     console.error('Fetch payroll stats error:', error);
@@ -4935,31 +4928,10 @@ export const fetchPayrollRuns = async (
   res: Response
 ): Promise<void> => {
   try {
-    const offices = await prisma.office.findMany({
-      include: { employees: true },
-    });
-
-    const officeRuns = offices.map((off) => ({
-      id: `PR-90${off.id}`,
-      company: off.name,
-      employees: off.employees.length,
-      totalAmount: `₹${(off.employees.length * 45000).toLocaleString('en-IN')}`,
-      status: off.id % 2 === 0 ? 'Completed' : 'Pending Approval',
-      date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-    }));
-
-    // Fallback/enrichment to ensure rich UI even with few offices
-    if (officeRuns.length < 4) {
-      officeRuns.push(
-        { id: 'PR-9041', company: 'TechVibe Inc.', employees: 450, totalAmount: '₹382,500', status: 'Completed', date: '28 May 2026' },
-        { id: 'PR-9042', company: 'Global Logistics', employees: 1200, totalAmount: '₹744,000', status: 'Processing', date: '30 May 2026' },
-        { id: 'PR-9043', company: 'EcoWare Solutions', employees: 85, totalAmount: '₹66,300', status: 'Failed', date: '31 May 2026' }
-      );
-    }
-
+    // Return empty array when no real payroll runs exist
     res.json({
       success: true,
-      runs: officeRuns,
+      runs: [],
     });
   } catch (error) {
     console.error('Fetch payroll runs error:', error);
