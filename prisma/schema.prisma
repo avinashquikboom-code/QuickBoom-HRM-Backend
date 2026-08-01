@@ -1048,3 +1048,17 @@ model BankEditRequest {
   decidedBy     Int?
   employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
+
+model ResetLog {
+  id           String   @id @default(uuid())
+  resetBy      String   // userId or employeeId/name
+  resetAt      DateTime @default(now())
+  tables       String[] // whitelisted tables
+  filters      Json     // applied filters
+  rowsDeleted  Json     // { table: count }
+  ipAddress    String?
+
+  @@index([resetBy])
+  @@index([resetAt])
+}
+

@@ -50,6 +50,7 @@ import breakRoutes from './routes/breakRoutes';
 import shiftRequestRoutes from './routes/shiftRequestRoutes';
 import locationTrackingRoutes from './routes/locationTrackingRoutes';
 import salaryRoutes from './routes/salaryRoutes';
+import resetRoutes from './routes/resetRoutes';
 import { authenticateToken } from './middlewares/authMiddleware';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
@@ -142,6 +143,7 @@ app.use('/api/breaks', breakRoutes);
 app.use('/api', shiftRequestRoutes);
 app.use('/api/mobile/location', locationTrackingRoutes);
 app.use('/api/salary', salaryRoutes);
+app.use('/api', resetRoutes);
 
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {
