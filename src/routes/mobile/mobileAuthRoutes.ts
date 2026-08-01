@@ -21,6 +21,7 @@ const router = Router();
 
 // Login, register, verify-identifier, forgot-password and refresh endpoints do not require auth middleware
 router.post('/login', mobileLogin);
+router.post('/hr/login', mobileLogin);
 router.post('/verify-mobile', verifyMobileNumber);
 router.post('/register', mobileRegister);
 router.post('/refresh', mobileRefreshToken);

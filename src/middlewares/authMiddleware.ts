@@ -20,10 +20,12 @@ export const authMiddleware = async (
 
   const publicPaths = [
     '/api/mobile/auth/login',
+    '/api/mobile/auth/hr/login',
     '/api/mobile/auth/register',
     '/api/mobile/auth/refresh',
     '/api/mobile/auth/forgot-password',
     '/api/mobile/auth/verify-mobile',
+    '/api/mobile/auth/verify-identifier',
     '/api/mobile/auth/reset-password',
     '/api/auth/login',
     '/api/auth/employee/login',
@@ -35,8 +37,17 @@ export const authMiddleware = async (
     '/api-docs',
   ];
 
+  const fullPath = req.originalUrl ? req.originalUrl.split('?')[0] : req.path;
   const requestPath = req.path;
-  if (publicPaths.some(p => requestPath === p || requestPath.startsWith(p))) {
+  if (
+    publicPaths.some(
+      p =>
+        fullPath === p ||
+        fullPath.startsWith(p) ||
+        requestPath === p ||
+        requestPath.startsWith(p)
+    )
+  ) {
     next();
     return;
   }
@@ -55,8 +66,8 @@ export const authMiddleware = async (
     } else {
       token = authHeader.trim();
     }
-  } else if (req.query.token && typeof req.query.token === 'string') {
-    token = req.query.token;
+  } else if (req.query?.token && typeof req.query.token === 'string') {
+    token = req.query.token as string;
   } else if ((req as any).cookies?.token) {
     token = (req as any).cookies.token;
   }
