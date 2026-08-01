@@ -115,7 +115,7 @@ class PayrollService {
         },
         _sum: { commissionAmount: true }
       });
-      const commissionEarned = commAggregate._sum.commissionAmount || 0;
+      const commissionEarned = commAggregate._sum?.commissionAmount || 0;
       
       // Calculate gross salary
       const grossSalary = calculatedBaseSalary + calculatedAllowance + overtime + bonus + commissionEarned;

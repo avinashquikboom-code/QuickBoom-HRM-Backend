@@ -1567,12 +1567,12 @@ export const fetchEmployeeWallet = async (
     });
 
     const registeredSalary = salaryStructure
-      ? (salaryStructure.monthlySalary || salaryStructure.grossSalary || 50000)
+      ? (salaryStructure.grossSalary || salaryStructure.monthlySalary || salaryStructure.basicSalary || 50000)
       : 50000;
 
     let estimatedNetSalary = 47250;
     if (salaryStructure) {
-      const gross = salaryStructure.monthlySalary || salaryStructure.grossSalary || registeredSalary;
+      const gross = salaryStructure.grossSalary || salaryStructure.monthlySalary || registeredSalary;
       const basic = salaryStructure.basicSalary || Math.round(gross * 0.5);
       const pf = salaryStructure.pfEnabled ? Math.round(basic * ((salaryStructure.employeePfRate || 12) / 100)) : 0;
       const esic = salaryStructure.esicEnabled ? Math.round(gross * ((salaryStructure.employeeEsicRate || 0.75) / 100)) : 0;
@@ -1580,9 +1580,33 @@ export const fetchEmployeeWallet = async (
       if (estimatedNetSalary === 0) estimatedNetSalary = 47250;
     }
 
-    const upcomingSalary = latestPayslip
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    // Calculate current month commission for this employee
+    const monthStart = new Date(currentYear, currentMonth - 1, 1);
+    const monthEnd = new Date(currentYear, currentMonth, 0, 23, 59, 59, 999);
+
+    const commAgg = await prisma.commissionTransaction.aggregate({
+      where: {
+        employeeId: employee.id,
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+        createdAt: { gte: monthStart, lte: monthEnd }
+      },
+      _sum: { commissionAmount: true }
+    });
+    const currentCommission = Math.round(commAgg._sum?.commissionAmount || 0);
+
+    const isCurrentMonthPayslip = latestPayslip && latestPayslip.month === currentMonth && latestPayslip.year === currentYear;
+
+    const upcomingSalary = isCurrentMonthPayslip
       ? latestPayslip.netSalary
       : estimatedNetSalary;
+
+    const upcomingSalaryWithCommission = isCurrentMonthPayslip
+      ? Math.round(latestPayslip.netSalary)
+      : Math.round(estimatedNetSalary + currentCommission);
 
     const activeAdvance = await prisma.salaryAdvance.findFirst({
       where: {
@@ -1608,7 +1632,7 @@ export const fetchEmployeeWallet = async (
         amount: true,
       },
     });
-    const calculatedPendingClaims = (pendingExpenses._sum.amount || 0) + (wallet.pendingClaims || 0);
+    const calculatedPendingClaims = (pendingExpenses._sum?.amount || 0) + (wallet.pendingClaims || 0);
 
     res.json({
       success: true,
@@ -1620,9 +1644,11 @@ export const fetchEmployeeWallet = async (
         cardNumber: wallet.cardNumber,
         isActive: wallet.isActive,
         registeredSalary,
-        upcomingSalary,
+        upcomingSalary: upcomingSalaryWithCommission,
+        baseUpcomingSalary: upcomingSalary,
+        commissionAmount: currentCommission,
         grossSalary: registeredSalary,
-        netSalary: upcomingSalary,
+        netSalary: upcomingSalaryWithCommission,
         activeAdvance: activeAdvance ? {
           id: activeAdvance.id.toString(),
           amount: activeAdvance.amount,

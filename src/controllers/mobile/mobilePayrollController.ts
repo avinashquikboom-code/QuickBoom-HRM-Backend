@@ -60,7 +60,7 @@ export const getMyPayslips = async (
         },
         _sum: { commissionAmount: true }
       });
-      const commissionEarned = commAggregate._sum.commissionAmount || 0;
+      const commissionEarned = commAggregate._sum?.commissionAmount || 0;
 
       const startDateStr = monthStart.toISOString().split('T')[0];
       const endDateStr = monthEnd.toISOString().split('T')[0];

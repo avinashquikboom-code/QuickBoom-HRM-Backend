@@ -59,10 +59,10 @@ export const getSalarySlip = async (
       }
     }
 
-    // Base salary from salaryStructure or fallback to 10000
-    const baseSalary = employee.salaryStructure?.basicSalary ||
+    // Base / Registered gross salary from salaryStructure (prioritize HR registered gross)
+    const baseSalary = employee.salaryStructure?.grossSalary ||
       employee.salaryStructure?.monthlySalary ||
-      employee.salaryStructure?.grossSalary ||
+      employee.salaryStructure?.basicSalary ||
       10000;
 
     // Month date range
