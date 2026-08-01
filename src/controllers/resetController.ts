@@ -9,6 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'quickboom-reset-secret-key-2026';
 export const WHITELISTED_TABLES = [
   'Attendance',
   'Leaves',
+  'Payroll',
   'Sales',
   'Breaks',
   'ShiftRequests',
@@ -53,7 +54,7 @@ const usedTokens = new Set<string>();
 
 // ─── Helper: Build Prisma Where Filters for Each Table ──────────────────────────
 async function buildTableWhere(table: WhitelistedTable, filters: any) {
-  const { branchId, employeeId, dateFrom, dateTo } = filters || {};
+  const { branchId, employeeId, attendanceStatus, dateFrom, dateTo } = filters || {};
   const where: any = {};
 
   let targetEmployeeIds: number[] | null = null;
@@ -97,6 +98,9 @@ async function buildTableWhere(table: WhitelistedTable, filters: any) {
       if (targetEmployeeIds !== null) {
         where.employeeId = { in: targetEmployeeIds };
       }
+      if (attendanceStatus) {
+        where.status = String(attendanceStatus).toUpperCase();
+      }
       if (dateFrom || dateTo) {
         where.date = {};
         if (dateFrom) where.date.gte = dateFrom; // YYYY-MM-DD
@@ -112,6 +116,17 @@ async function buildTableWhere(table: WhitelistedTable, filters: any) {
         where.fromDate = {};
         if (startDate) where.fromDate.gte = startDate;
         if (endDate) where.fromDate.lte = endDate;
+      }
+      break;
+    }
+    case 'Payroll': {
+      if (targetEmployeeIds !== null) {
+        where.employeeId = { in: targetEmployeeIds };
+      }
+      if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = startDate;
+        if (endDate) where.createdAt.lte = endDate;
       }
       break;
     }
@@ -201,6 +216,11 @@ async function getDryRunCount(table: WhitelistedTable, filters: any): Promise<nu
       return await prisma.attendance.count({ where });
     case 'Leaves':
       return await prisma.leaveRequest.count({ where });
+    case 'Payroll': {
+      const payslips = await prisma.payslip.count({ where });
+      const advances = await prisma.salaryAdvance.count({ where });
+      return payslips + advances;
+    }
     case 'Sales':
       return await prisma.commissionTransaction.count({ where });
     case 'Breaks':
@@ -237,6 +257,11 @@ async function deleteTableRecords(table: WhitelistedTable, filters: any): Promis
     case 'Leaves': {
       const res = await prisma.leaveRequest.deleteMany({ where });
       return res.count;
+    }
+    case 'Payroll': {
+      const payslipsRes = await prisma.payslip.deleteMany({ where });
+      const advancesRes = await prisma.salaryAdvance.deleteMany({ where });
+      return payslipsRes.count + advancesRes.count;
     }
     case 'Sales': {
       const res = await prisma.commissionTransaction.deleteMany({ where });
