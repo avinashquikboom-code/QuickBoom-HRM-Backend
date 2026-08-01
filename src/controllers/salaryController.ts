@@ -105,7 +105,8 @@ export const getSalarySlip = async (
       where: {
         employeeId: targetEmployeeId,
         status: { notIn: ['APPROVED', 'CANCELLED'] }, // unapproved/unplanned leaves
-        startDate: { gte: monthStart, lte: monthEnd }
+        fromDate: { gte: monthStart },
+        toDate: { lte: monthEnd }
       }
     });
     const leaveDays = leaveRequests.length;
