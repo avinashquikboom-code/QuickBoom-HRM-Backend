@@ -5010,10 +5010,6 @@ export const fetchSalarySlips = async (
       targetMonth = parseInt(parts[1], 10);
     }
 
-    const employees = await prisma.employee.findMany({
-      include: { office: true, department: true },
-    });
-
     const existingPayslips = await (prisma as any).payslip.findMany({
       where: {
         month: targetMonth,
@@ -5021,53 +5017,21 @@ export const fetchSalarySlips = async (
       },
     }) as any[];
 
-    const payslipMap = new Map(existingPayslips.map((p: any) => [p.employeeId, p]));
-
-    const slips = await Promise.all(employees.map(async (emp) => {
-      let dbPayslip = payslipMap.get(emp.id);
-
-      if (!dbPayslip) {
-        try {
-          dbPayslip = await PayrollAutomationService.calculateAndSaveSalary(emp.id, targetMonth, targetYear, 'Pending Approval');
-        } catch (e) {
-          console.error(`Failed to calculate salary for employee ${emp.id}:`, e);
-        }
-      }
-
-      if (dbPayslip) {
-        return {
-          id: emp.id,
-          payslipId: dbPayslip.id,
-          employeeCode: emp.employeeCode,
-          firstName: emp.firstName,
-          lastName: emp.lastName,
-          name: `${emp.firstName} ${emp.lastName}`,
-          designation: dbPayslip.designation,
-          department: dbPayslip.department,
-          office: dbPayslip.officeName,
-          baseSalary: dbPayslip.baseSalary,
-          allowance: dbPayslip.allowance,
-          deductions: dbPayslip.deductions,
-          netSalary: dbPayslip.netSalary,
-          status: dbPayslip.status,
-        };
-      }
-
-      return {
-        id: emp.id,
-        employeeCode: emp.employeeCode,
-        firstName: emp.firstName,
-        lastName: emp.lastName,
-        name: `${emp.firstName} ${emp.lastName}`,
-        designation: emp.designation || 'Associate',
-        department: emp.department?.name || 'Operations',
-        office: emp.office?.name || 'Headquarters',
-        baseSalary: 45000,
-        allowance: 0,
-        deductions: 0,
-        netSalary: 45000,
-        status: 'Pending Approval',
-      };
+    const slips = existingPayslips.map((dbPayslip: any) => ({
+      id: dbPayslip.employeeId,
+      payslipId: dbPayslip.id,
+      employeeCode: dbPayslip.employeeCode,
+      firstName: dbPayslip.employeeName?.split(' ')[0] || '',
+      lastName: dbPayslip.employeeName?.split(' ').slice(1).join(' ') || '',
+      name: dbPayslip.employeeName,
+      designation: dbPayslip.designation,
+      department: dbPayslip.department,
+      office: dbPayslip.officeName,
+      baseSalary: dbPayslip.baseSalary,
+      allowance: dbPayslip.allowance,
+      deductions: dbPayslip.deductions,
+      netSalary: dbPayslip.netSalary,
+      status: dbPayslip.status,
     }));
 
     res.json({
