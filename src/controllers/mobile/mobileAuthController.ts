@@ -331,6 +331,9 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
         designation: user.employee.designation,
         status: user.employee.status,
         department: user.employee.department,
+        branchName: user.employee.branchName || user.employee.office?.name,
+        storeId: user.employee.storeId?.toString() || user.employee.officeId?.toString(),
+        storeName: user.employee.office?.name || user.employee.branchName,
         salary: user.employee.salaryStructure ? user.employee.salaryStructure.monthlySalary : 0,
         office: user.employee.office ? {
           id: user.employee.office.id,
@@ -576,6 +579,9 @@ export const getMobileProfile = async (req: AuthenticatedRequest, res: Response)
         departmentId: user.employee.departmentId,
         shiftTypeId: user.employee.shiftTypeId,
         workModeId: user.employee.workModeId,
+        branchName: user.employee.branchName || user.employee.office?.name,
+        storeId: user.employee.storeId?.toString() || user.employee.officeId?.toString(),
+        storeName: user.employee.office?.name || user.employee.branchName,
         salary: user.employee.salaryStructure ? user.employee.salaryStructure.monthlySalary : 0,
         office: user.employee.office ? {
           id: user.employee.office.id,
