@@ -392,20 +392,17 @@ export const syncSalesBatch = async (
       return;
     }
 
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-      include: {
-        commissionPolicies: {
-          where: { isActive: true },
-          orderBy: { priority: 'asc' },
-        },
-      },
-    });
-
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee record not found for the logged-in user.' });
-      return;
-    }
+    const defaultEmployee = req.user?.id
+      ? await prisma.employee.findFirst({
+          where: { userId: req.user.id },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        })
+      : null;
 
     let syncedCount = 0;
     const results: any[] = [];
@@ -414,6 +411,39 @@ export const syncSalesBatch = async (
       const { endpoint, payload } = tx;
       if (!endpoint || !payload) continue;
       const normEndpoint = endpoint.toLowerCase().replace(/^\/api/, '');
+
+      // Resolve target employee for this transaction item
+      let employee = defaultEmployee;
+      const identifier = payload.employeeId || payload.employeeID || payload.employeeCode || payload.SalesMan;
+      if (identifier) {
+        const resolvedId = await resolveEmployeeId(identifier);
+        if (resolvedId !== null) {
+          const empFound = await prisma.employee.findUnique({
+            where: { id: resolvedId },
+            include: {
+              commissionPolicies: {
+                where: { isActive: true },
+                orderBy: { priority: 'asc' },
+              },
+            },
+          });
+          if (empFound) employee = empFound;
+        }
+      }
+
+      if (!employee) {
+        employee = await prisma.employee.findFirst({
+          where: { status: 'active' },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        });
+      }
+
+      if (!employee) continue;
 
       if (normEndpoint === '/sales/addsales' || normEndpoint === 'addsales' ||
           normEndpoint.includes('/api/sales/addsales')) {
@@ -625,7 +655,7 @@ export const syncSalesBatch = async (
         `${syncedCount} sales synced`,
         {
           screen: 'commission',
-          id: employee.id.toString()
+          id: (defaultEmployee?.id || req.user.id).toString()
         }
       ).catch(err => {
         console.error('[salesLegacyController] Failed to send sales sync push notification:', err);

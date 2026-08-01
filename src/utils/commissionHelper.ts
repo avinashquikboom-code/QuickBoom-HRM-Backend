@@ -38,18 +38,6 @@ export function isEligibleCommissionEmployee(emp: any): boolean {
   const source = String(emp.source || 'HOPKID').toUpperCase();
   if (source === 'MANUAL') return false;
 
-  // Must not be ADMIN or HR employee code
-  const code = String(emp.employeeCode || '').trim().toUpperCase();
-  if (code.startsWith('ADMIN') || code.startsWith('HR')) return false;
-
-  // Must not have HR designation
-  const des = String(emp.designation || '').toUpperCase();
-  if (des.includes('HR')) return false;
-
-  // Must not be admin or HR user role
-  const role = String(emp.user?.role || emp.role || '').toUpperCase();
-  if (['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'].includes(role)) return false;
-
   return true;
 }
 
