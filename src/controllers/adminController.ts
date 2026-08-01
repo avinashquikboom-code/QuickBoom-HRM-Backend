@@ -3565,6 +3565,61 @@ export const clearLiveLocationLogs = async (
   }
 };
 
+export const clearAttendanceData = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Store managers cannot clear attendance data.'
+      });
+      return;
+    }
+
+    await prisma.attendanceCorrection.deleteMany({});
+    await prisma.breakRecord.deleteMany({});
+    const result = await prisma.attendance.deleteMany({});
+
+    res.json({
+      success: true,
+      message: `Cleared ${result.count} attendance records successfully.`,
+      count: result.count
+    });
+  } catch (error) {
+    console.error('Clear attendance data error:', error);
+    res.status(500).json({ success: false, message: 'Failed to clear attendance data.' });
+  }
+};
+
+export const clearShiftRequestsData = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    if (req.user?.role === 'STORE_MANAGER') {
+      res.status(403).json({
+        success: false,
+        message: 'Access denied. Store managers cannot clear shift requests data.'
+      });
+      return;
+    }
+
+    const result = await prisma.shiftRequest.deleteMany({});
+
+    res.json({
+      success: true,
+      message: `Cleared ${result.count} shift request records successfully.`,
+      count: result.count
+    });
+  } catch (error) {
+    console.error('Clear shift requests data error:', error);
+    res.status(500).json({ success: false, message: 'Failed to clear shift requests data.' });
+  }
+};
+
+
 // ==========================================
 // 10. Admin Leave Management
 // ==========================================
