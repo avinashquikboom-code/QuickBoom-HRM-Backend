@@ -204,7 +204,7 @@ export const updateShiftRule = async (req: AuthenticatedRequest, res: Response):
 
 /**
  * 4. DELETE /api/hr/shift-rules/:id
- * Soft delete or hard delete shift rule
+ * Hard delete a shift rule permanently
  */
 export const deleteShiftRule = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -219,14 +219,13 @@ export const deleteShiftRule = async (req: AuthenticatedRequest, res: Response):
       return;
     }
 
-    await prisma.shiftRule.update({
-      where: { id: ruleId },
-      data: { isActive: false }
+    await prisma.shiftRule.delete({
+      where: { id: ruleId }
     });
 
     res.json({
       success: true,
-      message: 'Shift rule deactivated successfully.'
+      message: 'Shift rule deleted successfully.'
     });
   } catch (error: any) {
     console.error('Error in deleteShiftRule:', error);
