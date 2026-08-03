@@ -31,6 +31,8 @@ export const authMiddleware = async (
     '/api/auth/employee/login',
     '/api/auth/hr/login',
     '/api/auth/super-admin/login',
+    '/api/admin/auth/login',
+    '/api/admin/login',
     '/api/auth/refresh',
     '/api/auth/forgot-password',
     '/api/health',

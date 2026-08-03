@@ -135,21 +135,36 @@ export class FirebaseNotificationService {
     data?: Record<string, string>,
     options?: NotificationOptions
   ): Promise<admin.messaging.BatchResponse> {
+    const roleUpper = role.toUpperCase();
     const fcmTokens = await prisma.fCMToken.findMany({
       where: { 
         isActive: true,
         user: {
-          role: role as any,
+          role: roleUpper as any,
           isActive: true,
         }
       },
       select: { token: true }
     });
 
-    const tokens = fcmTokens.map(t => t.token);
+    let tokens = fcmTokens.map(t => t.token);
 
     if (tokens.length === 0) {
-      throw new Error(`No active users with FCM tokens found for role: ${role}`);
+      const devices = await prisma.device.findMany({
+        where: {
+          user: {
+            role: roleUpper as any,
+            isActive: true,
+          }
+        },
+        select: { fcmToken: true }
+      });
+      tokens = devices.map(d => d.fcmToken).filter((t): t is string => Boolean(t));
+    }
+
+    if (tokens.length === 0) {
+      console.warn(`[FirebaseNotificationService] No active users with FCM tokens found for role: ${role}`);
+      return { responses: [], successCount: 0, failureCount: 0 };
     }
 
     return this.sendNotificationToTokens(tokens, title, body, data, options);

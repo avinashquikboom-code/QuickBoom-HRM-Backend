@@ -100,13 +100,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     console.log('✅ [LOGIN] Password verified for:', email);
 
-    // 2.2. Enforce that only SUPER_ADMIN and HR roles can log in via this portal (admin panel)
-    const allowedAdminRoles = [Role.SUPER_ADMIN, Role.HR];
+    // 2.2. Enforce that administrative roles can log in via this portal (admin panel)
+    const allowedAdminRoles = [Role.SUPER_ADMIN, Role.ADMIN, Role.HR, Role.PLATFORM_ADMIN];
     if (!allowedAdminRoles.includes(user.role)) {
       console.log('❌ [LOGIN] Role not allowed for admin panel:', user.role);
       res.status(403).json({
         success: false,
-        message: 'Access denied. Only Super Admin and HR can log in to the Admin Panel.',
+        message: 'Access denied. Only Super Admin, Admin, and HR can log in to the Admin Panel.',
         errorCode: 'ROLE_MISMATCH'
       });
       return;
