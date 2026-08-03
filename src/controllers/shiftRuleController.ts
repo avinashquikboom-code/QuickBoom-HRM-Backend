@@ -287,6 +287,7 @@ export const getMobileShiftRules = async (req: AuthenticatedRequest, res: Respon
           {
             OR: [
               { branchId: null },
+              { branchId: 'ALL' },
               ...(empBranchIdStr ? [{ branchId: empBranchIdStr }] : [])
             ]
           }
