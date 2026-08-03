@@ -1082,3 +1082,20 @@ model RemoteWorkRequest {
   @@index([fromDate, toDate])
 }
 
+model ShiftRule {
+  id          String   @id @default(uuid())
+  title       String   // e.g. "Morning Shift Guidelines"
+  content     String   @db.Text // rule details
+  shiftType   String?  // MORNING, AFTERNOON, EVENING, ALL (null = applies to all)
+  branchId    String?  // specific branch or null = all branches
+  isActive    Boolean  @default(true)
+  priority    Int      @default(0) // display order
+  createdBy   String   // HR userId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shiftType])
+  @@index([branchId])
+  @@index([isActive])
+}
+
