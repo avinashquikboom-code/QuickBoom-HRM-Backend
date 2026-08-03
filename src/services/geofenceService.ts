@@ -59,6 +59,37 @@ class GeofenceService {
         }
       }) : null;
 
+      // Check if employee has an active APPROVED Remote Work Request for today
+      if (employeeId) {
+        const now = new Date();
+        const empIdStr = String(employeeId);
+        const activeRemote = await prisma.remoteWorkRequest.findFirst({
+          where: {
+            employeeId: empIdStr,
+            status: 'APPROVED',
+            fromDate: { lte: now },
+            toDate: { gte: now }
+          }
+        });
+
+        if (activeRemote) {
+          console.log(`✅ [GeofenceService] Active remote work approved for employeeId=${employeeId}. Bypassing geofence.`);
+          return {
+            isWithinGeofence: true,
+            distance: 0,
+            officeId: employee?.officeId || undefined,
+            officeName: 'Remote Work (Approved)',
+            maxRadius: 999999,
+            coordinates: {
+              userLat,
+              userLon,
+              officeLat: userLat,
+              officeLon: userLon
+            }
+          };
+        }
+      }
+
       const geofences: Array<{
         type: 'office' | 'store' | 'branch';
         id: number;

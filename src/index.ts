@@ -30,6 +30,7 @@ import mobileTrackingRoutes from './routes/mobile/mobileTrackingRoutes';
 import mobileGeofenceRoutes from './routes/mobile/mobileGeofenceRoutes';
 import mobileLeaveBalanceRoutes from './routes/mobile/mobileLeaveBalanceRoutes';
 import mobileDistanceRoutes from './routes/mobile/mobileDistanceRoutes';
+import remoteWorkRoutes from './routes/remoteWorkRoutes';
 import mobileComprehensiveAttendanceRoutes from './routes/mobile/mobileComprehensiveAttendanceRoutes';
 import mobileNotificationRoutes from './routes/mobile/mobileNotificationRoutes';
 import upcomingRoutes from './routes/mobile/upcomingRoutes';
@@ -144,6 +145,7 @@ app.use('/api', shiftRequestRoutes);
 app.use('/api/mobile/location', locationTrackingRoutes);
 app.use('/api/salary', salaryRoutes);
 app.use('/api', resetRoutes);
+app.use('/api', remoteWorkRoutes);
 
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {

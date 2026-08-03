@@ -27,6 +27,7 @@ interface AttendanceWithOffice {
   isOnBreak: boolean;
   breakStartTime: Date | null;
   totalBreakSeconds: number;
+  isRemoteWork: boolean;
   createdAt: Date;
   updatedAt: Date;
   office?: {
@@ -323,6 +324,18 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       }
     }
     
+    // Check if remote work is active for this punch-in
+    const empIdStr = String(employee.id);
+    const activeRemoteReq = await prisma.remoteWorkRequest.findFirst({
+      where: {
+        employeeId: empIdStr,
+        status: 'APPROVED',
+        fromDate: { lte: punchInTime },
+        toDate: { gte: punchInTime }
+      }
+    });
+    const isRemote = Boolean(activeRemoteReq);
+
     // Create attendance record
     const attendance = await prisma.attendance.create({
       data: {
@@ -331,10 +344,11 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         date: today,
         checkIn: punchInTime,
         status: attendanceStatus,
-        notes: notes || '',
+        notes: notes || (isRemote ? 'Punch in recorded via Remote Work' : 'Punch in recorded via mobile app'),
         latitude: punchLat,
         longitude: punchLon,
         isFingerprintCheckIn: isFingerprint,
+        isRemoteWork: isRemote,
       },
       include: {
         employee: {
