@@ -271,6 +271,22 @@ export const reviewRemoteWorkRequest = async (req: AuthenticatedRequest, res: Re
         }
 
         try {
+          await prisma.notification.create({
+            data: {
+              userId: empUser.userId,
+              title: msgTitle,
+              body: msgBody,
+              category: 'ATTENDANCE',
+              actionId: updated.id,
+              actionType: 'REMOTE_WORK_STATUS',
+              isRead: false,
+            }
+          });
+        } catch (dbNotifErr) {
+          console.warn('Failed to create in-app notification for remote work status update:', dbNotifErr);
+        }
+
+        try {
           await firebaseNotificationService.sendNotificationToUser(
             empUser.userId,
             msgTitle,
