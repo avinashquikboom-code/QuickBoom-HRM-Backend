@@ -69,10 +69,11 @@ export const getSalarySlip = async (
     }
 
     const ss = employee.salaryStructure;
-    const basicSalary = ss?.basicSalary || 10000;
-    const hra = ss?.hra || 2000;
-    const medical = ss?.medicalAllowance || 500;
-    const travel = ss?.travelAllowance || 1000;
+    const grossVal = ss?.grossSalary || ss?.monthlySalary || 0;
+    const basicSalary = ss?.basicSalary || (grossVal > 0 ? Math.round(grossVal * 0.5) : 0);
+    const hra = ss?.hra || 0;
+    const medical = ss?.medicalAllowance || 0;
+    const travel = ss?.travelAllowance || 0;
     const special = ss?.specialAllowance || 0;
     const bonus = ss?.bonus || 0;
     const incentive = ss?.incentive || 0;

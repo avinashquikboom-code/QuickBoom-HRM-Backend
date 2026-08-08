@@ -70,6 +70,7 @@ router.get('/payslips/:id/download', downloadPayslip);
  *       500:
  *         description: Server error
  */
+router.get('/slips/download', downloadPayslip);
 router.get('/slips/:id/download', downloadPayslip);
 
 export default router;

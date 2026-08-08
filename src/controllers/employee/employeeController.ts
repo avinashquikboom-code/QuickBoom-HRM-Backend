@@ -1567,17 +1567,16 @@ export const fetchEmployeeWallet = async (
     });
 
     const registeredSalary = salaryStructure
-      ? (salaryStructure.grossSalary || salaryStructure.monthlySalary || salaryStructure.basicSalary || 50000)
-      : 50000;
+      ? (salaryStructure.grossSalary || salaryStructure.monthlySalary || salaryStructure.basicSalary || 0)
+      : 0;
 
-    let estimatedNetSalary = 47250;
-    if (salaryStructure) {
-      const gross = salaryStructure.grossSalary || salaryStructure.monthlySalary || registeredSalary;
+    let estimatedNetSalary = 0;
+    if (salaryStructure && registeredSalary > 0) {
+      const gross = registeredSalary;
       const basic = salaryStructure.basicSalary || Math.round(gross * 0.5);
       const pf = salaryStructure.pfEnabled ? Math.round(basic * ((salaryStructure.employeePfRate || 12) / 100)) : 0;
       const esic = salaryStructure.esicEnabled ? Math.round(gross * ((salaryStructure.employeeEsicRate || 0.75) / 100)) : 0;
       estimatedNetSalary = Math.max(0, gross - (pf + esic));
-      if (estimatedNetSalary === 0) estimatedNetSalary = 47250;
     }
 
     const now = new Date();
