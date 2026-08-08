@@ -59,7 +59,13 @@ async function recalculatePayslipIfPresent(employeeId: number, targetDate: Date)
 }
 
 // Helper: Send Notification to Employee
-async function notifyEmployee(employeeId: number, title: string, message: string, type: string = 'ATTENDANCE_CORRECTION') {
+async function notifyEmployee(
+  employeeId: number,
+  title: string,
+  message: string,
+  type: string = 'ATTENDANCE_CORRECTION',
+  extraData?: Record<string, string>
+) {
   try {
     await prisma.notification.create({
       data: {
@@ -81,7 +87,10 @@ async function notifyEmployee(employeeId: number, title: string, message: string
       try {
         await firebaseNotificationService.sendNotificationToUser(emp.userId, title, message, {
           type,
+          screen: '/attendance/corrections',
+          action: 'open_details',
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          ...extraData,
         });
       } catch (fcmErr) {
         console.warn(`[notifyEmployee] FCM notification skipped or failed for user ${emp.userId}:`, fcmErr);
@@ -414,7 +423,8 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
           employee.id,
           'Attendance Correction Approved',
           `✅ Attendance corrected for ${dateFormatted}. Salary updated accordingly.`,
-          'ATTENDANCE_CORRECTION_APPROVED'
+          'ATTENDANCE_CORRECTION_APPROVED',
+          { correctionId: String(request.id) }
         );
       }
     } else if (status === 'REJECTED') {
@@ -424,7 +434,8 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
           employee.id,
           'Attendance Correction Rejected',
           `❌ Correction rejected for ${dateFormatted}${noteText}`,
-          'ATTENDANCE_CORRECTION_REJECTED'
+          'ATTENDANCE_CORRECTION_REJECTED',
+          { correctionId: String(request.id) }
         );
       }
     }
@@ -506,7 +517,8 @@ export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedReques
           employee.id,
           'Attendance Correction Approved',
           `✅ Attendance corrected for ${dateFormatted}.`,
-          'ATTENDANCE_CORRECTION_APPROVED'
+          'ATTENDANCE_CORRECTION_APPROVED',
+          { correctionId: String(request.id) }
         );
       } else if (status === 'REJECTED' && employee) {
         const noteText = reviewNote ? `. Reason: ${reviewNote}` : '';
@@ -514,7 +526,8 @@ export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedReques
           employee.id,
           'Attendance Correction Rejected',
           `❌ Correction rejected for ${dateFormatted}${noteText}`,
-          'ATTENDANCE_CORRECTION_REJECTED'
+          'ATTENDANCE_CORRECTION_REJECTED',
+          { correctionId: String(request.id) }
         );
       }
 
