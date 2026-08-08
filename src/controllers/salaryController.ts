@@ -174,6 +174,7 @@ export const getSalarySlip = async (
 
     res.json({
       success: true,
+      data: responsePayload,
       salarySlip: responsePayload,
       ...responsePayload,
     });
