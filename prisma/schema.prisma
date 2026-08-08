@@ -584,25 +584,26 @@ model Store {
 }
 
 model SalaryStructure {
-  id               Int      @id @default(autoincrement())
-  employeeId       Int      @unique
-  monthlySalary    Float    @default(0)
-  grossSalary      Float    @default(0)
-  basicSalary      Float    @default(0)
-  hra              Float    @default(0)
-  medicalAllowance Float    @default(0)
-  travelAllowance  Float    @default(0)
-  specialAllowance Float    @default(0)
-  incentive        Float    @default(0)
-  bonus            Float    @default(0)
-  pfEnabled        Boolean  @default(false)
-  employeePfRate   Float    @default(12.0)
-  employerPfRate   Float    @default(12.0)
-  esicEnabled      Boolean  @default(false)
-  employeeEsicRate Float    @default(0.75)
-  employerEsicRate Float    @default(3.25)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                 Int      @id @default(autoincrement())
+  employeeId         Int      @unique
+  monthlySalary      Float    @default(0)
+  grossSalary        Float    @default(0)
+  basicSalary        Float    @default(0)
+  hra                Float    @default(0)
+  medicalAllowance   Float    @default(0)
+  travelAllowance    Float    @default(0)
+  specialAllowance   Float    @default(0)
+  incentive          Float    @default(0)
+  bonus              Float    @default(0)
+  salaryAdvanceLimit Float    @default(0)
+  pfEnabled          Boolean  @default(false)
+  employeePfRate     Float    @default(12.0)
+  employerPfRate     Float    @default(12.0)
+  esicEnabled        Boolean  @default(false)
+  employeeEsicRate   Float    @default(0.75)
+  employerEsicRate   Float    @default(3.25)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
   employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
