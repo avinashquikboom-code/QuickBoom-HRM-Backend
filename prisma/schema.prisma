@@ -1082,6 +1082,22 @@ model RemoteWorkRequest {
   @@index([fromDate, toDate])
 }
 
+model CompanyPolicy {
+  id             Int      @id @default(autoincrement())
+  title          String
+  category       String   @default("GENERAL") // GENERAL, ATTENDANCE, LEAVE, DEDUCTION, CONDUCT, SAFETY
+  description    String
+  content        String   @db.Text
+  documentUrl    String?
+  effectiveDate  DateTime @default(now())
+  status         String   @default("ACTIVE") // ACTIVE, ARCHIVED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([category])
+  @@index([status])
+}
+
 model ShiftRule {
   id          String   @id @default(uuid())
   title       String   // e.g. "Morning Shift Guidelines"
@@ -1098,4 +1114,21 @@ model ShiftRule {
   @@index([branchId])
   @@index([isActive])
 }
+
+model AttendanceCorrectionRequest {
+  id              String    @id @default(uuid())
+  employeeId      String    // GUID
+  date            DateTime  // which day to correct
+  currentStatus   String    // what's recorded now (present/absent/half-day)
+  requestedStatus String    // what they want (present/half-day/leave)
+  reason          String    @db.Text
+  status          String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  appliedOn       DateTime  @default(now())
+  reviewedBy      String?   // HR userId
+  reviewedAt      DateTime?
+  reviewNote      String?
+  @@index([employeeId])
+  @@index([date])
+}
+
 

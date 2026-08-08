@@ -746,6 +746,10 @@ export const approveLeaveRequest = async (
       }
     }
 
+    // Deduct leave balance & sync attendance
+    const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
+
     console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     // Broadcast real-time leave balance update after approval

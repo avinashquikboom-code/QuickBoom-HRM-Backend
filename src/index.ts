@@ -47,6 +47,7 @@ import policyRoutes from './routes/policyRoutes';
 import realtimeLeaveRoutes from './routes/realtimeLeaveRoutes';
 import attendanceGenerationPolicyRoutes from './routes/attendanceGenerationPolicyRoutes';
 import comprehensiveAttendanceRoutes from './routes/comprehensiveAttendanceRoutes';
+import attendanceCorrectionRoutes from './routes/attendanceCorrectionRoutes';
 import deviceRoutes from './routes/deviceRoutes';
 import breakRoutes from './routes/breakRoutes';
 import shiftRequestRoutes from './routes/shiftRequestRoutes';
@@ -148,6 +149,7 @@ app.use('/api/salary', salaryRoutes);
 app.use('/api', resetRoutes);
 app.use('/api', remoteWorkRoutes);
 app.use('/api', shiftRuleRoutes);
+app.use('/api', attendanceCorrectionRoutes);
 
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {

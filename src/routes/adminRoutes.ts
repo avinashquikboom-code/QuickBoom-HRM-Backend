@@ -89,6 +89,7 @@ import {
   fetchLocationAlerts,
   fetchLocationHistory,
   exportReport,
+  exportDashboardExcelReport,
   fetchBankEditRequests,
   handleBankEditRequestAction,
 } from '../controllers/adminController';
@@ -229,6 +230,7 @@ router.put('/leaves/:id/deduction', roleMiddleware(adminOnlyRoles), toggleLeaveD
 router.get('/location/alerts', roleMiddleware(adminOnlyRoles), fetchLocationAlerts);
 router.get('/location/history', roleMiddleware(adminOnlyRoles), fetchLocationHistory);
 router.get('/reports/:type/export', roleMiddleware(adminOnlyRoles), exportReport);
+router.get('/reports/dashboard', roleMiddleware(adminOnlyRoles), exportDashboardExcelReport);
 
 // Apply administrative role check to all other admin routes
 router.use(roleMiddleware(adminOnlyRoles));

@@ -9,6 +9,7 @@ import { syncHopkidEmployees } from '../utils/employeeSync';
 import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 import { clearIntegrationCache } from '../utils/configService';
+import leaveBalanceService from '../services/leaveBalanceService';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -3862,12 +3863,15 @@ export const updateAdminLeaveStatus = async (
     });
     const reviewerName = user?.profile?.fullName || 'HR Manager';
 
+    const isApproved = status.toUpperCase() === 'APPROVED';
+
     const updated = await prisma.leaveRequest.update({
       where: { id: leaveIdInt },
       data: {
-        status: status.toUpperCase() === 'APPROVED' ? 'APPROVED' : 'REJECTED',
+        status: isApproved ? 'APPROVED' : 'REJECTED',
         reviewedBy: reviewerName,
         reviewNote: reviewNote || 'Processed by Administrator',
+        reviewedAt: new Date(),
       },
       include: {
         employee: {
@@ -3878,9 +3882,45 @@ export const updateAdminLeaveStatus = async (
       }
     });
 
+    if (isApproved) {
+      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
+
+      // Auto update attendance records to LEAVE for approved dates
+      try {
+        const curr = new Date(existingLeave.fromDate);
+        const end = new Date(existingLeave.toDate);
+        while (curr <= end) {
+          const dateStr = curr.toISOString().split('T')[0];
+          const existingAtt = await prisma.attendance.findFirst({
+            where: { employeeId: existingLeave.employeeId, date: dateStr }
+          });
+          if (existingAtt) {
+            await prisma.attendance.update({
+              where: { id: existingAtt.id },
+              data: { status: 'LEAVE', notes: `Approved leave request #${existingLeave.id}` }
+            });
+          } else {
+            await prisma.attendance.create({
+              data: {
+                employeeId: existingLeave.employeeId,
+                officeId: existingLeave.employee.officeId,
+                date: dateStr,
+                status: 'LEAVE',
+                notes: `Approved leave request #${existingLeave.id}`
+              }
+            });
+          }
+          curr.setDate(curr.getDate() + 1);
+        }
+      } catch (attErr) {
+        console.error('Failed to sync attendance for approved leave:', attErr);
+      }
+    }
+
     // Send notification to employee
-    const notificationTitle = status.toUpperCase() === 'APPROVED' ? 'Leave Request Approved' : 'Leave Request Rejected';
-    const notificationBody = status.toUpperCase() === 'APPROVED' 
+    const notificationTitle = isApproved ? 'Leave Request Approved' : 'Leave Request Rejected';
+    const notificationBody = isApproved 
       ? `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been approved by ${reviewerName}.`
       : `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been rejected. Reason: ${reviewNote || 'No reason provided'}`;
 
@@ -3892,7 +3932,7 @@ export const updateAdminLeaveStatus = async (
         body: notificationBody,
         category: 'LEAVE',
         actionId: existingLeave.id.toString(),
-        actionType: status.toUpperCase() === 'APPROVED' ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
+        actionType: isApproved ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
         isRead: false,
       },
     });
@@ -7158,6 +7198,16 @@ export const fetchLiveDashboardStats = async (
     const endOfDay = new Date(today);
     endOfDay.setHours(23, 59, 59, 999);
 
+    // Format local date string (YYYY-MM-DD) in Asia/Kolkata
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const todayStr = formatter.format(today); // Returns "YYYY-MM-DD"
+    const utcTodayStr = today.toISOString().slice(0, 10);
+
     // 1. Fetch all active employees
     const activeEmployees = await prisma.employee.findMany({
       where: { status: 'active' },
@@ -7171,11 +7221,10 @@ export const fetchLiveDashboardStats = async (
       }
     });
 
-    // 2. Fetch today's attendance records
-    const todayStr = today.toISOString().slice(0, 10);
+    // 2. Fetch today's attendance records (matches local or UTC date string)
     const todayAttendance = await prisma.attendance.findMany({
       where: {
-        date: todayStr
+        date: { in: [todayStr, utcTodayStr] }
       }
     });
 
@@ -7254,7 +7303,6 @@ export const fetchLiveDashboardStats = async (
 
       if (isOnLeave) {
         onLeaveEmployees.push(empData);
-        // Leave counts as absent for branch stats if they aren't punched-in
         if (!hasAtt && branchStats) {
           branchStats.absent += 1;
         }
@@ -7266,7 +7314,7 @@ export const fetchLiveDashboardStats = async (
 
         // Determine if late check-in
         let isLate = false;
-        if (hasAtt.notes?.includes('LATE')) {
+        if (hasAtt.status === 'LATE' || hasAtt.notes?.includes('LATE')) {
           isLate = true;
         } else if (hasAtt.checkIn) {
           const shift = emp.shiftAssignments?.[0]?.shift;
@@ -7276,7 +7324,7 @@ export const fetchLiveDashboardStats = async (
             const shiftStartDate = new Date(checkInDate);
             shiftStartDate.setHours(sHour, sMin, 0, 0);
             
-            const graceMinutes = 15;
+            const graceMinutes = shift.graceMinutes ?? 15;
             const lateThreshold = new Date(shiftStartDate.getTime() + graceMinutes * 60 * 1000);
             if (checkInDate > lateThreshold) {
               isLate = true;
@@ -7795,12 +7843,275 @@ export const exportReport = async (
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${monthStr}.pdf`);
         pdfDoc.pipe(res);
-        pdfDoc.end();
       }
     }
   } catch (error) {
     console.error('Export report error:', error);
     res.status(500).json({ success: false, message: 'Failed to export report.' });
+  }
+};
+
+export const exportDashboardExcelReport = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { from, to, format = 'excel' } = req.query as { from?: string; to?: string; format?: string };
+
+    const now = new Date();
+    const fromDate = from ? new Date(from) : new Date(now.getFullYear(), now.getMonth(), 1);
+    const toDate = to ? new Date(to) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const fromStr = fromDate.toISOString().split('T')[0];
+    const toStr = toDate.toISOString().split('T')[0];
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'QuickBoom HRM';
+    workbook.created = new Date();
+
+    // Sheet 1: Attendance
+    const wsAttendance = workbook.addWorksheet('Attendance');
+    wsAttendance.columns = [
+      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Employee Code', key: 'code', width: 15 },
+      { header: 'Employee Name', key: 'name', width: 25 },
+      { header: 'Office / Branch', key: 'office', width: 20 },
+      { header: 'Check In', key: 'checkIn', width: 18 },
+      { header: 'Check Out', key: 'checkOut', width: 18 },
+      { header: 'Status', key: 'status', width: 12 },
+      { header: 'Total Break (min)', key: 'breakMin', width: 18 },
+      { header: 'Notes', key: 'notes', width: 30 },
+    ];
+
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        date: { gte: fromStr, lte: toStr },
+      },
+      include: {
+        employee: { include: { office: true } },
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    attendances.forEach((att) => {
+      wsAttendance.addRow({
+        date: att.date,
+        code: att.employee.employeeCode,
+        name: `${att.employee.firstName} ${att.employee.lastName}`,
+        office: att.employee.office?.name || 'N/A',
+        checkIn: att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN') : '—',
+        checkOut: att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN') : '—',
+        status: att.status,
+        breakMin: Math.floor((att.totalBreakSeconds || 0) / 60),
+        notes: att.notes || '',
+      });
+    });
+
+    // Sheet 2: Leaves
+    const wsLeaves = workbook.addWorksheet('Leaves');
+    wsLeaves.columns = [
+      { header: 'Employee Code', key: 'code', width: 15 },
+      { header: 'Employee Name', key: 'name', width: 25 },
+      { header: 'Type', key: 'type', width: 15 },
+      { header: 'From Date', key: 'fromDate', width: 15 },
+      { header: 'To Date', key: 'toDate', width: 15 },
+      { header: 'Days', key: 'days', width: 10 },
+      { header: 'Category', key: 'category', width: 15 },
+      { header: 'Reason', key: 'reason', width: 30 },
+      { header: 'Status', key: 'status', width: 15 },
+      { header: 'Reviewed By', key: 'reviewedBy', width: 20 },
+    ];
+
+    const leaves = await prisma.leaveRequest.findMany({
+      where: {
+        fromDate: { lte: toDate },
+        toDate: { gte: fromDate },
+      },
+      include: { employee: true },
+      orderBy: { appliedOn: 'desc' },
+    });
+
+    leaves.forEach((l) => {
+      const days = Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      wsLeaves.addRow({
+        code: l.employee.employeeCode,
+        name: `${l.employee.firstName} ${l.employee.lastName}`,
+        type: l.type,
+        fromDate: l.fromDate.toISOString().split('T')[0],
+        toDate: l.toDate.toISOString().split('T')[0],
+        days,
+        category: l.leaveCategory || 'PLANNED',
+        reason: l.reason,
+        status: l.status,
+        reviewedBy: l.reviewedBy || 'Pending',
+      });
+    });
+
+    // Sheet 3: Commission
+    const wsCommission = workbook.addWorksheet('Commission');
+    wsCommission.columns = [
+      { header: 'Bill ID', key: 'billId', width: 15 },
+      { header: 'Invoice Number', key: 'invoiceNumber', width: 18 },
+      { header: 'Employee Code', key: 'code', width: 15 },
+      { header: 'Employee Name', key: 'name', width: 25 },
+      { header: 'Store', key: 'store', width: 20 },
+      { header: 'Sale Amount', key: 'saleAmount', width: 15 },
+      { header: 'Commission Type', key: 'type', width: 18 },
+      { header: 'Commission Percent', key: 'percent', width: 18 },
+      { header: 'Commission Amount', key: 'amount', width: 18 },
+      { header: 'Status', key: 'status', width: 15 },
+    ];
+
+    const commissions = await prisma.commissionTransaction.findMany({
+      where: {
+        createdAt: { gte: fromDate, lte: toDate },
+      },
+      include: { employee: true, store: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    commissions.forEach((c) => {
+      wsCommission.addRow({
+        billId: c.billId || 'N/A',
+        invoiceNumber: c.invoiceNumber || 'N/A',
+        code: c.employee.employeeCode,
+        name: `${c.employee.firstName} ${c.employee.lastName}`,
+        store: c.store?.name || 'N/A',
+        saleAmount: c.saleAmount,
+        type: c.commissionType,
+        percent: c.commissionPercent ? `${c.commissionPercent}%` : 'N/A',
+        amount: c.commissionAmount,
+        status: c.status,
+      });
+    });
+
+    // Sheet 4: Salary
+    const wsSalary = workbook.addWorksheet('Salary Structures');
+    wsSalary.columns = [
+      { header: 'Employee Code', key: 'code', width: 15 },
+      { header: 'Employee Name', key: 'name', width: 25 },
+      { header: 'Designation', key: 'designation', width: 20 },
+      { header: 'Monthly Salary', key: 'monthly', width: 15 },
+      { header: 'Gross Salary', key: 'gross', width: 15 },
+      { header: 'Basic Salary', key: 'basic', width: 15 },
+      { header: 'HRA', key: 'hra', width: 12 },
+      { header: 'Medical Allowance', key: 'medical', width: 18 },
+      { header: 'Travel Allowance', key: 'travel', width: 18 },
+      { header: 'Special Allowance', key: 'special', width: 18 },
+      { header: 'Incentive', key: 'incentive', width: 12 },
+      { header: 'Bonus', key: 'bonus', width: 12 },
+      { header: 'PF Enabled', key: 'pf', width: 12 },
+      { header: 'ESIC Enabled', key: 'esic', width: 12 },
+    ];
+
+    const salaryStructures = await prisma.salaryStructure.findMany({
+      include: { employee: true },
+    });
+
+    salaryStructures.forEach((s) => {
+      wsSalary.addRow({
+        code: s.employee.employeeCode,
+        name: `${s.employee.firstName} ${s.employee.lastName}`,
+        designation: s.employee.designation || 'Staff',
+        monthly: s.monthlySalary,
+        gross: s.grossSalary,
+        basic: s.basicSalary,
+        hra: s.hra,
+        medical: s.medicalAllowance,
+        travel: s.travelAllowance,
+        special: s.specialAllowance,
+        incentive: s.incentive,
+        bonus: s.bonus,
+        pf: s.pfEnabled ? 'Yes' : 'No',
+        esic: s.esicEnabled ? 'Yes' : 'No',
+      });
+    });
+
+    // Sheet 5: Tasks
+    const wsTasks = workbook.addWorksheet('Tasks');
+    wsTasks.columns = [
+      { header: 'Title', key: 'title', width: 25 },
+      { header: 'Project', key: 'project', width: 20 },
+      { header: 'Assigned To', key: 'assignedTo', width: 25 },
+      { header: 'Priority', key: 'priority', width: 12 },
+      { header: 'Due Date', key: 'dueDate', width: 15 },
+      { header: 'Status', key: 'status', width: 15 },
+    ];
+
+    const tasks = await prisma.task.findMany({
+      where: {
+        createdAt: { gte: fromDate, lte: toDate },
+      },
+      include: { assignedTo: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    tasks.forEach((t) => {
+      wsTasks.addRow({
+        title: t.title,
+        project: t.projectName,
+        assignedTo: `${t.assignedTo.firstName} ${t.assignedTo.lastName}`,
+        priority: t.priority,
+        dueDate: t.dueDate.toISOString().split('T')[0],
+        status: t.status,
+      });
+    });
+
+    // Sheet 6: Breaks
+    const wsBreaks = workbook.addWorksheet('Breaks');
+    wsBreaks.columns = [
+      { header: 'Employee Code', key: 'code', width: 15 },
+      { header: 'Employee Name', key: 'name', width: 25 },
+      { header: 'Break Type', key: 'type', width: 15 },
+      { header: 'Date', key: 'date', width: 15 },
+      { header: 'Start Time', key: 'startAt', width: 18 },
+      { header: 'End Time', key: 'endAt', width: 18 },
+    ];
+
+    const breaks = await prisma.break.findMany({
+      where: {
+        date: { gte: fromStr, lte: toStr },
+      },
+      include: { employee: true },
+      orderBy: { startAt: 'desc' },
+    });
+
+    breaks.forEach((b) => {
+      wsBreaks.addRow({
+        code: b.employee.employeeCode,
+        name: `${b.employee.firstName} ${b.employee.lastName}`,
+        type: b.type,
+        date: b.date,
+        startAt: new Date(b.startAt).toLocaleTimeString('en-IN'),
+        endAt: b.endAt ? new Date(b.endAt).toLocaleTimeString('en-IN') : 'Active',
+      });
+    });
+
+    // Styling headers for all worksheets
+    [wsAttendance, wsLeaves, wsCommission, wsSalary, wsTasks, wsBreaks].forEach((ws) => {
+      const headerRow = ws.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: '3BA38B' },
+      };
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="dashboard-report-${fromStr}-to-${toStr}.xlsx"`
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Export dashboard excel error:', error);
+    res.status(500).json({ success: false, message: 'Failed to generate Excel report.' });
   }
 };
 
