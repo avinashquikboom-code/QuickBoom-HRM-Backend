@@ -1117,19 +1117,26 @@ model ShiftRule {
 }
 
 model AttendanceCorrectionRequest {
-  id              String    @id @default(uuid())
-  employeeId      String    // GUID
-  date            DateTime  // which day to correct
-  currentStatus   String    // what's recorded now (present/absent/half-day)
-  requestedStatus String    // what they want (present/half-day/leave)
-  reason          String    @db.Text
-  status          String    @default("PENDING") // PENDING, APPROVED, REJECTED
-  appliedOn       DateTime  @default(now())
-  reviewedBy      String?   // HR userId
-  reviewedAt      DateTime?
-  reviewNote      String?
+  id                 String    @id @default(uuid())
+  employeeId         String    // GUID
+  attendanceDate     DateTime  @default(now()) // which date to correct
+  currentStatus      String    // PRESENT, ABSENT, HALF_DAY, LATE
+  requestedStatus    String    // what employee wants (PRESENT, HALF_DAY, LATE)
+  reason             String    @db.Text
+  supportingDoc      String?   // file path/URL (photo, doctor note, etc)
+  status             String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  appliedOn          DateTime  @default(now())
+  reviewedBy         String?   // HR userId
+  reviewedAt         DateTime?
+  reviewNote         String?
+  approvalEffectDate DateTime? // when correction takes effect
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+
   @@index([employeeId])
-  @@index([date])
+  @@index([attendanceDate])
+  @@index([status])
+  @@index([appliedOn])
 }
 
 
