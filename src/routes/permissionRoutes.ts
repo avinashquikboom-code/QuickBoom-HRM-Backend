@@ -4,7 +4,9 @@ import {
   updateGlobalPermissions, 
   getUserPermissions, 
   updateUserPermissions,
-  getMyPermissions
+  getMyPermissions,
+  getHREmployeePermissions,
+  patchHREmployeePermissions
 } from '../controllers/permissionController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
@@ -13,6 +15,12 @@ const router = Router();
 
 // Endpoint for current authenticated user to fetch their effective permissions
 router.get('/me', authMiddleware, getMyPermissions);
+
+// Endpoints for HR to view and patch employee permissions
+router.get('/employee-permissions/:employeeId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']), getHREmployeePermissions);
+router.patch('/employee-permissions/:employeeId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']), patchHREmployeePermissions);
+router.get('/employee/:employeeId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']), getHREmployeePermissions);
+router.patch('/employee/:employeeId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']), patchHREmployeePermissions);
 
 // Endpoints for SUPER_ADMIN to manage global role permissions
 router.get('/global', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN']), getGlobalPermissions);

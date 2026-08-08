@@ -219,3 +219,79 @@ export const getMyPermissions = async (req: AuthenticatedRequest, res: Response)
   }
 };
 
+// GET /api/hr/employee-permissions/:employeeId or /api/permissions/employee/:employeeId
+export const getHREmployeePermissions = async (req: Request, res: Response) => {
+  try {
+    const employeeIdStr = Array.isArray(req.params.employeeId) ? req.params.employeeId[0] : req.params.employeeId;
+    if (!employeeIdStr) return res.status(400).json({ error: 'Invalid employee ID' });
+
+    const targetUser = await resolveTargetUser(employeeIdStr);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const effectivePermissions = await getEffectiveUserPermissions(targetUser.id);
+
+    res.json({
+      success: true,
+      employeeId: targetUser.id,
+      permissions: effectivePermissions,
+      ...effectivePermissions,
+    });
+  } catch (error) {
+    console.error('Error fetching employee permissions for HR:', error);
+    res.status(500).json({ error: 'Server error fetching employee permissions' });
+  }
+};
+
+// PATCH /api/hr/employee-permissions/:employeeId or /api/permissions/employee/:employeeId
+export const patchHREmployeePermissions = async (req: Request, res: Response) => {
+  try {
+    const employeeIdStr = Array.isArray(req.params.employeeId) ? req.params.employeeId[0] : req.params.employeeId;
+    if (!employeeIdStr) return res.status(400).json({ error: 'Invalid employee ID' });
+
+    const authReq = req as AuthenticatedRequest;
+    const targetUser = await resolveTargetUser(employeeIdStr);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const payload = req.body.permissions || req.body;
+    if (!payload || typeof payload !== 'object') {
+      return res.status(400).json({ error: 'Invalid permissions payload' });
+    }
+
+    const current = await getEffectiveUserPermissions(targetUser.id);
+    const updatedPermissions: Record<string, boolean> = { ...current };
+
+    Object.keys(payload).forEach((key) => {
+      if (typeof payload[key] === 'boolean') {
+        updatedPermissions[key] = payload[key];
+      }
+    });
+
+    const updated = await prisma.userPermission.upsert({
+      where: { userId: targetUser.id },
+      update: { permissions: updatedPermissions },
+      create: { userId: targetUser.id, permissions: updatedPermissions },
+    });
+
+    console.log(`🔒 [AUDIT LOG] HR User ${authReq.user?.email || authReq.user?.id} updated permissions for employee ${targetUser.id} (${targetUser.email}):`, {
+      updatedBy: authReq.user?.email,
+      timestamp: new Date().toISOString(),
+      employeeId: targetUser.id,
+      newPermissions: updatedPermissions,
+    });
+
+    res.json({
+      success: true,
+      message: `Employee permissions updated successfully for ${targetUser.email || targetUser.id}`,
+      permissions: updated.permissions,
+      ...(updated.permissions as Record<string, boolean>),
+    });
+  } catch (error) {
+    console.error('Error patching employee permissions for HR:', error);
+    res.status(500).json({ error: 'Server error patching employee permissions' });
+  }
+};
+
