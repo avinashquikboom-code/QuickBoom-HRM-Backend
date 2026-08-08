@@ -132,6 +132,7 @@ app.use('/api/employee/commission', employeeCommissionRoutes);
 app.use('/api/commission', commissionRoutes);
 app.use('/api/mobile/notifications', mobileNotificationRoutes);
 app.use('/api/permissions', permissionRoutes);
+app.use('/api/mobile/employee-permissions', permissionRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/hr/tasks', mobileHrTaskRoutes);
 app.use('/api/hr', hrRoutes);

@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import { getCommissionStats } from '../../utils/commissionHelper';
+import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 
 // Get commission dashboard stats for logged-in user
 export const getMobileCommissionDashboard = async (
@@ -9,6 +10,14 @@ export const getMobileCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
+    if (req.user?.id) {
+      const perms = await getEffectiveUserPermissions(req.user.id);
+      if (perms.canViewCommission === false) {
+        res.status(403).json({ success: false, message: 'Access denied: Commission viewing disabled by HR.' });
+        return;
+      }
+    }
+
     console.log(`[MOBILE-COMMISSION-DIAG] getMobileCommissionDashboard | user id=${req.user?.id}, role=${req.user?.role}`);
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },

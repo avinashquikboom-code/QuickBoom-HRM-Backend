@@ -7,6 +7,7 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import userSessionService from '../../services/userSessionService';
 import auditLogService from '../../services/auditLogService';
 import { syncHopkidEmployees } from '../../utils/employeeSync';
+import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 
 // Mobile-specific login - supports email, mobile number, or employee code + password
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
@@ -349,22 +350,22 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
     const totalTime = Date.now() - startTime;
     console.log('[MOBILE_LOGIN] Total request time:', totalTime, 'ms');
 
+    const userPermissions = await getEffectiveUserPermissions(user.id);
+
     res.json({
       success: true,
       token,
       refreshToken,
-      user: mobileUserResponse,
+      user: {
+        ...mobileUserResponse,
+        permissions: userPermissions,
+      },
       fcmToken: req.body.fcmToken || null,
       loginInfo: {
         loginTime: new Date().toISOString(),
         loginLocation: 'Mobile App',
       },
-      permissions: {
-        canCheckIn: user.role === Role.EMPLOYEE || user.role === Role.HR,
-        canApproveLeaves: user.role === Role.HR || user.role === Role.ADMIN,
-        canManageEmployees: user.role === Role.HR || user.role === Role.ADMIN,
-        canViewReports: user.role === Role.HR || user.role === Role.ADMIN,
-      }
+      permissions: userPermissions,
     });
   } catch (error) {
     const totalTime = Date.now() - startTime;
@@ -594,9 +595,15 @@ export const getMobileProfile = async (req: AuthenticatedRequest, res: Response)
       } : null,
     };
 
+    const userPermissions = await getEffectiveUserPermissions(user.id);
+
     res.json({
       success: true,
-      user: mobileProfile,
+      user: {
+        ...mobileProfile,
+        permissions: userPermissions,
+      },
+      permissions: userPermissions,
     });
   } catch (error) {
     console.error('Get mobile profile error:', error);

@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
+import { getEffectiveUserPermissions, DEFAULT_EMPLOYEE_PERMISSIONS } from '../utils/permissionHelper';
 
 export const getSalarySlip = async (
   req: AuthenticatedRequest,
@@ -36,6 +37,15 @@ export const getSalarySlip = async (
 
     if (!employee) {
       res.status(404).json({ success: false, message: 'Employee not found' });
+      return;
+    }
+
+    // Fetch permissions
+    const perms = employee.userId ? await getEffectiveUserPermissions(employee.userId) : DEFAULT_EMPLOYEE_PERMISSIONS;
+
+    // Check canViewSalary for employee requests
+    if (req.user && req.user.role === 'EMPLOYEE' && perms.canViewSalary === false) {
+      res.status(403).json({ success: false, message: 'Access denied: Salary slip viewing disabled by HR.' });
       return;
     }
 
@@ -76,15 +86,18 @@ export const getSalarySlip = async (
     const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
     const workingDays = 25;
 
-    // 1. Commission THIS MONTH only
-    const commissionTxns = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: targetEmployeeId,
-        createdAt: { gte: monthStart, lte: monthEnd },
-        status: { notIn: ['REJECTED', 'CANCELLED'] }
-      }
-    });
-    const commission = commissionTxns.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
+    // 1. Commission THIS MONTH only (if permitted)
+    let commission = 0;
+    if (perms.canViewCommission !== false) {
+      const commissionTxns = await prisma.commissionTransaction.findMany({
+        where: {
+          employeeId: targetEmployeeId,
+          createdAt: { gte: monthStart, lte: monthEnd },
+          status: { notIn: ['REJECTED', 'CANCELLED'] }
+        }
+      });
+      commission = commissionTxns.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
+    }
 
     // 2. Attendance THIS MONTH
     const attendances = await prisma.attendance.findMany({

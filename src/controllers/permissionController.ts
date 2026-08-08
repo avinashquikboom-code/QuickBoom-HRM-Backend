@@ -196,35 +196,26 @@ export const updateUserPermissions = async (req: Request, res: Response) => {
   }
 };
 
+import { getEffectiveUserPermissions } from '../utils/permissionHelper';
+
 // Get effective permissions for the authenticated user
 export const getMyPermissions = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const role = req.user?.role;
-    
-    if (!userId || !role) {
+    if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // 1. Get global role permissions
-    const rolePerm = await prisma.rolePermission.findUnique({
-      where: { role: role as Role },
+    const effectivePermissions = await getEffectiveUserPermissions(userId);
+
+    res.json({
+      success: true,
+      permissions: effectivePermissions,
+      ...effectivePermissions,
     });
-
-    // 2. Get user custom permissions
-    const userPerm = await prisma.userPermission.findUnique({
-      where: { userId },
-    });
-
-    // Merge them: User permissions override Role permissions
-    const effectivePermissions = {
-      ...(rolePerm?.permissions ? (rolePerm.permissions as object) : {}),
-      ...(userPerm?.permissions ? (userPerm.permissions as object) : {}),
-    };
-
-    res.json(effectivePermissions);
   } catch (error) {
     console.error('Error fetching my permissions:', error);
     res.status(500).json({ error: 'Server error fetching my permissions' });
   }
 };
+

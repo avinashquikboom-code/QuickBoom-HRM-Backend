@@ -2,12 +2,21 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { getCommissionStats } from '../utils/commissionHelper';
+import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 
 export const fetchCommissionWallet = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
+    if (req.user?.id) {
+      const perms = await getEffectiveUserPermissions(req.user.id);
+      if (perms.canViewCommission === false) {
+        res.status(403).json({ success: false, message: 'Access denied: Commission viewing disabled by HR.' });
+        return;
+      }
+    }
+
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: { store: true }
