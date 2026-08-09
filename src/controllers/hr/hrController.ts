@@ -699,6 +699,7 @@ export const fetchHRExpenses = async (
       reviewedBy: e.reviewedBy,
       reviewNote: e.reviewNote,
       hasReceipt: e.hasReceipt,
+      receiptUrl: e.receiptUrl,
     }));
 
     res.json({ success: true, expenses: mapped });
