@@ -295,3 +295,68 @@ export const patchHREmployeePermissions = async (req: Request, res: Response) =>
   }
 };
 
+// POST /api/permissions/request
+export const requestPermissionAccess = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const employee = await prisma.employee.findFirst({
+      where: { userId }
+    });
+
+    const empId = employee?.id || userId;
+    const { featureName, permissionKey, reason, requestedFromDate, requestedToDate, requestedFromTime, requestedToTime } = req.body;
+
+    const feature = featureName || permissionKey;
+    if (!feature || !reason) {
+      return res.status(400).json({ error: 'featureName and reason are required' });
+    }
+
+    const fromDate = requestedFromDate ? new Date(requestedFromDate) : new Date();
+    const toDate = requestedToDate ? new Date(requestedToDate) : new Date(Date.now() + 86400000 * 30);
+
+    const existingPending = await prisma.featureAccessRequest.findFirst({
+      where: {
+        employeeId: empId,
+        featureName: feature,
+        status: 'PENDING'
+      }
+    });
+
+    if (existingPending) {
+      return res.json({ success: true, message: 'Request already pending', requestId: existingPending.id });
+    }
+
+    const request = await prisma.featureAccessRequest.create({
+      data: {
+        employeeId: empId,
+        featureName: feature,
+        reason,
+        requestedFromDate: fromDate,
+        requestedToDate: toDate,
+        requestedFromTime,
+        requestedToTime,
+        status: 'PENDING',
+      }
+    });
+
+    try {
+      const { firebaseNotificationService } = await import('../services/firebaseNotificationService');
+      const empName = employee ? `${employee.firstName} ${employee.lastName}` : `User ${userId}`;
+      await firebaseNotificationService.sendNotificationToRole(
+        Role.HR,
+        'Permission Access Request',
+        `${empName} requested access for ${feature}`
+      );
+    } catch (e) {
+      console.warn('Notification send skipped:', e);
+    }
+
+    res.json({ success: true, requestId: request.id, message: 'Request sent to HR' });
+  } catch (error: any) {
+    console.error('Error requesting permission access:', error);
+    res.status(500).json({ success: false, error: error.message || 'Server error' });
+  }
+};
+

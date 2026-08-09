@@ -6,15 +6,18 @@ import {
   updateUserPermissions,
   getMyPermissions,
   getHREmployeePermissions,
-  patchHREmployeePermissions
+  patchHREmployeePermissions,
+  requestPermissionAccess
 } from '../controllers/permissionController';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 
 const router = Router();
 
-// Endpoint for current authenticated user to fetch their effective permissions
+// Endpoint for current authenticated user to fetch their effective permissions or request access
 router.get('/me', authMiddleware, getMyPermissions);
+router.post('/request', authMiddleware, requestPermissionAccess);
+router.post('/access-request', authMiddleware, requestPermissionAccess);
 
 // Endpoints for HR to view and patch employee permissions
 router.get('/employee-permissions/:employeeId', authMiddleware, roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']), getHREmployeePermissions);
