@@ -4,6 +4,9 @@ import { getMessaging, FirebaseMessagePayload, FirebaseUserTarget, NotificationO
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export class FirebaseNotificationService {
+  static getInstance() {
+    throw new Error('Method not implemented.');
+  }
   private messaging = getMessaging();
 
   // Send notification to specific FCM tokens
