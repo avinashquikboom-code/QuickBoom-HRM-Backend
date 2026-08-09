@@ -294,8 +294,7 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
           gte: dateStart,
           lte: dateEnd,
         },
-        status: 'PENDING',
-        id: { not: id }
+        status: 'PENDING'
       }
     });
     
@@ -305,35 +304,21 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
         error: 'A pending correction request already exists for this date.'
       });
     }
-    
-    // Build a unified reason string that preserves the thread history
-    const hrComment = original.reviewNote ? `\n\n[HR Rejection Note]: ${original.reviewNote}` : '';
-    const oldReasonText = original.reason ? `\n[Original Reason]: ${original.reason}` : '';
-    
-    // Prevent nesting history forever if they resubmit multiple times
-    let newReason = reason;
-    if (original.reason.includes('--- Previous History ---')) {
-      // It already has history, so just append the new stuff before the separator
-      const parts = original.reason.split('--- Previous History ---');
-      newReason = `${reason}\n\n--- Previous History ---${hrComment}\n[Previous Resubmit]: ${parts[0].trim()}\n\n[Older History]:${parts[1]}`;
-    } else {
-      newReason = `${reason}\n\n--- Previous History ---${hrComment}${oldReasonText}`;
-    }
 
-    // Step 6: Update existing correction request
-    const updatedCorrection = await prisma.attendanceCorrectionRequest.update({
-      where: { id },
+    // Step 5: Create NEW correction request
+    const newCorrection = await prisma.attendanceCorrectionRequest.create({
       data: {
+        employeeId: employee.employeeCode,
+        attendanceDate: original.attendanceDate,
+        currentStatus: original.currentStatus,
         requestedStatus,
-        reason: newReason.trim(),
+        reason,
         supportingDoc: supportingDoc || original.supportingDoc,
         status: 'PENDING',
-        reviewNote: null,
-        reviewedBy: null,
-        reviewedAt: null,
-        appliedOn: new Date(),
       }
     });
+
+    console.log(`[AUDIT LOG] Employee ${userId} resubmitted correction for ${original.attendanceDate}: oldId=${original.id}, newId=${newCorrection.id}`);
     
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const dateFormatted = original.attendanceDate.toISOString().split('T')[0];
@@ -347,8 +332,8 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
     return res.json({
       success: true,
       message: 'Request resubmitted successfully',
-      requestId: updatedCorrection.id,
-      request: updatedCorrection
+      requestId: newCorrection.id,
+      request: newCorrection
     });
     
   } catch (error: any) {
