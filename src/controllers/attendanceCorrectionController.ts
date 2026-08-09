@@ -320,22 +320,20 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
       newReason = `${reason}\n\n--- Previous History ---${hrComment}${oldReasonText}`;
     }
 
-    // Step 6: Update existing correction request
-    const updatedCorrection = await prisma.attendanceCorrectionRequest.update({
-      where: { id },
+    // Step 6: Create NEW correction request
+    const newCorrection = await prisma.attendanceCorrectionRequest.create({
       data: {
+        employeeId: original.employeeId,
+        attendanceDate: original.attendanceDate,
+        currentStatus: original.currentStatus,
         requestedStatus,
         reason: newReason.trim(),
         supportingDoc: supportingDoc || original.supportingDoc,
         status: 'PENDING',
-        reviewNote: null,
-        reviewedBy: null,
-        reviewedAt: null,
-        appliedOn: new Date(),
       }
     });
 
-    console.log(`[AUDIT LOG] Employee ${userId} resubmitted correction for ${original.attendanceDate}: id=${updatedCorrection.id}`);
+    console.log(`[AUDIT LOG] Employee ${userId} resubmitted correction for ${original.attendanceDate}: new id=${newCorrection.id}, old id=${id}`);
     
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const dateFormatted = original.attendanceDate.toISOString().split('T')[0];
@@ -349,8 +347,8 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
     return res.json({
       success: true,
       message: 'Request resubmitted successfully',
-      requestId: updatedCorrection.id,
-      request: updatedCorrection
+      requestId: newCorrection.id,
+      request: newCorrection
     });
     
   } catch (error: any) {
