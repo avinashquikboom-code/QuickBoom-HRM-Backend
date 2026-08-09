@@ -3956,24 +3956,39 @@ export const fetchAdminLeaveBalances = async (
 ): Promise<void> => {
   try {
     const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
+    const limitQuery = req.query.limit as string;
+    const limit = limitQuery === 'all' || limitQuery === '0' ? 1000 : (parseInt(limitQuery) || 100);
     const skip = (page - 1) * limit;
 
     const [employees, totalCount] = await Promise.all([
       prisma.employee.findMany({
         include: {
           leaveRequests: true,
+          leaveBalance: true,
+          department: true,
         },
+        orderBy: [
+          { firstName: 'asc' },
+          { lastName: 'asc' }
+        ],
         skip,
         take: limit,
       }),
       prisma.employee.count()
     ]);
 
+    const normalizeType = (type: string): string => {
+      const u = (type || '').toUpperCase().trim();
+      if (['CASUAL', 'CASUAL LEAVE', 'CL', 'CASUAL_LEAVE'].includes(u)) return 'CASUAL';
+      if (['SICK', 'SICK LEAVE', 'SL', 'SICK_LEAVE'].includes(u)) return 'SICK';
+      if (['EARNED', 'EARNED LEAVE', 'EL', 'EARNED_LEAVE'].includes(u)) return 'EARNED';
+      return u;
+    };
+
     const balances = employees.map((emp) => {
-      const getUsedDays = (type: string) => {
+      const getApprovedUsedDays = (targetCategory: string) => {
         return emp.leaveRequests
-          .filter((l) => l.status === 'APPROVED' && l.type === type)
+          .filter((l) => l.status === 'APPROVED' && normalizeType(l.type) === targetCategory)
           .reduce((sum, l) => {
             const diffTime = Math.abs(l.toDate.getTime() - l.fromDate.getTime());
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
@@ -3981,17 +3996,28 @@ export const fetchAdminLeaveBalances = async (
           }, 0);
       };
 
-      const casualUsed = getUsedDays('CASUAL');
-      const sickUsed = getUsedDays('SICK');
-      const earnedUsed = getUsedDays('EARNED');
+      const casualUsed = emp.leaveBalance?.casualUsed ?? getApprovedUsedDays('CASUAL');
+      const sickUsed = emp.leaveBalance?.sickUsed ?? getApprovedUsedDays('SICK');
+      const earnedUsed = emp.leaveBalance?.earnedUsed ?? getApprovedUsedDays('EARNED');
+
+      const casualTotal = emp.leaveBalance?.casualTotal ?? 12;
+      const sickTotal = emp.leaveBalance?.sickTotal ?? 10;
+      const earnedTotal = emp.leaveBalance?.earnedTotal ?? 15;
 
       return {
         employeeId: emp.id,
         name: `${emp.firstName} ${emp.lastName}`,
-        casual: Math.max(0, 12 - casualUsed),
-        sick: Math.max(0, 10 - sickUsed),
-        earned: Math.max(0, 15 - earnedUsed),
+        department: emp.department?.name || 'N/A',
+        casual: Math.max(0, casualTotal - casualUsed),
+        sick: Math.max(0, sickTotal - sickUsed),
+        earned: Math.max(0, earnedTotal - earnedUsed),
         paid: 15,
+        casualTotal,
+        casualUsed,
+        sickTotal,
+        sickUsed,
+        earnedTotal,
+        earnedUsed,
       };
     });
 
@@ -4000,7 +4026,7 @@ export const fetchAdminLeaveBalances = async (
       count: totalCount,
       page,
       limit,
-      totalPages: Math.ceil(totalCount / limit),
+      totalPages: Math.ceil(totalCount / limit) || 1,
       balances,
     });
   } catch (error) {

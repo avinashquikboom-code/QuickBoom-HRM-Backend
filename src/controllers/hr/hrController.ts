@@ -8,6 +8,7 @@ import { firebaseNotificationService } from '../../services/firebaseNotification
 import { pushNotificationService } from '../../services/pushNotificationService';
 import securityService from '../../services/securityService';
 import { expenseReceiptService } from '../../services/expenseReceiptService';
+import leaveBalanceService from '../../services/leaveBalanceService';
 
 // ==========================================
 // HR Dashboard Stats
@@ -963,6 +964,41 @@ export const approveLeave = async (
         }
       }
     });
+
+    // Update leave balance used days
+    const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
+
+    // Auto update attendance records to LEAVE for approved dates
+    try {
+      const curr = new Date(existingLeave.fromDate);
+      const end = new Date(existingLeave.toDate);
+      while (curr <= end) {
+        const dateStr = curr.toISOString().split('T')[0];
+        const existingAtt = await prisma.attendance.findFirst({
+          where: { employeeId: existingLeave.employeeId, date: dateStr }
+        });
+        if (existingAtt) {
+          await prisma.attendance.update({
+            where: { id: existingAtt.id },
+            data: { status: 'LEAVE', notes: `Approved leave request #${existingLeave.id}` }
+          });
+        } else {
+          await prisma.attendance.create({
+            data: {
+              employeeId: existingLeave.employeeId,
+              officeId: existingLeave.employee.officeId,
+              date: dateStr,
+              status: 'LEAVE',
+              notes: `Approved leave request #${existingLeave.id}`
+            }
+          });
+        }
+        curr.setDate(curr.getDate() + 1);
+      }
+    } catch (attErr) {
+      console.error('Failed to sync attendance for approved leave:', attErr);
+    }
 
     // Send notification to employee
     await prisma.notification.create({

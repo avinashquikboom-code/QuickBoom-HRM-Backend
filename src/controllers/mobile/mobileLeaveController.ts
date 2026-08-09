@@ -750,6 +750,37 @@ export const approveLeaveRequest = async (
     const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
     await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
 
+    // Auto update attendance records to LEAVE for approved dates
+    try {
+      const curr = new Date(existingLeave.fromDate);
+      const end = new Date(existingLeave.toDate);
+      while (curr <= end) {
+        const dateStr = curr.toISOString().split('T')[0];
+        const existingAtt = await prisma.attendance.findFirst({
+          where: { employeeId: existingLeave.employeeId, date: dateStr }
+        });
+        if (existingAtt) {
+          await prisma.attendance.update({
+            where: { id: existingAtt.id },
+            data: { status: 'LEAVE', notes: `Approved leave request #${existingLeave.id}` }
+          });
+        } else {
+          await prisma.attendance.create({
+            data: {
+              employeeId: existingLeave.employeeId,
+              officeId: existingLeave.employee.officeId,
+              date: dateStr,
+              status: 'LEAVE',
+              notes: `Approved leave request #${existingLeave.id}`
+            }
+          });
+        }
+        curr.setDate(curr.getDate() + 1);
+      }
+    } catch (attErr) {
+      console.error('Failed to sync attendance for approved leave:', attErr);
+    }
+
     console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     // Broadcast real-time leave balance update after approval

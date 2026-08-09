@@ -199,20 +199,18 @@ class LeaveBalanceService {
         return await this.updateUsedLeave(employeeId, leaveType, days);
       }
 
+      const typeUpper = (leaveType || '').toUpperCase().trim();
       const updateData: any = {};
-      
-      switch (leaveType.toUpperCase()) {
-        case 'CASUAL':
-          updateData.casualUsed = Math.max(0, leaveBalance.casualUsed + days);
-          break;
-        case 'SICK':
-          updateData.sickUsed = Math.max(0, leaveBalance.sickUsed + days);
-          break;
-        case 'EARNED':
-          updateData.earnedUsed = Math.max(0, leaveBalance.earnedUsed + days);
-          break;
-        default:
-          throw new Error(`Invalid leave type: ${leaveType}`);
+
+      if (['CASUAL', 'CASUAL LEAVE', 'CL', 'CASUAL_LEAVE'].includes(typeUpper)) {
+        updateData.casualUsed = Math.max(0, leaveBalance.casualUsed + days);
+      } else if (['SICK', 'SICK LEAVE', 'SL', 'SICK_LEAVE'].includes(typeUpper)) {
+        updateData.sickUsed = Math.max(0, leaveBalance.sickUsed + days);
+      } else if (['EARNED', 'EARNED LEAVE', 'EL', 'EARNED_LEAVE'].includes(typeUpper)) {
+        updateData.earnedUsed = Math.max(0, leaveBalance.earnedUsed + days);
+      } else {
+        console.warn(`Unrecognized leave type '${leaveType}' for employee ${employeeId}, defaulting deduction to casualUsed.`);
+        updateData.casualUsed = Math.max(0, leaveBalance.casualUsed + days);
       }
 
       await prisma.leaveBalance.update({
@@ -220,7 +218,7 @@ class LeaveBalanceService {
         data: updateData
       });
 
-      console.log(`✅ Updated used leave for employee ${employeeId}: ${leaveType} +${days} days`);
+      console.log(`✅ Updated used leave for employee ${employeeId}: ${leaveType} (+${days} days)`);
     } catch (error) {
       console.error('Update used leave error:', error);
       throw error;
