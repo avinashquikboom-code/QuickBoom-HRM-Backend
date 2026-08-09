@@ -166,21 +166,29 @@ class PayrollService {
    */
   async processPayrollRun(employeeIds: number[], month: number, year: number, runName?: string): Promise<PayrollRun> {
     try {
-      const runId = `run_${Date.now()}`;
-      const run: PayrollRun = {
-        id: runId,
-        name: runName || `Payroll Run - ${month}/${year}`,
-        month,
-        year,
-        status: 'PROCESSING',
-        totalEmployees: employeeIds.length,
-        processedEmployees: 0,
-        totalAmount: 0,
-        processedAmount: 0,
-        startedAt: new Date(),
-        createdBy: 'System'
-      };
+      const name = runName || `Payroll Run - ${month}/${year}`;
+      let createdRun: any = null;
 
+      try {
+        createdRun = await prisma.payrollRun.create({
+          data: {
+            name,
+            month,
+            year,
+            status: 'PROCESSING',
+            totalEmployees: employeeIds.length,
+            processedEmployees: 0,
+            totalAmount: 0,
+            processedAmount: 0,
+            startedAt: new Date(),
+            createdBy: 'System'
+          }
+        });
+      } catch (dbErr) {
+        console.warn('Could not create DB PayrollRun record:', dbErr);
+      }
+
+      const runId = createdRun?.id || `run_${Date.now()}`;
       const errors: string[] = [];
       let processedCount = 0;
       let totalAmount = 0;
@@ -205,13 +213,42 @@ class PayrollService {
         }
       }
 
-      // Update run status
-      run.processedEmployees = processedCount;
-      run.totalAmount = totalAmount;
-      run.processedAmount = totalAmount;
-      run.status = errors.length > 0 ? 'COMPLETED' : 'COMPLETED';
-      run.completedAt = new Date();
-      run.errors = errors;
+      const finalStatus = 'COMPLETED';
+      const completedAt = new Date();
+
+      if (createdRun) {
+        try {
+          await prisma.payrollRun.update({
+            where: { id: createdRun.id },
+            data: {
+              processedEmployees: processedCount,
+              totalAmount,
+              processedAmount: totalAmount,
+              status: finalStatus,
+              completedAt,
+              errors
+            }
+          });
+        } catch (dbErr) {
+          console.warn('Could not update DB PayrollRun record:', dbErr);
+        }
+      }
+
+      const runResult: PayrollRun = {
+        id: runId,
+        name,
+        month,
+        year,
+        status: finalStatus,
+        totalEmployees: employeeIds.length,
+        processedEmployees: processedCount,
+        totalAmount,
+        processedAmount: totalAmount,
+        startedAt: createdRun?.startedAt || new Date(),
+        completedAt,
+        createdBy: 'System',
+        errors
+      };
 
       // Broadcast completion
       try {
@@ -219,7 +256,7 @@ class PayrollService {
           title: 'Payroll Run Completed',
           body: `Payroll run for ${month}/${year} has been completed. Processed ${processedCount}/${employeeIds.length} employees.`,
           type: 'payroll_run_completed',
-          runId: run.id,
+          runId,
           processedCount,
           totalAmount
         });
@@ -227,7 +264,7 @@ class PayrollService {
         console.error('❌ Failed to broadcast payroll run update:', wsError);
       }
 
-      return run;
+      return runResult;
     } catch (error) {
       console.error('Process payroll run error:', error);
       throw error;
@@ -239,18 +276,11 @@ class PayrollService {
    */
   async getSalaryStructure(employeeId: number, effectiveDate: Date): Promise<SalaryStructure> {
     try {
-      const structure = await prisma.$queryRaw`
-        SELECT * FROM salary_structure 
-        WHERE employee_id = ${employeeId} 
-        AND effective_from <= ${effectiveDate}
-        AND (effective_to IS NULL OR effective_to >= ${effectiveDate})
-        AND is_active = true
-        ORDER BY effective_from DESC
-        LIMIT 1
-      ` as SalaryStructure[];
+      const structure = await prisma.salaryStructure.findUnique({
+        where: { employeeId }
+      });
 
-      if (structure.length === 0) {
-        // Return default structure
+      if (!structure) {
         return {
           id: 0,
           employeeId,
@@ -269,10 +299,45 @@ class PayrollService {
         };
       }
 
-      return structure[0];
+      const basic = structure.basicSalary || structure.monthlySalary || 0;
+      const gross = structure.grossSalary || basic;
+      const pf = structure.pfEnabled ? basic * (structure.employeePfRate / 100) : 0;
+      const esi = structure.esicEnabled ? gross * (structure.employeeEsicRate / 100) : 0;
+
+      return {
+        id: structure.id,
+        employeeId: structure.employeeId,
+        baseSalary: basic,
+        hra: structure.hra || 0,
+        da: 0,
+        conveyance: structure.travelAllowance || 0,
+        medical: structure.medicalAllowance || 0,
+        special: structure.specialAllowance || 0,
+        pf,
+        esi,
+        professionalTax: 0,
+        tds: 0,
+        effectiveFrom: structure.createdAt,
+        isActive: true
+      };
     } catch (error) {
       console.error('Get salary structure error:', error);
-      throw error;
+      return {
+        id: 0,
+        employeeId,
+        baseSalary: 0,
+        hra: 0,
+        da: 0,
+        conveyance: 0,
+        medical: 0,
+        special: 0,
+        pf: 0,
+        esi: 0,
+        professionalTax: 0,
+        tds: 0,
+        effectiveFrom: new Date(),
+        isActive: true
+      };
     }
   }
 
@@ -281,31 +346,56 @@ class PayrollService {
    */
   async updateSalaryStructure(employeeId: number, structureData: Partial<SalaryStructure>): Promise<SalaryStructure> {
     try {
-      // Deactivate existing structures
-      await prisma.$queryRaw`
-        UPDATE salary_structure 
-        SET is_active = false, updated_at = NOW()
-        WHERE employee_id = ${employeeId}
-      `;
+      const basicSalary = structureData.baseSalary || 0;
+      const hra = structureData.hra || 0;
+      const medicalAllowance = structureData.medical || 0;
+      const travelAllowance = structureData.conveyance || 0;
+      const specialAllowance = structureData.special || 0;
+      const grossSalary = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance;
 
-      // Create new structure
-      const newStructure = await prisma.$queryRaw`
-        INSERT INTO salary_structure (
-          employee_id, base_salary, hra, da, conveyance, medical, special,
-          pf, esi, professional_tax, tds, effective_from, is_active, created_at, updated_at
-        ) VALUES (
-          ${employeeId}, ${structureData.baseSalary || 0}, ${structureData.hra || 0}, 
-          ${structureData.da || 0}, ${structureData.conveyance || 0}, ${structureData.medical || 0},
-          ${structureData.special || 0}, ${structureData.pf || 0}, ${structureData.esi || 0},
-          ${structureData.professionalTax || 0}, ${structureData.tds || 0}, 
-          ${structureData.effectiveFrom || new Date()}, true, NOW(), NOW()
-        )
-        RETURNING id, employee_id as "employeeId", base_salary as "baseSalary", hra, da, conveyance, medical, special,
-                  pf, esi, professional_tax as "professionalTax", tds, effective_from as "effectiveFrom",
-                  effective_to as "effectiveTo", is_active as "isActive", created_at as "createdAt"
-      ` as SalaryStructure[];
+      const structure = await prisma.salaryStructure.upsert({
+        where: { employeeId },
+        update: {
+          basicSalary,
+          hra,
+          medicalAllowance,
+          travelAllowance,
+          specialAllowance,
+          grossSalary,
+          monthlySalary: grossSalary,
+          updatedAt: new Date()
+        },
+        create: {
+          employeeId,
+          basicSalary,
+          hra,
+          medicalAllowance,
+          travelAllowance,
+          specialAllowance,
+          grossSalary,
+          monthlySalary: grossSalary,
+        }
+      });
 
-      return newStructure[0];
+      const pf = structure.pfEnabled ? basicSalary * (structure.employeePfRate / 100) : 0;
+      const esi = structure.esicEnabled ? grossSalary * (structure.employeeEsicRate / 100) : 0;
+
+      return {
+        id: structure.id,
+        employeeId: structure.employeeId,
+        baseSalary: basicSalary,
+        hra,
+        da: 0,
+        conveyance: travelAllowance,
+        medical: medicalAllowance,
+        special: specialAllowance,
+        pf,
+        esi,
+        professionalTax: 0,
+        tds: 0,
+        effectiveFrom: structure.createdAt,
+        isActive: true
+      };
     } catch (error) {
       console.error('Update salary structure error:', error);
       throw error;
@@ -320,43 +410,89 @@ class PayrollService {
       const targetMonth = month || new Date().getMonth() + 1;
       const targetYear = year || new Date().getFullYear();
 
-      const stats = await prisma.$queryRaw`
-        SELECT 
-          COUNT(*) as total_payslips,
-          SUM(net_salary) as total_net_salary,
-          SUM(base_salary) as total_base_salary,
-          SUM(allowance) as total_allowance,
-          SUM(deductions) as total_deductions,
-          AVG(net_salary) as avg_net_salary,
-          COUNT(CASE WHEN status = 'Approved' THEN 1 END) as approved_payslips,
-          COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending_payslips
-        FROM payslip 
-        WHERE month = ${targetMonth} AND year = ${targetYear}
-      ` as any[];
+      const payslips = await prisma.payslip.findMany({
+        where: {
+          month: targetMonth,
+          year: targetYear
+        },
+        include: {
+          employee: {
+            include: {
+              department: true
+            }
+          }
+        }
+      });
 
-      const departmentStats = await prisma.$queryRaw`
-        SELECT 
-          d.name as department,
-          COUNT(*) as employee_count,
-          SUM(p.net_salary) as total_salary,
-          AVG(p.net_salary) as avg_salary
-        FROM payslip p
-        JOIN employee e ON p.employee_id = e.id
-        JOIN department d ON e.department_id = d.id
-        WHERE p.month = ${targetMonth} AND p.year = ${targetYear}
-        GROUP BY d.name
-        ORDER BY total_salary DESC
-      ` as any[];
+      const total_payslips = payslips.length;
+      let total_net_salary = 0;
+      let total_base_salary = 0;
+      let total_allowance = 0;
+      let total_deductions = 0;
+      let approved_payslips = 0;
+      let pending_payslips = 0;
+
+      const deptMap = new Map<string, { department: string; employee_count: number; total_salary: number }>();
+
+      for (const p of payslips) {
+        total_net_salary += p.netSalary || 0;
+        total_base_salary += p.baseSalary || 0;
+        total_allowance += p.allowance || 0;
+        total_deductions += p.deductions || 0;
+
+        const st = p.status?.toLowerCase() || '';
+        if (st === 'approved') {
+          approved_payslips++;
+        } else if (st === 'pending') {
+          pending_payslips++;
+        }
+
+        const deptName = p.employee?.department?.name || p.department || 'Unassigned';
+        const existing = deptMap.get(deptName) || { department: deptName, employee_count: 0, total_salary: 0 };
+        existing.employee_count += 1;
+        existing.total_salary += (p.netSalary || 0);
+        deptMap.set(deptName, existing);
+      }
+
+      const avg_net_salary = total_payslips > 0 ? total_net_salary / total_payslips : 0;
+
+      const departmentStats = Array.from(deptMap.values()).map(d => ({
+        ...d,
+        avg_salary: d.employee_count > 0 ? d.total_salary / d.employee_count : 0
+      })).sort((a, b) => b.total_salary - a.total_salary);
 
       return {
-        summary: stats[0] || {},
+        summary: {
+          total_payslips,
+          total_net_salary,
+          total_base_salary,
+          total_allowance,
+          total_deductions,
+          avg_net_salary,
+          approved_payslips,
+          pending_payslips
+        },
         departmentStats,
         month: targetMonth,
         year: targetYear
       };
     } catch (error) {
       console.error('Get payroll stats error:', error);
-      throw error;
+      return {
+        summary: {
+          total_payslips: 0,
+          total_net_salary: 0,
+          total_base_salary: 0,
+          total_allowance: 0,
+          total_deductions: 0,
+          avg_net_salary: 0,
+          approved_payslips: 0,
+          pending_payslips: 0
+        },
+        departmentStats: [],
+        month: month || new Date().getMonth() + 1,
+        year: year || new Date().getFullYear()
+      };
     }
   }
 
@@ -365,15 +501,28 @@ class PayrollService {
    */
   async getPayrollRuns(limit: number = 50): Promise<PayrollRun[]> {
     try {
-      const runs = await prisma.$queryRaw`
-        SELECT * FROM payroll_runs 
-        ORDER BY started_at DESC 
-        LIMIT ${limit}
-      ` as PayrollRun[];
+      const dbRuns = await prisma.payrollRun.findMany({
+        orderBy: { startedAt: 'desc' },
+        take: limit
+      });
 
-      return Array.isArray(runs) ? runs : [];
+      return dbRuns.map(r => ({
+        id: r.id,
+        name: r.name,
+        month: r.month,
+        year: r.year,
+        status: r.status as any,
+        totalEmployees: r.totalEmployees,
+        processedEmployees: r.processedEmployees,
+        totalAmount: r.totalAmount,
+        processedAmount: r.processedAmount,
+        startedAt: r.startedAt,
+        completedAt: r.completedAt || undefined,
+        createdBy: r.createdBy,
+        errors: r.errors
+      }));
     } catch (error) {
-      console.warn('Get payroll runs raw query failed, returning empty array:', error);
+      console.warn('Get payroll runs error:', error);
       return [];
     }
   }
@@ -602,6 +751,20 @@ class PayrollService {
 
   private async savePayslip(calculation: PayrollCalculation): Promise<void> {
     try {
+      const employee = await prisma.employee.findUnique({
+        where: { id: calculation.employeeId },
+        include: {
+          department: true,
+          office: true
+        }
+      });
+
+      const empCode = employee?.employeeCode || `EMP-${calculation.employeeId}`;
+      const empName = employee ? `${employee.firstName} ${employee.lastName}`.trim() : `Employee #${calculation.employeeId}`;
+      const desigName = employee?.designation || '';
+      const deptName = employee?.department?.name || '';
+      const offName = employee?.office?.name || '';
+
       await prisma.payslip.upsert({
         where: {
           employeeId_month_year: {
@@ -615,6 +778,11 @@ class PayrollService {
           allowance: calculation.allowance,
           deductions: calculation.deductions,
           netSalary: calculation.netSalary,
+          employeeCode: empCode,
+          employeeName: empName,
+          designation: desigName,
+          department: deptName,
+          officeName: offName,
           status: 'Approved',
           updatedAt: new Date()
         },
@@ -627,11 +795,11 @@ class PayrollService {
           deductions: calculation.deductions,
           netSalary: calculation.netSalary,
           status: 'Approved',
-          employeeCode: '',
-          employeeName: '',
-          designation: '',
-          department: '',
-          officeName: '',
+          employeeCode: empCode,
+          employeeName: empName,
+          designation: desigName,
+          department: deptName,
+          officeName: offName,
           netInWords: '',
           createdAt: new Date()
         }

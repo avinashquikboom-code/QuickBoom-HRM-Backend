@@ -487,6 +487,26 @@ model Payslip {
   @@unique([employeeId, month, year])
 }
 
+model PayrollRun {
+  id                 String    @id @default(uuid())
+  name               String
+  month              Int
+  year               Int
+  status             String    @default("PENDING")
+  totalEmployees     Int       @default(0)
+  processedEmployees Int       @default(0)
+  totalAmount        Float     @default(0)
+  processedAmount    Float     @default(0)
+  startedAt          DateTime  @default(now())
+  completedAt        DateTime?
+  createdBy          String    @default("System")
+  errors             String[]  @default([])
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("payroll_runs")
+}
+
 model FCMToken {
   id          Int      @id @default(autoincrement())
   userId      Int

@@ -191,13 +191,17 @@ class DatabaseValidationService {
       }
 
       // Check payslip consistency
-      const inconsistentPayslips = await prisma.$queryRaw`
-        SELECT COUNT(*) as count
-        FROM payslip p
-        WHERE p.base_salary < 0 OR p.allowance < 0 OR p.deductions < 0 OR p.net_salary < 0
-      ` as any[];
+      const negativeCount = await prisma.payslip.count({
+        where: {
+          OR: [
+            { baseSalary: { lt: 0 } },
+            { allowance: { lt: 0 } },
+            { deductions: { lt: 0 } },
+            { netSalary: { lt: 0 } }
+          ]
+        }
+      });
 
-      const negativeCount = parseInt(inconsistentPayslips[0]?.count || '0');
       if (negativeCount > 0) {
         result.errors.push(`Found ${negativeCount} payslips with negative values`);
         result.summary.failedChecks++;
