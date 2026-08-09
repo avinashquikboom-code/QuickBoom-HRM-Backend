@@ -35,7 +35,7 @@ async function run() {
 
     // Wait for redirection
     console.log('Waiting for login redirect to dashboard...');
-    await page.waitForURL('**/hr-management', { timeout: 10000 });
+    await page.waitForURL('**/live-dashboard', { timeout: 10000 });
     console.log('Login successful! Navigating to /leave...');
 
     await page.goto('http://localhost:3000/leave', { waitUntil: 'networkidle' });
