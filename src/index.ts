@@ -160,8 +160,10 @@ app.use('/api/salary', salaryRoutes);
 app.use('/api', resetRoutes);
 app.use('/api', remoteWorkRoutes);
 app.use('/api', shiftRuleRoutes);
-app.use('/api', attendanceCorrectionRoutes);
+import featureAccessRoutes from './routes/featureAccessRoutes';
 
+app.use('/api', attendanceCorrectionRoutes);
+app.use('/api', featureAccessRoutes);
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {
   res.setHeader('Content-Type', 'text/html');
@@ -347,6 +349,11 @@ async function initRolePermissions() {
     }
   }
 }
+
+import { initFeatureExpiryCron } from './scripts/featureExpiryCron';
+
+// Initialize cron jobs
+initFeatureExpiryCron();
 
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);

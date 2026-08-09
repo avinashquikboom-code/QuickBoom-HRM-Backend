@@ -151,6 +151,8 @@ model Employee {
   bankEditRequests BankEditRequest[]
   branch           Branch?           @relation(fields: [branchId], references: [id])
   branchId         Int?
+  featureAccess    FeatureAccess[]
+  featureAccessRequests FeatureAccessRequest[]
 
   @@index([officeId])
   @@index([departmentId])
@@ -1160,4 +1162,46 @@ model AttendanceCorrectionRequest {
   @@index([appliedOn])
 }
 
+model FeatureAccess {
+  id              String    @id @default(uuid())
+  employeeId      Int
+  featureName     String    // punch, leave, task, remote-work, etc
+  isEnabled       Boolean   @default(false)
+  grantedOn       DateTime  @default(now())
+  validFromDate   DateTime?
+  validToDate     DateTime?
+  validFromTime   String?   // "09:00"
+  validToTime     String?   // "17:00"
+  grantedBy       String?   // HR user ID
+  reason          String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  employee        Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, featureName])
+  @@index([employeeId])
+}
+
+model FeatureAccessRequest {
+  id                String    @id @default(uuid())
+  employeeId        Int
+  featureName       String
+  reason            String    @db.Text
+  requestedFromDate DateTime
+  requestedToDate   DateTime
+  requestedFromTime String?
+  requestedToTime   String?
+  status            String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  appliedOn         DateTime  @default(now())
+  reviewedBy        String?   // HR user ID
+  reviewedAt        DateTime?
+  reviewNote        String?   @db.Text
+
+  employee          Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([featureName])
+}
 
