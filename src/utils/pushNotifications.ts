@@ -1,4 +1,4 @@
-import { messaging } from '../lib/firebaseAdmin';
+import { getMessaging } from '../lib/firebaseAdmin';
 import { prisma } from './db';
 
 /**
@@ -14,7 +14,8 @@ export async function sendPushNotification(
   body: string,
   data?: Record<string, string>
 ) {
-  if (!messaging) {
+  const messagingInstance = getMessaging();
+  if (!messagingInstance) {
     console.warn('Firebase Admin not initialized. Skipping push notification.');
     return;
   }
@@ -37,7 +38,7 @@ export async function sendPushNotification(
       tokens: tokenStrings,
     };
 
-    const response = await messaging.sendEachForMulticast(payload);
+    const response = await messagingInstance.sendEachForMulticast(payload);
     
     // Optionally remove invalid tokens
     if (response.failureCount > 0) {
