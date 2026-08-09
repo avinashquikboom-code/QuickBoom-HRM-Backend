@@ -55,6 +55,7 @@ import shiftRequestRoutes from './routes/shiftRequestRoutes';
 import locationTrackingRoutes from './routes/locationTrackingRoutes';
 import salaryRoutes from './routes/salaryRoutes';
 import resetRoutes from './routes/resetRoutes';
+import uploadRoutes from './routes/uploadRoutes';
 import { authenticateToken } from './middlewares/authMiddleware';
 import { initializeFirebase } from './config/firebase';
 import WebSocketService from './services/websocketService';
@@ -77,6 +78,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static upload files (including expense receipt PDFs)
+app.use('/api/uploads', uploadRoutes); // Secure route
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
