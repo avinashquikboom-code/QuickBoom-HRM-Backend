@@ -201,6 +201,8 @@ router.get('/expenses', fetchHRExpenses);
  *         description: Server error
  */
 router.post('/expenses/:id/approve', approveExpense);
+router.put('/expenses/:id/approve', approveExpense);
+router.patch('/expenses/:id/approve', approveExpense);
 
 /**
  * @swagger
@@ -245,6 +247,8 @@ router.post('/expenses/:id/approve', approveExpense);
  *         description: Server error
  */
 router.post('/expenses/:id/reject', rejectExpense);
+router.put('/expenses/:id/reject', rejectExpense);
+router.patch('/expenses/:id/reject', rejectExpense);
 
 // Leave Review
 router.post('/leaves/:id/approve', approveLeave);

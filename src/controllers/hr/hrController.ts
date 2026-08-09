@@ -714,19 +714,83 @@ export const approveExpense = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const { reviewerName, reviewNote } = req.body;
+  const { reviewerName, reviewNote, status: inputStatus } = req.body;
+
+  const targetStatus = (inputStatus || 'APPROVED').toUpperCase();
+  const validStatuses = ['APPROVED', 'REJECTED', 'PAID'];
+  if (!validStatuses.includes(targetStatus)) {
+    res.status(400).json({
+      success: false,
+      message: `Invalid status enum. Allowed: ${validStatuses.join(', ')}`,
+      errorCode: 'INVALID_STATUS'
+    });
+    return;
+  }
+
+  const expenseId = parseInt(id as string, 10);
+  if (isNaN(expenseId)) {
+    res.status(400).json({ success: false, message: 'Invalid expense ID' });
+    return;
+  }
 
   try {
-    const expense = await prisma.expense.update({
-      where: { id: parseInt(id as string, 10) },
-      data: {
-        status: 'APPROVED',
-        reviewedBy: reviewerName || req.user?.email || 'HR',
-        reviewNote: reviewNote || 'Approved',
-      },
+    const existing = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: { employee: true },
     });
 
-    res.json({ success: true, message: 'Expense approved.', expense });
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Expense claim not found' });
+      return;
+    }
+
+    const reviewer = reviewerName || req.user?.email || String(req.user?.id || 'HR');
+    const noteText = reviewNote || (targetStatus === 'REJECTED' ? 'Rejected' : 'Approved');
+
+    const expense = await prisma.expense.update({
+      where: { id: expenseId },
+      data: {
+        status: targetStatus,
+        reviewedBy: reviewer,
+        reviewNote: noteText,
+        updatedAt: new Date(),
+      },
+      include: { employee: true },
+    });
+
+    // Send FCM notification to employee
+    try {
+      const empUserId = expense.employee?.userId;
+      if (empUserId) {
+        const notifTitle = targetStatus === 'REJECTED'
+          ? '❌ Expense Claim Rejected'
+          : `✅ Expense ${targetStatus}`;
+        const notifBody = targetStatus === 'REJECTED'
+          ? `❌ Rejected: ${noteText}`
+          : `✅ Expense ${targetStatus}: ₹${expense.amount.toLocaleString('en-IN')}`;
+
+        await firebaseNotificationService.sendNotificationToUser(
+          empUserId,
+          notifTitle,
+          notifBody,
+          {
+            type: 'EXPENSE_UPDATE',
+            expenseId: String(expense.id),
+            status: targetStatus,
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          }
+        );
+      }
+    } catch (fcmErr) {
+      console.warn('Expense review FCM notification warning:', fcmErr);
+    }
+
+    res.json({
+      success: true,
+      message: `Expense ${targetStatus.toLowerCase()} successfully.`,
+      data: expense,
+      expense
+    });
   } catch (error) {
     console.error('Approve expense error:', error);
     res.status(500).json({ success: false, message: 'Failed to approve expense.' });
@@ -740,17 +804,63 @@ export const rejectExpense = async (
   const { id } = req.params;
   const { reviewerName, reviewNote } = req.body;
 
+  const expenseId = parseInt(id as string, 10);
+  if (isNaN(expenseId)) {
+    res.status(400).json({ success: false, message: 'Invalid expense ID' });
+    return;
+  }
+
   try {
-    const expense = await prisma.expense.update({
-      where: { id: parseInt(id as string, 10) },
-      data: {
-        status: 'REJECTED',
-        reviewedBy: reviewerName || req.user?.email || 'HR',
-        reviewNote: reviewNote || 'Rejected',
-      },
+    const existing = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: { employee: true },
     });
 
-    res.json({ success: true, message: 'Expense rejected.', expense });
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Expense claim not found' });
+      return;
+    }
+
+    const reviewer = reviewerName || req.user?.email || String(req.user?.id || 'HR');
+    const noteText = reviewNote || 'Rejected';
+
+    const expense = await prisma.expense.update({
+      where: { id: expenseId },
+      data: {
+        status: 'REJECTED',
+        reviewedBy: reviewer,
+        reviewNote: noteText,
+        updatedAt: new Date(),
+      },
+      include: { employee: true },
+    });
+
+    // Send FCM notification to employee
+    try {
+      const empUserId = expense.employee?.userId;
+      if (empUserId) {
+        await firebaseNotificationService.sendNotificationToUser(
+          empUserId,
+          '❌ Expense Claim Rejected',
+          `❌ Rejected: ${noteText}`,
+          {
+            type: 'EXPENSE_UPDATE',
+            expenseId: String(expense.id),
+            status: 'REJECTED',
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          }
+        );
+      }
+    } catch (fcmErr) {
+      console.warn('Expense reject FCM notification warning:', fcmErr);
+    }
+
+    res.json({
+      success: true,
+      message: 'Expense rejected successfully.',
+      data: expense,
+      expense
+    });
   } catch (error) {
     console.error('Reject expense error:', error);
     res.status(500).json({ success: false, message: 'Failed to reject expense.' });

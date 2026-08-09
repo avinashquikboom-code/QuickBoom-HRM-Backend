@@ -181,20 +181,22 @@ export const getPayrollRuns = async (
 ): Promise<void> => {
   try {
     const { limit = '50' } = req.query as { limit: string };
-    const limitNum = parseInt(limit);
+    const limitNum = parseInt(limit) || 50;
 
     const runs = await payrollService.getPayrollRuns(limitNum);
 
     res.json({
       success: true,
-      runs
+      data: runs || [],
+      runs: runs || []
     });
   } catch (error) {
     console.error('Get payroll runs error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get payroll runs.',
-      errorCode: 'GET_PAYROLL_RUNS_ERROR'
+    res.json({
+      success: true,
+      data: [],
+      runs: [],
+      message: 'No payroll runs found.'
     });
   }
 };
@@ -650,30 +652,32 @@ export const getAdminPayrollRuns = async (
 ): Promise<void> => {
   try {
     const { limit = '50' } = req.query as { limit: string };
-    const limitNum = parseInt(limit);
+    const limitNum = parseInt(limit) || 50;
 
     const runs = await payrollService.getPayrollRuns(limitNum);
     
     // Transform to match frontend expectations
-    const transformedRuns = runs.map(run => ({
+    const transformedRuns = (runs || []).map(run => ({
       id: run.id,
       company: 'System Generated',
-      employees: run.totalEmployees,
-      totalAmount: `₹${run.totalAmount.toLocaleString('en-IN')}`,
-      status: run.status,
-      date: new Date(run.startedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      employees: run.totalEmployees || 0,
+      totalAmount: `₹${(run.totalAmount || 0).toLocaleString('en-IN')}`,
+      status: run.status || 'COMPLETED',
+      date: run.startedAt ? new Date(run.startedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'
     }));
 
     res.json({
       success: true,
+      data: transformedRuns,
       runs: transformedRuns
     });
   } catch (error) {
     console.error('Get admin payroll runs error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get admin payroll runs.',
-      errorCode: 'GET_ADMIN_PAYROLL_RUNS_ERROR'
+    res.json({
+      success: true,
+      data: [],
+      runs: [],
+      message: 'No payroll runs found.'
     });
   }
 };

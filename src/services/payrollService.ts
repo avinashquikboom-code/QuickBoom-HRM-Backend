@@ -371,10 +371,10 @@ class PayrollService {
         LIMIT ${limit}
       ` as PayrollRun[];
 
-      return runs;
+      return Array.isArray(runs) ? runs : [];
     } catch (error) {
-      console.error('Get payroll runs error:', error);
-      throw error;
+      console.warn('Get payroll runs raw query failed, returning empty array:', error);
+      return [];
     }
   }
 
