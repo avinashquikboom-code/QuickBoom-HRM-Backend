@@ -57,7 +57,7 @@ import salaryRoutes from './routes/salaryRoutes';
 import resetRoutes from './routes/resetRoutes';
 import uploadRoutes from './routes/uploadRoutes';
 import { authenticateToken } from './middlewares/authMiddleware';
-import { initializeFirebase } from './config/firebase';
+import { initializeFirebase, initializeFirebaseFromDb } from './config/firebase';
 import WebSocketService from './services/websocketService';
 import { setWebSocketInstance } from './utils/websocketSingleton';
 import { prisma } from './utils/db';
@@ -85,10 +85,14 @@ app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Apply metrics middleware to track all requests
 app.use(metricsMiddleware);
 
-// Initialize Firebase
+// Initialize Firebase (env/file sync first, then DB integrations async)
 try {
   initializeFirebase();
-  console.log('✅ Firebase initialized successfully');
+  initializeFirebaseFromDb().then(() => {
+    console.log('✅ Firebase initialized from DB integrations successfully');
+  }).catch((err: any) => {
+    console.warn('⚠️ Firebase DB initialization warning:', err);
+  });
 } catch (error) {
   console.error('❌ Firebase initialization failed:', error);
 }

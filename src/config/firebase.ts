@@ -4,6 +4,7 @@ import { join } from 'path';
 
 // Firebase Admin SDK configuration
 let firebaseApp: admin.app.App | null = null;
+let isRealAppInitialized = false;
 
 export const initializeFirebase = (): admin.app.App => {
   if (firebaseApp) {
@@ -87,7 +88,7 @@ export const initializeFirebase = (): admin.app.App => {
     }
 
     if (!serviceAccount) {
-      console.warn('⚠️ [FirebaseInit] No valid Firebase credentials configured. Defaulting to mock app.');
+      console.warn('⚠️ [FirebaseInit] No valid Firebase env/file credentials configured. Defaulting to mock app.');
       if (admin.apps.length > 0 && admin.apps[0]) {
         firebaseApp = admin.apps[0]!;
       } else {
@@ -106,6 +107,7 @@ export const initializeFirebase = (): admin.app.App => {
         credential: admin.credential.cert(serviceAccount),
         projectId: serviceAccount.project_id,
       });
+      isRealAppInitialized = true;
     }
 
     console.log(`✅ [FirebaseInit] Firebase Admin SDK initialized successfully for project: "${serviceAccount.project_id || 'default'}"`);
@@ -122,6 +124,65 @@ export const initializeFirebase = (): admin.app.App => {
     }
     return firebaseApp;
   }
+};
+
+export const initializeFirebaseFromDb = async (): Promise<admin.app.App> => {
+  if (firebaseApp && isRealAppInitialized) {
+    return firebaseApp;
+  }
+
+  const syncApp = initializeFirebase();
+  if (isRealAppInitialized) {
+    return syncApp;
+  }
+
+  try {
+    const { prisma } = await import('../utils/db');
+    const setting = await prisma.systemSetting.findFirst();
+    const integrations = (setting?.integrations as any) || {};
+
+    let serviceAccount: any = null;
+
+    const rawKey = (
+      integrations.firebaseServiceAccountJson ||
+      integrations.firebaseServiceAccount ||
+      integrations.firebaseServerKey ||
+      ''
+    ).toString().trim();
+
+    if (rawKey.startsWith('{')) {
+      try {
+        serviceAccount = JSON.parse(rawKey);
+        console.log('✅ [FirebaseInit] Loaded credentials from DB SystemSetting integrations JSON');
+      } catch (e) {
+        console.error('❌ [FirebaseInit] Failed to parse DB integrations JSON:', e);
+      }
+    } else if (integrations.firebaseProjectId && integrations.firebasePrivateKey && integrations.firebaseClientEmail) {
+      serviceAccount = {
+        project_id: integrations.firebaseProjectId.trim(),
+        private_key: integrations.firebasePrivateKey.replace(/\\n/g, '\n'),
+        client_email: integrations.firebaseClientEmail.trim(),
+      };
+      console.log('✅ [FirebaseInit] Loaded credentials from DB SystemSetting explicit fields');
+    }
+
+    if (serviceAccount && serviceAccount.project_id) {
+      if (admin.apps.length > 0) {
+        await Promise.all(admin.apps.map(app => app?.delete().catch(() => {})));
+      }
+      firebaseApp = admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: serviceAccount.project_id,
+      });
+      isRealAppInitialized = true;
+      console.log(`✅ [FirebaseInit] Successfully loaded & initialized Firebase from DB Admin Panel integrations for project: "${serviceAccount.project_id}"`);
+      return firebaseApp;
+    }
+  } catch (error) {
+    console.warn('⚠️ [FirebaseInit] DB integration lookup warning:', error);
+  }
+
+  return syncApp;
 };
 
 export const getFirebaseApp = (): admin.app.App => {

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { clearIntegrationCache } from '../utils/configService';
+import { initializeFirebaseFromDb } from '../config/firebase';
 
 const DEFAULT_SYSTEM_SETTINGS = {
   id: 1,
@@ -136,6 +137,9 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
     }
 
     clearIntegrationCache();
+    initializeFirebaseFromDb().catch(err => {
+      console.warn('⚠️ [settingsController] Re-initializing Firebase from DB failed:', err);
+    });
 
     res.json({
       success: true,
