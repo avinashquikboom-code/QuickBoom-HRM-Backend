@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
+import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 
 // Helper to safely extract single string from params
 function getSingleParam(param: string | string[] | undefined): string | undefined {
@@ -148,6 +149,11 @@ export const applyCorrectionRequest = async (req: AuthenticatedRequest, res: Res
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
+    const permissions = await getEffectiveUserPermissions(userId);
+    if (!permissions.canRequestAttendanceCorrection) {
+      return res.status(403).json({ error: 'Permission denied: HR must enable "Request Attendance Correction" permission for your account.' });
+    }
+
     const employee = await prisma.employee.findUnique({
       where: { userId },
     });
@@ -245,6 +251,11 @@ export const getMyCorrections = async (req: AuthenticatedRequest, res: Response)
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const permissions = await getEffectiveUserPermissions(userId);
+    if (!permissions.canRequestAttendanceCorrection) {
+      return res.status(403).json({ error: 'Permission denied: HR must enable "Request Attendance Correction" permission for your account.' });
+    }
 
     const employee = await prisma.employee.findUnique({
       where: { userId },
