@@ -246,6 +246,104 @@ export const applyCorrectionRequest = async (req: AuthenticatedRequest, res: Res
   }
 };
 
+export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const id = req.params.id as string;
+    const { requestedStatus, reason, supportingDoc } = req.body;
+
+    const employee = await prisma.employee.findUnique({
+      where: { userId },
+    });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+
+    // Step 1: Get original correction
+    const original = await prisma.attendanceCorrectionRequest.findUnique({
+      where: { id }
+    });
+    
+    if (!original) {
+      return res.status(404).json({ success: false, error: 'Correction not found' });
+    }
+    
+    // Step 2: Verify can resubmit (only if REJECTED)
+    if (original.status !== 'REJECTED') {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot resubmit ${original.status} correction. Only REJECTED can be resubmitted.`
+      });
+    }
+    
+    // Step 3: Verify employee owns this
+    if (original.employeeId !== employee.employeeCode) {
+      return res.status(403).json({ success: false, error: 'Unauthorized' });
+    }
+    
+    const dateStart = new Date(original.attendanceDate);
+    dateStart.setHours(0, 0, 0, 0);
+    const dateEnd = new Date(original.attendanceDate);
+    dateEnd.setHours(23, 59, 59, 999);
+
+    // Step 4: Check no PENDING for same date
+    const pendingConflict = await prisma.attendanceCorrectionRequest.findFirst({
+      where: {
+        employeeId: employee.employeeCode,
+        attendanceDate: {
+          gte: dateStart,
+          lte: dateEnd,
+        },
+        status: 'PENDING',
+        id: { not: id }
+      }
+    });
+    
+    if (pendingConflict) {
+      return res.status(400).json({
+        success: false,
+        error: 'A pending correction request already exists for this date.'
+      });
+    }
+    
+    // Step 6: Create NEW correction request
+    const newCorrection = await prisma.attendanceCorrectionRequest.create({
+      data: {
+        employeeId: employee.employeeCode,
+        attendanceDate: original.attendanceDate,
+        currentStatus: original.currentStatus,
+        requestedStatus,
+        reason,
+        supportingDoc: supportingDoc || null,
+        status: 'PENDING',
+      }
+    });
+    
+    const empName = `${employee.firstName} ${employee.lastName}`.trim();
+    const dateFormatted = original.attendanceDate.toISOString().split('T')[0];
+    
+    // Step 7: Notify HR
+    await notifyHRTeam(
+      `Attendance Correction Resubmitted: ${empName}`,
+      `Attendance correction resubmitted by ${empName} for ${dateFormatted}: ${original.currentStatus} → ${requestedStatus}`
+    );
+    
+    return res.json({
+      success: true,
+      message: 'Request resubmitted successfully',
+      requestId: newCorrection.id,
+      request: newCorrection
+    });
+    
+  } catch (error: any) {
+    console.error('Resubmit error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to resubmit'
+    });
+  }
+};
+
 // 2. Employee get my corrections
 export const getMyCorrections = async (req: AuthenticatedRequest, res: Response) => {
   try {

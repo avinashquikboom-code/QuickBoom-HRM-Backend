@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   applyCorrectionRequest,
+  resubmitCorrectionRequest,
   getMyCorrections,
   getHRAttendanceCorrections,
   getHRAttendanceCorrectionDetail,
@@ -17,6 +18,7 @@ const hrRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER'
 
 // Employee routes
 router.post('/mobile/attendance/correction-request', authMiddleware, applyCorrectionRequest);
+router.post('/mobile/attendance/correction-request/resubmit/:id', authMiddleware, resubmitCorrectionRequest);
 router.get('/mobile/attendance/my-corrections', authMiddleware, getMyCorrections);
 
 // HR routes
