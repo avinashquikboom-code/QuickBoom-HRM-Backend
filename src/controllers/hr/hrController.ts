@@ -7,6 +7,7 @@ import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 import { pushNotificationService } from '../../services/pushNotificationService';
 import securityService from '../../services/securityService';
+import { expenseReceiptService } from '../../services/expenseReceiptService';
 
 // ==========================================
 // HR Dashboard Stats
@@ -758,6 +759,38 @@ export const approveExpense = async (
       include: { employee: true },
     });
 
+    let receiptPdfUrl: string | undefined = undefined;
+
+    if (targetStatus === 'APPROVED' || targetStatus === 'PAID') {
+      try {
+        const fullEmployee = await prisma.employee.findUnique({
+          where: { id: expense.employeeId },
+          include: { department: true, office: true }
+        });
+
+        const receiptResult = await expenseReceiptService.generateExpenseReceipt(
+          expense,
+          fullEmployee,
+          {
+            reviewedBy: reviewer,
+            reviewNote: noteText,
+            reviewedAt: new Date(),
+          }
+        );
+
+        receiptPdfUrl = receiptResult.relativeUrl;
+
+        await prisma.expense.update({
+          where: { id: expenseId },
+          data: { receiptPdfUrl: receiptPdfUrl || null }
+        });
+
+        expense.receiptPdfUrl = receiptPdfUrl || null;
+      } catch (pdfErr) {
+        console.error('Failed to generate expense receipt PDF:', pdfErr);
+      }
+    }
+
     // Send FCM notification to employee
     try {
       const empUserId = expense.employee?.userId;
@@ -767,7 +800,7 @@ export const approveExpense = async (
           : `✅ Expense ${targetStatus}`;
         const notifBody = targetStatus === 'REJECTED'
           ? `❌ Rejected: ${noteText}`
-          : `✅ Expense ${targetStatus}: ₹${expense.amount.toLocaleString('en-IN')}`;
+          : `✅ Expense approved: ₹${expense.amount.toLocaleString('en-IN')}.${receiptPdfUrl ? ' [Download Receipt]' : ''}`;
 
         await firebaseNotificationService.sendNotificationToUser(
           empUserId,
@@ -777,6 +810,7 @@ export const approveExpense = async (
             type: 'EXPENSE_UPDATE',
             expenseId: String(expense.id),
             status: targetStatus,
+            receiptPdfUrl: receiptPdfUrl || '',
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
           }
         );
@@ -787,9 +821,16 @@ export const approveExpense = async (
 
     res.json({
       success: true,
-      message: `Expense ${targetStatus.toLowerCase()} successfully.`,
-      data: expense,
-      expense
+      message: `Expense ${targetStatus.toLowerCase()} successfully.${receiptPdfUrl ? ' Receipt generated.' : ''}`,
+      data: {
+        ...expense,
+        receiptPdfUrl,
+      },
+      expense: {
+        ...expense,
+        receiptPdfUrl,
+      },
+      receiptPdfUrl,
     });
   } catch (error) {
     console.error('Approve expense error:', error);

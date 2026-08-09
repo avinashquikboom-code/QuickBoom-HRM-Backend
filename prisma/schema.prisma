@@ -265,6 +265,7 @@ model Expense {
   reviewNote  String?
   hasReceipt  Boolean  @default(false)
   receiptUrl  String?
+  receiptPdfUrl String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)

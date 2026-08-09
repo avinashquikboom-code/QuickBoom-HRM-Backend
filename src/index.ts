@@ -68,10 +68,16 @@ dotenv.config();
 const app = express();
 const port = parseInt(process.env.PORT || '3000', 10);
 
+import path from 'path';
+
 app.use(cors());
 // Configure larger limit for base64 profile avatar images
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Serve static upload files (including expense receipt PDFs)
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Apply metrics middleware to track all requests
 app.use(metricsMiddleware);
