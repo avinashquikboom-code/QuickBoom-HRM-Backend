@@ -977,6 +977,7 @@ export const fetchEmployeeExpenses = async (
         reviewNote: e.reviewNote,
         hasReceipt: e.hasReceipt,
         receiptUrl: e.receiptUrl,
+        receiptPdfUrl: e.receiptPdfUrl,   // ← include generated receipt PDF URL
       })),
     });
   } catch (error) {
@@ -1003,6 +1004,48 @@ export const createEmployeeExpense = async (
       return;
     }
 
+    // ── Receipt file handling ──────────────────────────────────────────────────
+    let savedReceiptUrl: string | null = null;
+    if (imageBase64 && typeof imageBase64 === 'string' && imageBase64.length > 0) {
+      try {
+        const MAX_BASE64_SIZE = 7 * 1024 * 1024; // ~5 MB decoded
+        if (imageBase64.length > MAX_BASE64_SIZE) {
+          res.status(400).json({ success: false, message: 'Receipt file too large. Maximum 5 MB allowed.' });
+          return;
+        }
+
+        // Strip optional "data:image/...;base64," prefix
+        const base64Data = imageBase64.includes(',')
+          ? imageBase64.split(',')[1]
+          : imageBase64;
+
+        // Detect extension from mime prefix (jpeg/png/pdf fallback)
+        const mimeMatch = imageBase64.match(/^data:(image\/\w+|application\/pdf);base64,/);
+        let ext = 'jpg';
+        if (mimeMatch) {
+          const mime = mimeMatch[1];
+          if (mime === 'image/png') ext = 'png';
+          else if (mime === 'application/pdf') ext = 'pdf';
+        }
+
+        const fs = await import('fs');
+        const path = await import('path');
+        const uploadsDir = path.join(process.cwd(), 'uploads', 'receipts');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir, { recursive: true });
+        }
+
+        const filename = `receipt_${employee.id}_${Date.now()}.${ext}`;
+        const filePath = path.join(uploadsDir, filename);
+        await fs.promises.writeFile(filePath, Buffer.from(base64Data, 'base64'));
+        savedReceiptUrl = `/uploads/receipts/${filename}`;
+      } catch (fileErr) {
+        console.error('Failed to save receipt file:', fileErr);
+        // Non-fatal: continue expense creation without receipt
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     const expense = await prisma.expense.create({
       data: {
         employeeId: employee.id,
@@ -1011,8 +1054,8 @@ export const createEmployeeExpense = async (
         description: description.trim(),
         date: new Date(date),
         status: 'PENDING',
-        hasReceipt: !!imageBase64,
-        receiptUrl: imageBase64 || null,
+        hasReceipt: !!savedReceiptUrl,
+        receiptUrl: savedReceiptUrl,
       },
     });
 
@@ -1032,6 +1075,7 @@ export const createEmployeeExpense = async (
         submittedOn: expense.submittedOn.toISOString(),
         hasReceipt: expense.hasReceipt,
         receiptUrl: expense.receiptUrl,
+        receiptPdfUrl: null,
       },
     });
   } catch (error) {

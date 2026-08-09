@@ -672,7 +672,15 @@ export const fetchHRExpenses = async (
   res: Response
 ): Promise<void> => {
   try {
+    // Optional ?status=PENDING|APPROVED|REJECTED|PAID|ALL filter
+    const { status } = req.query as { status?: string };
+    const whereClause: any = {};
+    if (status && status !== 'ALL') {
+      whereClause.status = status.toUpperCase();
+    }
+
     const expenses = await prisma.expense.findMany({
+      where: whereClause,
       orderBy: { submittedOn: 'desc' },
       include: {
         employee: {
@@ -701,6 +709,7 @@ export const fetchHRExpenses = async (
       reviewNote: e.reviewNote,
       hasReceipt: e.hasReceipt,
       receiptUrl: e.receiptUrl,
+      receiptPdfUrl: e.receiptPdfUrl,  // ← include generated PDF receipt URL
     }));
 
     res.json({ success: true, expenses: mapped });
