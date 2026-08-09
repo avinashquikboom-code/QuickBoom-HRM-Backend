@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
+import cron from 'node-cron';
 import { apiReference } from '@scalar/express-api-reference';
 import { specs } from './config/swagger';
 import { metricsMiddleware } from './controllers/healthController';
@@ -390,6 +391,49 @@ server.listen(port, host, () => {
     console.log('🔄 [Background Schedule] Running periodic 30-min HopKid employee sync...');
     syncHopkidEmployees().catch(err => console.error('Background sync error:', err));
   }, THIRTY_MINUTES);
+
+  // On day start, check holidays
+  cron.schedule('0 0 * * *', async () => { // Midnight IST
+    try {
+      console.log('🔄 [Background Schedule] Checking for paid holidays...');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Strip time for exact date match
+      
+      const holiday = await prisma.holiday.findFirst({
+        where: { date: today }
+      });
+      
+      if (holiday) {
+        console.log(`🎉 [Holiday] Today is a paid holiday: ${holiday.name}`);
+        // Get all active employees
+        const employees = await prisma.employee.findMany({ where: { status: 'active' } });
+        
+        for (const emp of employees) {
+          // Check if attendance already exists to prevent duplicates
+          const dateStr = today.toISOString().split('T')[0];
+          const existing = await prisma.attendance.findFirst({
+            where: { employeeId: emp.id, date: dateStr }
+          });
+
+          if (!existing) {
+            // Create PAID attendance (no punch required)
+            await prisma.attendance.create({
+              data: {
+                employeeId: emp.id,
+                date: dateStr,
+                status: 'PAID',
+                checkIn: null,
+                checkOut: null,
+                notes: holiday.name
+              }
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('❌ [Background Schedule] Error checking holidays:', err);
+    }
+  });
 });
 
 // Set server timeout to 60 seconds to handle slow mobile requests
