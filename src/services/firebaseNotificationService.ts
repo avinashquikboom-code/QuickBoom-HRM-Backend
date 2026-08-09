@@ -7,7 +7,15 @@ export class FirebaseNotificationService {
   static getInstance() {
     throw new Error('Method not implemented.');
   }
-  private messaging = getMessaging();
+
+  private getMessagingInstance(): admin.messaging.Messaging | null {
+    try {
+      return getMessaging();
+    } catch (e) {
+      console.warn('⚠️ [FirebaseNotificationService] Messaging service unavailable:', e);
+      return null;
+    }
+  }
 
   // Send notification to specific FCM tokens
   async sendNotificationToTokens(
@@ -19,6 +27,12 @@ export class FirebaseNotificationService {
   ): Promise<admin.messaging.BatchResponse> {
     if (!tokens || tokens.length === 0) {
       throw new Error('No FCM tokens provided');
+    }
+
+    const messagingInstance = this.getMessagingInstance();
+    if (!messagingInstance) {
+      console.warn('⚠️ [FirebaseNotificationService] FCM not initialized. Skipping notification.');
+      return { responses: [], successCount: 0, failureCount: tokens.length };
     }
 
     const message: FirebaseMessagePayload = {
@@ -75,7 +89,7 @@ export class FirebaseNotificationService {
     };
 
     try {
-      const response = await this.messaging.sendEachForMulticast({
+      const response = await messagingInstance.sendEachForMulticast({
         tokens,
         ...message,
       });

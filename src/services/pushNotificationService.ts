@@ -5,11 +5,16 @@ import { getMessaging } from '../config/firebase';
 export class PushNotificationService {
   private messaging: admin.messaging.Messaging | null = null;
 
-  private getMessagingInstance(): admin.messaging.Messaging {
-    if (!this.messaging) {
-      this.messaging = getMessaging();
+  private getMessagingInstance(): admin.messaging.Messaging | null {
+    try {
+      if (!this.messaging) {
+        this.messaging = getMessaging();
+      }
+      return this.messaging;
+    } catch (e) {
+      console.warn('⚠️ [PushNotificationService] FCM messaging unavailable:', e);
+      return null;
     }
-    return this.messaging;
   }
 
   /**
@@ -24,6 +29,12 @@ export class PushNotificationService {
   ): Promise<void> {
     try {
       if (!userIds || userIds.length === 0) {
+        return;
+      }
+
+      const messagingInstance = this.getMessagingInstance();
+      if (!messagingInstance) {
+        console.log('[PushNotificationService] FCM messaging is unavailable. Skipping push.');
         return;
       }
 
@@ -77,7 +88,7 @@ export class PushNotificationService {
       };
 
       console.log(`[PushNotificationService] Sending push to users: ${userIds.join(', ')} (tokens count: ${tokens.length})`);
-      const response = await this.getMessagingInstance().sendEachForMulticast(message);
+      const response = await messagingInstance.sendEachForMulticast(message);
       
       console.log(`[PushNotificationService] FCM Multicast Result: success=${response.successCount}, failure=${response.failureCount}`);
 

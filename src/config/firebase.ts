@@ -11,14 +11,11 @@ export const initializeFirebase = (): admin.app.App => {
   }
 
   try {
-    // Check if Firebase app already exists
-    try {
-      const existingApp = admin.app();
-      firebaseApp = existingApp;
+    // Check if Firebase app already exists in admin.apps
+    if (admin.apps.length > 0 && admin.apps[0]) {
+      firebaseApp = admin.apps[0]!;
       console.log('✅ [FirebaseInit] Firebase Admin SDK already initialized, using existing app');
       return firebaseApp;
-    } catch (appError) {
-      // Continue initialization
     }
 
     let serviceAccount: any = null;
@@ -90,33 +87,39 @@ export const initializeFirebase = (): admin.app.App => {
     }
 
     if (!serviceAccount) {
-      console.warn('⚠️ [FirebaseInit] No valid Firebase credentials configured. Notifications will be mocked.');
-      firebaseApp = admin.initializeApp(
-        {
+      console.warn('⚠️ [FirebaseInit] No valid Firebase credentials configured. Defaulting to mock app.');
+      if (admin.apps.length > 0 && admin.apps[0]) {
+        firebaseApp = admin.apps[0]!;
+      } else {
+        firebaseApp = admin.initializeApp({
           projectId: 'quickboom-mock',
-        },
-        'mock-app'
-      );
+        });
+      }
       return firebaseApp;
     }
 
-    // Initialize Firebase Admin SDK
-    firebaseApp = admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      projectId: serviceAccount.project_id,
-    });
+    // Initialize Firebase Admin SDK as default app
+    if (admin.apps.length > 0 && admin.apps[0]) {
+      firebaseApp = admin.apps[0]!;
+    } else {
+      firebaseApp = admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: serviceAccount.project_id,
+      });
+    }
 
-    console.log(`✅ [FirebaseInit] Firebase Admin SDK initialized successfully for project: "${serviceAccount.project_id}"`);
+    console.log(`✅ [FirebaseInit] Firebase Admin SDK initialized successfully for project: "${serviceAccount.project_id || 'default'}"`);
     return firebaseApp;
   } catch (error) {
     console.error('❌ [FirebaseInit] Failed to initialize Firebase:', error);
-    console.warn('⚠️ [FirebaseInit] Using fallback mock app for development.');
-    firebaseApp = admin.initializeApp(
-      {
+    console.warn('⚠️ [FirebaseInit] Using fallback mock app.');
+    if (admin.apps.length > 0 && admin.apps[0]) {
+      firebaseApp = admin.apps[0]!;
+    } else {
+      firebaseApp = admin.initializeApp({
         projectId: 'quickboom-mock',
-      },
-      'mock-app'
-    );
+      });
+    }
     return firebaseApp;
   }
 };
