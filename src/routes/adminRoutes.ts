@@ -84,6 +84,7 @@ import {
   createAdminHoliday,
   deleteAdminHoliday,
   fetchLiveDashboardStats,
+  fetchStoreAttendance,
   fetchUpcomingLeaves,
   toggleLeaveDeduction,
   fetchLocationAlerts,
@@ -216,6 +217,7 @@ router.post('/employees/sync', roleMiddleware(storeManagerAllowedRoles), trigger
 router.get('/employees/sync', roleMiddleware(storeManagerAllowedRoles), triggerEmployeeSync);
 router.get('/attendance/today', roleMiddleware(storeManagerAllowedRoles), fetchTodayAttendance);
 router.get('/attendance/history', roleMiddleware(storeManagerAllowedRoles), fetchAttendanceHistory);
+router.get('/attendance/store/:storeId', roleMiddleware(storeManagerAllowedRoles), fetchStoreAttendance);
 router.get('/location/live', roleMiddleware(storeManagerAllowedRoles), fetchLiveLocations);
 router.get('/location/logs', roleMiddleware(storeManagerAllowedRoles), fetchLiveLocationLogs);
 router.get('/leaves', roleMiddleware(storeManagerAllowedRoles), fetchAdminLeaves);

@@ -7239,6 +7239,7 @@ export const fetchLiveDashboardStats = async (
       where: { status: 'active' },
       include: {
         office: true,
+        store: true,
         user: true,
         shiftAssignments: {
           where: { effectiveTo: null },
@@ -7301,15 +7302,15 @@ export const fetchLiveDashboardStats = async (
       meeting: [] as any[]
     };
 
-    // Calculate branchWise counts map: officeId -> { branchName, present, absent, onBreak }
-    const branchMap = new Map<number, { branch: string; present: number; absent: number; onBreak: number }>();
+    // Calculate branchWise counts map: officeId -> { branchId, branch, present, absent, onBreak }
+    const branchMap = new Map<number, { branchId: number; branch: string; present: number; absent: number; onBreak: number }>();
 
     for (const emp of activeEmployees) {
-      const officeId = emp.officeId;
-      const officeName = emp.office?.name || 'Unassigned';
+      const officeId = emp.officeId || emp.storeId;
+      const officeName = emp.office?.name || emp.store?.name || 'Unassigned';
 
       if (officeId && !branchMap.has(officeId)) {
-        branchMap.set(officeId, { branch: officeName, present: 0, absent: 0, onBreak: 0 });
+        branchMap.set(officeId, { branchId: officeId, branch: officeName, present: 0, absent: 0, onBreak: 0 });
       }
 
       const branchStats = officeId ? branchMap.get(officeId) : null;
@@ -8276,4 +8277,178 @@ export const handleBankEditRequestAction = async (
     res.status(500).json({ success: false, message: 'Failed to process request.' });
   }
 };
+
+export const fetchStoreAttendance = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const rawStoreId = req.params.storeId as string | string[] | undefined;
+    const storeIdStr = Array.isArray(rawStoreId) ? rawStoreId[0] : (rawStoreId || '');
+    const storeIdNum = parseInt(storeIdStr, 10);
+
+    if (isNaN(storeIdNum)) {
+      res.status(400).json({ success: false, message: 'Invalid store ID parameter.' });
+      return;
+    }
+
+    const officeObj = await prisma.office.findUnique({
+      where: { id: storeIdNum },
+      select: { id: true, name: true, code: true }
+    });
+
+    const storeObj = officeObj ? null : await prisma.store.findUnique({
+      where: { id: storeIdNum },
+      select: { id: true, name: true, code: true }
+    });
+
+    const storeName = officeObj?.name || storeObj?.name || `Store #${storeIdNum}`;
+
+    const employees = await prisma.employee.findMany({
+      where: {
+        OR: [
+          { officeId: storeIdNum },
+          { storeId: storeIdNum }
+        ],
+        status: 'active'
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        employeeCode: true,
+        designation: true,
+        office: { select: { name: true } },
+        store: { select: { name: true } },
+        shiftAssignments: {
+          where: { effectiveTo: null },
+          include: { shift: true }
+        }
+      }
+    });
+
+    const today = new Date();
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const todayStr = formatter.format(today);
+    const utcTodayStr = today.toISOString().slice(0, 10);
+
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const empIds = employees.map(e => e.id);
+
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        employeeId: { in: empIds },
+        date: { in: [todayStr, utcTodayStr] }
+      },
+      include: {
+        breakRecords: true
+      }
+    });
+
+    const leaves = await prisma.leaveRequest.findMany({
+      where: {
+        employeeId: { in: empIds },
+        status: 'APPROVED',
+        fromDate: { lte: endOfDay },
+        toDate: { gte: startOfDay }
+      }
+    });
+
+    const activeBreaks = await prisma.break.findMany({
+      where: {
+        employeeId: { in: empIds },
+        endAt: null
+      }
+    });
+
+    const attMap = new Map(attendances.map(a => [a.employeeId, a]));
+    const leaveMap = new Map(leaves.map(l => [l.employeeId, l]));
+    const breakMap = new Map(activeBreaks.map(b => [b.employeeId, b]));
+
+    const data = employees.map(emp => {
+      const att = attMap.get(emp.id);
+      const leave = leaveMap.get(emp.id);
+      const activeBreak = breakMap.get(emp.id);
+
+      let status = 'ABSENT';
+      if (leave) {
+        status = 'ON LEAVE';
+      } else if (att) {
+        status = att.status || 'PRESENT';
+        if (att.status === 'PRESENT' && (att.notes?.includes('LATE') || att.checkIn)) {
+          const shift = emp.shiftAssignments?.[0]?.shift;
+          if (shift && shift.startTime && att.checkIn) {
+            const [sHour, sMin] = shift.startTime.split(':').map(Number);
+            const checkInDate = new Date(att.checkIn);
+            const shiftStartDate = new Date(checkInDate);
+            shiftStartDate.setHours(sHour, sMin, 0, 0);
+            const graceMinutes = shift.graceMinutes ?? 15;
+            const lateThreshold = new Date(shiftStartDate.getTime() + graceMinutes * 60 * 1000);
+            if (checkInDate > lateThreshold) {
+              status = 'LATE';
+            }
+          }
+        }
+      }
+
+      let workingHours = '-';
+      if (att?.checkIn) {
+        const endTime = att.checkOut ? new Date(att.checkOut) : new Date();
+        const diffMs = endTime.getTime() - new Date(att.checkIn).getTime();
+        const totalMinutes = Math.floor(diffMs / (1000 * 60));
+        const hrs = Math.floor(totalMinutes / 60);
+        const mins = totalMinutes % 60;
+        workingHours = `${hrs}h ${mins}m`;
+      }
+
+      const checkInTime = att?.checkIn
+        ? new Date(att.checkIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+        : '-';
+      const checkOutTime = att?.checkOut
+        ? new Date(att.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+        : '-';
+
+      let breakDetails = '-';
+      if (activeBreak) {
+        breakDetails = `On ${activeBreak.type} break`;
+      } else if (att && att.totalBreakSeconds > 0) {
+        const breakMins = Math.round(att.totalBreakSeconds / 60);
+        breakDetails = `${breakMins} mins taken`;
+      }
+
+      return {
+        id: emp.id,
+        employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+        employeeCode: emp.employeeCode,
+        designation: emp.designation || 'Staff',
+        status,
+        checkInTime,
+        checkOutTime,
+        workingHours,
+        breakDetails,
+        notes: att?.notes || leave?.reason || ''
+      };
+    });
+
+    res.json({
+      success: true,
+      storeId: storeIdNum,
+      storeName,
+      data
+    });
+  } catch (error: any) {
+    console.error('Fetch store attendance error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch store attendance.' });
+  }
+};
+
 
