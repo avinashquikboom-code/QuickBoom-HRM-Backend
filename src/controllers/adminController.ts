@@ -8419,12 +8419,12 @@ export const fetchStoreAttendance = async (
         workingHours = `${hrs}h ${mins}m`;
       }
 
-      const checkInTime = att?.checkIn
-        ? new Date(att.checkIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
-        : '-';
-      const checkOutTime = att?.checkOut
-        ? new Date(att.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
-        : '-';
+      const checkInIso = att?.checkIn
+        ? att.checkIn.toISOString()
+        : null;
+      const checkOutIso = att?.checkOut
+        ? att.checkOut.toISOString()
+        : null;
 
       let breakDetails = '-';
       if (activeBreak) {
@@ -8440,8 +8440,10 @@ export const fetchStoreAttendance = async (
         employeeCode: emp.employeeCode,
         designation: emp.designation || 'Staff',
         status,
-        checkInTime,
-        checkOutTime,
+        checkInTime: checkInIso,
+        checkOutTime: checkOutIso,
+        punchInTime: checkInIso,
+        punchOutTime: checkOutIso,
         workingHours,
         breakDetails,
         notes: att?.notes || leave?.reason || ''

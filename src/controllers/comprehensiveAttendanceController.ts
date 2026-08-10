@@ -898,8 +898,8 @@ export const downloadComprehensiveAttendanceReport = async (
                 ],
                 ...emp.attendances.map((att: any) => [
                   att.date,
-                  att.checkin ? new Date(att.checkin).toLocaleTimeString() : '--:--',
-                  att.checkout ? new Date(att.checkout).toLocaleTimeString() : '--:--',
+                  att.checkin ? new Date(att.checkin).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
+                  att.checkout ? new Date(att.checkout).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
                   att.status,
                   att.totalworkseconds ? `${(parseFloat(att.totalworkseconds) / 3600).toFixed(2)}h` : '--'
                 ])

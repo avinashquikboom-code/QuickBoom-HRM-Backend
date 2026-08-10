@@ -1568,8 +1568,8 @@ export const downloadMyAttendanceReport = async (
               ['Date', 'Check In', 'Check Out', 'Status'],
               ...attendances.map((att: AttendanceWithOffice) => [
                 att.date,
-                att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
-                att.checkOut ? new Date(att.checkOut).toLocaleTimeString() : '--:--',
+                att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
+                att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
                 att.status
               ])
             ]
@@ -1779,8 +1779,8 @@ export const downloadAttendanceReport = async (
                 ['Date', 'Check In', 'Check Out', 'Status'],
                 ...empData.attendances.map((att: AttendanceWithOffice) => [
                   att.date,
-                  att.checkIn ? new Date(att.checkIn).toLocaleTimeString() : '--:--',
-                  att.checkOut ? new Date(att.checkOut).toLocaleTimeString() : '--:--',
+                  att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
+                  att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
                   att.status
                 ])
               ]
