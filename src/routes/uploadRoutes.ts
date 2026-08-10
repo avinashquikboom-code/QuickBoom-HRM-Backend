@@ -5,8 +5,8 @@ import fs from 'fs';
 
 const router = Router();
 
-// Protected route to download expense receipt PDFs
-router.get('/receipts/:filename', authenticateToken, (req, res) => {
+// Public route to download expense receipt PDFs (no auth required)
+router.get('/receipts/:filename', (req, res) => {
   const filename = req.params.filename as string;
 
   // Validate filename to prevent path traversal
