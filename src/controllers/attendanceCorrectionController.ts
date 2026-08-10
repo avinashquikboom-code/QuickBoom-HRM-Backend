@@ -277,8 +277,11 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
     }
     
     // Step 3: Verify employee owns this
-    if (original.employeeId !== employee.employeeCode) {
-      return res.status(403).json({ success: false, error: 'Unauthorized' });
+    const isOwner = original.employeeId === employee.employeeCode ||
+                    original.employeeId === String(employee.id) ||
+                    original.employeeId === employee.employeeID;
+    if (!isOwner) {
+      return res.status(403).json({ success: false, error: 'Unauthorized: You can only resubmit your own correction requests.' });
     }
     
     const dateStart = new Date(original.attendanceDate);
