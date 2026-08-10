@@ -172,9 +172,14 @@ app.use('/api', shiftRuleRoutes);
 import featureAccessRoutes from './routes/featureAccessRoutes';
 
 import { downloadExpenseReceiptPDF } from './controllers/hr/hrController';
+import { getSalaryStructureByEmployeeId, getMySalaryStructure } from './controllers/salaryController';
 
 app.use('/api', attendanceCorrectionRoutes);
 app.use('/api', featureAccessRoutes);
+
+// Salary structure route aliases for admin edit and mobile wallet
+app.get('/api/admin/employees/:employeeId/salary-structure', authenticateToken, getSalaryStructureByEmployeeId);
+app.get('/api/mobile/salary/structure', authenticateToken, getMySalaryStructure);
 
 // On-demand Expense Receipt PDF endpoints
 app.get('/api/expense-claim/:id/receipt/pdf', authenticateToken, downloadExpenseReceiptPDF);

@@ -270,6 +270,93 @@ export const getSalaryStructureList = async (
   }
 };
 
+// GET /api/salary/structure/me or /api/mobile/salary/structure (own salary structure)
+export const getMySalaryStructure = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ success: false, message: 'Authentication required.' });
+      return;
+    }
+
+    const emp = await prisma.employee.findFirst({
+      where: { userId: user.id },
+      include: { salaryStructure: true }
+    });
+
+    if (!emp) {
+      res.status(404).json({ success: false, message: 'Employee record not found.' });
+      return;
+    }
+
+    let ss = emp.salaryStructure;
+    if (!ss) {
+      ss = await prisma.salaryStructure.upsert({
+        where: { employeeId: emp.id },
+        update: {},
+        create: {
+          employeeId: emp.id,
+          basicSalary: 10000,
+          hra: 2000,
+          medicalAllowance: 500,
+          travelAllowance: 1000,
+          specialAllowance: 0,
+          monthlySalary: 13500,
+          grossSalary: 13500,
+          salaryAdvanceLimit: 25000,
+        }
+      });
+    }
+
+    const basicSalary = ss.basicSalary;
+    const hra = ss.hra;
+    const medical = ss.medicalAllowance;
+    const travel = ss.travelAllowance;
+    const special = ss.specialAllowance;
+    const salaryAdvanceLimit = ss.salaryAdvanceLimit;
+    const grossTotal = ss.grossSalary || (basicSalary + hra + medical + travel + special);
+
+    const payload = {
+      id: ss.id,
+      employeeId: emp.id,
+      employeeCode: emp.employeeCode,
+      employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+      basicSalary,
+      hra,
+      medical,
+      medicalAllowance: medical,
+      travel,
+      travelAllowance: travel,
+      special,
+      specialAllowance: special,
+      salaryAdvanceLimit,
+      grossTotal,
+      monthlySalary: ss.monthlySalary || grossTotal,
+      grossSalary: ss.grossSalary || grossTotal,
+      updatedAt: ss.updatedAt,
+    };
+
+    res.json({
+      success: true,
+      data: payload,
+      basicSalary,
+      hra,
+      medical,
+      travel,
+      special,
+      salaryAdvanceLimit,
+      grossTotal,
+      structure: ss
+    });
+  } catch (error) {
+    console.error('Get my salary structure error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch salary structure.' });
+  }
+};
+
 // GET /api/salary/structure/:employeeId
 export const getSalaryStructureByEmployeeId = async (
   req: AuthenticatedRequest,
@@ -295,17 +382,56 @@ export const getSalaryStructureByEmployeeId = async (
       return;
     }
 
-    const ss = emp.salaryStructure;
-    const basicSalary = ss?.basicSalary || 10000;
-    const hra = ss?.hra || 2000;
-    const medical = ss?.medicalAllowance || 500;
-    const travel = ss?.travelAllowance || 1000;
-    const special = ss?.specialAllowance || 0;
-    const salaryAdvanceLimit = ss?.salaryAdvanceLimit || 25000;
-    const grossTotal = basicSalary + hra + medical + travel + special;
+    let ss = emp.salaryStructure;
+    if (!ss) {
+      ss = await prisma.salaryStructure.upsert({
+        where: { employeeId: emp.id },
+        update: {},
+        create: {
+          employeeId: emp.id,
+          basicSalary: 10000,
+          hra: 2000,
+          medicalAllowance: 500,
+          travelAllowance: 1000,
+          specialAllowance: 0,
+          monthlySalary: 13500,
+          grossSalary: 13500,
+          salaryAdvanceLimit: 25000,
+        }
+      });
+    }
+
+    const basicSalary = ss.basicSalary;
+    const hra = ss.hra;
+    const medical = ss.medicalAllowance;
+    const travel = ss.travelAllowance;
+    const special = ss.specialAllowance;
+    const salaryAdvanceLimit = ss.salaryAdvanceLimit;
+    const grossTotal = ss.grossSalary || (basicSalary + hra + medical + travel + special);
+
+    const payload = {
+      id: ss.id,
+      employeeId: emp.id,
+      employeeCode: emp.employeeCode,
+      employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
+      basicSalary,
+      hra,
+      medical,
+      medicalAllowance: medical,
+      travel,
+      travelAllowance: travel,
+      special,
+      specialAllowance: special,
+      salaryAdvanceLimit,
+      grossTotal,
+      monthlySalary: ss.monthlySalary || grossTotal,
+      grossSalary: ss.grossSalary || grossTotal,
+      updatedAt: ss.updatedAt,
+    };
 
     res.json({
       success: true,
+      data: payload,
       basicSalary,
       hra,
       medical,
@@ -313,22 +439,7 @@ export const getSalaryStructureByEmployeeId = async (
       special,
       salaryAdvanceLimit,
       grossTotal,
-      structure: {
-        id: ss?.id || emp.id,
-        employeeId: emp.id,
-        employeeCode: emp.employeeCode,
-        employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-        basicSalary,
-        hra,
-        medical,
-        travel,
-        special,
-        salaryAdvanceLimit,
-        grossTotal,
-        monthlySalary: ss?.monthlySalary || grossTotal,
-        grossSalary: ss?.grossSalary || grossTotal,
-        updatedAt: ss?.updatedAt || emp.updatedAt,
-      },
+      structure: payload,
     });
   } catch (error) {
     console.error('Get salary structure by employeeId error:', error);

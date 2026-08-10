@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
 import { getMyPayslips, downloadPayslip } from '../../controllers/mobile/mobilePayrollController';
+import { getMySalaryStructure } from '../../controllers/salaryController';
 
 const router = Router();
 
@@ -39,6 +40,7 @@ router.use(roleMiddleware(allowedRoles));
  */
 router.get('/slips', getMyPayslips);
 router.get('/payslips', getMyPayslips);
+router.get('/structure', getMySalaryStructure);
 router.get('/payslips/:id/download', downloadPayslip);
 
 /**

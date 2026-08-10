@@ -1778,6 +1778,33 @@ export const createHREmployee = async (
       }
     }
 
+    // Auto-create initial SalaryStructure for the new employee
+    try {
+      const basic = req.body.basicSalary ? parseFloat(req.body.basicSalary) : 10000;
+      const hra = req.body.hra ? parseFloat(req.body.hra) : 2000;
+      const med = req.body.medicalAllowance || req.body.medical ? parseFloat(req.body.medicalAllowance || req.body.medical) : 500;
+      const trav = req.body.travelAllowance || req.body.travel ? parseFloat(req.body.travelAllowance || req.body.travel) : 1000;
+      const spec = req.body.specialAllowance || req.body.special ? parseFloat(req.body.specialAllowance || req.body.special) : 0;
+      const gross = req.body.grossSalary ? parseFloat(req.body.grossSalary) : (basic + hra + med + trav + spec);
+      const advLimit = req.body.salaryAdvanceLimit ? parseFloat(req.body.salaryAdvanceLimit) : 25000;
+
+      await prisma.salaryStructure.create({
+        data: {
+          employeeId: newEmployee.id,
+          basicSalary: basic,
+          hra,
+          medicalAllowance: med,
+          travelAllowance: trav,
+          specialAllowance: spec,
+          monthlySalary: gross,
+          grossSalary: gross,
+          salaryAdvanceLimit: advLimit,
+        }
+      });
+    } catch (sErr) {
+      console.warn('[CREATE_EMPLOYEE] SalaryStructure creation warning (non-fatal):', sErr);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Employee created successfully.',

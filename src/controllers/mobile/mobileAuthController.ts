@@ -1219,6 +1219,25 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
       console.error('[MOBILE_REGISTER] Leave balance error (non-fatal):', lErr);
     }
 
+    // Auto-create initial SalaryStructure
+    try {
+      await prisma.salaryStructure.create({
+        data: {
+          employeeId: employee.id,
+          basicSalary: 10000,
+          hra: 2000,
+          medicalAllowance: 500,
+          travelAllowance: 1000,
+          specialAllowance: 0,
+          monthlySalary: 13500,
+          grossSalary: 13500,
+          salaryAdvanceLimit: 25000,
+        }
+      });
+    } catch (sErr) {
+      console.warn('[MOBILE_REGISTER] SalaryStructure creation warning (non-fatal):', sErr);
+    }
+
     // Issue JWT tokens
     const token = signAccessToken({
       id: newUser.id,

@@ -276,27 +276,26 @@ class PayrollService {
    */
   async getSalaryStructure(employeeId: number, effectiveDate: Date): Promise<SalaryStructure> {
     try {
-      const structure = await prisma.salaryStructure.findUnique({
+      let structure = await prisma.salaryStructure.findUnique({
         where: { employeeId }
       });
 
       if (!structure) {
-        return {
-          id: 0,
-          employeeId,
-          baseSalary: 0,
-          hra: 0,
-          da: 0,
-          conveyance: 0,
-          medical: 0,
-          special: 0,
-          pf: 0,
-          esi: 0,
-          professionalTax: 0,
-          tds: 0,
-          effectiveFrom: new Date(),
-          isActive: true
-        };
+        structure = await prisma.salaryStructure.upsert({
+          where: { employeeId },
+          update: {},
+          create: {
+            employeeId,
+            basicSalary: 10000,
+            hra: 2000,
+            medicalAllowance: 500,
+            travelAllowance: 1000,
+            specialAllowance: 0,
+            monthlySalary: 13500,
+            grossSalary: 13500,
+            salaryAdvanceLimit: 25000,
+          }
+        });
       }
 
       const basic = structure.basicSalary || structure.monthlySalary || 0;
