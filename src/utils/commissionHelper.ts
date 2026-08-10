@@ -28,6 +28,27 @@ export async function resolveEmployeeId(identifier?: string | number | null): Pr
     if (byPk) return byPk.id;
   }
 
+  // 4. Check for mobileNumber match (matching last 10 digits)
+  const digitsOnly = str.replace(/\D/g, '');
+  if (digitsOnly.length >= 10) {
+    const last10 = digitsOnly.slice(-10);
+    const byMobile = await prisma.employee.findFirst({
+      where: { mobileNumber: { contains: last10 } },
+    });
+    if (byMobile) return byMobile.id;
+  }
+
+  // 5. Check for First/Last Name match (case-insensitive)
+  const byName = await prisma.employee.findFirst({
+    where: {
+      OR: [
+        { firstName: { equals: str, mode: 'insensitive' } },
+        { lastName: { equals: str, mode: 'insensitive' } },
+      ],
+    },
+  });
+  if (byName) return byName.id;
+
   return null;
 }
 

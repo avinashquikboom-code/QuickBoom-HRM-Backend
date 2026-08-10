@@ -13,8 +13,18 @@ export async function processHopkidSales(salesData: any): Promise<void> {
     const employeeIdentifier =
       salesData.employeeId ||
       salesData.employeeID ||
+      salesData.hopkidEmployeeId ||
       salesData.employeeCode ||
+      salesData.code ||
+      salesData.empCode ||
+      salesData.hopkidCode ||
+      salesData.mobileNo ||
+      salesData.mobileNumber ||
+      salesData.phone ||
+      salesData.phoneNumber ||
       salesData.SalesMan ||
+      salesData.name ||
+      salesData.employeeName ||
       salesData.userId;
 
     const rawAmount = salesData.amount ?? salesData.saleAmount ?? salesData.totalAmount;
