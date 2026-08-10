@@ -10,11 +10,12 @@ router.post('/hopkid', handleHopkidWebhook);
 router.post('/sales', handleHopkidWebhook);
 router.post('/commission', handleHopkidWebhook);
 
-// Fetch raw webhook logs
-router.get('/logs', getHopkidLogs);
-router.get('/hopkid/logs', getHopkidLogs);
+// Dedicated raw logs endpoint
+router.get('/raw-logs', getHopkidLogs);
+router.get('/hopkid/raw-logs', getHopkidLogs);
 
 // Mount logs, stats, delete, clear router
 router.use('/', webhookLogsRouter);
 
 export default router;
+

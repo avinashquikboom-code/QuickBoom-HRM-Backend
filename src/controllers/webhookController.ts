@@ -7,7 +7,7 @@ import { resolveEmployeeId } from '../utils/commissionHelper';
  */
 export async function storeWebhookData(data: any): Promise<void> {
   try {
-    const rawAmount = data.amount ?? data.saleAmount ?? data.totalAmount;
+    const rawAmount = data.amount ?? data.saleAmount ?? data.totalAmount ?? data.grandTotal ?? data.netAmount;
     const amountVal = rawAmount !== undefined && rawAmount !== null ? parseFloat(rawAmount) : null;
     const dateVal = data.invoiceDate || data.date || data.createdAt || data.transactionDate;
 

@@ -27,14 +27,22 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     if (eventType) where.eventType = eventType;
 
     // Fetch logs from WebhookLog
-    let logs = await prisma.webhookLog.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limitNum,
-      skip: offsetNum,
-    });
+    // Fetch logs from WebhookLog
+    let logs: any[] = [];
+    let total = 0;
 
-    let total = await prisma.webhookLog.count({ where });
+    try {
+      logs = await prisma.webhookLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: limitNum,
+        skip: offsetNum,
+      });
+
+      total = await prisma.webhookLog.count({ where });
+    } catch (e) {
+      total = 0;
+    }
 
     // Fallback: If WebhookLog has no records, fetch from HopkidWebhookLog
     if (total === 0 && !status && !eventType) {
@@ -46,18 +54,30 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
       total = await prisma.hopkidWebhookLog.count();
 
-      const mappedLogs = hopkidLogs.map((log) => ({
-        id: log.id,
-        eventType: 'COMMISSION',
-        status: 'SUCCESS',
-        payload: log.rawPayload,
-        employeeId: null,
-        amount: log.amount,
-        billId: log.billId,
-        errorMessage: null,
-        processedAt: log.createdAt,
-        createdAt: log.createdAt,
-      }));
+      const mappedLogs = hopkidLogs.map((log) => {
+        let rawPayloadObj: any = {};
+        try {
+          if (log.rawPayload) rawPayloadObj = JSON.parse(log.rawPayload);
+        } catch (_) {}
+
+        const rawAmount = log.amount ?? rawPayloadObj.amount ?? rawPayloadObj.saleAmount ?? rawPayloadObj.totalAmount ?? rawPayloadObj.grandTotal ?? rawPayloadObj.netAmount;
+        const amountVal = rawAmount !== undefined && rawAmount !== null ? parseFloat(rawAmount) : 0;
+        const billIdVal = log.billId || rawPayloadObj.invoiceNo || rawPayloadObj.billId || rawPayloadObj.billNo || rawPayloadObj.invoiceNumber || null;
+        const eventTypeVal = rawPayloadObj.eventType || 'INVOICE_CREATED';
+
+        return {
+          id: log.id,
+          eventType: eventTypeVal,
+          status: 'SUCCESS',
+          payload: log.rawPayload,
+          employeeId: null,
+          amount: isNaN(amountVal) ? 0 : amountVal,
+          billId: billIdVal,
+          errorMessage: null,
+          processedAt: log.createdAt,
+          createdAt: log.createdAt,
+        };
+      });
 
       res.json({
         success: true,
@@ -93,28 +113,46 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
  */
 router.get('/stats', async (req: Request, res: Response): Promise<void> => {
   try {
-    let total = await prisma.webhookLog.count();
-    let success = await prisma.webhookLog.count({ where: { status: 'SUCCESS' } });
-    let failed = await prisma.webhookLog.count({ where: { status: 'FAILED' } });
-    let processing = await prisma.webhookLog.count({ where: { status: 'PROCESSING' } });
+    let total = 0;
+    let success = 0;
+    let failed = 0;
+    let processing = 0;
+    let sumAmount = 0;
 
-    let totalAmount = await prisma.webhookLog.aggregate({
-      where: { amount: { not: null } },
-      _sum: { amount: true },
-    });
+    try {
+      total = await prisma.webhookLog.count();
+      success = await prisma.webhookLog.count({ where: { status: 'SUCCESS' } });
+      failed = await prisma.webhookLog.count({ where: { status: 'FAILED' } });
+      processing = await prisma.webhookLog.count({ where: { status: 'PROCESSING' } });
+
+      const totalAmountRes = await prisma.webhookLog.aggregate({
+        where: { amount: { not: null } },
+        _sum: { amount: true },
+      });
+      sumAmount = totalAmountRes._sum?.amount || 0;
+    } catch (e) {
+      total = 0;
+    }
 
     // Fallback to HopkidWebhookLog if WebhookLog is empty
     if (total === 0) {
       total = await prisma.hopkidWebhookLog.count();
       success = total;
-      const hopkidTotalAmount = await prisma.hopkidWebhookLog.aggregate({
-        where: { amount: { not: null } },
-        _sum: { amount: true },
-      });
-      totalAmount = hopkidTotalAmount;
+      const hopkidLogs = await prisma.hopkidWebhookLog.findMany();
+      sumAmount = hopkidLogs.reduce((acc, log) => {
+        let amt = log.amount;
+        if (amt === null || amt === undefined) {
+          try {
+            const raw = JSON.parse(log.rawPayload || '{}');
+            const rawAmt = raw.amount ?? raw.saleAmount ?? raw.totalAmount ?? raw.grandTotal;
+            amt = rawAmt ? parseFloat(rawAmt) : 0;
+          } catch (_) {
+            amt = 0;
+          }
+        }
+        return acc + (isNaN(amt as number) ? 0 : (amt as number));
+      }, 0);
     }
-
-    const sumAmount = totalAmount._sum?.amount || 0;
 
     res.json({
       success: true,
