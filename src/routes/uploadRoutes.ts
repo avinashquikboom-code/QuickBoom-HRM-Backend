@@ -22,7 +22,13 @@ router.get('/receipts/:filename', (req, res) => {
     return;
   }
 
-  res.setHeader('Content-Type', 'application/pdf');
+  const lower = filename.toLowerCase();
+  let contentType = 'application/pdf';
+  if (lower.endsWith('.png')) contentType = 'image/png';
+  else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) contentType = 'image/jpeg';
+  else if (lower.endsWith('.webp')) contentType = 'image/webp';
+
+  res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
   
   const stream = fs.createReadStream(filePath);

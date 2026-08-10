@@ -2208,6 +2208,26 @@ export const downloadExpenseReceiptPDF = async (
       return;
     }
 
+    // Check if uploaded receipt file exists on disk and is a PDF
+    if (expense.receiptUrl) {
+      try {
+        const path = await import('path');
+        const fs = await import('fs');
+        const filename = path.basename(expense.receiptUrl);
+        const filePath = path.join(process.cwd(), 'uploads', 'receipts', filename);
+
+        if (fs.existsSync(filePath) && filename.toLowerCase().endsWith('.pdf')) {
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `inline; filename="receipt_${expense.id}.pdf"`);
+          const stream = fs.createReadStream(filePath);
+          stream.pipe(res);
+          return;
+        }
+      } catch (fErr) {
+        console.warn('Error reading uploaded receipt file, falling back to PDF generator:', fErr);
+      }
+    }
+
     const reviewDetails = {
       reviewedBy: expense.reviewedBy || 'HR Administration',
       reviewNote: expense.reviewNote || (expense.status === 'APPROVED' ? 'Approved for reimbursement' : 'Expense Record'),
@@ -2221,7 +2241,7 @@ export const downloadExpenseReceiptPDF = async (
     );
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdfBuffer);
   } catch (error: any) {
     console.error('Download expense receipt PDF error:', error);
