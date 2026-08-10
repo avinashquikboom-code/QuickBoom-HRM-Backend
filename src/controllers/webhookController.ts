@@ -64,8 +64,41 @@ export async function processHopkidSales(salesData: any): Promise<void> {
     }
 
     if (!employee) {
-      console.error('[HopKid] Employee not found:', employeeIdentifier);
-      return; // Skip invalid employee
+      console.log('[HopKid Webhook] Employee not found in local DB. Auto-creating HopKid employee for identifier:', employeeIdentifier);
+
+      const rawName = salesData.name || salesData.employeeName || salesData.fullName || 'HopKid Employee';
+      const nameParts = String(rawName).trim().split(' ');
+      const firstName = nameParts[0] || 'HopKid';
+      const lastName = nameParts.slice(1).join(' ') || 'Employee';
+      const mobileNumber = salesData.mobileNo || salesData.mobileNumber || salesData.phone || salesData.phoneNumber || null;
+      const empCode = salesData.employeeCode || salesData.code || salesData.empCode || salesData.hopkidCode || `HK_${String(employeeIdentifier).replace(/[^a-zA-Z0-9]/g, '')}`;
+      const guid = String(employeeIdentifier).includes('-') ? String(employeeIdentifier) : null;
+
+      try {
+        employee = await prisma.employee.create({
+          data: {
+            employeeID: guid,
+            employeeCode: empCode,
+            firstName,
+            lastName,
+            mobileNumber,
+            status: 'active',
+            source: 'HOPKID',
+            commissionPercentage: 1.00,
+            storeId: salesData.storeId ? parseInt(salesData.storeId, 10) : null,
+          },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        });
+        console.log(`[HopKid Webhook] Auto-created new HopKid employee (ID: ${employee.id}, Code: ${employee.employeeCode})`);
+      } catch (createErr) {
+        console.error('[HopKid Webhook] Failed to auto-create employee:', createErr);
+        return; // Unable to create or resolve employee
+      }
     }
 
     // Resolve store and commission policy
