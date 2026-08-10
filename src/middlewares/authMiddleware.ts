@@ -37,6 +37,9 @@ export const authMiddleware = async (
     '/api/auth/forgot-password',
     '/api/health',
     '/api-docs',
+    '/api/webhook',
+    '/api/hopkid',
+    '/api/webhooks',
   ];
 
   const fullPath = req.originalUrl ? req.originalUrl.split('?')[0] : req.path;
