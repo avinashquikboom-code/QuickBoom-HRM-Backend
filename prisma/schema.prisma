@@ -1205,3 +1205,21 @@ model FeatureAccessRequest {
   @@index([featureName])
 }
 
+model HopkidWebhookLog {
+  id            String   @id @default(uuid())
+  mobileNo      String?
+  employeeCode  String?
+  amount        Float?
+  billId        String?
+  date          DateTime?
+  name          String?
+  storeId       Int?
+  description   String?
+  rawPayload    String   @db.Text
+  createdAt     DateTime @default(now())
+
+  @@index([mobileNo])
+  @@index([employeeCode])
+  @@index([createdAt])
+}
+

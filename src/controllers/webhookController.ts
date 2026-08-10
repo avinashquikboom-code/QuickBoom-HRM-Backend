@@ -3,10 +3,40 @@ import { prisma } from '../utils/db';
 import { resolveEmployeeId } from '../utils/commissionHelper';
 
 /**
+ * Stores raw HopKid webhook payload into HopkidWebhookLog table
+ */
+export async function storeWebhookData(data: any): Promise<void> {
+  try {
+    const rawAmount = data.amount ?? data.saleAmount ?? data.totalAmount;
+    const amountVal = rawAmount !== undefined && rawAmount !== null ? parseFloat(rawAmount) : null;
+    const dateVal = data.date || data.createdAt || data.transactionDate;
+
+    await prisma.hopkidWebhookLog.create({
+      data: {
+        mobileNo: data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null,
+        employeeCode: data.employeeCode || data.code || data.empCode || data.hopkidCode || null,
+        amount: isNaN(amountVal as number) ? null : amountVal,
+        billId: data.billId || data.billNo || data.invoiceNumber || data.invoiceNo || null,
+        date: dateVal ? new Date(dateVal) : new Date(),
+        name: data.name || data.employeeName || null,
+        storeId: data.storeId ? parseInt(data.storeId, 10) : null,
+        description: data.description || data.notes || null,
+        rawPayload: JSON.stringify(data),
+      },
+    });
+    console.log('[HopKid] Data stored in HopkidWebhookLog');
+  } catch (error: any) {
+    console.error('[HopKid] Store log error:', error.message);
+  }
+}
+
+/**
  * Separate async background processor for HopKid sales webhook.
- * Handles validation, employee lookup, policy resolution, and commission transaction creation.
  */
 export async function processHopkidSales(salesData: any): Promise<void> {
+  // 1. Store raw log first
+  await storeWebhookData(salesData);
+
   try {
     console.log('[HopKid Webhook] Processing:', salesData);
 
@@ -30,7 +60,6 @@ export async function processHopkidSales(salesData: any): Promise<void> {
     const rawAmount = salesData.amount ?? salesData.saleAmount ?? salesData.totalAmount;
     const dateStr = salesData.date || salesData.createdAt || salesData.transactionDate;
 
-    // ── STEP 8A: Data validation ─────────────────────────────────────────────
     if (!employeeIdentifier) {
       console.error('[HopKid] Missing employeeId in payload:', salesData);
       return;
@@ -42,12 +71,6 @@ export async function processHopkidSales(salesData: any): Promise<void> {
       return;
     }
 
-    if (!dateStr) {
-      console.error('[HopKid] Missing date in payload:', salesData);
-      return;
-    }
-
-    // ── STEP 8B: Employee existence check ────────────────────────────────────
     const resolvedId = await resolveEmployeeId(employeeIdentifier);
     let employee = null;
 
@@ -64,8 +87,7 @@ export async function processHopkidSales(salesData: any): Promise<void> {
     }
 
     if (!employee) {
-      console.log('[HopKid Webhook] Employee not found in local DB. Auto-creating HopKid employee for identifier:', employeeIdentifier);
-
+      console.log('[HopKid Webhook] Auto-creating HopKid employee for identifier:', employeeIdentifier);
       const rawName = salesData.name || salesData.employeeName || salesData.fullName || 'HopKid Employee';
       const nameParts = String(rawName).trim().split(' ');
       const firstName = nameParts[0] || 'HopKid';
@@ -94,18 +116,15 @@ export async function processHopkidSales(salesData: any): Promise<void> {
             },
           },
         });
-        console.log(`[HopKid Webhook] Auto-created new HopKid employee (ID: ${employee.id}, Code: ${employee.employeeCode})`);
+        console.log(`[HopKid Webhook] Auto-created new employee (ID: ${employee.id})`);
       } catch (createErr) {
         console.error('[HopKid Webhook] Failed to auto-create employee:', createErr);
-        return; // Unable to create or resolve employee
+        return;
       }
     }
 
-    // Resolve store and commission policy
     let policy = employee.commissionPolicies[0];
-    const targetStoreId = salesData.storeId
-      ? parseInt(salesData.storeId, 10)
-      : employee.storeId;
+    const targetStoreId = salesData.storeId ? parseInt(salesData.storeId, 10) : employee.storeId;
 
     if (!policy && targetStoreId) {
       const store = await prisma.store.findUnique({
@@ -134,16 +153,13 @@ export async function processHopkidSales(salesData: any): Promise<void> {
       } else if (policy.commissionType === 'FIXED') {
         commissionAmount = policy.commissionValue;
       }
-    } else if (
-      employee.commissionPercentage !== null &&
-      employee.commissionPercentage !== undefined
-    ) {
+    } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
       commissionType = 'PERCENTAGE';
       commissionPercent = employee.commissionPercentage;
       commissionAmount = (amount * employee.commissionPercentage) / 100;
     }
 
-    const saleDate = new Date(dateStr);
+    const saleDate = dateStr ? new Date(dateStr) : new Date();
     const validDate = isNaN(saleDate.getTime()) ? new Date() : saleDate;
 
     const transaction = await prisma.commissionTransaction.create({
@@ -158,7 +174,7 @@ export async function processHopkidSales(salesData: any): Promise<void> {
         billId: salesData.billId || salesData.billNo || null,
         invoiceNumber: salesData.invoiceNumber || salesData.invoiceNo || null,
         status: 'APPROVED',
-        notes: salesData.notes || 'HopKid Webhook Sales Data',
+        notes: salesData.notes || salesData.description || 'HopKid Webhook Sales Data',
         createdAt: validDate,
         history: {
           create: {
@@ -181,8 +197,6 @@ export async function processHopkidSales(salesData: any): Promise<void> {
 
 /**
  * Non-blocking HopKid sales webhook handler.
- * Responds immediately with 200 OK to avoid blocking callers,
- * and delegates processing to `processHopkidSales` in background.
  */
 export function handleHopkidWebhook(req: Request, res: Response): void {
   const salesData = req.body;
@@ -197,4 +211,20 @@ export function handleHopkidWebhook(req: Request, res: Response): void {
   processHopkidSales(salesData).catch((err) => {
     console.error('[HopKid Webhook] Unhandled background error:', err);
   });
+}
+
+/**
+ * GET Endpoint to view raw stored webhook logs
+ */
+export async function getHopkidLogs(req: Request, res: Response): Promise<void> {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100;
+    const logs = await prisma.hopkidWebhookLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    res.json({ success: true, count: logs.length, data: logs });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Failed to fetch webhook logs', error: error.message });
+  }
 }
