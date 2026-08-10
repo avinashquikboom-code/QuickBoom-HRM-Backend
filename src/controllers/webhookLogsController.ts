@@ -62,6 +62,9 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           employeeId: null,
           amount: amountVal || 0,
           billId: billIdVal || null,
+          customerName: meta.customerName || log.name || 'N/A',
+          employeeName: meta.employeeName || meta.employeeIdentifier || 'N/A',
+          commissionAmount: meta.commissionAmount || 0,
           errorMessage: null,
           processedAt: log.createdAt,
           createdAt: log.createdAt,
@@ -91,6 +94,9 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         ...log,
         amount: amountVal || 0,
         billId: billIdVal || null,
+        customerName: meta.customerName || 'N/A',
+        employeeName: meta.employeeName || meta.employeeIdentifier || 'N/A',
+        commissionAmount: meta.commissionAmount || 0,
         eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
       };
     });

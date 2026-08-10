@@ -54,17 +54,43 @@ export async function resolveEmployeeId(identifier?: string | number | null): Pr
 
 export interface ExtractedWebhookMeta {
   billId: string | null;
+  invoiceNumber: string | null;
   amount: number;
   eventType: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  paymentMode: string | null;
+  branchName: string | null;
+  storeId: number | null;
   invoice: any;
   lineItems: any[];
   firstItem: any;
   employeeIdentifier: string | null;
+  employeeName: string | null;
+  commissionAmount: number | null;
+  eventId: string | null;
 }
 
 export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   if (!data) {
-    return { billId: null, amount: 0, eventType: 'INVOICE_CREATED', invoice: {}, lineItems: [], firstItem: {}, employeeIdentifier: null };
+    return {
+      billId: null,
+      invoiceNumber: null,
+      amount: 0,
+      eventType: 'INVOICE_CREATED',
+      customerName: null,
+      customerPhone: null,
+      paymentMode: null,
+      branchName: null,
+      storeId: null,
+      invoice: {},
+      lineItems: [],
+      firstItem: {},
+      employeeIdentifier: null,
+      employeeName: null,
+      commissionAmount: null,
+      eventId: null,
+    };
   }
 
   let payload = data;
@@ -72,7 +98,24 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     try {
       payload = JSON.parse(data);
     } catch (_) {
-      return { billId: null, amount: 0, eventType: 'INVOICE_CREATED', invoice: {}, lineItems: [], firstItem: {}, employeeIdentifier: null };
+      return {
+        billId: null,
+        invoiceNumber: null,
+        amount: 0,
+        eventType: 'INVOICE_CREATED',
+        customerName: null,
+        customerPhone: null,
+        paymentMode: null,
+        branchName: null,
+        storeId: null,
+        invoice: {},
+        lineItems: [],
+        firstItem: {},
+        employeeIdentifier: null,
+        employeeName: null,
+        commissionAmount: null,
+        eventId: null,
+      };
     }
   }
 
@@ -83,6 +126,8 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     ? payload.lineItems
     : [];
   const firstItem = lineItems[0] || {};
+
+  const eventId = payload?.eventId || payload?.id || payload?.data?.eventId || null;
 
   const billId =
     invoice.invoiceNo ||
@@ -100,7 +145,10 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     firstItem?.invoiceNo ||
     firstItem?.billId ||
     firstItem?.billNo ||
+    eventId ||
     null;
+
+  const invoiceNumber = invoice.invoiceNumber || invoice.invoiceNo || billId || null;
 
   const rawAmount =
     firstItem?.productNetAmount ??
@@ -124,6 +172,38 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   const amount = isNaN(parsedAmount) ? 0 : parsedAmount;
 
   const eventType = payload?.eventType || payload?.topic || payload?.event || 'INVOICE_CREATED';
+
+  const customerName =
+    payload?.customerName ||
+    payload?.data?.customerName ||
+    invoice.customerName ||
+    invoice.customer ||
+    firstItem?.customerName ||
+    payload?.name ||
+    null;
+
+  const customerPhone =
+    payload?.customerPhone ||
+    payload?.data?.customerPhone ||
+    invoice.customerPhone ||
+    firstItem?.customerPhone ||
+    null;
+
+  const paymentMode =
+    payload?.paymentMode ||
+    payload?.data?.paymentMode ||
+    invoice.paymentMode ||
+    invoice.paymentType ||
+    null;
+
+  const branchName =
+    invoice.branchName ||
+    payload?.branchName ||
+    payload?.data?.branchName ||
+    null;
+
+  const storeIdParsed = invoice.storeId ? parseInt(String(invoice.storeId), 10) : (payload?.storeId ? parseInt(String(payload.storeId), 10) : null);
+  const storeId = isNaN(storeIdParsed as number) ? null : storeIdParsed;
 
   const employeeIdentifier =
     firstItem?.employeeCode ||
@@ -150,15 +230,80 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.name ||
     null;
 
+  const employeeName = firstItem?.employeeName || firstItem?.name || payload?.employeeName || payload?.name || null;
+  const rawComm = payload?.commissionAmount || payload?.data?.commissionAmount;
+  const commissionAmount = rawComm !== undefined && rawComm !== null ? parseFloat(String(rawComm)) : null;
+
   return {
     billId: billId ? String(billId) : null,
+    invoiceNumber: invoiceNumber ? String(invoiceNumber) : null,
     amount,
     eventType: String(eventType),
+    customerName: customerName ? String(customerName) : null,
+    customerPhone: customerPhone ? String(customerPhone) : null,
+    paymentMode: paymentMode ? String(paymentMode) : null,
+    branchName: branchName ? String(branchName) : null,
+    storeId,
     invoice,
     lineItems,
     firstItem,
     employeeIdentifier: employeeIdentifier ? String(employeeIdentifier) : null,
+    employeeName: employeeName ? String(employeeName) : null,
+    commissionAmount: commissionAmount && !isNaN(commissionAmount) ? commissionAmount : null,
+    eventId: eventId ? String(eventId) : null,
   };
+}
+
+/**
+ * Fetches full HopKid invoice details from external HopKid API if webhook payload is sparse/event-only
+ */
+export async function fetchHopkidInvoiceDetails(identifier: string): Promise<any | null> {
+  if (!identifier) return null;
+  try {
+    const { getIntegrationSettings } = await import('./configService');
+    const { hopkidApiUrl, hopkidApiKey } = await getIntegrationSettings();
+    const baseUrl = hopkidApiUrl.replace(/\/Employee\/.*$/i, '');
+
+    const endpoints = [
+      `${baseUrl}/Sales/GetInvoiceDetail`,
+      `${baseUrl}/Sales/GetSalesDetail`,
+      `${baseUrl}/Sales/GetSalesList`,
+    ];
+
+    for (const endpoint of endpoints) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'x-api-key': hopkidApiKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              InvoiceNo: identifier,
+              BillId: identifier,
+              EventId: identifier,
+              SalesID: identifier,
+            }),
+          });
+
+          if (response.ok) {
+            const json = (await response.json()) as any;
+            if (json && (json.data || json.invoice || json.lineItems)) {
+              console.log(`✅ [fetchHopkidInvoiceDetails] Successfully fetched full invoice for ${identifier} from ${endpoint}`);
+              return json.data || json;
+            }
+          }
+        } catch (attemptErr) {
+          console.warn(`⚠️ [fetchHopkidInvoiceDetails] Attempt ${attempt} failed for ${endpoint}:`, attemptErr);
+        }
+        await new Promise((r) => setTimeout(r, attempt * 400));
+      }
+    }
+  } catch (err) {
+    console.error('❌ [fetchHopkidInvoiceDetails] Error fetching invoice from HopKid API:', err);
+  }
+  return null;
 }
 
 export function isEligibleCommissionEmployee(emp: any): boolean {
