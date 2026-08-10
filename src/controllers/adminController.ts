@@ -7366,20 +7366,26 @@ export const fetchLiveDashboardStats = async (
           lateEmployees.push(empData);
         }
 
-        if (activeBreak) {
+        const isAttOnBreak = hasAtt.isOnBreak === true;
+        if (activeBreak || isAttOnBreak) {
           if (branchStats) {
             branchStats.onBreak += 1;
           }
-          const breakType = activeBreak.type.toLowerCase();
+          const rawType = (activeBreak?.type || 'TEA').toLowerCase();
           const breakItem = {
             ...empData,
-            breakType: activeBreak.type,
-            startAt: activeBreak.startAt
+            breakType: activeBreak?.type || 'Break',
+            startAt: activeBreak?.startAt || hasAtt.breakStartTime || new Date()
           };
-          if (breakType === 'lunch') breakGroups.lunch.push(breakItem);
-          else if (breakType === 'tea') breakGroups.tea.push(breakItem);
-          else if (breakType === 'personal') breakGroups.personal.push(breakItem);
-          else if (breakType === 'meeting') breakGroups.meeting.push(breakItem);
+          if (rawType.includes('lunch')) {
+            breakGroups.lunch.push(breakItem);
+          } else if (rawType.includes('tea') || rawType.includes('coffee') || rawType.includes('short')) {
+            breakGroups.tea.push(breakItem);
+          } else if (rawType.includes('meet') || rawType.includes('client')) {
+            breakGroups.meeting.push(breakItem);
+          } else {
+            breakGroups.personal.push(breakItem);
+          }
         }
       } else {
         absentEmployees.push(empData);
