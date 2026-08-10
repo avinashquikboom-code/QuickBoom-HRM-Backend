@@ -61,6 +61,7 @@ export interface ExtractedWebhookMeta {
   customerPhone: string | null;
   paymentMode: string | null;
   branchName: string | null;
+  storeName: string | null;
   storeId: number | null;
   invoice: any;
   lineItems: any[];
@@ -82,6 +83,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
       customerPhone: null,
       paymentMode: null,
       branchName: null,
+      storeName: null,
       storeId: null,
       invoice: {},
       lineItems: [],
@@ -107,6 +109,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
         customerPhone: null,
         paymentMode: null,
         branchName: null,
+        storeName: null,
         storeId: null,
         invoice: {},
         lineItems: [],
@@ -200,6 +203,26 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     invoice.branchName ||
     payload?.branchName ||
     payload?.data?.branchName ||
+    firstItem?.branchName ||
+    null;
+
+  const storeName =
+    invoice.storeName ||
+    invoice.branchName ||
+    invoice.store ||
+    invoice.branch ||
+    payload?.data?.storeName ||
+    payload?.data?.branchName ||
+    payload?.data?.store ||
+    payload?.data?.branch ||
+    payload?.storeName ||
+    payload?.branchName ||
+    payload?.store ||
+    payload?.branch ||
+    firstItem?.storeName ||
+    firstItem?.branchName ||
+    firstItem?.store ||
+    firstItem?.branch ||
     null;
 
   const storeIdParsed = invoice.storeId ? parseInt(String(invoice.storeId), 10) : (payload?.storeId ? parseInt(String(payload.storeId), 10) : null);
@@ -230,7 +253,34 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.name ||
     null;
 
-  const employeeName = firstItem?.employeeName || firstItem?.name || payload?.employeeName || payload?.name || null;
+  const employeeName =
+    firstItem?.employeeName ||
+    firstItem?.salesmanName ||
+    firstItem?.salesman ||
+    firstItem?.salesPerson ||
+    firstItem?.salespersonName ||
+    firstItem?.empName ||
+    firstItem?.name ||
+    invoice?.employeeName ||
+    invoice?.salesmanName ||
+    invoice?.salesman ||
+    invoice?.salesPerson ||
+    invoice?.salespersonName ||
+    invoice?.empName ||
+    payload?.data?.employeeName ||
+    payload?.data?.salesmanName ||
+    payload?.data?.salesman ||
+    payload?.data?.salesPerson ||
+    payload?.data?.salespersonName ||
+    payload?.data?.empName ||
+    payload?.employeeName ||
+    payload?.salesmanName ||
+    payload?.salesman ||
+    payload?.salesPerson ||
+    payload?.salespersonName ||
+    payload?.empName ||
+    payload?.name ||
+    null;
   const rawComm = payload?.commissionAmount || payload?.data?.commissionAmount;
   const commissionAmount = rawComm !== undefined && rawComm !== null ? parseFloat(String(rawComm)) : null;
 
@@ -243,6 +293,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     customerPhone: customerPhone ? String(customerPhone) : null,
     paymentMode: paymentMode ? String(paymentMode) : null,
     branchName: branchName ? String(branchName) : null,
+    storeName: storeName ? String(storeName) : null,
     storeId,
     invoice,
     lineItems,
