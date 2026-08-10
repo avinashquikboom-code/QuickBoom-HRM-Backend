@@ -171,8 +171,15 @@ app.use('/api', remoteWorkRoutes);
 app.use('/api', shiftRuleRoutes);
 import featureAccessRoutes from './routes/featureAccessRoutes';
 
+import { downloadExpenseReceiptPDF } from './controllers/hr/hrController';
+
 app.use('/api', attendanceCorrectionRoutes);
 app.use('/api', featureAccessRoutes);
+
+// On-demand Expense Receipt PDF endpoints
+app.get('/api/expense-claim/:id/receipt/pdf', authenticateToken, downloadExpenseReceiptPDF);
+app.get('/api/expense/:id/receipt/pdf', authenticateToken, downloadExpenseReceiptPDF);
+app.get('/api/employee/expenses/:id/receipt/pdf', authenticateToken, downloadExpenseReceiptPDF);
 // Scalar documentation fallback
 app.get('/scalar-docs', (req, res) => {
   res.setHeader('Content-Type', 'text/html');

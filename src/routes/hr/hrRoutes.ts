@@ -10,6 +10,7 @@ import {
   fetchAttendanceTrend,
   fetchHRActivity,
   fetchHRExpenses,
+  downloadExpenseReceiptPDF,
   approveExpense,
   rejectExpense,
   approveLeave,
@@ -168,6 +169,7 @@ router.get('/activity', fetchHRActivity);
  *         description: Server error
  */
 router.get('/expenses', fetchHRExpenses);
+router.get('/expenses/:id/receipt/pdf', downloadExpenseReceiptPDF);
 
 /**
  * @swagger

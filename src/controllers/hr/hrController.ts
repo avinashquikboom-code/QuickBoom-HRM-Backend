@@ -2172,3 +2172,52 @@ export const fetchHRDepartments = async (
     res.status(500).json({ success: false, message: 'Failed to fetch departments.' });
   }
 };
+
+export const downloadExpenseReceiptPDF = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const rawId = req.params.id as string | string[] | undefined;
+    const idStr = Array.isArray(rawId) ? rawId[0] : (rawId || '');
+    const expenseId = parseInt(idStr, 10);
+
+    if (isNaN(expenseId)) {
+      res.status(400).json({ success: false, message: 'Invalid expense ID parameter.' });
+      return;
+    }
+
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: {
+        employee: {
+          include: { department: true, office: true, store: true }
+        }
+      }
+    });
+
+    if (!expense) {
+      res.status(404).json({ success: false, message: 'Expense claim not found.' });
+      return;
+    }
+
+    const reviewDetails = {
+      reviewedBy: expense.reviewedBy || 'HR Administration',
+      reviewNote: expense.reviewNote || (expense.status === 'APPROVED' ? 'Approved for reimbursement' : 'Expense Record'),
+      reviewedAt: expense.updatedAt || new Date()
+    };
+
+    const { pdfBuffer, filename } = await expenseReceiptService.generateExpenseReceipt(
+      expense,
+      expense.employee,
+      reviewDetails
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    console.error('Download expense receipt PDF error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to generate expense receipt PDF.' });
+  }
+};
