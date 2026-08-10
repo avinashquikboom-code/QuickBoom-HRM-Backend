@@ -7,7 +7,8 @@ import {
   getMobileStoreDetails,
   getMobileStoreEmployees,
   getMobileStoreReports,
-  getMobileStoreDashboard
+  getMobileStoreDashboard,
+  getMobileStoreAttendance
 } from '../../controllers/mobile/mobileStoreController';
 
 const router = Router();
@@ -48,6 +49,7 @@ const ALLOWED_STORE_ROLES = [
 
 router.get('/', roleMiddleware(ALLOWED_STORE_ROLES), getMobileStoreDetails);
 router.get('/dashboard', roleMiddleware(ALLOWED_STORE_ROLES), getMobileStoreDashboard);
+router.get('/:storeId/attendance', roleMiddleware(ALLOWED_STORE_ROLES), getMobileStoreAttendance);
 
 /**
  * @swagger

@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import { Role } from '@prisma/client';
+import { formatTime, calculateWorkingHours } from '../../utils/timeFormatter';
 
 const ALLOWED_STORE_ROLES: Role[] = [
   Role.STORE_MANAGER,
@@ -522,5 +523,79 @@ export const getMobileStoreDashboard = async (
       success: false,
       message: 'Failed to retrieve store dashboard.',
     });
+  }
+};
+
+export const getMobileStoreAttendance = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const context = await resolveStoreContext(req);
+    if ('error' in context) {
+      res.status(context.status).json({
+        success: false,
+        message: context.error,
+      });
+      return;
+    }
+
+    const { storeId, storeName } = context;
+
+    const employees = await prisma.employee.findMany({
+      where: {
+        OR: [
+          { officeId: storeId },
+          { storeId }
+        ],
+        status: 'active'
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        employeeCode: true,
+      }
+    });
+
+    const today = new Date();
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const todayStr = formatter.format(today);
+    const utcTodayStr = today.toISOString().slice(0, 10);
+
+    const empIds = employees.map(e => e.id);
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        employeeId: { in: empIds },
+        date: { in: [todayStr, utcTodayStr] }
+      }
+    });
+
+    const attMap = new Map(attendances.map(a => [a.employeeId, a]));
+
+    const data = employees.map(emp => {
+      const att = attMap.get(emp.id);
+      return {
+        id: emp.id,
+        employeeName: `${emp.firstName} ${emp.lastName || ''}`.trim(),
+        employeeCode: emp.employeeCode || '',
+        status: att?.status || 'ABSENT',
+        checkInTime: formatTime(att?.checkIn),
+        checkOutTime: formatTime(att?.checkOut),
+        workingHours: calculateWorkingHours(att?.checkIn, att?.checkOut),
+        breakMinutes: att ? Math.round((att.totalBreakSeconds || 0) / 60) : 0,
+        notes: att?.notes || ''
+      };
+    });
+
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('Get mobile store attendance error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch store attendance.' });
   }
 };
