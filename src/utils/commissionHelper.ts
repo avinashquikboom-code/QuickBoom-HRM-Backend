@@ -52,6 +52,115 @@ export async function resolveEmployeeId(identifier?: string | number | null): Pr
   return null;
 }
 
+export interface ExtractedWebhookMeta {
+  billId: string | null;
+  amount: number;
+  eventType: string;
+  invoice: any;
+  lineItems: any[];
+  firstItem: any;
+  employeeIdentifier: string | null;
+}
+
+export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
+  if (!data) {
+    return { billId: null, amount: 0, eventType: 'INVOICE_CREATED', invoice: {}, lineItems: [], firstItem: {}, employeeIdentifier: null };
+  }
+
+  let payload = data;
+  if (typeof data === 'string') {
+    try {
+      payload = JSON.parse(data);
+    } catch (_) {
+      return { billId: null, amount: 0, eventType: 'INVOICE_CREATED', invoice: {}, lineItems: [], firstItem: {}, employeeIdentifier: null };
+    }
+  }
+
+  const invoice = payload?.data?.invoice || payload?.invoice || {};
+  const lineItems = Array.isArray(payload?.data?.lineItems)
+    ? payload.data.lineItems
+    : Array.isArray(payload?.lineItems)
+    ? payload.lineItems
+    : [];
+  const firstItem = lineItems[0] || {};
+
+  const billId =
+    invoice.invoiceNo ||
+    invoice.billId ||
+    invoice.billNo ||
+    invoice.invoiceNumber ||
+    payload?.data?.invoiceNo ||
+    payload?.invoiceNo ||
+    payload?.data?.billId ||
+    payload?.billId ||
+    payload?.data?.billNo ||
+    payload?.billNo ||
+    payload?.data?.invoiceNumber ||
+    payload?.invoiceNumber ||
+    firstItem?.invoiceNo ||
+    firstItem?.billId ||
+    firstItem?.billNo ||
+    null;
+
+  const rawAmount =
+    firstItem?.productNetAmount ??
+    firstItem?.netAmount ??
+    firstItem?.amount ??
+    invoice.netAmount ??
+    invoice.totalAmount ??
+    invoice.grandTotal ??
+    payload?.data?.netAmount ??
+    payload?.data?.totalAmount ??
+    payload?.data?.grandTotal ??
+    payload?.data?.amount ??
+    payload?.data?.saleAmount ??
+    payload?.amount ??
+    payload?.saleAmount ??
+    payload?.totalAmount ??
+    payload?.grandTotal ??
+    payload?.netAmount;
+
+  const parsedAmount = rawAmount !== undefined && rawAmount !== null ? parseFloat(String(rawAmount)) : 0;
+  const amount = isNaN(parsedAmount) ? 0 : parsedAmount;
+
+  const eventType = payload?.eventType || payload?.topic || payload?.event || 'INVOICE_CREATED';
+
+  const employeeIdentifier =
+    firstItem?.employeeCode ||
+    firstItem?.code ||
+    firstItem?.empCode ||
+    firstItem?.hopkidCode ||
+    firstItem?.employeePhoneNo ||
+    firstItem?.employeeContactNo ||
+    firstItem?.mobileNo ||
+    firstItem?.mobileNumber ||
+    firstItem?.phone ||
+    firstItem?.phoneNumber ||
+    firstItem?.employeeName ||
+    firstItem?.name ||
+    payload?.employeeCode ||
+    payload?.code ||
+    payload?.empCode ||
+    payload?.hopkidCode ||
+    payload?.mobileNo ||
+    payload?.mobileNumber ||
+    payload?.phone ||
+    payload?.phoneNumber ||
+    payload?.employeeName ||
+    payload?.name ||
+    null;
+
+  return {
+    billId: billId ? String(billId) : null,
+    amount,
+    eventType: String(eventType),
+    invoice,
+    lineItems,
+    firstItem,
+    employeeIdentifier: employeeIdentifier ? String(employeeIdentifier) : null,
+  };
+}
+
 export function isEligibleCommissionEmployee(emp: any): boolean {
   if (!emp) return false;
 

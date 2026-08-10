@@ -1,38 +1,34 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
-import { resolveEmployeeId } from '../utils/commissionHelper';
+import { resolveEmployeeId, extractWebhookMeta } from '../utils/commissionHelper';
 
 /**
  * Stores raw HopKid webhook payload into HopkidWebhookLog table
  */
 export async function storeWebhookData(data: any): Promise<void> {
   try {
-    const invoice = data.data?.invoice || data.invoice || {};
-    const lineItems = data.data?.lineItems || data.lineItems || [];
-    const firstItem = lineItems[0] || {};
+    const meta = extractWebhookMeta(data);
+    const dateVal = meta.invoice.invoiceDate || data.invoiceDate || data.date || data.createdAt || data.transactionDate;
 
-    const rawAmount = firstItem.productNetAmount ?? firstItem.netAmount ?? invoice.netAmount ?? data.amount ?? data.saleAmount ?? data.totalAmount ?? data.grandTotal ?? data.netAmount;
-    const amountVal = rawAmount !== undefined && rawAmount !== null ? parseFloat(rawAmount) : null;
-    const dateVal = invoice.invoiceDate || data.invoiceDate || data.date || data.createdAt || data.transactionDate;
-
-    const mobileNo = firstItem.employeePhoneNo || firstItem.employeeContactNo || data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null;
-    const employeeCode = firstItem.employeeCode || data.employeeCode || data.code || data.empCode || data.hopkidCode || null;
-    const billId = invoice.invoiceNo || data.invoiceNo || data.billId || data.billNo || data.invoiceNumber || null;
-    const name = firstItem.employeeName || data.employeeName || data.name || data.customerName || null;
-    const description = invoice.branchName || data.description || data.notes || (data.paymentMode ? `Payment: ${data.paymentMode}` : null);
-    const storeId = data.storeId ? parseInt(data.storeId, 10) : (invoice.storeId ? parseInt(invoice.storeId, 10) : null);
+    const mobileNo = meta.firstItem.employeePhoneNo || meta.firstItem.employeeContactNo || data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null;
+    const employeeCode = meta.firstItem.employeeCode || data.employeeCode || data.code || data.empCode || data.hopkidCode || null;
+    const billId = meta.billId;
+    const amountVal = meta.amount;
+    const name = meta.firstItem.employeeName || data.employeeName || data.name || data.customerName || null;
+    const description = meta.invoice.branchName || data.description || data.notes || (data.paymentMode ? `Payment: ${data.paymentMode}` : null);
+    const storeId = data.storeId ? parseInt(data.storeId, 10) : (meta.invoice.storeId ? parseInt(meta.invoice.storeId, 10) : null);
 
     await prisma.hopkidWebhookLog.create({
       data: {
         mobileNo: mobileNo ? String(mobileNo) : null,
         employeeCode: employeeCode ? String(employeeCode) : null,
-        amount: isNaN(amountVal as number) ? null : amountVal,
+        amount: amountVal,
         billId: billId ? String(billId) : null,
         date: dateVal ? new Date(dateVal) : new Date(),
         name: name ? String(name) : null,
         storeId,
         description: description ? String(description) : null,
-        rawPayload: JSON.stringify(data),
+        rawPayload: typeof data === 'string' ? data : JSON.stringify(data),
       },
     });
     console.log('[HopKid] Data stored in HopkidWebhookLog');
@@ -48,25 +44,21 @@ export async function processHopkidSales(salesData: any): Promise<void> {
   // 1. Store raw log first
   await storeWebhookData(salesData);
 
-  const invoice = salesData.data?.invoice || salesData.invoice || {};
-  const lineItems = salesData.data?.lineItems || salesData.lineItems || [];
-
-  // Process lineItems if array exists and not empty, otherwise fallback to flat salesData
-  const itemsToProcess = lineItems.length > 0 ? lineItems : [salesData];
-
-  const primaryBillId = invoice.invoiceNo || salesData.invoiceNo || salesData.billId || salesData.billNo || salesData.invoiceNumber || null;
-  const primaryAmount = invoice.netAmount ?? salesData.amount ?? salesData.saleAmount ?? salesData.totalAmount;
-  const amountVal = primaryAmount !== undefined && primaryAmount !== null ? parseFloat(primaryAmount) : null;
+  const meta = extractWebhookMeta(salesData);
+  const invoice = meta.invoice || {};
+  const primaryBillId = meta.billId;
+  const primaryAmount = meta.amount;
+  const itemsToProcess = meta.lineItems.length > 0 ? meta.lineItems : [salesData];
 
   let logEntry: any = null;
   try {
     logEntry = await prisma.webhookLog.create({
       data: {
-        eventType: salesData.topic || salesData.eventType || 'COMMISSION',
+        eventType: meta.eventType,
         status: 'PROCESSING',
-        payload: JSON.stringify(salesData),
-        billId: primaryBillId ? String(primaryBillId) : null,
-        amount: isNaN(amountVal as number) ? null : amountVal,
+        payload: typeof salesData === 'string' ? salesData : JSON.stringify(salesData),
+        billId: primaryBillId,
+        amount: primaryAmount,
       },
     });
   } catch (e) {

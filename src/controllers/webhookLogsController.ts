@@ -3,6 +3,7 @@ import { prisma } from '../utils/db';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 import { Role } from '@prisma/client';
+import { extractWebhookMeta } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -27,7 +28,6 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     if (eventType) where.eventType = eventType;
 
     // Fetch logs from WebhookLog
-    // Fetch logs from WebhookLog
     let logs: any[] = [];
     let total = 0;
 
@@ -35,11 +35,8 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       logs = await prisma.webhookLog.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: limitNum,
-        skip: offsetNum,
       });
-
-      total = await prisma.webhookLog.count({ where });
+      total = logs.length;
     } catch (e) {
       total = 0;
     }
@@ -48,40 +45,34 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     if (total === 0 && !status && !eventType) {
       const hopkidLogs = await prisma.hopkidWebhookLog.findMany({
         orderBy: { createdAt: 'desc' },
-        take: limitNum,
-        skip: offsetNum,
       });
 
-      total = await prisma.hopkidWebhookLog.count();
+      total = hopkidLogs.length;
 
       const mappedLogs = hopkidLogs.map((log) => {
-        let rawPayloadObj: any = {};
-        try {
-          if (log.rawPayload) rawPayloadObj = JSON.parse(log.rawPayload);
-        } catch (_) {}
-
-        const rawAmount = log.amount ?? rawPayloadObj.amount ?? rawPayloadObj.saleAmount ?? rawPayloadObj.totalAmount ?? rawPayloadObj.grandTotal ?? rawPayloadObj.netAmount;
-        const amountVal = rawAmount !== undefined && rawAmount !== null ? parseFloat(rawAmount) : 0;
-        const billIdVal = log.billId || rawPayloadObj.invoiceNo || rawPayloadObj.billId || rawPayloadObj.billNo || rawPayloadObj.invoiceNumber || null;
-        const eventTypeVal = rawPayloadObj.eventType || 'INVOICE_CREATED';
+        const meta = extractWebhookMeta(log.rawPayload);
+        const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
+        const billIdVal = log.billId || meta.billId;
 
         return {
           id: log.id,
-          eventType: eventTypeVal,
+          eventType: meta.eventType || 'INVOICE_CREATED',
           status: 'SUCCESS',
           payload: log.rawPayload,
           employeeId: null,
-          amount: isNaN(amountVal) ? 0 : amountVal,
-          billId: billIdVal,
+          amount: amountVal || 0,
+          billId: billIdVal || null,
           errorMessage: null,
           processedAt: log.createdAt,
           createdAt: log.createdAt,
         };
       });
 
+      const paginatedLogs = mappedLogs.slice(offsetNum, offsetNum + limitNum);
+
       res.json({
         success: true,
-        data: mappedLogs,
+        data: paginatedLogs,
         pagination: {
           total,
           limit: limitNum,
@@ -91,9 +82,24 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const mappedLogs = logs.map((log) => {
+      const meta = extractWebhookMeta(log.payload);
+      const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
+      const billIdVal = log.billId || meta.billId;
+
+      return {
+        ...log,
+        amount: amountVal || 0,
+        billId: billIdVal || null,
+        eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
+      };
+    });
+
+    const paginatedLogs = mappedLogs.slice(offsetNum, offsetNum + limitNum);
+
     res.json({
       success: true,
-      data: logs,
+      data: paginatedLogs,
       pagination: {
         total,
         limit: limitNum,
@@ -119,40 +125,45 @@ router.get('/stats', async (req: Request, res: Response): Promise<void> => {
     let processing = 0;
     let sumAmount = 0;
 
+    let webhookLogs: any[] = [];
     try {
-      total = await prisma.webhookLog.count();
-      success = await prisma.webhookLog.count({ where: { status: 'SUCCESS' } });
-      failed = await prisma.webhookLog.count({ where: { status: 'FAILED' } });
-      processing = await prisma.webhookLog.count({ where: { status: 'PROCESSING' } });
-
-      const totalAmountRes = await prisma.webhookLog.aggregate({
-        where: { amount: { not: null } },
-        _sum: { amount: true },
-      });
-      sumAmount = totalAmountRes._sum?.amount || 0;
+      webhookLogs = await prisma.webhookLog.findMany();
+      total = webhookLogs.length;
     } catch (e) {
       total = 0;
     }
 
-    // Fallback to HopkidWebhookLog if WebhookLog is empty
-    if (total === 0) {
-      total = await prisma.hopkidWebhookLog.count();
-      success = total;
+    if (total > 0) {
+      success = webhookLogs.filter((l) => l.status === 'SUCCESS').length;
+      failed = webhookLogs.filter((l) => l.status === 'FAILED').length;
+      processing = webhookLogs.filter((l) => l.status === 'PROCESSING').length;
+
+      sumAmount = webhookLogs.reduce((acc, log) => {
+        let amt = log.amount;
+        if (amt === null || amt === undefined) {
+          const meta = extractWebhookMeta(log.payload);
+          amt = meta.amount;
+        }
+        return acc + (isNaN(amt) ? 0 : amt);
+      }, 0);
+    } else {
       const hopkidLogs = await prisma.hopkidWebhookLog.findMany();
+      total = hopkidLogs.length;
+      success = total;
+      failed = 0;
+      processing = 0;
+
       sumAmount = hopkidLogs.reduce((acc, log) => {
         let amt = log.amount;
         if (amt === null || amt === undefined) {
-          try {
-            const raw = JSON.parse(log.rawPayload || '{}');
-            const rawAmt = raw.amount ?? raw.saleAmount ?? raw.totalAmount ?? raw.grandTotal;
-            amt = rawAmt ? parseFloat(rawAmt) : 0;
-          } catch (_) {
-            amt = 0;
-          }
+          const meta = extractWebhookMeta(log.rawPayload);
+          amt = meta.amount;
         }
-        return acc + (isNaN(amt as number) ? 0 : (amt as number));
+        return acc + (isNaN(amt) ? 0 : amt);
       }, 0);
     }
+
+    const successRate = total > 0 ? ((success / total) * 100).toFixed(2) + '%' : '100%';
 
     res.json({
       success: true,
@@ -161,7 +172,7 @@ router.get('/stats', async (req: Request, res: Response): Promise<void> => {
         success,
         failed,
         processing,
-        successRate: total > 0 ? ((success / total) * 100).toFixed(2) + '%' : '100%',
+        successRate,
         totalAmount: sumAmount,
       },
     });
@@ -190,19 +201,28 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
       });
 
       if (hopkidLog) {
+        const meta = extractWebhookMeta(hopkidLog.rawPayload);
         log = {
           id: hopkidLog.id,
-          eventType: 'COMMISSION',
+          eventType: meta.eventType || 'INVOICE_CREATED',
           status: 'SUCCESS',
           payload: hopkidLog.rawPayload,
           employeeId: null,
-          amount: hopkidLog.amount,
-          billId: hopkidLog.billId,
+          amount: hopkidLog.amount ?? meta.amount,
+          billId: hopkidLog.billId || meta.billId,
           errorMessage: null,
           processedAt: hopkidLog.createdAt,
           createdAt: hopkidLog.createdAt,
         };
       }
+    } else {
+      const meta = extractWebhookMeta(log.payload);
+      log = {
+        ...log,
+        amount: log.amount ?? meta.amount,
+        billId: log.billId || meta.billId,
+        eventType: log.eventType || meta.eventType,
+      };
     }
 
     if (!log) {
