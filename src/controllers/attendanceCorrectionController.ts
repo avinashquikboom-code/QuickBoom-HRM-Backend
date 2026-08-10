@@ -442,8 +442,12 @@ export const getHRAttendanceCorrections = async (req: Request, res: Response) =>
 
     const formatted = requests.map((r) => {
       const emp = empMap.get(r.employeeId);
+      const isoDate = r.attendanceDate ? new Date(r.attendanceDate).toISOString() : null;
       return {
         ...r,
+        date: isoDate,
+        dateToCorrect: isoDate,
+        attendanceDate: isoDate,
         employeeName: emp ? `${emp.firstName} ${emp.lastName}`.trim() : r.employeeId,
         designation: emp?.designation || 'Staff',
         branch: emp?.office?.name || 'Main Office',
