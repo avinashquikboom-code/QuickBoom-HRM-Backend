@@ -9,18 +9,18 @@ export async function storeWebhookData(data: any): Promise<void> {
   try {
     const rawAmount = data.amount ?? data.saleAmount ?? data.totalAmount;
     const amountVal = rawAmount !== undefined && rawAmount !== null ? parseFloat(rawAmount) : null;
-    const dateVal = data.date || data.createdAt || data.transactionDate;
+    const dateVal = data.invoiceDate || data.date || data.createdAt || data.transactionDate;
 
     await prisma.hopkidWebhookLog.create({
       data: {
         mobileNo: data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null,
         employeeCode: data.employeeCode || data.code || data.empCode || data.hopkidCode || null,
         amount: isNaN(amountVal as number) ? null : amountVal,
-        billId: data.billId || data.billNo || data.invoiceNumber || data.invoiceNo || null,
+        billId: data.invoiceNo || data.billId || data.billNo || data.invoiceNumber || null,
         date: dateVal ? new Date(dateVal) : new Date(),
-        name: data.name || data.employeeName || null,
+        name: data.employeeName || data.name || data.customerName || null,
         storeId: data.storeId ? parseInt(data.storeId, 10) : null,
-        description: data.description || data.notes || null,
+        description: data.description || data.notes || (data.paymentMode ? `Payment: ${data.paymentMode}` : null),
         rawPayload: JSON.stringify(data),
       },
     });
@@ -53,12 +53,12 @@ export async function processHopkidSales(salesData: any): Promise<void> {
       salesData.phone ||
       salesData.phoneNumber ||
       salesData.SalesMan ||
-      salesData.name ||
       salesData.employeeName ||
+      salesData.name ||
       salesData.userId;
 
     const rawAmount = salesData.amount ?? salesData.saleAmount ?? salesData.totalAmount;
-    const dateStr = salesData.date || salesData.createdAt || salesData.transactionDate;
+    const dateStr = salesData.invoiceDate || salesData.date || salesData.createdAt || salesData.transactionDate;
 
     if (!employeeIdentifier) {
       console.error('[HopKid] Missing employeeId in payload:', salesData);
@@ -171,8 +171,8 @@ export async function processHopkidSales(salesData: any): Promise<void> {
         commissionType,
         commissionPercent: commissionPercent || null,
         commissionAmount,
-        billId: salesData.billId || salesData.billNo || null,
-        invoiceNumber: salesData.invoiceNumber || salesData.invoiceNo || null,
+        billId: salesData.invoiceNo || salesData.billId || salesData.billNo || null,
+        invoiceNumber: salesData.invoiceNo || salesData.invoiceNumber || salesData.billId || salesData.billNo || null,
         status: 'APPROVED',
         notes: salesData.notes || salesData.description || 'HopKid Webhook Sales Data',
         createdAt: validDate,
