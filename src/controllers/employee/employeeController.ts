@@ -630,10 +630,18 @@ export const fetchLeavesAndBalances = async (
     const sickTotal = 10;
     const earnedTotal = 15;
 
+    const normalizeType = (t: string): string => {
+      const u = (t || '').toUpperCase().trim();
+      if (['CASUAL', 'CASUAL LEAVE', 'CL', 'CASUAL_LEAVE'].includes(u)) return 'CASUAL';
+      if (['SICK', 'SICK LEAVE', 'SL', 'SICK_LEAVE'].includes(u)) return 'SICK';
+      if (['EARNED', 'EARNED LEAVE', 'EL', 'EARNED_LEAVE', 'PAID', 'PAID LEAVE', 'PL'].includes(u)) return 'EARNED';
+      return u;
+    };
+
     // Helper to calculate total days for approved leaves by type
-    const getUsedDays = (type: string) => {
+    const getUsedDays = (targetCategory: string) => {
       return leaveRequests
-        .filter((l) => l.status === 'APPROVED' && l.type === type)
+        .filter((l) => l.status === 'APPROVED' && normalizeType(l.type) === targetCategory)
         .reduce((sum, l) => {
           const diffTime = Math.abs(l.toDate.getTime() - l.fromDate.getTime());
           const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
@@ -1342,9 +1350,17 @@ export const fetchEmployeeDashboardStats = async (
     const sickTotal = 10;
     const earnedTotal = 15;
 
-    const getUsedDays = (type: string) => {
+    const normalizeType = (t: string): string => {
+      const u = (t || '').toUpperCase().trim();
+      if (['CASUAL', 'CASUAL LEAVE', 'CL', 'CASUAL_LEAVE'].includes(u)) return 'CASUAL';
+      if (['SICK', 'SICK LEAVE', 'SL', 'SICK_LEAVE'].includes(u)) return 'SICK';
+      if (['EARNED', 'EARNED LEAVE', 'EL', 'EARNED_LEAVE', 'PAID', 'PAID LEAVE', 'PL'].includes(u)) return 'EARNED';
+      return u;
+    };
+
+    const getUsedDays = (targetCategory: string) => {
       return totalLeaves
-        .filter((l) => l.status === 'APPROVED' && l.type === type)
+        .filter((l) => l.status === 'APPROVED' && normalizeType(l.type) === targetCategory)
         .reduce((sum, l) => {
           const diffTime = Math.abs(l.toDate.getTime() - l.fromDate.getTime());
           const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;

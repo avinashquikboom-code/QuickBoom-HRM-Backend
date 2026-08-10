@@ -3882,9 +3882,13 @@ export const updateAdminLeaveStatus = async (
       }
     });
 
-    if (isApproved) {
+    if (isApproved && existingLeave.status !== 'APPROVED') {
       const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
       await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
+    } else if (!isApproved && existingLeave.status === 'APPROVED') {
+      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, -days).catch(err => console.error('Update used leave error:', err));
+    }
 
       // Auto update attendance records to LEAVE for approved dates
       try {
@@ -3916,7 +3920,6 @@ export const updateAdminLeaveStatus = async (
       } catch (attErr) {
         console.error('Failed to sync attendance for approved leave:', attErr);
       }
-    }
 
     // Send notification to employee
     const notificationTitle = isApproved ? 'Leave Request Approved' : 'Leave Request Rejected';

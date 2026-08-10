@@ -966,8 +966,10 @@ export const approveLeave = async (
     });
 
     // Update leave balance used days
-    const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
+    if (existingLeave.status !== 'APPROVED') {
+      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
+    }
 
     // Auto update attendance records to LEAVE for approved dates
     try {
@@ -1123,6 +1125,11 @@ export const rejectLeave = async (
         }
       }
     });
+
+    if (existingLeave.status === 'APPROVED') {
+      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, -days).catch(err => console.error('Update used leave error:', err));
+    }
 
     // Send notification to employee
     await prisma.notification.create({

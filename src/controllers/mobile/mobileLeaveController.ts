@@ -32,44 +32,44 @@ export const fetchMyLeaves = async (
       orderBy: { appliedOn: 'desc' },
     });
 
-    // Calculate leave balances
+    // Calculate leave balances using normalized types
+    const normalizeType = (typeStr: string): string => {
+      const u = (typeStr || '').toUpperCase().trim();
+      if (['CASUAL', 'CASUAL LEAVE', 'CL', 'CASUAL_LEAVE'].includes(u)) return 'CASUAL';
+      if (['SICK', 'SICK LEAVE', 'SL', 'SICK_LEAVE'].includes(u)) return 'SICK';
+      if (['EARNED', 'EARNED LEAVE', 'EL', 'EARNED_LEAVE', 'PAID', 'PAID LEAVE', 'PL'].includes(u)) return 'EARNED';
+      return u;
+    };
+
+    const casualUsed = allLeaveRequests
+      .filter(l => l.status === 'APPROVED' && normalizeType(l.type) === 'CASUAL')
+      .reduce((sum, l) => sum + (Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1), 0);
+
+    const sickUsed = allLeaveRequests
+      .filter(l => l.status === 'APPROVED' && normalizeType(l.type) === 'SICK')
+      .reduce((sum, l) => sum + (Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1), 0);
+
+    const earnedUsed = allLeaveRequests
+      .filter(l => l.status === 'APPROVED' && normalizeType(l.type) === 'EARNED')
+      .reduce((sum, l) => sum + (Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1), 0);
+
     const leaveBalances = {
       casual: {
         total: 12,
-        used: allLeaveRequests
-          .filter(l => l.status === 'APPROVED' && l.type === 'CASUAL')
-          .reduce((sum, l) => {
-            const days = Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            return sum + days;
-          }, 0),
-        remaining: 0,
+        used: casualUsed,
+        remaining: Math.max(0, 12 - casualUsed),
       },
       sick: {
         total: 10,
-        used: allLeaveRequests
-          .filter(l => l.status === 'APPROVED' && l.type === 'SICK')
-          .reduce((sum, l) => {
-            const days = Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            return sum + days;
-          }, 0),
-        remaining: 0,
+        used: sickUsed,
+        remaining: Math.max(0, 10 - sickUsed),
       },
       earned: {
         total: 15,
-        used: allLeaveRequests
-          .filter(l => l.status === 'APPROVED' && l.type === 'EARNED')
-          .reduce((sum, l) => {
-            const days = Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-            return sum + days;
-          }, 0),
-        remaining: 0,
+        used: earnedUsed,
+        remaining: Math.max(0, 15 - earnedUsed),
       },
     };
-
-    // Calculate remaining
-    leaveBalances.casual.remaining = Math.max(0, leaveBalances.casual.total - leaveBalances.casual.used);
-    leaveBalances.sick.remaining = Math.max(0, leaveBalances.sick.total - leaveBalances.sick.used);
-    leaveBalances.earned.remaining = Math.max(0, leaveBalances.earned.total - leaveBalances.earned.used);
 
     const leaveRequests = allLeaveRequests.map(l => ({
       id: l.id.toString(),
@@ -705,6 +705,11 @@ export const approveLeaveRequest = async (
       }
     });
 
+    if (existingLeave.status !== 'APPROVED') {
+      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
+    }
+
     // Send notification to employee
     await prisma.notification.create({
       data: {
@@ -872,6 +877,11 @@ export const rejectLeaveRequest = async (
         }
       }
     });
+
+    if (existingLeave.status === 'APPROVED') {
+      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, -days).catch(err => console.error('Update used leave error:', err));
+    }
 
     // Send notification to employee
     await prisma.notification.create({

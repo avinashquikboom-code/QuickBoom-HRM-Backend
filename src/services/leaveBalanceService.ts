@@ -180,13 +180,13 @@ class LeaveBalanceService {
   }
 
   /**
-   * Update used leave count when a leave is approved
+   * Update used leave count when a leave is approved or reverted
    */
   async updateUsedLeave(employeeId: number, leaveType: string, days: number): Promise<void> {
     try {
       const fiscalYear = new Date().getFullYear().toString();
       
-      const leaveBalance = await prisma.leaveBalance.findFirst({
+      let leaveBalance = await prisma.leaveBalance.findFirst({
         where: {
           employeeId,
           fiscalYear
@@ -195,9 +195,9 @@ class LeaveBalanceService {
 
       if (!leaveBalance) {
         // Create balance if not found
-        await this.createOrUpdateLeaveBalance({ employeeId, fiscalYear });
-        return await this.updateUsedLeave(employeeId, leaveType, days);
+        leaveBalance = await this.createOrUpdateLeaveBalance({ employeeId, fiscalYear });
       }
+      if (!leaveBalance) return;
 
       const typeUpper = (leaveType || '').toUpperCase().trim();
       const updateData: any = {};
@@ -206,19 +206,34 @@ class LeaveBalanceService {
         updateData.casualUsed = Math.max(0, leaveBalance.casualUsed + days);
       } else if (['SICK', 'SICK LEAVE', 'SL', 'SICK_LEAVE'].includes(typeUpper)) {
         updateData.sickUsed = Math.max(0, leaveBalance.sickUsed + days);
-      } else if (['EARNED', 'EARNED LEAVE', 'EL', 'EARNED_LEAVE'].includes(typeUpper)) {
+      } else if (['EARNED', 'EARNED LEAVE', 'EL', 'EARNED_LEAVE', 'PAID', 'PAID LEAVE', 'PL'].includes(typeUpper)) {
         updateData.earnedUsed = Math.max(0, leaveBalance.earnedUsed + days);
       } else {
-        console.warn(`Unrecognized leave type '${leaveType}' for employee ${employeeId}, defaulting deduction to casualUsed.`);
         updateData.casualUsed = Math.max(0, leaveBalance.casualUsed + days);
       }
 
-      await prisma.leaveBalance.update({
+      const updated = await prisma.leaveBalance.update({
         where: { id: leaveBalance.id },
         data: updateData
       });
 
-      console.log(`✅ Updated used leave for employee ${employeeId}: ${leaveType} (+${days} days)`);
+      console.log(`✅ Updated used leave for employee ${employeeId}: ${leaveType} (${days > 0 ? '+' : ''}${days} days)`);
+
+      try {
+        const { getWebSocketInstance } = require('../utils/websocketSingleton');
+        const casualRemaining = Math.max(0, updated.casualTotal - updated.casualUsed);
+        const sickRemaining = Math.max(0, updated.sickTotal - updated.sickUsed);
+        const earnedRemaining = Math.max(0, updated.earnedTotal - updated.earnedUsed);
+        await getWebSocketInstance().broadcastLeaveBalanceUpdate(employeeId, {
+          ...updated,
+          casualRemaining,
+          sickRemaining,
+          earnedRemaining,
+          totalRemaining: casualRemaining + sickRemaining + earnedRemaining
+        });
+      } catch (wsErr) {
+        // Silently fail if WS is unavailable
+      }
     } catch (error) {
       console.error('Update used leave error:', error);
       throw error;
