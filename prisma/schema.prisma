@@ -1223,3 +1223,20 @@ model HopkidWebhookLog {
   @@index([createdAt])
 }
 
+model WebhookLog {
+  id            String   @id @default(uuid())
+  eventType     String   @default("COMMISSION")
+  status        String   @default("RECEIVED") // RECEIVED, PROCESSING, SUCCESS, FAILED
+  payload       String   @db.Text
+  employeeId    Int?
+  amount        Float?
+  billId        String?
+  errorMessage  String?
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([status])
+  @@index([eventType])
+  @@index([createdAt])
+}
+

@@ -37,6 +37,25 @@ export async function processHopkidSales(salesData: any): Promise<void> {
   // 1. Store raw log first
   await storeWebhookData(salesData);
 
+  const rawAmount = salesData.amount ?? salesData.saleAmount ?? salesData.totalAmount;
+  const amountVal = rawAmount !== undefined && rawAmount !== null ? parseFloat(rawAmount) : null;
+  const billIdVal = salesData.invoiceNo || salesData.billId || salesData.billNo || salesData.invoiceNumber || null;
+
+  let logEntry: any = null;
+  try {
+    logEntry = await prisma.webhookLog.create({
+      data: {
+        eventType: salesData.eventType || 'COMMISSION',
+        status: 'PROCESSING',
+        payload: JSON.stringify(salesData),
+        billId: billIdVal,
+        amount: isNaN(amountVal as number) ? null : amountVal,
+      },
+    });
+  } catch (e) {
+    console.error('[WebhookLog] Failed to create log entry:', e);
+  }
+
   try {
     console.log('[HopKid Webhook] Processing:', salesData);
 
@@ -57,17 +76,30 @@ export async function processHopkidSales(salesData: any): Promise<void> {
       salesData.name ||
       salesData.userId;
 
-    const rawAmount = salesData.amount ?? salesData.saleAmount ?? salesData.totalAmount;
     const dateStr = salesData.invoiceDate || salesData.date || salesData.createdAt || salesData.transactionDate;
 
     if (!employeeIdentifier) {
-      console.error('[HopKid] Missing employeeId in payload:', salesData);
+      const errMsg = 'Missing employeeId in payload';
+      console.error('[HopKid]', errMsg, salesData);
+      if (logEntry) {
+        await prisma.webhookLog.update({
+          where: { id: logEntry.id },
+          data: { status: 'FAILED', errorMessage: errMsg, processedAt: new Date() },
+        }).catch(() => {});
+      }
       return;
     }
 
     const amount = parseFloat(rawAmount);
     if (isNaN(amount) || amount <= 0) {
-      console.error('[HopKid] Invalid amount:', rawAmount);
+      const errMsg = `Invalid amount: ${rawAmount}`;
+      console.error('[HopKid]', errMsg);
+      if (logEntry) {
+        await prisma.webhookLog.update({
+          where: { id: logEntry.id },
+          data: { status: 'FAILED', errorMessage: errMsg, processedAt: new Date() },
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -117,8 +149,14 @@ export async function processHopkidSales(salesData: any): Promise<void> {
           },
         });
         console.log(`[HopKid Webhook] Auto-created new employee (ID: ${employee.id})`);
-      } catch (createErr) {
+      } catch (createErr: any) {
         console.error('[HopKid Webhook] Failed to auto-create employee:', createErr);
+        if (logEntry) {
+          await prisma.webhookLog.update({
+            where: { id: logEntry.id },
+            data: { status: 'FAILED', errorMessage: createErr?.message || String(createErr), processedAt: new Date() },
+          }).catch(() => {});
+        }
         return;
       }
     }
@@ -190,8 +228,29 @@ export async function processHopkidSales(salesData: any): Promise<void> {
     });
 
     console.log('[HopKid Webhook] Success — created commission transaction ID:', transaction.id);
+
+    if (logEntry) {
+      await prisma.webhookLog.update({
+        where: { id: logEntry.id },
+        data: {
+          status: 'SUCCESS',
+          employeeId: employee.id,
+          processedAt: new Date(),
+        },
+      }).catch(() => {});
+    }
   } catch (error: any) {
     console.error('[HopKid Webhook] Failed:', error?.message || error);
+    if (logEntry) {
+      await prisma.webhookLog.update({
+        where: { id: logEntry.id },
+        data: {
+          status: 'FAILED',
+          errorMessage: error?.message || String(error),
+          processedAt: new Date(),
+        },
+      }).catch(() => {});
+    }
   }
 }
 
