@@ -39,6 +39,217 @@ export async function storeWebhookData(data: any): Promise<void> {
 }
 
 /**
+ * HELPER: Group and calculate commission per salesman for multi-product invoices
+ */
+export async function groupAndCalculateCommissionBySalesman(
+  lineItems: any[],
+  invoiceData: { invoiceNo: string; invoiceDate: string | Date; netAmount: number; metaStoreId?: number | null; defaultIdentifier?: string | null }
+): Promise<Map<number, { salesman: any; totalAmount: number; totalCommission: number; products: any[] }>> {
+  console.log('\n╔════════════════════════════════════════════════════════════╗');
+  console.log('║ [COMMISSION GROUPING] Multi-Product Commission Calculator  ║');
+  console.log('╚════════════════════════════════════════════════════════════╝');
+
+  const commissionMap = new Map<number, { salesman: any; totalAmount: number; totalCommission: number; products: any[] }>();
+
+  console.log(`\n[Grouping] Processing ${lineItems.length} products from invoice ${invoiceData.invoiceNo}`);
+  console.log(`[Grouping] Invoice Date: ${invoiceData.invoiceDate}`);
+  console.log(`[Grouping] Invoice Total: ₹${invoiceData.netAmount}`);
+
+  for (let i = 0; i < lineItems.length; i++) {
+    const lineItem = lineItems[i];
+
+    console.log(`\n───────────────────────────────────────────────────────────`);
+    console.log(`[Product ${i + 1}] Processing...`);
+    console.log(`───────────────────────────────────────────────────────────`);
+
+    try {
+      const productName = lineItem.productName || lineItem.name || 'Unknown Product';
+      const productId = lineItem.productID || lineItem.productId || lineItem.id || `prod-${i + 1}`;
+
+      const rawProdAmount =
+        lineItem.productNetAmount ??
+        lineItem.netAmount ??
+        lineItem.amount ??
+        lineItem.saleAmount ??
+        (lineItems.length === 1 ? invoiceData.netAmount : 0);
+
+      const productNetAmount = safeParseAmount(rawProdAmount) || (lineItems.length === 1 ? invoiceData.netAmount : 0);
+
+      console.log(`[Product ${i + 1}] Details:`, {
+        productID: productId,
+        productName: productName,
+        netAmount: productNetAmount,
+      });
+
+      if (productNetAmount <= 0) {
+        console.error(`[Product ${i + 1}] ❌ Invalid amount: ${productNetAmount}`);
+        continue;
+      }
+
+      const employeeIdentifier =
+        lineItem.employeeCode ||
+        lineItem.code ||
+        lineItem.empCode ||
+        lineItem.hopkidCode ||
+        lineItem.employeePhoneNo ||
+        lineItem.employeeContactNo ||
+        lineItem.mobileNo ||
+        lineItem.mobileNumber ||
+        lineItem.phone ||
+        lineItem.phoneNumber ||
+        lineItem.employeeName ||
+        lineItem.name ||
+        invoiceData.defaultIdentifier ||
+        lineItem.employeeId ||
+        lineItem.employeeID ||
+        lineItem.SalesMan;
+
+      if (!employeeIdentifier) {
+        console.error(`[Product ${i + 1}] ❌ Missing employee identifier`);
+        continue;
+      }
+
+      let resolvedId = await resolveEmployeeId(employeeIdentifier);
+      if (resolvedId === null && lineItem.employeePhoneNo) {
+        resolvedId = await resolveEmployeeId(lineItem.employeePhoneNo);
+      }
+      if (resolvedId === null && lineItem.employeeName) {
+        resolvedId = await resolveEmployeeId(lineItem.employeeName);
+      }
+
+      let salesman = null;
+      if (resolvedId !== null) {
+        salesman = await prisma.employee.findUnique({
+          where: { id: resolvedId },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        });
+      }
+
+      if (!salesman) {
+        console.log(`[Product ${i + 1}] Auto-creating Employee for identifier: ${employeeIdentifier}`);
+        const rawName = lineItem.employeeName || lineItem.name || 'HopKid Employee';
+        const nameParts = String(rawName).trim().split(' ');
+        const firstName = nameParts[0] || 'HopKid';
+        const lastName = nameParts.slice(1).join(' ') || 'Employee';
+        const mobileNumber = lineItem.employeePhoneNo || lineItem.employeeContactNo || lineItem.mobileNo || null;
+        const empCode = lineItem.employeeCode || lineItem.code || `HK_${String(employeeIdentifier).replace(/[^a-zA-Z0-9]/g, '')}`;
+
+        salesman = await prisma.employee.create({
+          data: {
+            employeeCode: String(empCode),
+            firstName,
+            lastName,
+            mobileNumber: mobileNumber ? String(mobileNumber) : null,
+            status: 'active',
+            source: 'HOPKID',
+            commissionPercentage: 1.00,
+            storeId: invoiceData.metaStoreId,
+          },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        });
+        console.log(`[Product ${i + 1}] ✅ Auto-created salesman: ${salesman.firstName} ${salesman.lastName} (ID: ${salesman.id})`);
+      }
+
+      let policy = salesman.commissionPolicies?.[0];
+      const targetStoreId = invoiceData.metaStoreId || salesman.storeId;
+
+      if (!policy && targetStoreId) {
+        const store = await prisma.store.findUnique({
+          where: { id: targetStoreId },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        });
+        if (store && store.commissionPolicies.length > 0) {
+          policy = store.commissionPolicies[0];
+        }
+      }
+
+      let productCommission = 0;
+      let commissionRate = 0;
+
+      if (policy) {
+        if (policy.commissionType === 'PERCENTAGE') {
+          commissionRate = policy.commissionValue;
+          productCommission = (productNetAmount * policy.commissionValue) / 100;
+        } else if (policy.commissionType === 'FIXED') {
+          productCommission = policy.commissionValue;
+          commissionRate = 0;
+        }
+      } else {
+        commissionRate = salesman.commissionPercentage ?? 1.0;
+        productCommission = (productNetAmount * commissionRate) / 100;
+      }
+
+      console.log(`[Product ${i + 1}] Commission Calculation:`, {
+        netAmount: productNetAmount,
+        commissionRate,
+        commission: productCommission,
+      });
+
+      if (commissionMap.has(salesman.id)) {
+        const existing = commissionMap.get(salesman.id)!;
+        existing.totalAmount += productNetAmount;
+        existing.totalCommission += productCommission;
+        existing.products.push({
+          productID: productId,
+          productName: productName,
+          productNetAmount: productNetAmount,
+          productCommission: productCommission,
+          policyId: policy ? policy.id : null,
+          storeId: targetStoreId,
+        });
+
+        console.log(`[Product ${i + 1}] 📊 Merged with existing commission for ${salesman.firstName} ${salesman.lastName}:`, {
+          totalAmount: existing.totalAmount,
+          totalCommission: existing.totalCommission,
+          productCount: existing.products.length,
+        });
+      } else {
+        commissionMap.set(salesman.id, {
+          salesman,
+          totalAmount: productNetAmount,
+          totalCommission: productCommission,
+          products: [
+            {
+              productID: productId,
+              productName: productName,
+              productNetAmount: productNetAmount,
+              productCommission: productCommission,
+              policyId: policy ? policy.id : null,
+              storeId: targetStoreId,
+            },
+          ],
+        });
+
+        console.log(`[Product ${i + 1}] ✅ New commission entry for ${salesman.firstName} ${salesman.lastName}:`, {
+          totalAmount: productNetAmount,
+          totalCommission: productCommission,
+        });
+      }
+    } catch (productError: any) {
+      console.error(`[Product ${i + 1}] ❌ Error processing product:`, productError.message);
+      continue;
+    }
+  }
+
+  return commissionMap;
+}
+
+/**
  * Robust async background processor for HopKid sales webhook.
  */
 export async function processHopkidSales(rawSalesData: any): Promise<void> {
@@ -47,54 +258,17 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   console.log(`Payload snippet:`, typeof rawSalesData === 'string' ? rawSalesData.slice(0, 300) : JSON.stringify(rawSalesData).slice(0, 300));
   console.log(`======================================================\n`);
 
-  console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║ [WEBHOOK DEBUG] Full payload inspection                    ║');
-  console.log('╚════════════════════════════════════════════════════════════╝');
-  console.log('[DEBUG] Full raw payload:');
-  console.log(typeof rawSalesData === 'string' ? rawSalesData : JSON.stringify(rawSalesData, null, 2));
-
-  // 1. Store raw payload log first
   await storeWebhookData(rawSalesData);
 
   let effectiveData = rawSalesData;
   let meta = extractWebhookMeta(effectiveData);
 
   const invoice = meta.invoice || {};
-  console.log('\n[DEBUG] Invoice object:');
-  console.log({
-    invoiceNo: invoice.invoiceNo || meta.billId,
-    invoiceDate: invoice.invoiceDate,
-    netAmount: invoice.netAmount,
-    totalAmount: invoice.totalAmount,
-    salesType: invoice.salesType,
-    branchName: invoice.branchName,
-    keys: Object.keys(invoice)
-  });
-
   const lineItems = meta.lineItems || [];
-  console.log(`\n[DEBUG] Found ${lineItems.length} line items`);
-  lineItems.forEach((item: any, index: number) => {
-    console.log(`\n[DEBUG] LineItem ${index}:`);
-    console.log({
-      productID: item.productID,
-      productName: item.productName,
-      productNetAmount: item.productNetAmount,
-      netAmount: item.netAmount,
-      amount: item.amount,
-      employeeID: item.employeeID,
-      employeeCode: item.employeeCode,
-      employeeName: item.employeeName,
-      employeePhoneNo: item.employeePhoneNo,
-      commission: item.commission,
-      commissionAmount: item.commissionAmount,
-      keys: Object.keys(item)
-    });
-  });
 
-  // 2. Check if payload is sparse/event-only (amount is 0 or lineItems empty or employee missing)
   if ((meta.amount === 0 || meta.lineItems.length === 0 || !meta.employeeIdentifier) && (meta.billId || meta.eventId)) {
     const searchId = meta.billId || meta.eventId;
-    console.log(`ℹ️ [HopKid Webhook] Sparse payload detected for ID "${searchId}". Auto-fetching full invoice details from HopKid API...`);
+    console.log(`ℹ️ [HopKid Webhook] Sparse payload detected for ID "${searchId}". Auto-fetching full invoice details...`);
     const fetchedInvoice = await fetchHopkidInvoiceDetails(searchId as string);
 
     if (fetchedInvoice) {
@@ -104,17 +278,13 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
         data: fetchedInvoice.data || fetchedInvoice,
       };
       meta = extractWebhookMeta(effectiveData);
-      console.log(`✅ [HopKid Webhook] Auto-fetched invoice details! Extracted Amount: ₹${meta.amount}, Bill ID: ${meta.billId}, Employee: ${meta.employeeIdentifier}`);
-    } else {
-      console.warn(`⚠️ [HopKid Webhook] Could not fetch invoice details from HopKid API for ID "${searchId}". Proceeding with existing payload.`);
     }
   }
 
-  const primaryBillId = meta.billId;
-  const primaryAmount = meta.amount;
+  const primaryBillId = meta.billId || invoice.invoiceNo || `BILL-${Date.now()}`;
+  const primaryAmount = meta.amount || invoice.netAmount || 0;
   const itemsToProcess = meta.lineItems.length > 0 ? meta.lineItems : [effectiveData];
 
-  // 3. Create WebhookLog entry for tracking
   let logEntry: any = null;
   try {
     logEntry = await prisma.webhookLog.create({
@@ -130,261 +300,98 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
     console.error('[WebhookLog] Failed to create log entry:', e);
   }
 
-  // 4. Duplicate Check
-  if (primaryBillId) {
-    const existingTx = await prisma.commissionTransaction.findFirst({
-      where: { billId: String(primaryBillId) },
-    });
-    if (existingTx) {
-      console.log(`ℹ️ [HopKid Webhook] Duplicate Webhook skipped: Bill ID "${primaryBillId}" already processed in CommissionTransaction.`);
-      if (logEntry) {
-        await prisma.webhookLog.update({
-          where: { id: logEntry.id },
-          data: {
-            status: 'SUCCESS',
-            errorMessage: 'Skipped duplicate invoice processing',
-            processedAt: new Date(),
-          },
-        }).catch(() => {});
-      }
-      return;
-    }
-  }
+  const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || effectiveData.createdAt || effectiveData.transactionDate;
+  const validDate = safeParseDate(dateStr);
 
-  let processedCount = 0;
+  const commissionMap = await groupAndCalculateCommissionBySalesman(itemsToProcess, {
+    invoiceNo: String(primaryBillId),
+    invoiceDate: validDate,
+    netAmount: primaryAmount,
+    metaStoreId: meta.storeId,
+    defaultIdentifier: meta.employeeIdentifier,
+  });
+
+  console.log('\n╔════════════════════════════════════════════════════════════╗');
+  console.log('║ [WEBHOOK] Saving Sales & Commission Records                ║');
+  console.log('╚════════════════════════════════════════════════════════════╝\n');
+
+  let processedSalesCount = 0;
   let lastError: string | null = null;
 
-  // 5. Process line items / sales record with retries
-  for (const item of itemsToProcess) {
-    let success = false;
-    let attempt = 0;
-    const maxAttempts = 3;
+  for (const [salesmanId, commissionData] of commissionMap.entries()) {
+    const salesman = commissionData.salesman;
+    console.log(`\n[Save] Salesman: ${salesman.firstName} ${salesman.lastName} (${salesman.employeeCode})`);
 
-    while (!success && attempt < maxAttempts) {
-      attempt++;
-      try {
-        const employeeIdentifier =
-          item.employeeCode ||
-          item.code ||
-          item.empCode ||
-          item.hopkidCode ||
-          item.employeePhoneNo ||
-          item.employeeContactNo ||
-          item.mobileNo ||
-          item.mobileNumber ||
-          item.phone ||
-          item.phoneNumber ||
-          item.employeeName ||
-          item.name ||
-          meta.employeeIdentifier ||
-          item.employeeId ||
-          item.employeeID ||
-          item.SalesMan ||
-          item.userId;
+    try {
+      for (const product of commissionData.products) {
+        const uniqueBillId = itemsToProcess.length > 1 ? `${primaryBillId}-${product.productID}` : String(primaryBillId);
 
-        const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || item.invoiceDate || item.date || effectiveData.createdAt || effectiveData.transactionDate;
-        const itemBillId = meta.invoice?.invoiceNo || item.invoiceNo || item.billId || item.billNo || item.invoiceNumber || primaryBillId;
-        const rawItemAmount =
-          (meta.invoice?.netAmount && safeParseAmount(meta.invoice.netAmount) > 0 ? meta.invoice.netAmount : null) ??
-          (meta.invoice?.totalAmount && safeParseAmount(meta.invoice.totalAmount) > 0 ? meta.invoice.totalAmount : null) ??
-          (item.productNetAmount && safeParseAmount(item.productNetAmount) > 0 ? item.productNetAmount : null) ??
-          (item.netAmount && safeParseAmount(item.netAmount) > 0 ? item.netAmount : null) ??
-          primaryAmount ??
-          item.amount ??
-          item.saleAmount;
+        console.log(`[Save] Product: ${product.productName}`);
+        console.log(`[Save]   billId: ${uniqueBillId}`);
+        console.log(`[Save]   amount: ₹${product.productNetAmount}`);
 
-        if (!employeeIdentifier) {
-          lastError = 'Missing employee identifier in webhook payload';
-          console.error('[HopKid Webhook]', lastError, item);
-          break;
-        }
-
-        const amount = safeParseAmount(rawItemAmount);
-        if (amount <= 0) {
-          lastError = `Invalid sale amount: ${rawItemAmount}`;
-          console.error('[HopKid Webhook]', lastError);
-          break;
-        }
-
-        let resolvedId = await resolveEmployeeId(employeeIdentifier);
-        if (resolvedId === null && item.employeePhoneNo) {
-          resolvedId = await resolveEmployeeId(item.employeePhoneNo);
-        }
-        if (resolvedId === null && item.employeeName) {
-          resolvedId = await resolveEmployeeId(item.employeeName);
-        }
-
-        let employee = null;
-        if (resolvedId !== null) {
-          employee = await prisma.employee.findUnique({
-            where: { id: resolvedId },
-            include: {
-              commissionPolicies: {
-                where: { isActive: true },
-                orderBy: { priority: 'asc' },
-              },
-            },
-          });
-        }
-
-        // Auto-create HopKid Employee if not found
-        if (!employee) {
-          console.log('[HopKid Webhook] Auto-creating Employee for identifier:', employeeIdentifier);
-          const rawName = item.employeeName || item.name || meta.employeeName || meta.customerName || 'HopKid Employee';
-          const nameParts = String(rawName).trim().split(' ');
-          const firstName = nameParts[0] || 'HopKid';
-          const lastName = nameParts.slice(1).join(' ') || 'Employee';
-          const mobileNumber = item.employeePhoneNo || item.employeeContactNo || item.mobileNo || item.mobileNumber || item.phone || item.phoneNumber || null;
-          const empCode = item.employeeCode || item.code || item.empCode || item.hopkidCode || `HK_${String(employeeIdentifier).replace(/[^a-zA-Z0-9]/g, '')}`;
-          const guid = String(employeeIdentifier).includes('-') ? String(employeeIdentifier) : null;
-
-          try {
-            employee = await prisma.employee.create({
-              data: {
-                employeeID: guid,
-                employeeCode: String(empCode),
-                firstName,
-                lastName,
-                mobileNumber: mobileNumber ? String(mobileNumber) : null,
-                status: 'active',
-                source: 'HOPKID',
-                commissionPercentage: 1.00,
-                storeId: meta.storeId,
-              },
-              include: {
-                commissionPolicies: {
-                  where: { isActive: true },
-                  orderBy: { priority: 'asc' },
-                },
-              },
-            });
-            console.log(`✅ [HopKid Webhook] Auto-created Employee (ID: ${employee.id}, Code: ${employee.employeeCode})`);
-          } catch (createErr: any) {
-            console.error('[HopKid Webhook] Failed to auto-create employee:', createErr);
-            lastError = createErr?.message || String(createErr);
-            break;
-          }
-        }
-
-        // Resolve Commission Policy
-        let policy = employee.commissionPolicies[0];
-        const targetStoreId = meta.storeId || employee.storeId;
-
-        if (!policy && targetStoreId) {
-          const store = await prisma.store.findUnique({
-            where: { id: targetStoreId },
-            include: {
-              commissionPolicies: {
-                where: { isActive: true },
-                orderBy: { priority: 'asc' },
-              },
-            },
-          });
-          if (store && store.commissionPolicies.length > 0) {
-            policy = store.commissionPolicies[0];
-          }
-        }
-
-        let commissionAmount = 0;
-        let commissionPercent = 0;
-        let commissionType = 'PERCENTAGE';
-
-        if (policy) {
-          commissionType = policy.commissionType;
-          if (policy.commissionType === 'PERCENTAGE') {
-            commissionAmount = (amount * policy.commissionValue) / 100;
-            commissionPercent = policy.commissionValue;
-          } else if (policy.commissionType === 'FIXED') {
-            commissionAmount = policy.commissionValue;
-          }
-        } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
-          commissionType = 'PERCENTAGE';
-          commissionPercent = employee.commissionPercentage;
-          commissionAmount = (amount * employee.commissionPercentage) / 100;
-        }
-
-        const validDate = safeParseDate(dateStr);
-
-        console.log('\n[DEBUG Parsed Data]', {
-          billId: itemBillId,
-          saleAmount: amount,
-          invoiceDate: validDate.toISOString(),
-          employeeIdentifier,
+        const existingTx = await prisma.commissionTransaction.findFirst({
+          where: {
+            employeeId: salesman.id,
+            OR: [{ billId: uniqueBillId }, { invoiceNumber: uniqueBillId }],
+          },
         });
 
-        // Wrap transaction creation in atomic DB transaction
-        const createdTx = await prisma.$transaction(async (tx) => {
-          return tx.commissionTransaction.create({
-            data: {
-              employeeId: employee.id,
-              storeId: targetStoreId,
-              policyId: policy ? policy.id : null,
-              saleAmount: amount,
-              commissionType,
-              commissionPercent: commissionPercent || null,
-              commissionAmount: Math.round(commissionAmount * 100) / 100,
-              billId: itemBillId ? String(itemBillId) : null,
-              invoiceNumber: itemBillId ? String(itemBillId) : null,
-              status: 'APPROVED',
-              notes: meta.branchName || meta.customerName ? `Customer: ${meta.customerName || 'N/A'}, Branch: ${meta.branchName || 'N/A'}` : 'HopKid Webhook Sales Data',
-              createdAt: validDate,
-              history: {
-                create: {
-                  employeeId: employee.id,
-                  action: 'CREATED',
-                  newStatus: 'APPROVED',
-                  newAmount: Math.round(commissionAmount * 100) / 100,
-                  reason: 'HopKid Webhook Sales Data',
-                  performedAt: new Date(),
-                },
+        if (existingTx) {
+          console.log(`[Save]   ⚠️ Already exists (idempotent skip)`);
+          continue;
+        }
+
+        const createdTx = await prisma.commissionTransaction.create({
+          data: {
+            employeeId: salesman.id,
+            storeId: product.storeId || meta.storeId,
+            policyId: product.policyId ?? undefined,
+            saleAmount: product.productNetAmount,
+            commissionType: 'PERCENTAGE',
+            commissionPercent: salesman.commissionPercentage || 1.0,
+            commissionAmount: Math.round(product.productCommission * 100) / 100,
+            billId: uniqueBillId,
+            invoiceNumber: uniqueBillId,
+            status: 'APPROVED',
+            notes: `HopKid Invoice ${primaryBillId} - Product: ${product.productName}`,
+            createdAt: validDate,
+            history: {
+              create: {
+                employeeId: salesman.id,
+                action: 'CREATED',
+                newStatus: 'APPROVED',
+                newAmount: Math.round(product.productCommission * 100) / 100,
+                reason: `HopKid Invoice ${primaryBillId} - Product: ${product.productName}`,
+                performedAt: new Date(),
               },
             },
-          });
+          },
         });
 
-        console.log('\n[DEBUG Stored Database Values]', {
-          id: createdTx.id,
-          billId: createdTx.billId,
-          saleAmount: createdTx.saleAmount,
-          commissionAmount: createdTx.commissionAmount,
-          createdAt: createdTx.createdAt.toISOString(),
-          status: createdTx.status,
-        });
-
-        console.log(`✅ [HopKid Webhook] Success! Created Commission Transaction ID: ${createdTx.id} (Employee: ${employee.firstName} ${employee.lastName}, Sale: ₹${amount}, Commission: ₹${createdTx.commissionAmount})`);
-        processedCount++;
-        success = true;
-      } catch (itemErr: any) {
-        console.error(`⚠️ [HopKid Webhook] Attempt ${attempt}/${maxAttempts} failed:`, itemErr.message || itemErr);
-        lastError = itemErr?.message || String(itemErr);
-        if (attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, attempt * 500));
-        }
+        console.log(`[Save]   ✅ Sale & Commission created: ID ${createdTx.id}`);
+        processedSalesCount++;
       }
+    } catch (salesmanErr: any) {
+      console.error(`[Save] ❌ Error processing salesman ${salesman.firstName}:`, salesmanErr.message);
+      lastError = salesmanErr.message;
     }
   }
 
-  // 6. Update WebhookLog status
+  console.log(`\n╔════════════════════════════════════════════════════════════╗`);
+  console.log(`║ [WEBHOOK] ✅ COMPLETE                                      ║`);
+  console.log(`║ Sales created: ${processedSalesCount}                                       ║`);
+  console.log(`╚════════════════════════════════════════════════════════════╝\n`);
+
   if (logEntry) {
-    if (processedCount > 0) {
-      await prisma.webhookLog.update({
-        where: { id: logEntry.id },
-        data: {
-          status: 'SUCCESS',
-          errorMessage: null,
-          processedAt: new Date(),
-        },
-      }).catch(() => {});
-    } else {
-      await prisma.webhookLog.update({
-        where: { id: logEntry.id },
-        data: {
-          status: 'FAILED',
-          errorMessage: lastError || 'Failed to process webhook line items',
-          processedAt: new Date(),
-        },
-      }).catch(() => {});
-    }
+    await prisma.webhookLog.update({
+      where: { id: logEntry.id },
+      data: {
+        status: processedSalesCount > 0 ? 'SUCCESS' : (commissionMap.size === 0 ? 'SUCCESS' : 'FAILED'),
+        errorMessage: lastError ?? undefined,
+        processedAt: new Date(),
+      },
+    }).catch(() => {});
   }
 }
 
