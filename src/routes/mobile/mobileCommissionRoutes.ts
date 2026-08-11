@@ -8,6 +8,9 @@ import {
   getMobileCommissionTargets,
   getMobileCommissionSettlements,
   getMobileWebhookLogs,
+  getMobileCommissionSummary,
+  getMobileCommissionBills,
+  getMobileCommissionBillDetail,
 } from '../../controllers/mobile/mobileCommissionController';
 
 const router = Router();
@@ -15,9 +18,13 @@ const router = Router();
 // Apply auth middleware to protect all mobile commission routes
 router.use(authMiddleware);
 
-// Restrict access to mobile roles only (Store Manager, Salesman, Helper)
-const mobileRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER'];
+// Allow all employee roles (EMPLOYEE, STORE_MANAGER, SALESMAN, HELPER, etc.)
+const mobileRoles = ['EMPLOYEE', 'STORE_MANAGER', 'SALESMAN', 'HELPER', 'ADMIN', 'SUPERADMIN'];
 router.use(roleMiddleware(mobileRoles));
+
+router.get('/summary', getMobileCommissionSummary);
+router.get('/bills', getMobileCommissionBills);
+router.get('/bill/:billId', getMobileCommissionBillDetail);
 
 /**
  * @swagger

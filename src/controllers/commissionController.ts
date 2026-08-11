@@ -352,6 +352,17 @@ export const getCommissionTransactions = async (
 
     const transactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
 
+    console.log('\n[DEBUG API Response Values]', {
+      count: transactions.length,
+      sample: transactions.slice(0, 3).map((t) => ({
+        id: t.id,
+        billId: t.billId || t.invoiceNumber,
+        saleAmount: t.saleAmount,
+        commissionAmount: t.commissionAmount,
+        createdAt: t.createdAt?.toISOString ? t.createdAt.toISOString() : t.createdAt,
+      })),
+    });
+
     res.json({ success: true, transactions });
   } catch (error) {
     console.error('Get commission transactions error:', error);

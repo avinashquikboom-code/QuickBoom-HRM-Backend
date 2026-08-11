@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
-import { resolveEmployeeId, extractWebhookMeta, fetchHopkidInvoiceDetails } from '../utils/commissionHelper';
+import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, fetchHopkidInvoiceDetails } from '../utils/commissionHelper';
 
 /**
  * Stores raw HopKid webhook payload into HopkidWebhookLog table
@@ -8,12 +8,13 @@ import { resolveEmployeeId, extractWebhookMeta, fetchHopkidInvoiceDetails } from
 export async function storeWebhookData(data: any): Promise<void> {
   try {
     const meta = extractWebhookMeta(data);
-    const dateVal = meta.invoice.invoiceDate || data.invoiceDate || data.date || data.createdAt || data.transactionDate;
+    const dateVal = meta.invoice?.invoiceDate || meta.invoice?.date || data.invoiceDate || data.date || data.createdAt || data.transactionDate;
+    const parsedDate = safeParseDate(dateVal);
 
     const mobileNo = meta.firstItem.employeePhoneNo || meta.firstItem.employeeContactNo || data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null;
     const employeeCode = meta.firstItem.employeeCode || data.employeeCode || data.code || data.empCode || data.hopkidCode || null;
     const billId = meta.billId;
-    const amountVal = meta.amount;
+    const amountVal = safeParseAmount(meta.amount || data.amount || data.saleAmount);
     const name = meta.customerName || meta.firstItem.employeeName || data.employeeName || data.name || data.customerName || null;
     const description = meta.branchName || data.description || data.notes || (data.paymentMode ? `Payment: ${data.paymentMode}` : null);
     const storeId = meta.storeId;
@@ -24,14 +25,14 @@ export async function storeWebhookData(data: any): Promise<void> {
         employeeCode: employeeCode ? String(employeeCode) : null,
         amount: amountVal,
         billId: billId ? String(billId) : null,
-        date: dateVal ? new Date(dateVal) : new Date(),
+        date: parsedDate,
         name: name ? String(name) : null,
         storeId,
         description: description ? String(description) : null,
         rawPayload: typeof data === 'string' ? data : JSON.stringify(data),
       },
     });
-    console.log(`[HopKid Raw Store] Log stored in HopkidWebhookLog for Bill ID: ${billId || 'N/A'}`);
+    console.log(`[HopKid Raw Store] Log stored in HopkidWebhookLog for Bill ID: ${billId || 'N/A'}, Amount: ₹${amountVal}, Date: ${parsedDate.toISOString()}`);
   } catch (error: any) {
     console.error('[HopKid Store Error]:', error.message);
   }
@@ -181,13 +182,13 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
           item.SalesMan ||
           item.userId;
 
-        const dateStr = meta.invoice?.invoiceDate || item.invoiceDate || item.date || effectiveData.createdAt || effectiveData.transactionDate;
+        const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || item.invoiceDate || item.date || effectiveData.createdAt || effectiveData.transactionDate;
         const itemBillId = meta.invoice?.invoiceNo || item.invoiceNo || item.billId || item.billNo || item.invoiceNumber || primaryBillId;
         const rawItemAmount =
-          (item.productNetAmount && Number(item.productNetAmount) > 0 ? item.productNetAmount : null) ??
-          (item.netAmount && Number(item.netAmount) > 0 ? item.netAmount : null) ??
-          (meta.invoice?.netAmount && Number(meta.invoice.netAmount) > 0 ? meta.invoice.netAmount : null) ??
-          (meta.invoice?.totalAmount && Number(meta.invoice.totalAmount) > 0 ? meta.invoice.totalAmount : null) ??
+          (meta.invoice?.netAmount && safeParseAmount(meta.invoice.netAmount) > 0 ? meta.invoice.netAmount : null) ??
+          (meta.invoice?.totalAmount && safeParseAmount(meta.invoice.totalAmount) > 0 ? meta.invoice.totalAmount : null) ??
+          (item.productNetAmount && safeParseAmount(item.productNetAmount) > 0 ? item.productNetAmount : null) ??
+          (item.netAmount && safeParseAmount(item.netAmount) > 0 ? item.netAmount : null) ??
           primaryAmount ??
           item.amount ??
           item.saleAmount;
@@ -198,8 +199,8 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
           break;
         }
 
-        const amount = parseFloat(String(rawItemAmount));
-        if (isNaN(amount) || amount <= 0) {
+        const amount = safeParseAmount(rawItemAmount);
+        if (amount <= 0) {
           lastError = `Invalid sale amount: ${rawItemAmount}`;
           console.error('[HopKid Webhook]', lastError);
           break;
@@ -302,8 +303,14 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
           commissionAmount = (amount * employee.commissionPercentage) / 100;
         }
 
-        const saleDate = dateStr ? new Date(dateStr) : new Date();
-        const validDate = isNaN(saleDate.getTime()) ? new Date() : saleDate;
+        const validDate = safeParseDate(dateStr);
+
+        console.log('\n[DEBUG Parsed Data]', {
+          billId: itemBillId,
+          saleAmount: amount,
+          invoiceDate: validDate.toISOString(),
+          employeeIdentifier,
+        });
 
         // Wrap transaction creation in atomic DB transaction
         const createdTx = await prisma.$transaction(async (tx) => {
@@ -333,6 +340,15 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
               },
             },
           });
+        });
+
+        console.log('\n[DEBUG Stored Database Values]', {
+          id: createdTx.id,
+          billId: createdTx.billId,
+          saleAmount: createdTx.saleAmount,
+          commissionAmount: createdTx.commissionAmount,
+          createdAt: createdTx.createdAt.toISOString(),
+          status: createdTx.status,
         });
 
         console.log(`✅ [HopKid Webhook] Success! Created Commission Transaction ID: ${createdTx.id} (Employee: ${employee.firstName} ${employee.lastName}, Sale: ₹${amount}, Commission: ₹${createdTx.commissionAmount})`);

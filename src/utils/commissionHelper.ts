@@ -1,6 +1,59 @@
 import { prisma } from './db';
 
 /**
+ * Safely parses any amount value (number or string with currency symbols/commas).
+ * Example: "1,056.00" -> 1056, "₹1,056.00" -> 1056.
+ */
+export function safeParseAmount(val: any): number {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : Math.abs(val);
+  const cleanStr = String(val).replace(/,/g, '').replace(/[^0-9.-]/g, '');
+  const num = parseFloat(cleanStr);
+  return isNaN(num) ? 0 : Math.abs(num);
+}
+
+/**
+ * Safely parses any date value (ISO strings, YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, or timestamps).
+ * Resolves Indian date format (DD/MM/YYYY or DD-MM-YYYY) correctly without treating day as month.
+ */
+export function safeParseDate(val: any): Date {
+  if (val === undefined || val === null || val === '') return new Date();
+  if (val instanceof Date) return isNaN(val.getTime()) ? new Date() : val;
+  if (typeof val === 'number') {
+    const ms = val < 1e11 ? val * 1000 : val;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+
+  const str = String(val).trim();
+  if (!str) return new Date();
+
+  // Check if string is pure numeric timestamp
+  if (/^\d+$/.test(str)) {
+    const num = Number(str);
+    const ms = num < 1e11 ? num * 1000 : num;
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Check DD/MM/YYYY or DD-MM-YYYY (with optional time HH:mm:ss)
+  const dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+    const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
+    const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+    const d = new Date(Date.UTC(year, month, day, hour, min, sec));
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
+/**
  * Resolves an employee identifier (GUID string, employeeCode, or integer ID)
  * to the canonical local Employee DB primary key (id).
  */
@@ -173,8 +226,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.grandTotal ??
     payload?.netAmount;
 
-  const parsedAmount = rawAmount !== undefined && rawAmount !== null ? parseFloat(String(rawAmount)) : 0;
-  const amount = isNaN(parsedAmount) ? 0 : parsedAmount;
+  const amount = safeParseAmount(rawAmount);
 
   const eventType = payload?.eventType || payload?.topic || payload?.event || 'INVOICE_CREATED';
 

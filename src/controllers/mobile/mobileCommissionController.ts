@@ -439,3 +439,231 @@ export const getMobileWebhookLogs = async (
   }
 };
 
+/**
+ * GET /api/mobile/commission/summary
+ * Monthly commission summary for logged-in employee
+ */
+export const getMobileCommissionSummary = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
+      return;
+    }
+
+    console.log('[Commission Summary] Employee:', employee.id);
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const monthlyTxs = await prisma.commissionTransaction.findMany({
+      where: {
+        employeeId: employee.id,
+        createdAt: {
+          gte: startOfMonth,
+          lte: endOfMonth,
+        },
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+      },
+    });
+
+    const totalSales = monthlyTxs.reduce((sum, t) => sum + t.saleAmount, 0);
+    const totalCommission = monthlyTxs.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const approvedCommission = monthlyTxs
+      .filter((t) => t.status === 'APPROVED' || t.status === 'PAID')
+      .reduce((sum, t) => sum + t.commissionAmount, 0);
+    const paidCommission = monthlyTxs
+      .filter((t) => t.status === 'PAID')
+      .reduce((sum, t) => sum + t.commissionAmount, 0);
+    const pendingCommission = totalCommission - paidCommission;
+
+    const commissionRate = employee.commissionPercentage || 0;
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalSales,
+          totalCommissionEarned: Math.round(totalCommission * 100) / 100,
+          pendingCommission: Math.max(0, Math.round(pendingCommission * 100) / 100),
+          approvedCommission: Math.round(approvedCommission * 100) / 100,
+          paidCommission: Math.round(paidCommission * 100) / 100,
+          commissionRate,
+          transactionCount: monthlyTxs.length,
+          period: {
+            from: startOfMonth.toISOString().split('T')[0],
+            to: endOfMonth.toISOString().split('T')[0],
+          },
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('[Commission Summary] Error:', error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * GET /api/mobile/commission/bills
+ * Bill-wise commission history with period & search filters
+ */
+export const getMobileCommissionBills = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
+      return;
+    }
+
+    const { from, to, billId, limit = 20, offset = 0, period = 'current_month' } = req.query;
+
+    let fromDate: Date;
+    let toDate = new Date();
+
+    switch (period) {
+      case 'previous_month':
+        fromDate = new Date(toDate.getFullYear(), toDate.getMonth() - 1, 1);
+        toDate = new Date(toDate.getFullYear(), toDate.getMonth(), 0, 23, 59, 59, 999);
+        break;
+      case 'custom_range':
+        fromDate = from ? new Date(from as string) : new Date(toDate.getFullYear(), toDate.getMonth(), 1);
+        toDate = to ? new Date(to as string) : toDate;
+        break;
+      case 'current_month':
+      default:
+        fromDate = new Date(toDate.getFullYear(), toDate.getMonth(), 1);
+        toDate = new Date(toDate.getFullYear(), toDate.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+    }
+
+    const where: any = {
+      employeeId: employee.id,
+      createdAt: {
+        gte: fromDate,
+        lte: toDate,
+      },
+    };
+
+    if (billId) {
+      const bStr = String(billId).trim();
+      where.OR = [
+        { billId: { contains: bStr, mode: 'insensitive' } },
+        { invoiceNumber: { contains: bStr, mode: 'insensitive' } },
+      ];
+    }
+
+    const limitNum = parseInt(limit as string, 10) || 20;
+    const offsetNum = parseInt(offset as string, 10) || 0;
+
+    const txs = await prisma.commissionTransaction.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limitNum,
+      skip: offsetNum,
+    });
+
+    const total = await prisma.commissionTransaction.count({ where });
+
+    const bills = txs.map((t) => ({
+      id: String(t.id),
+      billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+      saleAmount: t.saleAmount,
+      commission: t.commissionAmount,
+      date: t.createdAt,
+      status: t.status,
+      description: t.notes,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        bills,
+        pagination: {
+          total,
+          limit: limitNum,
+          offset: offsetNum,
+          hasMore: offsetNum + limitNum < total,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('[Commission Bills] Error:', error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * GET /api/mobile/commission/bill/:billId
+ * Detailed commission info for a specific bill
+ */
+export const getMobileCommissionBillDetail = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
+      return;
+    }
+
+    const rawBillId = req.params.billId;
+    const billIdStr = Array.isArray(rawBillId) ? String(rawBillId[0]) : String(rawBillId);
+
+    const sale = await prisma.commissionTransaction.findFirst({
+      where: {
+        employeeId: employee.id,
+        OR: [{ billId: billIdStr }, { invoiceNumber: billIdStr }],
+      },
+    });
+
+    if (!sale) {
+      res.status(404).json({
+        success: false,
+        message: 'Bill not found',
+      });
+      return;
+    }
+
+    const rate = sale.commissionPercent ?? employee.commissionPercentage ?? 0;
+    const empName = `${employee.firstName} ${employee.lastName}`.trim();
+
+    res.json({
+      success: true,
+      data: {
+        billId: sale.billId || sale.invoiceNumber,
+        saleAmount: sale.saleAmount,
+        commissionRate: rate,
+        commissionAmount: sale.commissionAmount,
+        date: sale.createdAt,
+        status: sale.status,
+        description: sale.notes,
+        createdAt: sale.createdAt,
+        employee: {
+          name: empName,
+          code: employee.employeeCode,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('[Commission Detail] Error:', error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
