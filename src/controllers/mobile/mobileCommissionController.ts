@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
 import { getCommissionStats, extractWebhookMeta } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
+import { CommissionService } from '../../services/commissionService';
 
 // Get commission dashboard stats for logged-in user
 export const getMobileCommissionDashboard = async (
@@ -459,136 +460,70 @@ export const getMobileCommissionSummary = async (
 
     console.log('[Commission Summary] Employee:', employee.id);
 
-    const now = new Date();
-
-    // ─── Date range helpers ─────────────────────────────────────────────────────
-    const todayStart    = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const todayEnd      = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-    // This week: Monday to today
-    const dayOfWeek     = now.getDay() === 0 ? 6 : now.getDay() - 1; // Mon=0
-    const weekStart     = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek, 0, 0, 0, 0);
-    const weekEnd       = todayEnd;
-
-    // Last week: previous Mon–Sun
-    const lastWeekEnd   = new Date(weekStart.getTime() - 1);
-    const lastWeekStart = new Date(lastWeekEnd.getFullYear(), lastWeekEnd.getMonth(), lastWeekEnd.getDate() - 6, 0, 0, 0, 0);
-
-    // This month
-    const monthStart    = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd      = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    // Last month
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-
-    // Fetch all non-rejected transactions
-    const allTxs = await prisma.commissionTransaction.findMany({
-      where: {
-        employeeId: employee.id,
-        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
-      },
-    });
-
-    const calcPeriod = (start: Date, end: Date) => {
-      const txs = allTxs.filter(t => {
-        const dt = new Date(t.createdAt);
-        return dt >= start && dt <= end;
-      });
-      return {
-        totalSales:       txs.reduce((s, t) => s + t.saleAmount, 0),
-        totalCommission:  txs.reduce((s, t) => s + t.commissionAmount, 0),
-        billCount:        txs.length,
-        pendingCommission: txs.filter(t => t.status !== 'PAID').reduce((s, t) => s + t.commissionAmount, 0),
-        paidCommission:    txs.filter(t => t.status === 'PAID').reduce((s, t) => s + t.commissionAmount, 0),
-      };
-    };
-
-    const todayData     = calcPeriod(todayStart, todayEnd);
-    const weekData      = calcPeriod(weekStart, weekEnd);
-    const lastWeekData  = calcPeriod(lastWeekStart, lastWeekEnd);
-    const monthData     = calcPeriod(monthStart, monthEnd);
-    const lastMonthData = calcPeriod(lastMonthStart, lastMonthEnd);
-    const lifetimeSales = allTxs.reduce((s, t) => s + t.saleAmount, 0);
-    const lifetimeComm  = allTxs.reduce((s, t) => s + t.commissionAmount, 0);
+    // Get complete summary using the new CommissionService
+    const summary = await CommissionService.getCompleteSummary(employee.id);
 
     const commissionRate = employee.commissionPercentage || 0;
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
     res.json({
       success: true,
       data: {
         summary: {
-          // Legacy fields (backward compat)
-          totalSales:           monthData.totalSales,
-          totalCommissionEarned: Math.round(monthData.totalCommission * 100) / 100,
-          pendingCommission:     Math.max(0, Math.round(monthData.pendingCommission * 100) / 100),
-          approvedCommission:    Math.round(monthData.totalCommission * 100) / 100,
-          paidCommission:        Math.round(monthData.paidCommission * 100) / 100,
+          // Backward compatibility fields
+          totalSales: summary.thisMonth.netSales,
+          totalCommissionEarned: Math.round(summary.thisMonth.commission * 100) / 100,
+          pendingCommission: Math.round(summary.thisMonth.commission * 100) / 100,
+          approvedCommission: Math.round(summary.thisMonth.commission * 100) / 100,
+          paidCommission: 0,
           commissionRate,
-          transactionCount:      monthData.billCount,
-          period: {
-            from: monthStart.toISOString().split('T')[0],
-            to:   monthEnd.toISOString().split('T')[0],
+          transactionCount: summary.thisMonth.billCount,
+
+          // ═════════════════════════════════════════════════════════════
+          // TODAY'S METRICS (RESETS DAILY AT 00:00)
+          // ═════════════════════════════════════════════════════════════
+          today: {
+            date: summary.today.date,
+            netSales: summary.today.netSales,
+            commission: summary.today.commission,
+            billCount: summary.today.billCount,
+            label: "Today's Performance"
           },
 
-          // ═══════════════════════════════════════════════
-          // NEW: Multi-period breakdown
-          // ═══════════════════════════════════════════════
-          today: {
-            date:            todayStr,
-            totalSales:      Math.round(todayData.totalSales * 100) / 100,
-            totalCommission: Math.round(todayData.totalCommission * 100) / 100,
-            billCount:       todayData.billCount,
-            label:           "Today",
-          },
-          thisWeek: {
-            from:            weekStart.toISOString().split('T')[0],
-            to:              todayStr,
-            totalSales:      Math.round(weekData.totalSales * 100) / 100,
-            totalCommission: Math.round(weekData.totalCommission * 100) / 100,
-            billCount:       weekData.billCount,
-            label:           "This Week",
-          },
-          lastWeek: {
-            from:            lastWeekStart.toISOString().split('T')[0],
-            to:              lastWeekEnd.toISOString().split('T')[0],
-            totalSales:      Math.round(lastWeekData.totalSales * 100) / 100,
-            totalCommission: Math.round(lastWeekData.totalCommission * 100) / 100,
-            billCount:       lastWeekData.billCount,
-            label:           "Last Week",
-          },
+          // ═════════════════════════════════════════════════════════════
+          // THIS MONTH'S METRICS (AGGREGATED)
+          // ═════════════════════════════════════════════════════════════
           thisMonth: {
-            month:             monthStr,
-            monthName:         now.toLocaleString('en-IN', { month: 'long' }),
-            year:              now.getFullYear().toString(),
-            totalSales:        Math.round(monthData.totalSales * 100) / 100,
-            totalCommission:   Math.round(monthData.totalCommission * 100) / 100,
-            billCount:         monthData.billCount,
-            pendingCommission: Math.round(monthData.pendingCommission * 100) / 100,
-            paidCommission:    Math.round(monthData.paidCommission * 100) / 100,
-            label:             now.toLocaleString('en-IN', { month: 'long' }),
+            month: summary.thisMonth.month,
+            netSales: summary.thisMonth.netSales,
+            commission: summary.thisMonth.commission,
+            billCount: summary.thisMonth.billCount,
+            label: 'This Month'
           },
-          lastMonth: {
-            month:             `${lastMonthStart.getFullYear()}-${String(lastMonthStart.getMonth() + 1).padStart(2, '0')}`,
-            monthName:         lastMonthStart.toLocaleString('en-IN', { month: 'long' }),
-            year:              lastMonthStart.getFullYear().toString(),
-            totalSales:        Math.round(lastMonthData.totalSales * 100) / 100,
-            totalCommission:   Math.round(lastMonthData.totalCommission * 100) / 100,
-            billCount:         lastMonthData.billCount,
-            pendingCommission: Math.round(lastMonthData.pendingCommission * 100) / 100,
-            paidCommission:    Math.round(lastMonthData.paidCommission * 100) / 100,
-            label:             lastMonthStart.toLocaleString('en-IN', { month: 'long' }),
-          },
-          lifetime: {
-            totalSales:      Math.round(lifetimeSales * 100) / 100,
-            totalCommission: Math.round(lifetimeComm * 100) / 100,
-            billCount:       allTxs.length,
-            label:           "All Time",
-          },
-        },
-      },
+
+          // ═════════════════════════════════════════════════════════════
+          // LATEST SALE (MOST RECENT TRANSACTION)
+          // ═════════════════════════════════════════════════════════════
+          latestSale: summary.latestSale ? {
+            billId: summary.latestSale.billId,
+            date: summary.latestSale.date.toISOString().split('T')[0],
+            displayDate: new Date(summary.latestSale.date).toLocaleDateString('en-IN'),
+            displayTime: new Date(summary.latestSale.date).toLocaleTimeString('en-IN'),
+            netAmount: summary.latestSale.netAmount,
+            commission: summary.latestSale.commission,
+            commissionRate: summary.latestSale.commissionRate
+          } : null,
+
+          // ═════════════════════════════════════════════════════════════
+          // QUICK STATS
+          // ═════════════════════════════════════════════════════════════
+          stats: {
+            todayPercentage: summary.thisMonth.netSales > 0
+              ? ((summary.today.netSales / summary.thisMonth.netSales) * 100).toFixed(1)
+              : "0.0",
+            description: `Today is ${summary.thisMonth.netSales > 0 ? ((summary.today.netSales / summary.thisMonth.netSales) * 100).toFixed(1) : 0}% of monthly target`
+          }
+        }
+      }
     });
   } catch (error: any) {
     console.error('[Commission Summary] Error:', error.message);
