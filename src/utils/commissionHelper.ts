@@ -45,12 +45,83 @@ export function safeParseDate(val: any): Date {
     const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
     const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
     const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
-    const d = new Date(Date.UTC(year, month, day, hour, min, sec));
+    const d = new Date(year, month, day, hour, min, sec);
     if (!isNaN(d.getTime())) return d;
+  }
+
+  if (str.includes('Z') || str.includes('+')) {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) return d;
+  } else if (str.includes('T')) {
+    const d = new Date(str + 'Z');
+    if (!isNaN(d.getTime())) return d;
+  } else if (str.includes('-')) {
+    const parts = str.split('-');
+    if (parts.length >= 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const d = new Date(year, month, day, 0, 0, 0, 0);
+      if (!isNaN(d.getTime())) return d;
+    }
   }
 
   const d = new Date(str);
   return isNaN(d.getTime()) ? new Date() : d;
+}
+
+/**
+ * Parse sale date correctly handling timezone, ISO, YYYY-MM-DD, and Indian date formats.
+ */
+export async function parseSaleDateCorrectly(invoiceDateString: string): Promise<Date> {
+  console.log('[Date Parse] Input:', invoiceDateString);
+
+  try {
+    if (!invoiceDateString || typeof invoiceDateString !== 'string') {
+      return safeParseDate(invoiceDateString);
+    }
+
+    let date: Date;
+    const str = invoiceDateString.trim();
+
+    // Check DD/MM/YYYY or DD-MM-YYYY (with optional time HH:mm:ss)
+    const dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (dmyMatch) {
+      const day = parseInt(dmyMatch[1], 10);
+      const month = parseInt(dmyMatch[2], 10) - 1;
+      const year = parseInt(dmyMatch[3], 10);
+      const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+      const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
+      const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
+      date = new Date(year, month, day, hour, min, sec);
+    } else if (str.includes('Z') || str.includes('+')) {
+      date = new Date(str);
+    } else if (str.includes('T')) {
+      date = new Date(str + 'Z');
+    } else if (str.includes('-')) {
+      const parts = str.split('-');
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      date = new Date(year, month, day, 0, 0, 0, 0);
+    } else {
+      date = new Date(str);
+    }
+
+    console.log('[Date Parse] Parsed:', date.toISOString());
+    console.log('[Date Parse] Local:', date.toString());
+
+    if (isNaN(date.getTime())) {
+      throw new Error('Invalid date');
+    }
+
+    return date;
+
+  } catch (error: any) {
+    console.error('[Date Parse] ❌ Error parsing date:', error.message);
+    console.log('[Date Parse] Falling back to current date');
+    return new Date();
+  }
 }
 
 /**
@@ -75,9 +146,11 @@ export async function resolveEmployeeId(identifier?: string | number | null): Pr
   if (byCode) return byCode.id;
 
   // 3. Check for DB integer primary key match
+  // Guard: skip if it looks like a phone number (7+ pure digits which would overflow PostgreSQL int)
   const parsedInt = parseInt(str, 10);
-  if (!isNaN(parsedInt)) {
-    const byPk = await prisma.employee.findUnique({ where: { id: parsedInt } });
+  const isPureDigits = /^\d+$/.test(str);
+  if (!isNaN(parsedInt) && parsedInt > 0 && parsedInt <= 2147483647 && !(isPureDigits && str.length >= 7)) {
+    const byPk = await prisma.employee.findUnique({ where: { id: parsedInt } }).catch(() => null);
     if (byPk) return byPk.id;
   }
 
@@ -92,11 +165,18 @@ export async function resolveEmployeeId(identifier?: string | number | null): Pr
   }
 
   // 5. Check for First/Last Name match (case-insensitive)
+  const nameParts = str.trim().split(/\s+/);
   const byName = await prisma.employee.findFirst({
     where: {
       OR: [
         { firstName: { equals: str, mode: 'insensitive' } },
         { lastName: { equals: str, mode: 'insensitive' } },
+        nameParts.length >= 2 ? {
+          AND: [
+            { firstName: { equals: nameParts[0], mode: 'insensitive' } },
+            { lastName: { equals: nameParts.slice(1).join(' '), mode: 'insensitive' } },
+          ],
+        } : { firstName: { equals: str, mode: 'insensitive' } },
       ],
     },
   });
@@ -104,6 +184,7 @@ export async function resolveEmployeeId(identifier?: string | number | null): Pr
 
   return null;
 }
+
 
 export interface ExtractedWebhookMeta {
   billId: string | null;
