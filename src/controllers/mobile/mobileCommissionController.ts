@@ -120,9 +120,18 @@ export const getMobileCommissionTransactions = async (
       return;
     }
 
-    const { status, limit = 50, offset = 0 } = req.query;
+    const { status, startDate, endDate, limit = 50, offset = 0 } = req.query;
     const whereClause: any = { employeeId: employee.id };
     if (status) whereClause.status = status;
+    if (startDate || endDate) {
+      whereClause.createdAt = {};
+      if (startDate) {
+        whereClause.createdAt.gte = new Date(`${startDate}T00:00:00.000Z`);
+      }
+      if (endDate) {
+        whereClause.createdAt.lte = new Date(`${endDate}T23:59:59.999Z`);
+      }
+    }
 
     const transactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
