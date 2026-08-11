@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { getCommissionStats } from '../../utils/commissionHelper';
+import { getCommissionStats, extractWebhookMeta } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 
 // Get commission dashboard stats for logged-in user
@@ -250,9 +250,99 @@ export const getMobileCommissionSettlements = async (
     });
   } catch (error) {
     console.error('Get mobile commission settlements error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve commission settlements.'
-    });
+    res.status(500).json({ success: false, message: 'Failed to retrieve commission settlements.' });
   }
 };
+
+// Get webhook logs scoped to the logged-in employee
+export const getMobileWebhookLogs = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const limitNum = Math.min(parseInt((req.query.limit as string) || '10', 10), 50);
+
+    // 1. Resolve employee for the authenticated user
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id },
+      select: { id: true, employeeCode: true, mobileNumber: true, firstName: true, lastName: true },
+    });
+
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
+      return;
+    }
+
+    const results: any[] = [];
+
+    // 2. WebhookLog — filter by employeeId directly
+    try {
+      const wLogs = await prisma.webhookLog.findMany({
+        where: { employeeId: employee.id },
+        orderBy: { createdAt: 'desc' },
+        take: limitNum,
+      });
+
+      for (const log of wLogs) {
+        const meta = extractWebhookMeta(log.payload);
+        results.push({
+          id: log.id,
+          eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
+          status: log.status || 'SUCCESS',
+          billId: log.billId || meta.billId || null,
+          amount: log.amount ?? meta.amount ?? 0,
+          customerName: meta.customerName || 'N/A',
+          errorMessage: log.errorMessage || null,
+          createdAt: log.createdAt,
+        });
+      }
+    } catch (_) { /* table may not exist */ }
+
+    // 3. HopkidWebhookLog — match by employeeCode or mobileNumber in meta
+    try {
+      const hLogs = await prisma.hopkidWebhookLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 200, // fetch enough to filter client-side
+      });
+
+      const empCodeLower = (employee.employeeCode || '').toLowerCase();
+      const empMobileLower = (employee.mobileNumber || '').toLowerCase();
+
+      for (const log of hLogs) {
+        const meta = extractWebhookMeta(log.rawPayload);
+        const identifier = String(meta.employeeIdentifier || '').toLowerCase();
+
+        const isMatch =
+          (empCodeLower && identifier === empCodeLower) ||
+          (empMobileLower && identifier === empMobileLower);
+
+        if (!isMatch) continue;
+
+        // Skip if already covered by WebhookLog (same billId)
+        const billId = log.billId || meta.billId || null;
+        if (billId && results.some((r) => r.billId === billId)) continue;
+
+        results.push({
+          id: `hopkid-${log.id}`,
+          eventType: meta.eventType || 'INVOICE_CREATED',
+          status: 'SUCCESS',
+          billId,
+          amount: log.amount ?? meta.amount ?? 0,
+          customerName: meta.customerName || 'N/A',
+          errorMessage: null,
+          createdAt: log.createdAt,
+        });
+      }
+    } catch (_) { /* table may not exist */ }
+
+    // Sort combined result by newest first and cap at limit
+    results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const data = results.slice(0, limitNum);
+
+    res.json({ success: true, data, total: data.length });
+  } catch (error) {
+    console.error('getMobileWebhookLogs error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve webhook logs.' });
+  }
+};
+

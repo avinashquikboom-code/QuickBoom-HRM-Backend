@@ -5,7 +5,8 @@ import {
   getMobileCommissionDashboard,
   getMobileCommissionTransactions,
   getMobileCommissionTargets,
-  getMobileCommissionSettlements
+  getMobileCommissionSettlements,
+  getMobileWebhookLogs,
 } from '../../controllers/mobile/mobileCommissionController';
 
 const router = Router();
@@ -118,5 +119,12 @@ router.get('/targets', getMobileCommissionTargets);
  *         description: Server error
  */
 router.get('/settlements', getMobileCommissionSettlements);
+
+/**
+ * GET /api/mobile/commission/webhook-logs
+ * Recent webhook events scoped to the logged-in employee.
+ * Auth + role guard applied by router.use() above.
+ */
+router.get('/webhook-logs', getMobileWebhookLogs);
 
 export default router;
