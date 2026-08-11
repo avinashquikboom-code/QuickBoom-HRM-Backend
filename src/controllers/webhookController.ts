@@ -145,7 +145,14 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
 
         const dateStr = meta.invoice?.invoiceDate || item.invoiceDate || item.date || effectiveData.createdAt || effectiveData.transactionDate;
         const itemBillId = meta.invoice?.invoiceNo || item.invoiceNo || item.billId || item.billNo || item.invoiceNumber || primaryBillId;
-        const rawItemAmount = item.productNetAmount ?? item.netAmount ?? item.amount ?? item.saleAmount ?? primaryAmount;
+        const rawItemAmount =
+          (item.productNetAmount && Number(item.productNetAmount) > 0 ? item.productNetAmount : null) ??
+          (item.netAmount && Number(item.netAmount) > 0 ? item.netAmount : null) ??
+          (meta.invoice?.netAmount && Number(meta.invoice.netAmount) > 0 ? meta.invoice.netAmount : null) ??
+          (meta.invoice?.totalAmount && Number(meta.invoice.totalAmount) > 0 ? meta.invoice.totalAmount : null) ??
+          primaryAmount ??
+          item.amount ??
+          item.saleAmount;
 
         if (!employeeIdentifier) {
           lastError = 'Missing employee identifier in webhook payload';

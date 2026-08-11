@@ -4,6 +4,7 @@ import { roleMiddleware } from '../../middlewares/roleMiddleware';
 import {
   getMobileCommissionDashboard,
   getMobileCommissionTransactions,
+  getMobileCommissionDaily,
   getMobileCommissionTargets,
   getMobileCommissionSettlements,
   getMobileWebhookLogs,
@@ -71,6 +72,12 @@ router.get('/dashboard', getMobileCommissionDashboard);
  *         description: Server error
  */
 router.get('/transactions', getMobileCommissionTransactions);
+
+/**
+ * GET /api/mobile/commission/daily
+ * Get daily commission breakdown for logged-in user (Mobile)
+ */
+router.get('/daily', getMobileCommissionDaily);
 
 /**
  * @swagger

@@ -49,6 +49,18 @@ export const getMobileCommissionDashboard = async (
     res.json({
       success: true,
       data: {
+        summary: {
+          totalSalesAmount: stats.month.sales,
+          commissionAmount: stats.month.commission,
+          approvedCommission: stats.month.commission,
+          commissionRate: employee.commissionPercentage || 0,
+          transactionCount: stats.month.transactions,
+        },
+        employee: {
+          name: `${employee.firstName} ${employee.lastName}`,
+          code: employee.employeeCode,
+          designation: employee.designation,
+        },
         today: {
           commission: stats.today.commission,
           sales: stats.today.sales,
@@ -124,23 +136,36 @@ export const getMobileCommissionTransactions = async (
 
     console.log(`[MOBILE-COMMISSION-DIAG] Transactions retrieved for employee id=${employee.id} | found=${transactions.length}, total=${total}`);
 
+    const mappedTransactions = transactions.map(t => ({
+      id: t.id,
+      billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+      invoiceNumber: t.invoiceNumber,
+      amount: t.saleAmount,
+      saleAmount: t.saleAmount,
+      commission: t.commissionAmount,
+      commissionType: t.commissionType,
+      commissionPercent: t.commissionPercent,
+      commissionAmount: t.commissionAmount,
+      status: t.status,
+      date: t.createdAt,
+      createdAt: t.createdAt,
+      approvedAt: t.approvedAt,
+      paidAt: t.paidAt,
+      description: t.notes,
+      notes: t.notes,
+    }));
+
+    const summary = {
+      totalSales: transactions.reduce((sum, t) => sum + t.saleAmount, 0),
+      totalCommission: transactions.reduce((sum, t) => sum + t.commissionAmount, 0),
+      transactionCount: transactions.length,
+    };
+
     res.json({
       success: true,
       data: {
-        transactions: transactions.map(t => ({
-          id: t.id,
-          billId: t.billId,
-          invoiceNumber: t.invoiceNumber,
-          saleAmount: t.saleAmount,
-          commissionType: t.commissionType,
-          commissionPercent: t.commissionPercent,
-          commissionAmount: t.commissionAmount,
-          status: t.status,
-          createdAt: t.createdAt,
-          approvedAt: t.approvedAt,
-          paidAt: t.paidAt,
-          notes: t.notes,
-        })),
+        transactions: mappedTransactions,
+        summary,
         total,
         limit: parseInt(limit as string),
         offset: parseInt(offset as string),
@@ -152,6 +177,72 @@ export const getMobileCommissionTransactions = async (
       success: false,
       message: 'Failed to retrieve commission transactions.'
     });
+  }
+};
+
+// Get daily commission breakdown for logged-in user
+export const getMobileCommissionDaily = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const employee = await prisma.employee.findFirst({
+      where: { userId: req.user?.id }
+    });
+
+    if (!employee) {
+      res.status(404).json({
+        success: false,
+        message: 'Employee record not found.'
+      });
+      return;
+    }
+
+    const { date } = req.query; // YYYY-MM-DD
+    const queryDate = date ? new Date(date as string) : new Date();
+
+    const dayStart = new Date(queryDate);
+    dayStart.setHours(0, 0, 0, 0);
+
+    const dayEnd = new Date(queryDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const transactions = await prisma.commissionTransaction.findMany({
+      where: {
+        employeeId: employee.id,
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd,
+        },
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const bills = transactions.map(t => ({
+      billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+      amount: t.saleAmount,
+      commission: t.commissionAmount,
+      time: t.createdAt,
+    }));
+
+    const summary = {
+      date: queryDate.toISOString().split('T')[0],
+      totalSales: transactions.reduce((sum, t) => sum + t.saleAmount, 0),
+      totalCommission: transactions.reduce((sum, t) => sum + t.commissionAmount, 0),
+      billCount: bills.length,
+    };
+
+    res.json({
+      success: true,
+      data: {
+        bills,
+        summary,
+      }
+    });
+  } catch (error: any) {
+    console.error('[Daily Commission] Error:', error.message);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 

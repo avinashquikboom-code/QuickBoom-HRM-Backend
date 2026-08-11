@@ -154,15 +154,17 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   const invoiceNumber = invoice.invoiceNumber || invoice.invoiceNo || billId || null;
 
   const rawAmount =
-    firstItem?.productNetAmount ??
-    firstItem?.netAmount ??
-    firstItem?.amount ??
     invoice.netAmount ??
     invoice.totalAmount ??
     invoice.grandTotal ??
+    payload?.data?.invoice?.netAmount ??
+    payload?.data?.invoice?.totalAmount ??
     payload?.data?.netAmount ??
     payload?.data?.totalAmount ??
     payload?.data?.grandTotal ??
+    firstItem?.productNetAmount ??
+    firstItem?.netAmount ??
+    firstItem?.amount ??
     payload?.data?.amount ??
     payload?.data?.saleAmount ??
     payload?.amount ??
