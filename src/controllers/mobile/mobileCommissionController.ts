@@ -291,7 +291,8 @@ export const getMobileWebhookLogs = async (
           status: log.status || 'SUCCESS',
           billId: log.billId || meta.billId || null,
           amount: log.amount ?? meta.amount ?? 0,
-          customerName: meta.customerName || 'N/A',
+          commissionAmount: meta.commissionAmount ?? 0,
+          customerName: meta.customerName || '-',
           errorMessage: log.errorMessage || null,
           createdAt: log.createdAt,
         });
@@ -328,6 +329,7 @@ export const getMobileWebhookLogs = async (
           status: 'SUCCESS',
           billId,
           amount: log.amount ?? meta.amount ?? 0,
+          commissionAmount: meta.commissionAmount ?? 0,
           customerName: meta.customerName || 'N/A',
           errorMessage: null,
           createdAt: log.createdAt,
