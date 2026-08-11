@@ -602,7 +602,7 @@ export async function getCommissionStats(params?: {
       },
       store: true,
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { id: 'desc' },
   });
 
   const allTransactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));

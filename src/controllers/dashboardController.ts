@@ -111,7 +111,7 @@ router.get('/', authenticateToken, roleMiddleware(['ADMIN', 'SUPERADMIN', 'STORE
     // ─── LATEST BILLS ──────────────────────────────────────────────────────
     const latestBills = await prisma.commissionTransaction.findMany({
       take: 10,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { id: 'desc' },
       where: { status: { in: ['PENDING', 'APPROVED', 'PAID'] } },
       include: { employee: { select: { firstName: true, lastName: true, employeeCode: true } } },
     });

@@ -126,7 +126,7 @@ export const getMobileCommissionTransactions = async (
 
     const transactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { id: 'desc' },
       take: parseInt(limit as string),
       skip: parseInt(offset as string),
     });
@@ -217,7 +217,7 @@ export const getMobileCommissionDaily = async (
         },
         status: { in: ['PENDING', 'APPROVED', 'PAID'] },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { id: 'desc' },
     });
 
     const bills = transactions.map(t => ({
@@ -615,7 +615,7 @@ export const getMobileCommissionBills = async (
 
     const txs = await prisma.commissionTransaction.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { id: 'desc' },
       take: limitNum,
       skip: offsetNum,
     });

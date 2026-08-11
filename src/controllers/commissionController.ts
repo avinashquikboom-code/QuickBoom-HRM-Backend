@@ -347,7 +347,7 @@ export const getCommissionTransactions = async (
         store: true,
         policy: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { id: 'desc' },
     });
 
     const transactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
