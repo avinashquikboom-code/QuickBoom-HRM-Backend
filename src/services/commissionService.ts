@@ -7,10 +7,21 @@ export class CommissionService {
    */
   static async getDailyMetrics(employeeId: number, date?: Date): Promise<any> {
     const targetDate = date || new Date();
-    const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 0, 0, 0, 0);
-    const dayEnd   = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate(), 23, 59, 59, 999);
+    // Convert target UTC time to IST (UTC+5:30)
+    const istTime = targetDate.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
 
-    console.log(`[Daily Metrics] Employee: ${employeeId}, Date: ${dayStart.toISOString().split('T')[0]}`);
+    const year = istDate.getUTCFullYear();
+    const month = istDate.getUTCMonth();
+    const dateVal = istDate.getUTCDate();
+
+    // dayStart in UTC corresponding to 00:00:00.000 IST
+    const dayStart = new Date(Date.UTC(year, month, dateVal) - 5.5 * 60 * 60 * 1000);
+    // dayEnd in UTC corresponding to 23:59:59.999 IST
+    const dayEnd = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+
+    const displayDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`;
+    console.log(`[Daily Metrics] Employee: ${employeeId}, IST Date: ${displayDateStr}`);
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
@@ -27,14 +38,14 @@ export class CommissionService {
     const totalCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
 
     console.log(`[Daily Metrics] ✅ Results:`, {
-      date: dayStart.toISOString().split('T')[0],
+      date: displayDateStr,
       netSales: totalNetSales,
       commission: totalCommission,
       billCount: sales.length
     });
 
     return {
-      date: dayStart.toISOString().split('T')[0],
+      date: displayDateStr,
       netSales: totalNetSales,
       commission: totalCommission,
       billCount: sales.length
@@ -47,13 +58,19 @@ export class CommissionService {
    */
   static async getMonthlyMetrics(employeeId: number, month?: string): Promise<any> {
     const now = new Date();
-    const targetMonth = month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    // Convert target UTC time to IST (UTC+5:30)
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+
+    const targetMonth = month || `${istDate.getUTCFullYear()}-${String(istDate.getUTCMonth() + 1).padStart(2, '0')}`;
 
     console.log(`[Monthly Metrics] Employee: ${employeeId}, Month: ${targetMonth}`);
 
     const [year, monthNum] = targetMonth.split('-').map(Number);
-    const monthStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0);
-    const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
+    // monthStart in UTC corresponding to 00:00:00.000 IST
+    const monthStart = new Date(Date.UTC(year, monthNum - 1, 1) - 5.5 * 60 * 60 * 1000);
+    // monthEnd in UTC corresponding to 23:59:59.999 IST
+    const monthEnd = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
