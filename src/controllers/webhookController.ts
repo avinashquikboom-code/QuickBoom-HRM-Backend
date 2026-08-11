@@ -405,24 +405,30 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
 }
 
 /**
- * Non-blocking HopKid sales webhook handler.
+ * Synchronous HopKid sales webhook handler.
  */
-export function handleHopkidWebhook(req: Request, res: Response): void {
+export async function handleHopkidWebhook(req: Request, res: Response): Promise<void> {
   const salesData = req.body;
 
   // ✅ Log immediately
   console.log(`📥 [HopKid Webhook Ingress] Incoming payload at ${new Date().toISOString()}`);
 
-  // ✅ Respond immediately (non-blocking HTTP 200)
-  res.json({
-    success: true,
-    message: 'HopKid webhook received successfully.',
-  });
+  try {
+    // ✅ Process and await database persistence before responding
+    await processHopkidSales(salesData);
 
-  // ✅ Process in background asynchronously
-  processHopkidSales(salesData).catch((err) => {
+    res.json({
+      success: true,
+      message: 'HopKid webhook processed and synchronized successfully.',
+    });
+  } catch (err: any) {
     console.error('❌ [HopKid Webhook] Fatal background processing error:', err);
-  });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 }
 
 /**
