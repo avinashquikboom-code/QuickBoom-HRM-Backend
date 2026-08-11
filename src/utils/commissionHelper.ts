@@ -608,9 +608,20 @@ export async function getCommissionStats(params?: {
   const allTransactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
 
   const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  // Convert UTC time to IST (UTC+5:30)
+  const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(istTime);
+
+  const year = istDate.getUTCFullYear();
+  const month = istDate.getUTCMonth();
+  const dateVal = istDate.getUTCDate();
+
+  // todayStart in UTC corresponding to 00:00:00.000 IST today
+  const todayStart = new Date(Date.UTC(year, month, dateVal) - 5.5 * 60 * 60 * 1000);
+  // todayEnd in UTC corresponding to 23:59:59.999 IST today
+  const todayEnd = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+  // monthStart in UTC corresponding to 00:00:00.000 IST 1st of month
+  const monthStart = new Date(Date.UTC(year, month, 1) - 5.5 * 60 * 60 * 1000);
 
   const todayTxns = allTransactions.filter(
     (t) => new Date(t.createdAt) >= todayStart && new Date(t.createdAt) <= todayEnd
