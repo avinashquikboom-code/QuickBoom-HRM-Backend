@@ -132,10 +132,15 @@ app.use('/scalar-docs', apiReference({
   }
 }));
 
+import commissionReportController from './controllers/commissionReportController';
+import dashboardController from './controllers/dashboardController';
+
 // Routes
 app.use('/api', homeRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/admin/commission', commissionReportController);
+app.use('/api/admin/dashboard', dashboardController);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);

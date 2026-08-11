@@ -2683,6 +2683,83 @@ export const fetchDashboardStats = async (
       }
     }
 
+    // Commission Stats for Admin Dashboard
+    const dNow = new Date();
+    const dTodayStart = new Date(dNow.getFullYear(), dNow.getMonth(), dNow.getDate(), 0, 0, 0, 0);
+    const dTodayEnd   = new Date(dNow.getFullYear(), dNow.getMonth(), dNow.getDate(), 23, 59, 59, 999);
+    const dMonthStart = new Date(dNow.getFullYear(), dNow.getMonth(), 1, 0, 0, 0, 0);
+    const dMonthEnd   = new Date(dNow.getFullYear(), dNow.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const [todayCommTxns, monthCommTxns, latestCommBills] = await Promise.all([
+      prisma.commissionTransaction.findMany({
+        where: {
+          createdAt: { gte: dTodayStart, lte: dTodayEnd },
+          status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+          ...(officeId ? { storeId: officeId } : {})
+        }
+      }),
+      prisma.commissionTransaction.findMany({
+        where: {
+          createdAt: { gte: dMonthStart, lte: dMonthEnd },
+          status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+          ...(officeId ? { storeId: officeId } : {})
+        },
+        include: { employee: true }
+      }),
+      prisma.commissionTransaction.findMany({
+        take: 10,
+        where: {
+          status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+          ...(officeId ? { storeId: officeId } : {})
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { employee: { select: { firstName: true, lastName: true, employeeCode: true } } }
+      })
+    ]);
+
+    const todayTotalSales = todayCommTxns.reduce((s, t) => s + t.saleAmount, 0);
+    const todayTotalCommission = todayCommTxns.reduce((s, t) => s + t.commissionAmount, 0);
+    const monthTotalSales = monthCommTxns.reduce((s, t) => s + t.saleAmount, 0);
+    const monthTotalCommission = monthCommTxns.reduce((s, t) => s + t.commissionAmount, 0);
+
+    const empCommMap = new Map<number, any>();
+    for (const tx of monthCommTxns) {
+      const empId = tx.employeeId;
+      const empName = tx.employee ? `${tx.employee.firstName} ${tx.employee.lastName}`.trim() : `Emp ${empId}`;
+      const empCode = tx.employee?.employeeCode || `EMP_${empId}`;
+      if (!empCommMap.has(empId)) {
+        empCommMap.set(empId, { employeeName: empName, employeeCode: empCode, totalCommission: 0, totalSales: 0 });
+      }
+      const item = empCommMap.get(empId);
+      item.totalCommission += tx.commissionAmount;
+      item.totalSales += tx.saleAmount;
+    }
+
+    const topPerformers = Array.from(empCommMap.values())
+      .sort((a, b) => b.totalCommission - a.totalCommission)
+      .slice(0, 5)
+      .map((item, idx) => ({
+        rank: idx + 1,
+        employeeName: item.employeeName,
+        employeeCode: item.employeeCode,
+        totalCommission: Math.round(item.totalCommission * 100) / 100,
+        totalSales: Math.round(item.totalSales * 100) / 100,
+      }));
+
+    const fmtDispDate = (dt: Date) => {
+      const d = new Date(dt);
+      return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+    };
+
+    const latestBills = latestCommBills.map(b => ({
+      billId: b.billId || b.invoiceNumber || `TXN-${b.id}`,
+      date: b.createdAt.toISOString().split('T')[0],
+      displayDate: fmtDispDate(b.createdAt),
+      employeeName: b.employee ? `${b.employee.firstName} ${b.employee.lastName}`.trim() : 'N/A',
+      saleAmount: b.saleAmount,
+      commission: Math.round(b.commissionAmount * 100) / 100,
+    }));
+
     res.json({
       success: true,
       data: {
@@ -2697,7 +2774,21 @@ export const fetchDashboardStats = async (
         newHires,
         subscriptionDistribution,
         storeWiseEmployeeCount,
-        storeWiseAttendanceSummary
+        storeWiseAttendanceSummary,
+        today: {
+          totalSales: Math.round(todayTotalSales * 100) / 100,
+          totalCommission: Math.round(todayTotalCommission * 100) / 100,
+          billCount: todayCommTxns.length,
+          date: `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}-${String(dNow.getDate()).padStart(2, '0')}`
+        },
+        thisMonth: {
+          totalSales: Math.round(monthTotalSales * 100) / 100,
+          totalCommission: Math.round(monthTotalCommission * 100) / 100,
+          billCount: monthCommTxns.length,
+          month: `${dNow.getFullYear()}-${String(dNow.getMonth() + 1).padStart(2, '0')}`
+        },
+        topPerformers,
+        latestBills,
       },
     });
   } catch (error) {
