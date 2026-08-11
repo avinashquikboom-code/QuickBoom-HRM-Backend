@@ -50,10 +50,22 @@ export function safeParseDate(val: any): Date {
   }
 
   if (str.includes('Z') || str.includes('+')) {
+    // Has explicit timezone info — parse as-is
     const d = new Date(str);
     if (!isNaN(d.getTime())) return d;
   } else if (str.includes('T')) {
-    const d = new Date(str + 'Z');
+    // DateTime WITHOUT timezone (e.g. HopKid: "2026-08-11T23:28:00")
+    // ✅ Parse as LOCAL time (IST) — do NOT append 'Z' (that forces UTC → wrong date in IST)
+    const [datePart, timePart] = str.split('T');
+    const dateParts = datePart.split('-');
+    const timeParts = (timePart || '00:00:00').split(':');
+    const year = parseInt(dateParts[0], 10);
+    const month = parseInt(dateParts[1], 10) - 1;
+    const day = parseInt(dateParts[2], 10);
+    const hour = parseInt(timeParts[0], 10) || 0;
+    const min = parseInt(timeParts[1], 10) || 0;
+    const sec = parseInt((timeParts[2] || '0').split('.')[0], 10) || 0;
+    const d = new Date(year, month, day, hour, min, sec);
     if (!isNaN(d.getTime())) return d;
   } else if (str.includes('-')) {
     const parts = str.split('-');
@@ -95,9 +107,21 @@ export async function parseSaleDateCorrectly(invoiceDateString: string): Promise
       const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
       date = new Date(year, month, day, hour, min, sec);
     } else if (str.includes('Z') || str.includes('+')) {
+      // Has explicit timezone info — parse as-is
       date = new Date(str);
     } else if (str.includes('T')) {
-      date = new Date(str + 'Z');
+      // DateTime WITHOUT timezone (e.g. HopKid: "2026-08-11T23:28:00")
+      // ✅ Parse as LOCAL time (IST) — do NOT append 'Z' (that forces UTC → wrong date in IST)
+      const [datePart, timePart] = str.split('T');
+      const dateParts = datePart.split('-');
+      const timeParts = (timePart || '00:00:00').split(':');
+      const year = parseInt(dateParts[0], 10);
+      const month = parseInt(dateParts[1], 10) - 1;
+      const day = parseInt(dateParts[2], 10);
+      const hour = parseInt(timeParts[0], 10) || 0;
+      const min = parseInt(timeParts[1], 10) || 0;
+      const sec = parseInt((timeParts[2] || '0').split('.')[0], 10) || 0;
+      date = new Date(year, month, day, hour, min, sec);
     } else if (str.includes('-')) {
       const parts = str.split('-');
       const year = parseInt(parts[0], 10);

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
-import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, fetchHopkidInvoiceDetails } from '../utils/commissionHelper';
+import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails } from '../utils/commissionHelper';
 
 /**
  * Stores raw HopKid webhook payload into HopkidWebhookLog table
@@ -301,7 +301,16 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   }
 
   const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || effectiveData.createdAt || effectiveData.transactionDate;
-  const validDate = safeParseDate(dateStr);
+  // ✅ Use parseSaleDateCorrectly: treats HopKid's "2026-08-11T23:28:00" (no timezone) as IST local time
+  const validDate = await parseSaleDateCorrectly(dateStr || '');
+  console.log('[Webhook] Parsed invoice date:', {
+    input: dateStr,
+    parsed: validDate.toISOString(),
+    localDate: validDate.toLocaleDateString('en-IN'),
+    day: validDate.getDate(),
+    month: validDate.getMonth() + 1,
+    year: validDate.getFullYear()
+  });
 
   const commissionMap = await groupAndCalculateCommissionBySalesman(itemsToProcess, {
     invoiceNo: String(primaryBillId),
