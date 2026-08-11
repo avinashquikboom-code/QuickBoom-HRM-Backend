@@ -70,9 +70,17 @@ export const fetchCommissionWallet = async (
 
     const totalSalesAmount = approvedOrPaid.reduce((sum, t) => sum + t.saleAmount, 0);
 
+    const latestPayslip = await prisma.payslip.findFirst({
+      where: { employeeId: employee.id },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
+    const netSalary = latestPayslip ? latestPayslip.netSalary : 0;
+
     res.json({
       success: true,
       data: {
+        netSalary,
+        totalEarnings: netSalary + pendingCommission,
         totalCommissionBalance: pendingCommission,
         currentMonthCommission,
         lastMonthCommission,
