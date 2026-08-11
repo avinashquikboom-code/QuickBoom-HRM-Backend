@@ -105,13 +105,14 @@ export async function parseSaleDateCorrectly(invoiceDateString: string): Promise
       const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
       const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
       const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
-      date = new Date(year, month, day, hour, min, sec);
+      const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
+      date = new Date(utcMs);
     } else if (str.includes('Z') || str.includes('+')) {
       // Has explicit timezone info — parse as-is
       date = new Date(str);
     } else if (str.includes('T')) {
       // DateTime WITHOUT timezone (e.g. HopKid: "2026-08-11T23:28:00")
-      // ✅ Parse as LOCAL time (IST) — do NOT append 'Z' (that forces UTC → wrong date in IST)
+      // ✅ Parse as LOCAL time (IST)
       const [datePart, timePart] = str.split('T');
       const dateParts = datePart.split('-');
       const timeParts = (timePart || '00:00:00').split(':');
@@ -121,13 +122,15 @@ export async function parseSaleDateCorrectly(invoiceDateString: string): Promise
       const hour = parseInt(timeParts[0], 10) || 0;
       const min = parseInt(timeParts[1], 10) || 0;
       const sec = parseInt((timeParts[2] || '0').split('.')[0], 10) || 0;
-      date = new Date(year, month, day, hour, min, sec);
+      const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
+      date = new Date(utcMs);
     } else if (str.includes('-')) {
       const parts = str.split('-');
       const year = parseInt(parts[0], 10);
       const month = parseInt(parts[1], 10) - 1;
       const day = parseInt(parts[2], 10);
-      date = new Date(year, month, day, 0, 0, 0, 0);
+      const utcMs = Date.UTC(year, month, day, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000;
+      date = new Date(utcMs);
     } else {
       date = new Date(str);
     }
