@@ -581,34 +581,64 @@ export const fetchCommissionReport = async (
     let gteDate: Date | undefined;
     let lteDate: Date | undefined;
     if (fromStr) {
-      gteDate = new Date(`${fromStr}T00:00:00+05:30`);
+      const d = new Date(fromStr.includes('T') ? fromStr : `${fromStr}T00:00:00+05:30`);
+      if (isNaN(d.getTime())) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid "from" date format. Use ISO 8601 format (YYYY-MM-DD).',
+        });
+        return;
+      }
+      gteDate = d;
     }
     if (toStr) {
-      lteDate = new Date(`${toStr}T23:59:59.999+05:30`);
+      const d = new Date(toStr.includes('T') ? toStr : `${toStr}T23:59:59.999+05:30`);
+      if (isNaN(d.getTime())) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid "to" date format. Use ISO 8601 format (YYYY-MM-DD).',
+        });
+        return;
+      }
+      lteDate = d;
+    }
+
+    if (gteDate && lteDate && gteDate > lteDate) {
+      const temp = gteDate;
+      gteDate = lteDate;
+      lteDate = temp;
     }
 
     let targetEmployeeId: number | undefined;
-    // For all mobile-authenticated users (not HR/Admin), scope report to their own records
     const mobileRoles = ['EMPLOYEE', 'SALESMAN', 'STORE_MANAGER', 'HELPER'];
     if (req.user?.role && mobileRoles.includes(req.user.role)) {
       const employee = await prisma.employee.findUnique({
         where: { userId: req.user.id },
       });
       if (!employee) {
-        res.json({ success: true, data: [] });
+        res.json({
+          success: true,
+          data: [],
+          report: [],
+          summary: {
+            totalSales: 0,
+            totalCredits: 0,
+            netSales: 0,
+            totalCommission: 0,
+            transactionCount: 0,
+            averageSale: 0,
+            periodCount: 0,
+            dateRange: { from: fromStr || null, to: toStr || null },
+          },
+        });
         return;
       }
       targetEmployeeId = employee.id;
-      console.log(`[COMMISSION-DIAG] fetchCommissionReport | MOBILE user role=${req.user.role}, scoped to employeeId=${targetEmployeeId}`);
     } else if (req.query.employeeId) {
       const resolvedId = await resolveEmployeeId(req.query.employeeId as string);
       targetEmployeeId = resolvedId !== null ? resolvedId : -1;
-      console.log(`[COMMISSION-DIAG] fetchCommissionReport | ADMIN/HR, explicit employeeId filter=${targetEmployeeId}`);
-    } else {
-      console.log(`[COMMISSION-DIAG] fetchCommissionReport | ADMIN/HR, no employeeId filter — returning ALL employees`);
     }
 
-    // Store filter — admin can pass storeId to scope the report
     let targetStoreId: number | undefined;
     if (req.query.storeId) {
       const parsedStoreId = parseInt(req.query.storeId as string, 10);
@@ -618,14 +648,17 @@ export const fetchCommissionReport = async (
     }
 
     const whereClause: any = {
-      createdAt: {
-        gte: gteDate,
-        lte: lteDate,
-      },
       employee: {
         source: { not: 'MANUAL' },
       },
     };
+
+    if (gteDate || lteDate) {
+      whereClause.createdAt = {};
+      if (gteDate) whereClause.createdAt.gte = gteDate;
+      if (lteDate) whereClause.createdAt.lte = lteDate;
+    }
+
     if (targetEmployeeId !== undefined) whereClause.employeeId = targetEmployeeId;
     if (targetStoreId !== undefined) whereClause.storeId = targetStoreId;
 
@@ -643,6 +676,7 @@ export const fetchCommissionReport = async (
       orderBy: {
         createdAt: 'asc',
       },
+      take: 10000,
     });
 
     const transactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
@@ -657,6 +691,7 @@ export const fetchCommissionReport = async (
     const rawAllEmployees = await prisma.employee.findMany({
       where: empWhere,
       include: { store: true, user: true },
+      take: 2000,
     });
 
     const allEmployees = rawAllEmployees.filter(isEligibleCommissionEmployee);
@@ -677,7 +712,12 @@ export const fetchCommissionReport = async (
     } = {};
 
     const formatDateString = (d: Date) => {
-      return d.toISOString().split('T')[0];
+      try {
+        if (!d || isNaN(d.getTime())) return new Date().toISOString().split('T')[0];
+        return d.toISOString().split('T')[0];
+      } catch (_) {
+        return new Date().toISOString().split('T')[0];
+      }
     };
 
     const defaultStart = fromStr || formatDateString(new Date());
@@ -703,8 +743,10 @@ export const fetchCommissionReport = async (
       };
     }
 
-    const getPeriodBoundaries = (date: Date, type: string) => {
-      const istDate = new Date(date.getTime() + 5.5 * 60 * 60 * 1000);
+    const getPeriodBoundaries = (dateInput: any, type: string) => {
+      const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+      const validDate = (!d || isNaN(d.getTime())) ? new Date() : d;
+      const istDate = new Date(validDate.getTime() + 5.5 * 60 * 60 * 1000);
 
       if (type === 'day') {
         const start = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate()));
@@ -715,11 +757,9 @@ export const fetchCommissionReport = async (
       } else if (type === 'week') {
         const utcDay = istDate.getUTCDay();
         const dayDiff = utcDay === 0 ? -6 : 1 - utcDay;
-
         const monday = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate() + dayDiff));
         const sunday = new Date(monday);
         sunday.setUTCDate(monday.getUTCDate() + 6);
-
         return {
           start: formatDateString(monday),
           end: formatDateString(sunday),
@@ -743,7 +783,6 @@ export const fetchCommissionReport = async (
       if (tx.employee) {
         empName = `${tx.employee.firstName || ''} ${tx.employee.lastName || ''}`.trim() || 'Employee';
         empCode = tx.employee.employeeCode || '';
-        // Prefer the transaction's own store, fallback to employee's assigned store
         branchName = (tx as any).store?.name || tx.employee.store?.name || '';
       }
 
@@ -763,14 +802,14 @@ export const fetchCommissionReport = async (
         };
       }
 
-      const amount = tx.saleAmount;
+      const amount = tx.saleAmount || 0;
       if (amount > 0) {
         groups[key].sales += amount;
       } else {
         groups[key].credits += Math.abs(amount);
       }
 
-      groups[key].commissionAmount += tx.commissionAmount;
+      groups[key].commissionAmount += (tx.commissionAmount || 0);
       if (tx.commissionPercent !== null && tx.commissionPercent !== undefined) {
         groups[key].rates.push(tx.commissionPercent);
       }
@@ -810,15 +849,39 @@ export const fetchCommissionReport = async (
       return a.employeeName.localeCompare(b.employeeName);
     });
 
+    const totalSales = report.reduce((sum, r) => sum + r.totalSales, 0);
+    const totalCredits = report.reduce((sum, r) => sum + r.totalCredits, 0);
+    const netSales = report.reduce((sum, r) => sum + r.netSales, 0);
+    const totalCommission = report.reduce((sum, r) => sum + r.commissionAmount, 0);
+    const transactionCount = transactions.length;
+    const averageSale = transactionCount > 0 ? totalSales / transactionCount : 0;
+
+    const summary = {
+      totalSales: Number(totalSales.toFixed(2)),
+      totalCredits: Number(totalCredits.toFixed(2)),
+      netSales: Number(netSales.toFixed(2)),
+      totalCommission: Number(totalCommission.toFixed(2)),
+      transactionCount,
+      averageSale: Number(averageSale.toFixed(2)),
+      periodCount: report.length,
+      dateRange: {
+        from: fromStr || (gteDate ? formatDateString(gteDate) : null),
+        to: toStr || (lteDate ? formatDateString(lteDate) : null),
+      },
+    };
+
     res.json({
       success: true,
       data: report,
+      report,
+      summary,
     });
   } catch (error: any) {
     console.error('Fetch commission report error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to generate commission report.',
+      error: error?.message || 'Server error',
     });
   }
 };
