@@ -102,6 +102,47 @@ export class CommissionService {
   }
 
   /**
+   * Get WEEKLY net sales and commission for an employee
+   * Used for "This Week's Performance"
+   */
+  static async getWeeklyMetrics(employeeId: number): Promise<any> {
+    const now = new Date();
+    // Convert target UTC time to IST (UTC+5:30)
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+
+    // Calculate Monday of current week in IST
+    const utcDay = istDate.getUTCDay();
+    const dayDiff = utcDay === 0 ? -6 : 1 - utcDay; // Monday is 1, Sunday is 0
+    const monday = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate() + dayDiff) - 5.5 * 60 * 60 * 1000);
+    const sunday = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000 - 1); // end of Sunday IST
+
+    console.log(`[Weekly Metrics] Employee: ${employeeId}, IST Week Start: ${monday.toISOString()} to ${sunday.toISOString()}`);
+
+    const sales = await prisma.commissionTransaction.findMany({
+      where: {
+        employeeId: employeeId,
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+        createdAt: {
+          gte: monday,
+          lte: sunday
+        }
+      }
+    });
+
+    const totalNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
+    const totalCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+
+    return {
+      start: monday.toISOString().split('T')[0],
+      end: sunday.toISOString().split('T')[0],
+      netSales: totalNetSales,
+      commission: totalCommission,
+      billCount: sales.length
+    };
+  }
+
+  /**
    * Get LATEST sale for this employee
    * Used for "Latest Transaction"
    */
@@ -113,7 +154,7 @@ export class CommissionService {
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] }
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { id: 'desc' }
     });
 
     if (!latestSale) {
@@ -147,6 +188,7 @@ export class CommissionService {
 
     try {
       const today = await this.getDailyMetrics(employeeId);
+      const weekly = await this.getWeeklyMetrics(employeeId);
       const month = await this.getMonthlyMetrics(employeeId);
       const latest = await this.getLatestSale(employeeId);
 
@@ -156,6 +198,7 @@ export class CommissionService {
 
       return {
         today: today,
+        weekly: weekly,
         thisMonth: month,
         latestSale: latest
       };

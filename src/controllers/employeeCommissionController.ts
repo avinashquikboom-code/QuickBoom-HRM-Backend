@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { getCommissionStats } from '../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
+import { CommissionService } from '../services/commissionService';
 
 async function getEmployeeForUser(userId?: number) {
   if (!userId) return null;
@@ -71,31 +72,23 @@ export const fetchCommissionWallet = async (
     const lifetimeCommission = approvedOrPaid.reduce((sum, t) => sum + t.commissionAmount, 0);
 
     const now = new Date();
+    const today = await CommissionService.getDailyMetrics(employee.id);
+    const weekly = await CommissionService.getWeeklyMetrics(employee.id);
+    const monthly = await CommissionService.getMonthlyMetrics(employee.id);
 
-    // ─── TODAY (IST local midnight-to-midnight) ────────────────────────────────
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-    // ─── CURRENT MONTH ─────────────────────────────────────────────────────────
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastMonthStart    = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastMonthEnd      = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-
-    // Filter by createdAt (this is the sale date stored in DB from webhook)
-    const todayTxns        = approvedOrPaid.filter(t => {
-      const dt = new Date(t.createdAt);
-      return dt >= todayStart && dt <= todayEnd;
-    });
-    const currentMonthTxns = approvedOrPaid.filter(t => new Date(t.createdAt) >= currentMonthStart);
     const lastMonthTxns    = approvedOrPaid.filter(t => {
       const dt = new Date(t.createdAt);
       return dt >= lastMonthStart && dt <= lastMonthEnd;
     });
+    const lastMonthCommission = lastMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
 
-    const todayCommission         = todayTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const todaySales              = todayTxns.reduce((sum, t) => sum + t.saleAmount, 0);
-    const currentMonthCommission  = currentMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const lastMonthCommission     = lastMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const todayCommission = today.commission;
+    const todaySales = today.netSales;
+    const currentMonthCommission = monthly.commission;
+    const todayTxnsCount = today.billCount;
+    const currentMonthTxnsCount = monthly.billCount;
 
     // Map recent transactions (limit to 50 for complete bill visibility)
     const recentTransactions = allTransactions.slice(0, 50).map(t => ({
@@ -119,8 +112,8 @@ export const fetchCommissionWallet = async (
     });
     const netSalary = latestPayslip ? latestPayslip.netSalary : 0;
 
-    const todayDateStr  = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const monthStr      = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const todayDateStr  = today.date;
+    const monthStr      = monthly.month;
 
     res.json({
       success: true,
@@ -142,8 +135,20 @@ export const fetchCommissionWallet = async (
           date: todayDateStr,
           totalSales: todaySales,
           totalCommission: todayCommission,
-          billCount: todayTxns.length,
+          billCount: todayTxnsCount,
           label: "Today's Commission",
+        },
+
+        // ═══════════════════════════════════════════════════════
+        // WEEK'S COMMISSION (IST MON - SUN)
+        // ═══════════════════════════════════════════════════════
+        thisWeek: {
+          from: weekly.start,
+          to: weekly.end,
+          totalSales: weekly.netSales,
+          totalCommission: weekly.commission,
+          billCount: weekly.billCount,
+          label: "This Week's Commission",
         },
 
         // ═══════════════════════════════════════════════════════
@@ -153,26 +158,26 @@ export const fetchCommissionWallet = async (
           month: monthStr,
           monthName: now.toLocaleString('default', { month: 'long' }),
           year: now.getFullYear().toString(),
-          totalSales: currentMonthTxns.reduce((sum, t) => sum + t.saleAmount, 0),
+          totalSales: monthly.netSales,
           totalCommission: currentMonthCommission,
-          billCount: currentMonthTxns.length,
-          pendingCommission: currentMonthTxns.filter(t => t.status !== 'PAID').reduce((sum, t) => sum + t.commissionAmount, 0),
-          paidCommission: currentMonthTxns.filter(t => t.status === 'PAID').reduce((sum, t) => sum + t.commissionAmount, 0),
+          billCount: currentMonthTxnsCount,
+          pendingCommission: pendingCommission,
+          paidCommission: paidCommission,
           label: `${now.toLocaleString('default', { month: 'long' })} Commission`,
         },
 
         monthlySummary: {
           month: now.toLocaleString('default', { month: 'long' }),
           year: now.getFullYear().toString(),
-          totalBills: currentMonthTxns.length,
-          totalSalesAmount: currentMonthTxns.reduce((sum, t) => sum + t.saleAmount, 0),
+          totalBills: currentMonthTxnsCount,
+          totalSalesAmount: monthly.netSales,
           totalCommissionEarned: currentMonthCommission,
-          paidCommission: currentMonthTxns.filter(t => t.status === 'PAID').reduce((sum, t) => sum + t.commissionAmount, 0),
-          pendingCommission: currentMonthTxns.filter(t => t.status !== 'PAID').reduce((sum, t) => sum + t.commissionAmount, 0),
+          paidCommission: paidCommission,
+          pendingCommission: pendingCommission,
         },
         statistics: {
           totalBillsGenerated: approvedOrPaid.length,
-          totalSalesAmount,
+          totalSalesAmount: approvedOrPaid.reduce((sum, t) => sum + t.saleAmount, 0),
           totalCommissionEarned: lifetimeCommission,
           paidCommission,
           pendingCommission,

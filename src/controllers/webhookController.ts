@@ -380,6 +380,23 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
 
         console.log(`[Save]   ✅ Sale & Commission created: ID ${createdTx.id}`);
         processedSalesCount++;
+
+        // Emit a WebSocket event to trigger immediate UI refresh on mobile/dashboard
+        try {
+          const { getWebSocketInstance } = require('../utils/websocketSingleton');
+          const ws = getWebSocketInstance();
+          if (ws) {
+            console.log(`[WebSocket] Emitting commissionUpdate for Employee ID ${salesman.id}`);
+            ws.getServer().to(`employee_${salesman.id}`).emit('commissionUpdate', {
+              success: true,
+              billId: uniqueBillId,
+              amount: product.productNetAmount,
+              commission: product.productCommission,
+            });
+          }
+        } catch (wsErr: any) {
+          console.error('[WebSocket] Failed to broadcast update:', wsErr.message);
+        }
       }
     } catch (salesmanErr: any) {
       console.error(`[Save] ❌ Error processing salesman ${salesman.firstName}:`, salesmanErr.message);

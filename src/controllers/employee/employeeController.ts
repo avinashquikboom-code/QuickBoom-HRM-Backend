@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma, ensureBankEditTable } from '../../utils/db';
 import { pushNotificationService } from '../../services/pushNotificationService';
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
+import { CommissionService } from '../../services/commissionService';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -1643,19 +1644,9 @@ export const fetchEmployeeWallet = async (
     const currentMonth = now.getMonth() + 1;
     const currentYear = now.getFullYear();
 
-    // Calculate current month commission for this employee
-    const monthStart = new Date(currentYear, currentMonth - 1, 1);
-    const monthEnd = new Date(currentYear, currentMonth, 0, 23, 59, 59, 999);
-
-    const commAgg = await prisma.commissionTransaction.aggregate({
-      where: {
-        employeeId: employee.id,
-        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
-        createdAt: { gte: monthStart, lte: monthEnd }
-      },
-      _sum: { commissionAmount: true }
-    });
-    const currentCommission = Math.round(commAgg._sum?.commissionAmount || 0);
+    // Calculate current month commission for this employee using the unified source of truth (CommissionService)
+    const monthMetrics = await CommissionService.getMonthlyMetrics(employee.id);
+    const currentCommission = Math.round(monthMetrics.commission || 0);
 
     const isCurrentMonthPayslip = latestPayslip && latestPayslip.month === currentMonth && latestPayslip.year === currentYear;
 

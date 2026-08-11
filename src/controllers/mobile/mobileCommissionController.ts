@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { getCommissionStats, extractWebhookMeta } from '../../utils/commissionHelper';
+import { getCommissionStats, extractWebhookMeta, safeParseAmount } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { CommissionService } from '../../services/commissionService';
 
@@ -463,6 +463,25 @@ export const getMobileCommissionSummary = async (
     // Get complete summary using the new CommissionService
     const summary = await CommissionService.getCompleteSummary(employee.id);
 
+    // Calculate actual status-based pending and paid commission sums
+    const allTransactions = await prisma.commissionTransaction.findMany({
+      where: {
+        employeeId: employee.id,
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+      }
+    });
+
+    const pendingCommission = allTransactions
+      .filter(t => t.status === 'PENDING' || t.status === 'APPROVED')
+      .reduce((sum, t) => sum + t.commissionAmount, 0);
+
+    const paidCommission = allTransactions
+      .filter(t => t.status === 'PAID')
+      .reduce((sum, t) => sum + t.commissionAmount, 0);
+
+    const lifetimeCommission = allTransactions
+      .reduce((sum, t) => sum + t.commissionAmount, 0);
+
     const commissionRate = employee.commissionPercentage || 0;
 
     res.json({
@@ -471,12 +490,12 @@ export const getMobileCommissionSummary = async (
         summary: {
           // Backward compatibility fields
           totalSales: summary.thisMonth.netSales,
-          totalCommissionEarned: Math.round(summary.thisMonth.commission * 100) / 100,
-          pendingCommission: Math.round(summary.thisMonth.commission * 100) / 100,
-          approvedCommission: Math.round(summary.thisMonth.commission * 100) / 100,
-          paidCommission: 0,
+          totalCommissionEarned: Math.round(lifetimeCommission * 100) / 100,
+          pendingCommission: Math.round(pendingCommission * 100) / 100,
+          approvedCommission: Math.round(pendingCommission * 100) / 100,
+          paidCommission: Math.round(paidCommission * 100) / 100,
           commissionRate,
-          transactionCount: summary.thisMonth.billCount,
+          transactionCount: allTransactions.length,
 
           // ═════════════════════════════════════════════════════════════
           // TODAY'S METRICS (RESETS DAILY AT 00:00)
@@ -487,6 +506,18 @@ export const getMobileCommissionSummary = async (
             commission: summary.today.commission,
             billCount: summary.today.billCount,
             label: "Today's Performance"
+          },
+
+          // ═════════════════════════════════════════════════════════════
+          // WEEK'S METRICS (IST MON - SUN)
+          // ═════════════════════════════════════════════════════════════
+          thisWeek: {
+            from: summary.weekly.start,
+            to: summary.weekly.end,
+            netSales: summary.weekly.netSales,
+            commission: summary.weekly.commission,
+            billCount: summary.weekly.billCount,
+            label: "This Week's Performance"
           },
 
           // ═════════════════════════════════════════════════════════════
@@ -661,6 +692,7 @@ export const getMobileCommissionBillDetail = async (
   try {
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
+      include: { store: true }
     });
 
     if (!employee) {
@@ -676,6 +708,7 @@ export const getMobileCommissionBillDetail = async (
         employeeId: employee.id,
         OR: [{ billId: billIdStr }, { invoiceNumber: billIdStr }],
       },
+      include: { store: true }
     });
 
     if (!sale) {
@@ -686,6 +719,61 @@ export const getMobileCommissionBillDetail = async (
       return;
     }
 
+    // Try to load HopkidWebhookLog to get rich metadata
+    const baseBillId = billIdStr.split('-')[0];
+    const webhookLog = await prisma.hopkidWebhookLog.findFirst({
+      where: {
+        OR: [
+          { billId: billIdStr },
+          { billId: baseBillId }
+        ]
+      }
+    });
+
+    let customerName = 'Retail Customer';
+    let customerPhone = '-';
+    let paymentMode = '-';
+    let storeName = sale.store?.name || employee.store?.name || 'Unassigned Store';
+    let products: any[] = [];
+    let grossSale = sale.saleAmount;
+    let discount = 0;
+    let tax = 0;
+
+    if (webhookLog) {
+      const meta = extractWebhookMeta(webhookLog.rawPayload);
+      customerName = meta.customerName || customerName;
+      customerPhone = meta.customerPhone || customerPhone;
+      paymentMode = meta.paymentMode || paymentMode;
+      storeName = meta.storeName || storeName;
+
+      // Extract products from line items
+      if (meta.lineItems && meta.lineItems.length > 0) {
+        products = meta.lineItems.map((item: any) => ({
+          name: item.productName || item.name || 'Unknown Product',
+          quantity: item.qty || item.quantity || 1,
+          price: safeParseAmount(item.productPrice || item.price || item.productNetAmount || item.amount || 0)
+        }));
+      } else {
+        products = [{
+          name: meta.firstItem?.productName || 'HopKid Product',
+          quantity: 1,
+          price: sale.saleAmount
+        }];
+      }
+
+      // Parse invoice properties
+      const invoiceData = meta.invoice || {};
+      grossSale = safeParseAmount(invoiceData.grandTotal || invoiceData.grossAmount || sale.saleAmount);
+      discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
+      tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || invoiceData.vat || 0);
+    } else {
+      products = [{
+        name: sale.notes || 'Retail product',
+        quantity: 1,
+        price: sale.saleAmount
+      }];
+    }
+
     const rate = sale.commissionPercent ?? employee.commissionPercentage ?? 0;
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
 
@@ -694,12 +782,21 @@ export const getMobileCommissionBillDetail = async (
       data: {
         billId: sale.billId || sale.invoiceNumber,
         saleAmount: sale.saleAmount,
+        netAmount: sale.saleAmount,
         commissionRate: rate,
         commissionAmount: sale.commissionAmount,
         date: sale.createdAt,
         status: sale.status,
         description: sale.notes,
         createdAt: sale.createdAt,
+        customerName,
+        customerPhone,
+        paymentMode,
+        storeName,
+        products,
+        grossSale,
+        discount,
+        tax,
         employee: {
           name: empName,
           code: employee.employeeCode,
