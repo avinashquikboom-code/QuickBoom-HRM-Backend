@@ -126,10 +126,14 @@ export const getMobileCommissionTransactions = async (
     if (startDate || endDate) {
       whereClause.createdAt = {};
       if (startDate) {
-        whereClause.createdAt.gte = new Date(`${startDate}T00:00:00.000Z`);
+        const s = startDate.toString();
+        const startStr = s.includes('T') ? s : `${s}T00:00:00+05:30`;
+        whereClause.createdAt.gte = new Date(startStr);
       }
       if (endDate) {
-        whereClause.createdAt.lte = new Date(`${endDate}T23:59:59.999Z`);
+        const e = endDate.toString();
+        const endStr = e.includes('T') ? e : `${e}T23:59:59.999+05:30`;
+        whereClause.createdAt.lte = new Date(endStr);
       }
     }
 
