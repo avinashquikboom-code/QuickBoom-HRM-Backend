@@ -60,7 +60,17 @@ export const getMyPayslips = async (
         },
         _sum: { commissionAmount: true }
       });
-      const commissionEarned = commAggregate._sum?.commissionAmount || 0;
+      let commissionEarned = commAggregate._sum?.commissionAmount || 0;
+      if (commissionEarned === 0) {
+        const empCommSum = await prisma.commissionTransaction.aggregate({
+          where: {
+            employeeId: employee.id,
+            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+          },
+          _sum: { commissionAmount: true }
+        });
+        commissionEarned = empCommSum._sum?.commissionAmount || 0;
+      }
 
       const startDateStr = monthStart.toISOString().split('T')[0];
       const endDateStr = monthEnd.toISOString().split('T')[0];
@@ -101,6 +111,18 @@ export const getMyPayslips = async (
       const month = now.getMonth() + 1;
       const calculation = await payrollService.calculatePayroll(employee.id, month, year);
 
+      let previewComm = calculation.commissionEarned || 0;
+      if (previewComm === 0) {
+        const empCommSum = await prisma.commissionTransaction.aggregate({
+          where: {
+            employeeId: employee.id,
+            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+          },
+          _sum: { commissionAmount: true }
+        });
+        previewComm = empCommSum._sum?.commissionAmount || 0;
+      }
+
       const previewPayslip = {
         id: 0,
         employeeId: employee.id,
@@ -118,7 +140,7 @@ export const getMyPayslips = async (
         officeName: 'Main Store',
         netInWords: '',
         createdAt: new Date().toISOString(),
-        commissionEarned: calculation.commissionEarned,
+        commissionEarned: previewComm,
         presentDays: calculation.presentDays,
         halfDays: calculation.halfDays,
         halfDayDeduction: calculation.halfDayDeduction,
