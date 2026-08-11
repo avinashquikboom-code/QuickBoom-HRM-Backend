@@ -71,18 +71,31 @@ export const fetchCommissionWallet = async (
     const lifetimeCommission = approvedOrPaid.reduce((sum, t) => sum + t.commissionAmount, 0);
 
     const now = new Date();
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
+    // ─── TODAY (IST local midnight-to-midnight) ────────────────────────────────
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    // ─── CURRENT MONTH ─────────────────────────────────────────────────────────
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart    = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd      = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+    // Filter by createdAt (this is the sale date stored in DB from webhook)
+    const todayTxns        = approvedOrPaid.filter(t => {
+      const dt = new Date(t.createdAt);
+      return dt >= todayStart && dt <= todayEnd;
+    });
     const currentMonthTxns = approvedOrPaid.filter(t => new Date(t.createdAt) >= currentMonthStart);
-    const lastMonthTxns = approvedOrPaid.filter(t => {
+    const lastMonthTxns    = approvedOrPaid.filter(t => {
       const dt = new Date(t.createdAt);
       return dt >= lastMonthStart && dt <= lastMonthEnd;
     });
 
-    const currentMonthCommission = currentMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const lastMonthCommission = lastMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const todayCommission         = todayTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const todaySales              = todayTxns.reduce((sum, t) => sum + t.saleAmount, 0);
+    const currentMonthCommission  = currentMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const lastMonthCommission     = lastMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
 
     // Map recent transactions (limit to 50 for complete bill visibility)
     const recentTransactions = allTransactions.slice(0, 50).map(t => ({
@@ -106,6 +119,9 @@ export const fetchCommissionWallet = async (
     });
     const netSalary = latestPayslip ? latestPayslip.netSalary : 0;
 
+    const todayDateStr  = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const monthStr      = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
     res.json({
       success: true,
       data: {
@@ -118,6 +134,33 @@ export const fetchCommissionWallet = async (
         pendingCommission,
         paidCommission,
         recentTransactions,
+
+        // ═══════════════════════════════════════════════════════
+        // TODAY'S COMMISSION (Resets at 00:00 IST every day)
+        // ═══════════════════════════════════════════════════════
+        today: {
+          date: todayDateStr,
+          totalSales: todaySales,
+          totalCommission: todayCommission,
+          billCount: todayTxns.length,
+          label: "Today's Commission",
+        },
+
+        // ═══════════════════════════════════════════════════════
+        // THIS MONTH'S COMMISSION (Aggregated full month)
+        // ═══════════════════════════════════════════════════════
+        thisMonth: {
+          month: monthStr,
+          monthName: now.toLocaleString('default', { month: 'long' }),
+          year: now.getFullYear().toString(),
+          totalSales: currentMonthTxns.reduce((sum, t) => sum + t.saleAmount, 0),
+          totalCommission: currentMonthCommission,
+          billCount: currentMonthTxns.length,
+          pendingCommission: currentMonthTxns.filter(t => t.status !== 'PAID').reduce((sum, t) => sum + t.commissionAmount, 0),
+          paidCommission: currentMonthTxns.filter(t => t.status === 'PAID').reduce((sum, t) => sum + t.commissionAmount, 0),
+          label: `${now.toLocaleString('default', { month: 'long' })} Commission`,
+        },
+
         monthlySummary: {
           month: now.toLocaleString('default', { month: 'long' }),
           year: now.getFullYear().toString(),
@@ -143,6 +186,7 @@ export const fetchCommissionWallet = async (
     res.status(500).json({ success: false, message: 'Failed to retrieve commission wallet data.' });
   }
 };
+
 
 export const fetchCommissionHistory = async (
   req: AuthenticatedRequest,
