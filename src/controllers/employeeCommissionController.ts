@@ -4,6 +4,39 @@ import { prisma } from '../utils/db';
 import { getCommissionStats } from '../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 
+async function getEmployeeForUser(userId?: number) {
+  if (!userId) return null;
+
+  let employee = await prisma.employee.findFirst({
+    where: { userId },
+    include: { store: true }
+  });
+
+  if (!employee) {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (user && user.employeeID) {
+      employee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { employeeID: user.employeeID },
+            { employeeCode: user.employeeID }
+          ]
+        },
+        include: { store: true }
+      });
+
+      if (employee) {
+        await prisma.employee.update({
+          where: { id: employee.id },
+          data: { userId }
+        }).catch(() => {});
+      }
+    }
+  }
+
+  return employee;
+}
+
 export const fetchCommissionWallet = async (
   req: AuthenticatedRequest,
   res: Response
@@ -17,10 +50,7 @@ export const fetchCommissionWallet = async (
       }
     }
 
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-      include: { store: true }
-    });
+    const employee = await getEmployeeForUser(req.user?.id);
 
     if (!employee) {
       res.status(404).json({ success: false, message: 'Employee record not found.' });
@@ -54,8 +84,8 @@ export const fetchCommissionWallet = async (
     const currentMonthCommission = currentMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
     const lastMonthCommission = lastMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
 
-    // Map recent transactions (limit to 10)
-    const recentTransactions = allTransactions.slice(0, 10).map(t => ({
+    // Map recent transactions (limit to 50 for complete bill visibility)
+    const recentTransactions = allTransactions.slice(0, 50).map(t => ({
       id: t.id.toString(),
       invoiceNumber: t.invoiceNumber || t.billId || `TXN-${t.id}`,
       customerName: t.notes || 'Retail Sale',
@@ -64,7 +94,7 @@ export const fetchCommissionWallet = async (
       commissionEarned: t.commissionAmount,
       generatedDate: t.createdAt.toISOString(),
       paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
-      status: t.status === 'PAID' ? 'Paid' : 'Pending',
+      status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
       remarks: t.notes,
     }));
 
@@ -119,9 +149,7 @@ export const fetchCommissionHistory = async (
   res: Response
 ): Promise<void> => {
   try {
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id }
-    });
+    const employee = await getEmployeeForUser(req.user?.id);
 
     if (!employee) {
       res.status(404).json({ success: false, message: 'Employee record not found.' });
@@ -175,7 +203,7 @@ export const fetchCommissionHistory = async (
           commissionEarned: t.commissionAmount,
           generatedDate: t.createdAt.toISOString(),
           paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
-          status: t.status === 'PAID' ? 'Paid' : 'Pending',
+          status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
           remarks: t.notes,
         })),
         totalCount,
@@ -194,9 +222,7 @@ export const fetchCommissionDetails = async (
   res: Response
 ): Promise<void> => {
   try {
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id }
-    });
+    const employee = await getEmployeeForUser(req.user?.id);
 
     if (!employee) {
       res.status(404).json({ success: false, message: 'Employee record not found.' });
