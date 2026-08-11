@@ -46,11 +46,49 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   console.log(`Payload snippet:`, typeof rawSalesData === 'string' ? rawSalesData.slice(0, 300) : JSON.stringify(rawSalesData).slice(0, 300));
   console.log(`======================================================\n`);
 
+  console.log('\n╔════════════════════════════════════════════════════════════╗');
+  console.log('║ [WEBHOOK DEBUG] Full payload inspection                    ║');
+  console.log('╚════════════════════════════════════════════════════════════╝');
+  console.log('[DEBUG] Full raw payload:');
+  console.log(typeof rawSalesData === 'string' ? rawSalesData : JSON.stringify(rawSalesData, null, 2));
+
   // 1. Store raw payload log first
   await storeWebhookData(rawSalesData);
 
   let effectiveData = rawSalesData;
   let meta = extractWebhookMeta(effectiveData);
+
+  const invoice = meta.invoice || {};
+  console.log('\n[DEBUG] Invoice object:');
+  console.log({
+    invoiceNo: invoice.invoiceNo || meta.billId,
+    invoiceDate: invoice.invoiceDate,
+    netAmount: invoice.netAmount,
+    totalAmount: invoice.totalAmount,
+    salesType: invoice.salesType,
+    branchName: invoice.branchName,
+    keys: Object.keys(invoice)
+  });
+
+  const lineItems = meta.lineItems || [];
+  console.log(`\n[DEBUG] Found ${lineItems.length} line items`);
+  lineItems.forEach((item: any, index: number) => {
+    console.log(`\n[DEBUG] LineItem ${index}:`);
+    console.log({
+      productID: item.productID,
+      productName: item.productName,
+      productNetAmount: item.productNetAmount,
+      netAmount: item.netAmount,
+      amount: item.amount,
+      employeeID: item.employeeID,
+      employeeCode: item.employeeCode,
+      employeeName: item.employeeName,
+      employeePhoneNo: item.employeePhoneNo,
+      commission: item.commission,
+      commissionAmount: item.commissionAmount,
+      keys: Object.keys(item)
+    });
+  });
 
   // 2. Check if payload is sparse/event-only (amount is 0 or lineItems empty or employee missing)
   if ((meta.amount === 0 || meta.lineItems.length === 0 || !meta.employeeIdentifier) && (meta.billId || meta.eventId)) {

@@ -208,12 +208,86 @@ export const createCommissionTransaction = async (
   }
 };
 
+export const searchSalesByBillId = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const rawBillId = req.params.billId;
+    const billIdStr = Array.isArray(rawBillId) ? String(rawBillId[0]) : String(rawBillId);
+
+    console.log('[Search] Bill ID:', billIdStr);
+
+    const sale = await prisma.commissionTransaction.findFirst({
+      where: {
+        OR: [
+          { billId: billIdStr },
+          { invoiceNumber: billIdStr },
+        ],
+      },
+      include: {
+        employee: true,
+        store: true,
+      },
+    });
+
+    if (!sale) {
+      res.status(404).json({
+        success: false,
+        message: 'Bill not found',
+      });
+      return;
+    }
+
+    const emp = sale.employee;
+    const empName = emp ? `${emp.firstName} ${emp.lastName}`.trim() : null;
+    const rate = sale.commissionPercent ?? emp?.commissionPercentage ?? 0;
+    const commission = sale.commissionAmount || (sale.saleAmount * rate) / 100;
+
+    console.log('[Search] Found:', {
+      billId: sale.billId || sale.invoiceNumber,
+      amount: sale.saleAmount,
+      employee: empName,
+      commission,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        sale: {
+          id: sale.id,
+          billId: sale.billId || sale.invoiceNumber,
+          amount: sale.saleAmount,
+          saleDate: sale.createdAt,
+          source: 'HOPKID_WEBHOOK',
+          description: sale.notes,
+        },
+        employee: {
+          id: emp?.id,
+          name: empName,
+          code: emp?.employeeCode,
+          phone: emp?.mobileNumber,
+          commissionRate: emp?.commissionPercentage,
+        },
+        calculation: {
+          saleAmount: sale.saleAmount,
+          commissionRate: rate,
+          commission: Math.round(commission * 100) / 100,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('[Search] Error:', error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const getCommissionTransactions = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const { employeeId, storeId, status, startDate, endDate } = req.query;
+    const { employeeId, storeId, status, startDate, endDate, search, billId } = req.query;
 
     const whereClause: any = {
       employee: {
@@ -228,7 +302,25 @@ export const getCommissionTransactions = async (
     if (storeId) {
       whereClause.storeId = parseInt(storeId as string, 10);
     }
-    if (status) whereClause.status = status;
+    if (status) whereClause.status = status as string;
+
+    if (billId) {
+      const bId = Array.isArray(billId) ? String(billId[0]) : String(billId);
+      whereClause.OR = [
+        { billId: bId },
+        { invoiceNumber: bId },
+      ];
+    } else if (search) {
+      const term = Array.isArray(search) ? String(search[0]).trim() : String(search).trim();
+      whereClause.OR = [
+        { billId: { contains: term, mode: 'insensitive' } },
+        { invoiceNumber: { contains: term, mode: 'insensitive' } },
+        { employee: { firstName: { contains: term, mode: 'insensitive' } } },
+        { employee: { lastName: { contains: term, mode: 'insensitive' } } },
+        { employee: { employeeCode: { contains: term, mode: 'insensitive' } } },
+      ];
+    }
+
     if (startDate || endDate) {
       whereClause.createdAt = {};
       if (startDate) {

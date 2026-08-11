@@ -136,6 +136,7 @@ import {
   calculateCommission,
   createCommissionSettlement,
   fetchCommissionReport,
+  searchSalesByBillId,
 } from '../controllers/commissionController';
 import { fetchWorkModes } from '../controllers/workModeController';
 
@@ -188,6 +189,8 @@ router.post('/commission/calculate', roleMiddleware(storeManagerAllowedRoles), c
 router.post('/commission/settlements', roleMiddleware(adminOnlyRoles), createCommissionSettlement);
 // Commission Report (grouped ledger view) — also exposed under /api/admin for consistency
 router.get('/commission/report', roleMiddleware(storeManagerAllowedRoles), fetchCommissionReport);
+router.get('/sales/search/:billId', roleMiddleware(storeManagerAllowedRoles), searchSalesByBillId);
+router.get('/commission/search/:billId', roleMiddleware(storeManagerAllowedRoles), searchSalesByBillId);
 
 // WorkMode Routes
 /**
