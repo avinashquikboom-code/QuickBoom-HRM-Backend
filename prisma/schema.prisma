@@ -153,6 +153,9 @@ model Employee {
   branchId         Int?
   featureAccess    FeatureAccess[]
   featureAccessRequests FeatureAccessRequest[]
+  sales                 Sales[]
+  creditNoteLines       CreditNoteLine[]
+  salesExchanges        SalesExchange[]
 
   @@index([officeId])
   @@index([departmentId])
@@ -1239,4 +1242,131 @@ model WebhookLog {
   @@index([eventType])
   @@index([createdAt])
 }
+
+// Existing Sales model - add these fields if not present
+model Sales {
+  id                    String   @id @default(uuid())
+  employeeId            Int
+  netAmount             Decimal  @db.Decimal(15, 2)
+  billId                String
+  saleDate              DateTime
+  status                String   @default("ACTIVE")  // ACTIVE, RETURNED, EXCHANGED
+  returnDate            DateTime?
+  returnReason          String?
+  replacedBySaleId      String?  @unique
+  description           String?
+  source                String   @default("HOPKID")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  employee              Employee @relation(fields: [employeeId], references: [id])
+  replacedBySale        Sales?   @relation("SalesExchange", fields: [replacedBySaleId], references: [id])
+  originalSales         Sales?   @relation("SalesExchange")
+  
+  @@index([employeeId])
+  @@index([billId])
+  @@index([status])
+  @@index([saleDate])
+}
+
+// ✅ NEW: Credit Notes (partial returns/adjustments)
+model CreditNote {
+  id                    String   @id @default(uuid())
+  creditNoteNo          String   @unique
+  invoiceNo             String   // Link to original invoice
+  creditDate            DateTime
+  
+  // ✅ Credit amount (what's being reversed)
+  creditAmount          Decimal  @db.Decimal(15, 2)
+  creditReason          String   // "Discount adjustment", "Partial return", "Damage", etc
+  
+  // Line items (which products/employees affected)
+  lineItems             CreditNoteLine[]
+  
+  status                String   @default("ACTIVE")  // ACTIVE, CANCELLED, APPLIED
+  appliedDate           DateTime?
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  @@index([invoiceNo])
+  @@index([creditDate])
+  @@index([status])
+}
+
+// ✅ NEW: Credit Note Line Items
+model CreditNoteLine {
+  id                    String   @id @default(uuid())
+  creditNoteId          String
+  
+  // Original sale reference
+  originalSaleId        String?  // Link to original sale
+  employeeId            Int
+  productId             String?  // Product ID for item-wise matching
+  
+  // Credit details
+  productDescription    String
+  creditAmount          Decimal  @db.Decimal(15, 2)
+  commissionAdjustment  Decimal  @db.Decimal(15, 2)  // How much commission to reverse
+  
+  reason                String   // Detailed reason for this line item
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  creditNote            CreditNote @relation(fields: [creditNoteId], references: [id])
+  employee              Employee @relation(fields: [employeeId], references: [id])
+  
+  @@index([creditNoteId])
+  @@index([employeeId])
+  @@index([originalSaleId])
+}
+
+// ✅ NEW: Sales Exchange (product replacement)
+model SalesExchange {
+  id                    String   @id @default(uuid())
+  exchangeNo            String   @unique
+  
+  // Original sale
+  originalInvoiceNo     String   // Invoice that was exchanged
+  originalSaleId        String?  // Link to Sales record
+  
+  // New sale (replacement)
+  newInvoiceNo          String   // New invoice for replacement
+  newSaleId             String?  // Link to new Sales record
+  
+  employeeId            Int      // Primary employee handling exchange
+  originalEmployeeId    Int?     // Original salesman for returned item
+  newEmployeeId         Int?     // Replacement salesman for new item
+  
+  exchangeDate          DateTime
+  reason                String   // "Defective", "Size change", "Customer request", etc
+  
+  // Amount tracking
+  originalAmount        Decimal  @db.Decimal(15, 2)
+  newAmount             Decimal  @db.Decimal(15, 2)
+  amountDifference      Decimal  @db.Decimal(15, 2)  // newAmount - originalAmount
+  
+  // Commission tracking
+  originalCommission    Decimal  @db.Decimal(15, 2)
+  newCommission         Decimal  @db.Decimal(15, 2)
+  commissionDifference  Decimal  @db.Decimal(15, 2)  // newCommission - originalCommission
+  
+  status                String   @default("ACTIVE")  // ACTIVE, CANCELLED, REVERSED
+  cancelledDate         DateTime?
+  cancelReason          String?
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  employee              Employee @relation(fields: [employeeId], references: [id])
+  
+  @@index([originalInvoiceNo])
+  @@index([newInvoiceNo])
+  @@index([employeeId])
+  @@index([exchangeDate])
+  @@index([status])
+}
+
+
 

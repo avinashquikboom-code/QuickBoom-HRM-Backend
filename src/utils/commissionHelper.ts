@@ -680,3 +680,86 @@ export async function getCommissionStats(params?: {
     topPerformers,
   };
 }
+
+/**
+ * Updates an Employee's Wallet balance and records a WalletTransaction for commission credit/debit.
+ */
+export async function updateEmployeeWalletCommission(
+  employeeId: number,
+  amount: number,
+  isCredit: boolean,
+  description: string,
+  title: string = isCredit ? 'Commission Earned' : 'Commission Reversed'
+): Promise<void> {
+  const roundedAmount = Math.round(amount * 100) / 100;
+  if (roundedAmount <= 0) return;
+
+  try {
+    let wallet = await prisma.wallet.findUnique({
+      where: { employeeId }
+    });
+
+    if (!wallet) {
+      const emp = await prisma.employee.findUnique({ where: { id: employeeId } });
+      const empCode = emp?.employeeCode || String(employeeId);
+      wallet = await prisma.wallet.create({
+        data: {
+          employeeId,
+          availableBalance: 0,
+          advanceLimit: 25000,
+          pendingClaims: 0,
+          cardNumber: `QB-${empCode.replace(/\D/g, '')}-XXXX`,
+          isActive: true
+        }
+      });
+    }
+
+    const currentBalance = wallet.availableBalance || 0;
+    const newBalance = isCredit
+      ? currentBalance + roundedAmount
+      : Math.max(0, currentBalance - roundedAmount);
+
+    await prisma.wallet.update({
+      where: { id: wallet.id },
+      data: { availableBalance: newBalance }
+    });
+
+    await prisma.walletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        title,
+        category: 'Commission',
+        amount: roundedAmount,
+        date: new Date(),
+        status: 'COMPLETED',
+        isCredit,
+        description
+      }
+    });
+
+    console.log(`[Wallet] ✅ Employee ${employeeId} wallet updated: ${isCredit ? '+' : '-'}₹${roundedAmount}. New Balance: ₹${newBalance}`);
+  } catch (err: any) {
+    console.error(`[Wallet Error] ❌ Failed to update wallet for Employee ${employeeId}:`, err.message);
+  }
+}
+
+/**
+ * Emits real-time WebSocket updates for employee commission, dashboard, and reports.
+ */
+export async function broadcastCommissionEvent(employeeId: number, eventData: any): Promise<void> {
+  try {
+    const { getWebSocketInstance } = require('./websocketSingleton');
+    const ws = getWebSocketInstance();
+    if (ws) {
+      console.log(`[WebSocket] Broadcasting event for Employee ID ${employeeId}`);
+      if (typeof ws.broadcastCommissionUpdate === 'function') {
+        await ws.broadcastCommissionUpdate(employeeId, eventData);
+      } else if (ws.getServer()) {
+        ws.getServer().to(`employee_${employeeId}`).emit('commissionUpdate', eventData);
+      }
+    }
+  } catch (err: any) {
+    console.error('[WebSocket Error] Broadcast failed:', err.message);
+  }
+}
+

@@ -207,4 +207,91 @@ export class CommissionService {
       throw error;
     }
   }
+
+  /**
+   * Calculate monthly commission for an employee including adjustments
+   */
+  static async calculateMonthlyCommission(employeeId: number, month: string): Promise<any> {
+    const [year, monthNum] = month.split('-').map(Number);
+    const monthStart = new Date(Date.UTC(year, monthNum - 1, 1) - 5.5 * 60 * 60 * 1000);
+    const monthEnd = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+
+    const sales = await prisma.commissionTransaction.findMany({
+      where: {
+        employeeId: employeeId,
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+        createdAt: {
+          gte: monthStart,
+          lte: monthEnd
+        }
+      }
+    });
+
+    const creditLines = await prisma.creditNoteLine.findMany({
+      where: {
+        employeeId: employeeId,
+        createdAt: {
+          gte: monthStart,
+          lte: monthEnd
+        }
+      }
+    });
+
+    const totalSalesAmount = sales.reduce((sum, s) => sum + Number(s.saleAmount), 0);
+    const totalTransactionCommission = sales.reduce((sum, s) => sum + Number(s.commissionAmount), 0);
+    const totalCreditAdjustments = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment), 0);
+
+    const finalCommission = Math.max(0, totalTransactionCommission - totalCreditAdjustments);
+
+    return {
+      employeeId,
+      month,
+      totalNetSales: totalSalesAmount,
+      totalTransactionCommission,
+      totalCreditAdjustments,
+      totalCommissionAmount: finalCommission,
+      billCount: sales.length
+    };
+  }
+
+  /**
+   * Upsert monthly commission settlement record
+   */
+  static async upsertMonthlyCommission(employeeId: number, month: string, calculation: any): Promise<any> {
+    const [year, monthNum] = month.split('-').map(Number);
+    const settlementDate = new Date(Date.UTC(year, monthNum - 1, 1));
+
+    const existingSettlement = await prisma.commissionSettlement.findFirst({
+      where: {
+        employeeId: employeeId,
+        settlementDate: settlementDate,
+      }
+    });
+
+    if (existingSettlement) {
+      return await prisma.commissionSettlement.update({
+        where: { id: existingSettlement.id },
+        data: {
+          totalCommission: calculation.totalTransactionCommission || calculation.totalCommissionAmount,
+          totalDeduction: calculation.totalCreditAdjustments || 0,
+          netAmount: calculation.totalCommissionAmount,
+          updatedAt: new Date()
+        }
+      });
+    } else {
+      return await prisma.commissionSettlement.create({
+        data: {
+          employeeId: employeeId,
+          settlementDate: settlementDate,
+          totalCommission: calculation.totalTransactionCommission || calculation.totalCommissionAmount,
+          totalBonus: 0,
+          totalDeduction: calculation.totalCreditAdjustments || 0,
+          netAmount: calculation.totalCommissionAmount,
+          status: 'PENDING',
+          notes: `Monthly commission calculated for ${month}`
+        }
+      });
+    }
+  }
 }
+
