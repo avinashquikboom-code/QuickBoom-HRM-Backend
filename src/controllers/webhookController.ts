@@ -381,18 +381,31 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
         console.log(`[Save]   ✅ Sale & Commission created: ID ${createdTx.id}`);
         processedSalesCount++;
 
-        // Emit a WebSocket event to trigger immediate UI refresh on mobile/dashboard
+        // Emit WebSocket events to trigger immediate UI refresh on mobile and admin dashboards
         try {
           const { getWebSocketInstance } = require('../utils/websocketSingleton');
           const ws = getWebSocketInstance();
           if (ws) {
-            console.log(`[WebSocket] Emitting commissionUpdate for Employee ID ${salesman.id}`);
-            ws.getServer().to(`employee_${salesman.id}`).emit('commissionUpdate', {
-              success: true,
-              billId: uniqueBillId,
-              amount: product.productNetAmount,
-              commission: product.productCommission,
-            });
+            console.log(`[WebSocket] Broadcasting commissionUpdate for Employee ID ${salesman.id}, Bill ID ${uniqueBillId}`);
+            if (typeof ws.broadcastCommissionUpdate === 'function') {
+              await ws.broadcastCommissionUpdate(salesman.id, {
+                success: true,
+                billId: uniqueBillId,
+                amount: product.productNetAmount,
+                commission: product.productCommission,
+                employeeId: salesman.id,
+                createdAt: validDate.toISOString(),
+              });
+            } else {
+              ws.getServer().to(`employee_${salesman.id}`).emit('commissionUpdate', {
+                success: true,
+                billId: uniqueBillId,
+                amount: product.productNetAmount,
+                commission: product.productCommission,
+                employeeId: salesman.id,
+                createdAt: validDate.toISOString(),
+              });
+            }
           }
         } catch (wsErr: any) {
           console.error('[WebSocket] Failed to broadcast update:', wsErr.message);

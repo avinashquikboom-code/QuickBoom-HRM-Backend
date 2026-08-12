@@ -14,7 +14,8 @@ export function safeParseAmount(val: any): number {
 
 /**
  * Safely parses any date value (ISO strings, YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, or timestamps).
- * Resolves Indian date format (DD/MM/YYYY or DD-MM-YYYY) correctly without treating day as month.
+ * Resolves Indian date format (DD/MM/YYYY or DD-MM-YYYY) correctly without treating day as month,
+ * and ensures date-only strings land on the correct day without shifting to the previous day in UTC.
  */
 export function safeParseDate(val: any): Date {
   if (val === undefined || val === null || val === '') return new Date();
@@ -42,10 +43,12 @@ export function safeParseDate(val: any): Date {
     const day = parseInt(dmyMatch[1], 10);
     const month = parseInt(dmyMatch[2], 10) - 1;
     const year = parseInt(dmyMatch[3], 10);
-    const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
+    const hasTime = dmyMatch[4] !== undefined;
+    const hour = hasTime ? parseInt(dmyMatch[4], 10) : 12; // Default to 12:00 noon if no time given
     const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
     const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
-    const d = new Date(year, month, day, hour, min, sec);
+    const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
+    const d = new Date(utcMs);
     if (!isNaN(d.getTime())) return d;
   }
 
@@ -54,26 +57,28 @@ export function safeParseDate(val: any): Date {
     const d = new Date(str);
     if (!isNaN(d.getTime())) return d;
   } else if (str.includes('T')) {
-    // DateTime WITHOUT timezone (e.g. HopKid: "2026-08-11T23:28:00")
-    // ✅ Parse as LOCAL time (IST) — do NOT append 'Z' (that forces UTC → wrong date in IST)
+    // DateTime WITHOUT timezone (e.g. HopKid: "2026-08-12T14:30:00")
     const [datePart, timePart] = str.split('T');
     const dateParts = datePart.split('-');
-    const timeParts = (timePart || '00:00:00').split(':');
+    const timeParts = (timePart || '12:00:00').split(':');
     const year = parseInt(dateParts[0], 10);
     const month = parseInt(dateParts[1], 10) - 1;
     const day = parseInt(dateParts[2], 10);
     const hour = parseInt(timeParts[0], 10) || 0;
     const min = parseInt(timeParts[1], 10) || 0;
     const sec = parseInt((timeParts[2] || '0').split('.')[0], 10) || 0;
-    const d = new Date(year, month, day, hour, min, sec);
+    const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
+    const d = new Date(utcMs);
     if (!isNaN(d.getTime())) return d;
   } else if (str.includes('-')) {
+    // Date-only YYYY-MM-DD -> treat as 12:00 noon IST to avoid UTC day-shift
     const parts = str.split('-');
     if (parts.length >= 3) {
       const year = parseInt(parts[0], 10);
       const month = parseInt(parts[1], 10) - 1;
       const day = parseInt(parts[2], 10);
-      const d = new Date(year, month, day, 0, 0, 0, 0);
+      const utcMs = Date.UTC(year, month, day, 12, 0, 0, 0) - 5.5 * 60 * 60 * 1000;
+      const d = new Date(utcMs);
       if (!isNaN(d.getTime())) return d;
     }
   }
@@ -87,66 +92,13 @@ export function safeParseDate(val: any): Date {
  */
 export async function parseSaleDateCorrectly(invoiceDateString: string): Promise<Date> {
   console.log('[Date Parse] Input:', invoiceDateString);
-
   try {
-    if (!invoiceDateString || typeof invoiceDateString !== 'string') {
-      return safeParseDate(invoiceDateString);
-    }
-
-    let date: Date;
-    const str = invoiceDateString.trim();
-
-    // Check DD/MM/YYYY or DD-MM-YYYY (with optional time HH:mm:ss)
-    const dmyMatch = str.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
-    if (dmyMatch) {
-      const day = parseInt(dmyMatch[1], 10);
-      const month = parseInt(dmyMatch[2], 10) - 1;
-      const year = parseInt(dmyMatch[3], 10);
-      const hour = dmyMatch[4] ? parseInt(dmyMatch[4], 10) : 0;
-      const min = dmyMatch[5] ? parseInt(dmyMatch[5], 10) : 0;
-      const sec = dmyMatch[6] ? parseInt(dmyMatch[6], 10) : 0;
-      const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
-      date = new Date(utcMs);
-    } else if (str.includes('Z') || str.includes('+')) {
-      // Has explicit timezone info — parse as-is
-      date = new Date(str);
-    } else if (str.includes('T')) {
-      // DateTime WITHOUT timezone (e.g. HopKid: "2026-08-11T23:28:00")
-      // ✅ Parse as LOCAL time (IST)
-      const [datePart, timePart] = str.split('T');
-      const dateParts = datePart.split('-');
-      const timeParts = (timePart || '00:00:00').split(':');
-      const year = parseInt(dateParts[0], 10);
-      const month = parseInt(dateParts[1], 10) - 1;
-      const day = parseInt(dateParts[2], 10);
-      const hour = parseInt(timeParts[0], 10) || 0;
-      const min = parseInt(timeParts[1], 10) || 0;
-      const sec = parseInt((timeParts[2] || '0').split('.')[0], 10) || 0;
-      const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
-      date = new Date(utcMs);
-    } else if (str.includes('-')) {
-      const parts = str.split('-');
-      const year = parseInt(parts[0], 10);
-      const month = parseInt(parts[1], 10) - 1;
-      const day = parseInt(parts[2], 10);
-      const utcMs = Date.UTC(year, month, day, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000;
-      date = new Date(utcMs);
-    } else {
-      date = new Date(str);
-    }
-
-    console.log('[Date Parse] Parsed:', date.toISOString());
-    console.log('[Date Parse] Local:', date.toString());
-
-    if (isNaN(date.getTime())) {
-      throw new Error('Invalid date');
-    }
-
+    const date = safeParseDate(invoiceDateString);
+    console.log('[Date Parse] Parsed ISO:', date.toISOString());
+    console.log('[Date Parse] Local String:', date.toString());
     return date;
-
   } catch (error: any) {
     console.error('[Date Parse] ❌ Error parsing date:', error.message);
-    console.log('[Date Parse] Falling back to current date');
     return new Date();
   }
 }
