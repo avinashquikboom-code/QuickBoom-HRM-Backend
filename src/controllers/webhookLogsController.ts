@@ -3,18 +3,13 @@ import { prisma } from '../utils/db';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 import { Role } from '@prisma/client';
-import { extractWebhookMeta } from '../utils/commissionHelper';
+import { extractWebhookMeta, normalizeEventType } from '../utils/commissionHelper';
 
 const router = Router();
 
 const ADMIN_ROLES = [Role.ADMIN, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.HR];
 const SUPERADMIN_ROLES = [Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.ADMIN];
 
-/**
- * GET /api/webhook/logs
- * 
- * Returns all webhook logs with filtering (or returns HopkidWebhookLogs if WebhookLog table is empty)
- */
 /**
  * GET /api/webhook/logs
  * 
@@ -28,7 +23,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     const offsetNum = parseInt(offset as string, 10) || 0;
 
     const statusFilter = status ? String(status).toUpperCase() : null;
-    const eventTypeFilter = eventType ? String(eventType) : null;
+    const eventTypeFilter = eventType ? normalizeEventType(String(eventType)) : null;
 
     // Pre-fetch employee lookup maps for resolving employee names
     let allEmployees: any[] = [];
@@ -100,7 +95,12 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     // 1. Fetch from WebhookLog
     const where: any = {};
     if (statusFilter && statusFilter !== 'ALL') where.status = statusFilter;
-    if (eventTypeFilter) where.eventType = eventTypeFilter;
+    if (eventTypeFilter && eventTypeFilter !== 'ALL') {
+      where.OR = [
+        { eventType: { equals: eventTypeFilter, mode: 'insensitive' } },
+        { eventType: { equals: eventTypeFilter.toLowerCase(), mode: 'insensitive' } },
+      ];
+    }
 
     let webhookLogs: any[] = [];
     try {
@@ -129,7 +129,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
           return {
             id: `hopkid-${log.id}`,
-            eventType: meta.eventType || 'INVOICE_CREATED',
+            eventType: normalizeEventType(meta.eventType, 'INVOICE_CREATED', log.rawPayload),
             status: 'SUCCESS',
             payload: log.rawPayload,
             employeeId: null,
@@ -145,8 +145,8 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           };
         });
 
-        if (eventTypeFilter) {
-          hopkidLogsMapped = hopkidLogsMapped.filter((l) => l.eventType === eventTypeFilter);
+        if (eventTypeFilter && eventTypeFilter !== 'ALL') {
+          hopkidLogsMapped = hopkidLogsMapped.filter((l) => normalizeEventType(l.eventType) === eventTypeFilter);
         }
       } catch (e) {
         hopkidLogsMapped = [];
