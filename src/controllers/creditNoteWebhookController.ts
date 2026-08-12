@@ -89,6 +89,20 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
       }
     }
 
+    // Pre-fetch matching original commission transactions for this invoice / sale
+    const originalTxns = (invoiceNo || salesId)
+      ? await prisma.commissionTransaction.findMany({
+          where: {
+            OR: [
+              invoiceNo ? { billId: invoiceNo } : {},
+              invoiceNo ? { invoiceNumber: invoiceNo } : {},
+              invoiceNo ? { billId: { startsWith: `${invoiceNo}-` } } : {}
+            ].filter(o => Object.keys(o).length > 0)
+          },
+          include: { employee: true }
+        })
+      : [];
+
     let totalCreditAmount = Number(
       creditNote.CNAmount ??
       creditNote.creditAmount ??
@@ -130,7 +144,7 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
     });
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 2: CREATE CREDIT NOTE RECORD (IDEMPOTENT)
+    // STEP 2: CREATE CREDIT NOTE RECORD (IDEMPOTENT CHECK)
     // ═════════════════════════════════════════════════════════════════════════
 
     let creditNoteRecord = await prisma.creditNote.findUnique({
@@ -156,7 +170,7 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
     console.log('[Process] ✅ Credit note record created:', creditNoteRecord.id);
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 3: PROCESS EACH RETURNED LINE ITEM (ITEM-WISE COMMISSION REVERSAL)
+    // STEP 3: PROCESS EACH RETURNED LINE ITEM INDEPENDENTLY (PER PRODUCT & SALESMAN)
     // ═════════════════════════════════════════════════════════════════════════
 
     const itemsToProcess = lineItems.length > 0 ? lineItems : [creditNote];
@@ -168,6 +182,7 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
       const productName = lineItem.ProductName || lineItem.productName || lineItem.name || 'Returned Product';
       const productId = lineItem.ProductID || lineItem.productID || lineItem.productId || lineItem.id || null;
       const returnedQty = Number(lineItem.Quantity || lineItem.ReturnQuantity || lineItem.quantity || 1);
+      const originalQty = Number(lineItem.OriginalQuantity || lineItem.totalQty || lineItem.quantity || returnedQty);
       const unitPrice = Number(lineItem.Price || lineItem.price || 0);
 
       const creditAmount = Number(
@@ -179,13 +194,14 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
         (unitPrice > 0 ? unitPrice * returnedQty : (totalCreditAmount / itemsToProcess.length))
       ) || 0;
 
-      console.log(`\n[LineItem ${i + 1}] Processing returned item: ${productName} (Qty: ${returnedQty}, Credit: ₹${creditAmount})`);
+      console.log(`\n[LineItem ${i + 1}] Processing returned item: ${productName} (Returned Qty: ${returnedQty}/${originalQty}, Credit: ₹${creditAmount})`);
 
       try {
-        // Resolve employee assigned to this returned product
+        // Resolve employee assigned to THIS specific returned product
         const employeeIdentifier =
           lineItem.Salesman ||
           lineItem.CreatedBy ||
+          lineItem.salesmanName ||
           lineItem.employeeCode ||
           lineItem.code ||
           lineItem.empCode ||
@@ -217,26 +233,27 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
           });
         }
 
-        // Fallback 1: search original commission transaction for this invoice / sale
+        // Match original commission transaction for THIS specific product & salesman
         let originalTx: any = null;
-        if (invoiceNo || salesId) {
-          originalTx = await prisma.commissionTransaction.findFirst({
-            where: {
-              OR: [
-                invoiceNo ? { billId: invoiceNo } : {},
-                invoiceNo ? { invoiceNumber: invoiceNo } : {},
-                invoiceNo ? { billId: { startsWith: `${invoiceNo}-` } } : {}
-              ].filter(o => Object.keys(o).length > 0),
-              ...(employee ? { employeeId: employee.id } : {})
-            },
-            include: { employee: true }
-          });
-          if (!employee && originalTx?.employee) {
-            employee = originalTx.employee;
+        if (originalTxns.length > 0) {
+          if (employee) {
+            originalTx = originalTxns.find(t =>
+              t.employeeId === employee.id &&
+              ((productId && (t.billId?.endsWith(`-${productId}`) || t.notes?.includes(String(productId)))) ||
+               (productName && t.notes?.toLowerCase().includes(String(productName).toLowerCase())))
+            ) || originalTxns.find(t => t.employeeId === employee.id);
+          } else {
+            originalTx = originalTxns.find(t =>
+              (productId && (t.billId?.endsWith(`-${productId}`) || t.notes?.includes(String(productId)))) ||
+              (productName && t.notes?.toLowerCase().includes(String(productName).toLowerCase()))
+            ) || originalTxns[0];
+            if (originalTx?.employee) {
+              employee = originalTx.employee;
+            }
           }
         }
 
-        // Fallback 2: search original sale record
+        // Fallback: search original sale record
         if (!employee && originalSaleRecord?.employeeId) {
           employee = await prisma.employee.findUnique({
             where: { id: originalSaleRecord.employeeId }
@@ -248,9 +265,25 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
           continue;
         }
 
-        // Calculate commission adjustment (to reverse ONLY for this returned product)
+        // Calculate item-level proportional commission adjustment
         const rate = employee.commissionPercentage || (originalTx?.commissionPercent ?? 1.0);
-        const commissionAdjustment = Math.round(((creditAmount * rate) / 100) * 100) / 100;
+        let commissionAdjustment = 0;
+
+        if (originalTx && originalTx.commissionAmount > 0) {
+          const origTxCommission = Number(originalTx.commissionAmount);
+          if (originalQty > 0 && returnedQty <= originalQty) {
+            const ratio = returnedQty / originalQty;
+            commissionAdjustment = Math.round((ratio * origTxCommission) * 100) / 100;
+          } else if (originalTx.saleAmount > 0 && creditAmount > 0) {
+            const ratio = Math.min(1.0, creditAmount / originalTx.saleAmount);
+            commissionAdjustment = Math.round((ratio * origTxCommission) * 100) / 100;
+          } else {
+            commissionAdjustment = Math.round(((creditAmount * rate) / 100) * 100) / 100;
+          }
+          commissionAdjustment = Math.min(origTxCommission, commissionAdjustment);
+        } else {
+          commissionAdjustment = Math.round(((creditAmount * rate) / 100) * 100) / 100;
+        }
 
         console.log(`[LineItem ${i + 1}] Salesman: ${employee.firstName} ${employee.lastName} (Rate: ${rate}%, Reversed Commission: ₹${commissionAdjustment})`);
 
@@ -261,7 +294,7 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
             originalSaleId: originalTx ? String(originalTx.id) : null,
             employeeId: employee.id,
             productId: productId ? String(productId) : null,
-            productDescription: productName,
+            productDescription: `${productName}${returnedQty > 1 ? ` (Qty: ${returnedQty})` : ''}`,
             creditAmount: creditAmount,
             commissionAdjustment: commissionAdjustment,
             reason: lineItem.reason || creditNote.reason || 'Commission Reversed - Product Returned'
@@ -279,7 +312,7 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
               newStatus: 'ADJUSTED',
               previousAmount: originalTx.commissionAmount,
               newAmount: Math.max(0, originalTx.commissionAmount - commissionAdjustment),
-              reason: `Commission Reversed - Product Returned: ${productName}`,
+              reason: `Commission Reversed - Product Returned: ${productName} (Qty: ${returnedQty})`,
               performedAt: new Date()
             }
           });
@@ -293,12 +326,12 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
           });
         }
 
-        // Update Employee Wallet (decrease wallet by reversed commission)
+        // Update Employee Wallet (decrease wallet ONLY for THIS salesman by reversed commission)
         await updateEmployeeWalletCommission(
           employee.id,
           commissionAdjustment,
           false,
-          `Commission Reversed - Product Returned (${productName})`,
+          `Commission Reversed - Product Returned (${productName} x${returnedQty})`,
           'Commission Reversed'
         );
 
@@ -397,9 +430,29 @@ async function processCreditNoteUpdated(payload: any, eventType: string = 'CREDI
   try {
     const data = payload.data || payload;
     const creditNote = data.creditNote || data;
-    if (!creditNote || !creditNote.creditNoteNo) return;
+    const lineItems =
+      data.CreditNoteProducts ||
+      creditNote.CreditNoteProducts ||
+      payload.CreditNoteProducts ||
+      data.lineItems ||
+      creditNote.lineItems ||
+      payload.lineItems ||
+      data.products ||
+      creditNote.products ||
+      [];
 
-    const creditNoteNo = String(creditNote.creditNoteNo);
+    const creditNoteNo = String(
+      creditNote.CNNo ||
+      creditNote.CNID ||
+      creditNote.creditNoteNo ||
+      creditNote.number ||
+      payload.CNNo ||
+      payload.CNID ||
+      payload.creditNoteNo ||
+      ''
+    );
+
+    if (!creditNoteNo) return;
     console.log('[Update] Processing Credit Note update:', creditNoteNo);
 
     const existingRecord = await prisma.creditNote.findUnique({
@@ -409,7 +462,7 @@ async function processCreditNoteUpdated(payload: any, eventType: string = 'CREDI
 
     if (!existingRecord) {
       console.warn('[Update] ⚠️ Credit note not found in DB, executing created processor...');
-      await processCreditNoteCreated(payload);
+      await processCreditNoteCreated(payload, eventType);
       return;
     }
 
@@ -445,6 +498,96 @@ async function processCreditNoteUpdated(payload: any, eventType: string = 'CREDI
             updatedAt: new Date().toISOString()
           });
         }
+      }
+    } else if (lineItems.length > 0) {
+      // Calculate delta adjustments per product line
+      const affectedEmpIds = new Set<number>();
+
+      for (let i = 0; i < lineItems.length; i++) {
+        const item = lineItems[i];
+        const productId = item.ProductID || item.productID || item.productId || item.id || null;
+        const productName = item.ProductName || item.productName || item.name || 'Returned Product';
+        const returnedQty = Number(item.Quantity || item.ReturnQuantity || item.quantity || 1);
+        const originalQty = Number(item.OriginalQuantity || item.totalQty || item.quantity || returnedQty);
+        const unitPrice = Number(item.Price || item.price || 0);
+
+        const creditAmount = Number(
+          item.CNAmount ??
+          item.creditAmount ??
+          item.Amount ??
+          item.amount ??
+          (unitPrice > 0 ? unitPrice * returnedQty : 0)
+        ) || 0;
+
+        // Match existing CreditNoteLine record
+        const existingLine = existingRecord.lineItems.find(l =>
+          (productId && l.productId === String(productId)) ||
+          l.productDescription.toLowerCase().includes(String(productName).toLowerCase())
+        ) || existingRecord.lineItems[i];
+
+        if (existingLine) {
+          const previousAdjustment = Number(existingLine.commissionAdjustment);
+          const emp = await prisma.employee.findUnique({ where: { id: existingLine.employeeId } });
+          const rate = emp?.commissionPercentage || 1.0;
+
+          let newAdjustment = 0;
+          if (originalQty > 0 && returnedQty <= originalQty) {
+            newAdjustment = Math.round(((returnedQty / originalQty) * (previousAdjustment || creditAmount * (rate / 100))) * 100) / 100;
+          } else {
+            newAdjustment = Math.round(((creditAmount * rate) / 100) * 100) / 100;
+          }
+
+          const deltaAdjustment = Math.round((newAdjustment - previousAdjustment) * 100) / 100;
+
+          if (deltaAdjustment > 0) {
+            // Additional quantity returned -> reverse additional delta from wallet
+            await updateEmployeeWalletCommission(
+              existingLine.employeeId,
+              deltaAdjustment,
+              false,
+              `Commission Reversed - Credit Note ${creditNoteNo} Updated (Qty: ${returnedQty})`,
+              'Commission Reversed'
+            );
+            affectedEmpIds.add(existingLine.employeeId);
+          } else if (deltaAdjustment < 0) {
+            // Return quantity reduced -> refund delta back to employee wallet
+            const refundAmount = Math.abs(deltaAdjustment);
+            await updateEmployeeWalletCommission(
+              existingLine.employeeId,
+              refundAmount,
+              true,
+              `Commission Restored - Credit Note ${creditNoteNo} Updated (Qty: ${returnedQty})`,
+              'Commission Restored'
+            );
+            affectedEmpIds.add(existingLine.employeeId);
+          }
+
+          // Update line item record in DB
+          await prisma.creditNoteLine.update({
+            where: { id: existingLine.id },
+            data: {
+              creditAmount,
+              commissionAdjustment: newAdjustment,
+              productDescription: `${productName}${returnedQty > 1 ? ` (Qty: ${returnedQty})` : ''}`,
+              updatedAt: new Date()
+            }
+          });
+        }
+      }
+
+      // Recalculate monthly commission for affected employees
+      for (const empId of affectedEmpIds) {
+        const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+        const calculation = await CommissionService.calculateMonthlyCommission(empId, month);
+        await CommissionService.upsertMonthlyCommission(empId, month, calculation);
+
+        await broadcastCommissionEvent(empId, {
+          success: true,
+          eventType: 'CREDIT_NOTE_UPDATED',
+          creditNoteNo,
+          employeeId: empId,
+          updatedAt: new Date().toISOString()
+        });
       }
     }
 
