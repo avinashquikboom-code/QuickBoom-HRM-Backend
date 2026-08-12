@@ -228,12 +228,15 @@ export const getSalaryStructureList = async (
 
     const structures = employees.map(emp => {
       const ss = emp.salaryStructure;
-      const basic = ss?.basicSalary || 10000;
-      const hra = ss?.hra || 2000;
-      const medical = ss?.medicalAllowance || 500;
-      const travel = ss?.travelAllowance || 1000;
-      const special = ss?.specialAllowance || 0;
-      const grossTotal = basic + hra + medical + travel + special;
+      const basic = ss?.basicSalary ?? 0;
+      const hra = ss?.hra ?? 0;
+      const medical = ss?.medicalAllowance ?? 0;
+      const travel = ss?.travelAllowance ?? 0;
+      const special = ss?.specialAllowance ?? 0;
+      const incentive = ss?.incentive ?? 0;
+      const bonus = ss?.bonus ?? 0;
+      const calcSum = basic + hra + medical + travel + special + incentive + bonus;
+      const grossTotal = ss?.grossSalary && ss.grossSalary > 0 ? ss.grossSalary : (calcSum === 0 && basic > 0 ? basic : calcSum);
 
       return {
         id: ss?.id || emp.id,
@@ -250,10 +253,10 @@ export const getSalaryStructureList = async (
         medicalAllowance: medical,
         travelAllowance: travel,
         specialAllowance: special,
-        salaryAdvanceLimit: ss?.salaryAdvanceLimit || 25000,
+        salaryAdvanceLimit: ss?.salaryAdvanceLimit ?? 25000,
         grossTotal: grossTotal,
-        incentive: ss?.incentive || 0,
-        bonus: ss?.bonus || 0,
+        incentive: incentive,
+        bonus: bonus,
         pfEnabled: ss?.pfEnabled ?? false,
         esicEnabled: ss?.esicEnabled ?? false,
         updatedAt: ss?.updatedAt || emp.updatedAt,
@@ -522,14 +525,20 @@ export const updateSalaryStructureById = async (
 
     const currentSS = emp.salaryStructure;
 
-    const newBasic = basicSalary !== undefined ? parseFloat(basicSalary) : (currentSS?.basicSalary || 10000);
-    const newHra = hra !== undefined ? parseFloat(hra) : (currentSS?.hra || 2000);
-    const newMedical = (medical !== undefined ? parseFloat(medical) : undefined) ?? (medicalAllowance !== undefined ? parseFloat(medicalAllowance) : (currentSS?.medicalAllowance || 500));
-    const newTravel = (travel !== undefined ? parseFloat(travel) : undefined) ?? (travelAllowance !== undefined ? parseFloat(travelAllowance) : (currentSS?.travelAllowance || 1000));
+    const newBasic = basicSalary !== undefined ? parseFloat(basicSalary) : (currentSS?.basicSalary || 0);
+    const newHra = hra !== undefined ? parseFloat(hra) : (currentSS?.hra || 0);
+    const newMedical = (medical !== undefined ? parseFloat(medical) : undefined) ?? (medicalAllowance !== undefined ? parseFloat(medicalAllowance) : (currentSS?.medicalAllowance || 0));
+    const newTravel = (travel !== undefined ? parseFloat(travel) : undefined) ?? (travelAllowance !== undefined ? parseFloat(travelAllowance) : (currentSS?.travelAllowance || 0));
     const newSpecial = (special !== undefined ? parseFloat(special) : undefined) ?? (specialAllowance !== undefined ? parseFloat(specialAllowance) : (currentSS?.specialAllowance || 0));
+    const newIncentive = incentive !== undefined ? parseFloat(incentive) : (currentSS?.incentive || 0);
+    const newBonus = bonus !== undefined ? parseFloat(bonus) : (currentSS?.bonus || 0);
     const newAdvanceLimit = salaryAdvanceLimit !== undefined ? parseFloat(salaryAdvanceLimit) : (currentSS?.salaryAdvanceLimit || 25000);
 
-    const grossTotal = newBasic + newHra + newMedical + newTravel + newSpecial;
+    const calcTotal = newBasic + newHra + newMedical + newTravel + newSpecial + newIncentive + newBonus;
+    let grossTotal = grossSalary !== undefined && parseFloat(grossSalary) > 0 ? parseFloat(grossSalary) : calcTotal;
+    if (grossTotal === 0 && newBasic > 0) {
+      grossTotal = newBasic;
+    }
 
     const dataToUpdate: any = {
       basicSalary: newBasic,
@@ -537,6 +546,8 @@ export const updateSalaryStructureById = async (
       medicalAllowance: newMedical,
       travelAllowance: newTravel,
       specialAllowance: newSpecial,
+      incentive: newIncentive,
+      bonus: newBonus,
       salaryAdvanceLimit: newAdvanceLimit,
       grossSalary: grossTotal,
       monthlySalary: grossTotal,

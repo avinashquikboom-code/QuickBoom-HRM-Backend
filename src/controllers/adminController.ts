@@ -584,7 +584,16 @@ export const updateEmployee = async (
       storeId,
       customPunchRadius,
       commissionPercentage,
-      advanceLimit
+      advanceLimit,
+      basicSalary,
+      grossSalary,
+      hra,
+      medicalAllowance,
+      travelAllowance,
+      specialAllowance,
+      incentive,
+      bonus,
+      salaryStructure
     } = req.body;
 
     if (!id) {
@@ -751,6 +760,107 @@ export const updateEmployee = async (
             cardNumber: `HK-${updatedEmployee.employeeCode}-${phoneDigits}`,
           },
         });
+      }
+    }
+
+    // Handle Salary Structure update if any salary fields or salaryStructure object are passed
+    const ssInput = req.body.salaryStructure || req.body;
+    if (
+      ssInput.basicSalary !== undefined ||
+      ssInput.grossSalary !== undefined ||
+      ssInput.hra !== undefined ||
+      ssInput.medicalAllowance !== undefined ||
+      ssInput.travelAllowance !== undefined ||
+      ssInput.specialAllowance !== undefined ||
+      ssInput.incentive !== undefined ||
+      ssInput.bonus !== undefined ||
+      req.body.basicSalary !== undefined ||
+      req.body.grossSalary !== undefined
+    ) {
+      try {
+        const currentSS = await prisma.salaryStructure.findUnique({ where: { employeeId } });
+
+        const basicVal = ssInput.basicSalary !== undefined
+          ? parseFloat(String(ssInput.basicSalary))
+          : (currentSS?.basicSalary || 0);
+
+        const hraVal = ssInput.hra !== undefined
+          ? parseFloat(String(ssInput.hra))
+          : (currentSS?.hra || 0);
+
+        const medicalVal = ssInput.medicalAllowance !== undefined
+          ? parseFloat(String(ssInput.medicalAllowance))
+          : (ssInput.medical !== undefined ? parseFloat(String(ssInput.medical)) : (currentSS?.medicalAllowance || 0));
+
+        const travelVal = ssInput.travelAllowance !== undefined
+          ? parseFloat(String(ssInput.travelAllowance))
+          : (ssInput.travel !== undefined ? parseFloat(String(ssInput.travel)) : (currentSS?.travelAllowance || 0));
+
+        const specialVal = ssInput.specialAllowance !== undefined
+          ? parseFloat(String(ssInput.specialAllowance))
+          : (ssInput.special !== undefined ? parseFloat(String(ssInput.special)) : (currentSS?.specialAllowance || 0));
+
+        const incentiveVal = ssInput.incentive !== undefined
+          ? parseFloat(String(ssInput.incentive))
+          : (currentSS?.incentive || 0);
+
+        const bonusVal = ssInput.bonus !== undefined
+          ? parseFloat(String(ssInput.bonus))
+          : (currentSS?.bonus || 0);
+
+        const totalCalc = basicVal + hraVal + medicalVal + travelVal + specialVal + incentiveVal + bonusVal;
+
+        let grossVal = ssInput.grossSalary !== undefined && parseFloat(String(ssInput.grossSalary)) > 0
+          ? parseFloat(String(ssInput.grossSalary))
+          : totalCalc;
+
+        if (grossVal === 0 && basicVal > 0) {
+          grossVal = basicVal;
+        }
+
+        const advanceLimitVal = (advanceLimit !== undefined && advanceLimit !== null && advanceLimit !== '')
+          ? parseFloat(String(advanceLimit))
+          : (ssInput.salaryAdvanceLimit !== undefined ? parseFloat(String(ssInput.salaryAdvanceLimit)) : (currentSS?.salaryAdvanceLimit || 25000));
+
+        const pfEnabledVal = ssInput.pfEnabled !== undefined ? Boolean(ssInput.pfEnabled) : (currentSS?.pfEnabled ?? false);
+        const esicEnabledVal = ssInput.esicEnabled !== undefined ? Boolean(ssInput.esicEnabled) : (currentSS?.esicEnabled ?? false);
+
+        await prisma.salaryStructure.upsert({
+          where: { employeeId },
+          update: {
+            basicSalary: basicVal,
+            hra: hraVal,
+            medicalAllowance: medicalVal,
+            travelAllowance: travelVal,
+            specialAllowance: specialVal,
+            incentive: incentiveVal,
+            bonus: bonusVal,
+            grossSalary: grossVal,
+            monthlySalary: grossVal,
+            salaryAdvanceLimit: advanceLimitVal,
+            pfEnabled: pfEnabledVal,
+            esicEnabled: esicEnabledVal,
+            updatedAt: new Date(),
+          },
+          create: {
+            employeeId,
+            basicSalary: basicVal,
+            hra: hraVal,
+            medicalAllowance: medicalVal,
+            travelAllowance: travelVal,
+            specialAllowance: specialVal,
+            incentive: incentiveVal,
+            bonus: bonusVal,
+            grossSalary: grossVal,
+            monthlySalary: grossVal,
+            salaryAdvanceLimit: advanceLimitVal,
+            pfEnabled: pfEnabledVal,
+            esicEnabled: esicEnabledVal,
+          },
+        });
+        console.log(`✅ Salary structure updated for employee ${employeeId}: Basic=${basicVal}, Gross=${grossVal}`);
+      } catch (ssErr) {
+        console.error('Failed to update salary structure in updateEmployee:', ssErr);
       }
     }
 
@@ -1174,8 +1284,9 @@ export const createEmployee = async (
       const employeeEsicRate = ssInput.employeeEsicRate !== undefined ? Number(ssInput.employeeEsicRate) : 0.75;
       const employerEsicRate = ssInput.employerEsicRate !== undefined ? Number(ssInput.employerEsicRate) : 3.25;
 
-      const monthlySalary = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus;
-      const grossSalary = monthlySalary; // Gross salary is the total before deductions
+      const calcMonthly = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus;
+      const grossSalary = (calcMonthly === 0 && basicSalary > 0) ? basicSalary : calcMonthly;
+      const monthlySalary = grossSalary;
 
       await prisma.salaryStructure.create({
         data: {
