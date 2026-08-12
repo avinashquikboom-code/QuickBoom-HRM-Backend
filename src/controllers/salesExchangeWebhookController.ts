@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
-import { updateEmployeeWalletCommission, broadcastCommissionEvent, safeParseAmount } from '../utils/commissionHelper';
+import { updateEmployeeWalletCommission, broadcastCommissionEvent, safeParseAmount, createWebhookLog, normalizeEventType } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -11,9 +11,11 @@ const router = Router();
  */
 router.post('/created', (req: Request, res: Response) => {
   const rawPayload = req.body;
+  const eventType = 'SALES_EXCHANGE_CREATED';
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║ [SALES EXCHANGE CREATED] Webhook received                  ║');
+  console.log('║ [WEBHOOK] Route: /salesExchange/created                    ║');
+  console.log(`║ [WEBHOOK] Event Type: ${eventType}                        ║`);
   console.log('╚════════════════════════════════════════════════════════════╝');
 
   res.status(200).json({
@@ -21,12 +23,12 @@ router.post('/created', (req: Request, res: Response) => {
     message: 'Sales exchange received'
   });
 
-  processSalesExchangeCreated(rawPayload).catch(err => {
+  processSalesExchangeCreated(rawPayload, eventType).catch(err => {
     console.error('[Exchange] ❌ Error:', err.message);
   });
 });
 
-async function processSalesExchangeCreated(payload: any): Promise<void> {
+async function processSalesExchangeCreated(payload: any, eventType: string = 'SALES_EXCHANGE_CREATED'): Promise<void> {
   try {
     console.log('[Process] Step 1: Validate exchange payload');
 
@@ -374,6 +376,16 @@ async function processSalesExchangeCreated(payload: any): Promise<void> {
       });
     }
 
+    // ✅ Persist WebhookLog with authoritative eventType
+    await createWebhookLog({
+      eventType,
+      status: 'SUCCESS',
+      payload,
+      billId: exchangeNo,
+      amount: totalNewAmount,
+      employeeId: primaryEmpId,
+    });
+
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [SALES EXCHANGE] ✅ COMPLETE                               ║');
     console.log(`║ Net commission diff: ${commissionDifference >= 0 ? '+' : ''}₹${commissionDifference}`);
@@ -381,6 +393,12 @@ async function processSalesExchangeCreated(payload: any): Promise<void> {
 
   } catch (error: any) {
     console.error('[Process] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType,
+      status: 'FAILED',
+      payload,
+      errorMessage: error.message,
+    });
   }
 }
 
@@ -390,9 +408,11 @@ async function processSalesExchangeCreated(payload: any): Promise<void> {
  */
 router.post('/updated', (req: Request, res: Response) => {
   const rawPayload = req.body;
+  const eventType = 'SALES_EXCHANGE_UPDATED';
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║ [SALES EXCHANGE UPDATED] Webhook received                  ║');
+  console.log('║ [WEBHOOK] Route: /salesExchange/updated                    ║');
+  console.log(`║ [WEBHOOK] Event Type: ${eventType}                        ║`);
   console.log('╚════════════════════════════════════════════════════════════╝');
 
   res.status(200).json({
@@ -400,12 +420,12 @@ router.post('/updated', (req: Request, res: Response) => {
     message: 'Sales exchange update received'
   });
 
-  processSalesExchangeUpdated(rawPayload).catch(err => {
+  processSalesExchangeUpdated(rawPayload, eventType).catch(err => {
     console.error('[Update] ❌ Error:', err.message);
   });
 });
 
-async function processSalesExchangeUpdated(payload: any): Promise<void> {
+async function processSalesExchangeUpdated(payload: any, eventType: string = 'SALES_EXCHANGE_UPDATED'): Promise<void> {
   try {
     const data = payload.data || payload;
     const exchange = data.salesExchange || data;
@@ -512,8 +532,22 @@ async function processSalesExchangeUpdated(payload: any): Promise<void> {
 
     console.log(`[Update] ✅ Status updated to ${updatedStatus} for Exchange ${exchangeNo}`);
 
+    await createWebhookLog({
+      eventType,
+      status: 'SUCCESS',
+      payload,
+      billId: exchangeNo,
+      amount: Number(existingRecord.newAmount || 0),
+    });
+
   } catch (error: any) {
     console.error('[Update] Error:', error.message);
+    await createWebhookLog({
+      eventType,
+      status: 'FAILED',
+      payload,
+      errorMessage: error.message,
+    });
   }
 }
 

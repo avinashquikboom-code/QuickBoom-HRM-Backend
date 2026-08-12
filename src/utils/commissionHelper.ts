@@ -288,7 +288,8 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
 
   const amount = safeParseAmount(rawAmount);
 
-  const eventType = payload?.eventType || payload?.topic || payload?.event || 'INVOICE_CREATED';
+  const rawEventType = payload?.eventType || payload?.topic || payload?.event || null;
+  const eventType = normalizeEventType(rawEventType, 'INVOICE_CREATED', payload);
 
   const customerName =
     payload?.customerName ||
@@ -783,6 +784,83 @@ export async function broadcastCommissionEvent(employeeId: number, eventData: an
     }
   } catch (err: any) {
     console.error('[WebSocket Error] Broadcast failed:', err.message);
+  }
+}
+
+/**
+ * Normalizes event type strings to canonical uppercase format:
+ * INVOICE_CREATED, INVOICE_UPDATED, CREDIT_NOTE_CREATED, CREDIT_NOTE_UPDATED,
+ * SALES_EXCHANGE_CREATED, SALES_EXCHANGE_UPDATED, EMPLOYEE_CREATED, EMPLOYEE_UPDATED, EMPLOYEE_DELETED
+ */
+export function normalizeEventType(rawType?: string | null, routeDefault: string = 'INVOICE_CREATED', payload?: any): string {
+  if (rawType && typeof rawType === 'string' && rawType.trim()) {
+    const s = rawType.trim().toLowerCase().replace(/[\.\-]/g, '_');
+    if (s.includes('credit') && (s.includes('update') || s.includes('cancel') || s.includes('reverse'))) return 'CREDIT_NOTE_UPDATED';
+    if (s.includes('credit') && (s.includes('create') || s.includes('add'))) return 'CREDIT_NOTE_CREATED';
+    if (s.includes('credit')) return 'CREDIT_NOTE_CREATED';
+
+    if (s.includes('exchange') && (s.includes('update') || s.includes('cancel') || s.includes('reverse'))) return 'SALES_EXCHANGE_UPDATED';
+    if (s.includes('exchange') && (s.includes('create') || s.includes('add'))) return 'SALES_EXCHANGE_CREATED';
+    if (s.includes('exchange')) return 'SALES_EXCHANGE_CREATED';
+
+    if (s.includes('invoice') && s.includes('update')) return 'INVOICE_UPDATED';
+    if (s.includes('invoice') && s.includes('create')) return 'INVOICE_CREATED';
+
+    if (s.includes('employee') && s.includes('delete')) return 'EMPLOYEE_DELETED';
+    if (s.includes('employee') && s.includes('update')) return 'EMPLOYEE_UPDATED';
+    if (s.includes('employee') && (s.includes('create') || s.includes('add'))) return 'EMPLOYEE_CREATED';
+
+    return rawType.toUpperCase().replace(/[\.\-]/g, '_');
+  }
+
+  if (payload) {
+    const dataStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const lowerStr = dataStr.toLowerCase();
+    if (lowerStr.includes('creditnote') || lowerStr.includes('credit_note')) {
+      if (lowerStr.includes('cancel') || lowerStr.includes('update') || lowerStr.includes('reverse')) return 'CREDIT_NOTE_UPDATED';
+      return 'CREDIT_NOTE_CREATED';
+    }
+    if (lowerStr.includes('salesexchange') || lowerStr.includes('sales_exchange') || lowerStr.includes('exchangeno')) {
+      if (lowerStr.includes('cancel') || lowerStr.includes('update') || lowerStr.includes('reverse')) return 'SALES_EXCHANGE_UPDATED';
+      return 'SALES_EXCHANGE_CREATED';
+    }
+  }
+
+  return routeDefault;
+}
+
+/**
+ * Creates an explicit WebhookLog entry in DB with authoritative event type.
+ */
+export async function createWebhookLog(data: {
+  eventType: string;
+  status: string;
+  payload: any;
+  billId?: string | null;
+  amount?: number | null;
+  employeeId?: number | null;
+  errorMessage?: string | null;
+}): Promise<any> {
+  try {
+    const normalizedType = normalizeEventType(data.eventType, 'INVOICE_CREATED', data.payload);
+    const payloadStr = typeof data.payload === 'string' ? data.payload : JSON.stringify(data.payload);
+    const log = await prisma.webhookLog.create({
+      data: {
+        eventType: normalizedType,
+        status: data.status || 'SUCCESS',
+        payload: payloadStr,
+        billId: data.billId || null,
+        amount: data.amount !== undefined && data.amount !== null ? Number(data.amount) : null,
+        employeeId: data.employeeId || null,
+        errorMessage: data.errorMessage || null,
+        processedAt: new Date(),
+      },
+    });
+    console.log(`[WEBHOOK LOG] ✅ Recorded Log ID ${log.id} | EventType: ${normalizedType} | Status: ${log.status}`);
+    return log;
+  } catch (err: any) {
+    console.error('[WEBHOOK LOG] ❌ Failed to record log:', err.message);
+    return null;
   }
 }
 

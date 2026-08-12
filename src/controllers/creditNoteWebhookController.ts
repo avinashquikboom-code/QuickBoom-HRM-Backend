@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
-import { updateEmployeeWalletCommission, broadcastCommissionEvent } from '../utils/commissionHelper';
+import { updateEmployeeWalletCommission, broadcastCommissionEvent, createWebhookLog, normalizeEventType } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -11,9 +11,11 @@ const router = Router();
  */
 router.post('/created', (req: Request, res: Response) => {
   const rawPayload = req.body;
+  const eventType = 'CREDIT_NOTE_CREATED';
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║ [CREDIT NOTE CREATED] Webhook received                     ║');
+  console.log('║ [WEBHOOK] Route: /creditNote/created                       ║');
+  console.log(`║ [WEBHOOK] Event Type: ${eventType}                        ║`);
   console.log('╚════════════════════════════════════════════════════════════╝');
 
   res.status(200).json({
@@ -22,12 +24,12 @@ router.post('/created', (req: Request, res: Response) => {
   });
 
   // Process in background
-  processCreditNoteCreated(rawPayload).catch(err => {
+  processCreditNoteCreated(rawPayload, eventType).catch(err => {
     console.error('[Credit Note] ❌ Background error:', err.message);
   });
 });
 
-async function processCreditNoteCreated(payload: any): Promise<void> {
+async function processCreditNoteCreated(payload: any, eventType: string = 'CREDIT_NOTE_CREATED'): Promise<void> {
   try {
     console.log('[Process] Step 1: Validate payload');
 
@@ -238,6 +240,17 @@ async function processCreditNoteCreated(payload: any): Promise<void> {
       });
     }
 
+    // ✅ Persist WebhookLog with authoritative eventType
+    const firstEmpId = Array.from(employeeCommissionMap.keys())[0] || null;
+    await createWebhookLog({
+      eventType,
+      status: 'SUCCESS',
+      payload,
+      billId: creditNoteNo,
+      amount: totalCreditAmount,
+      employeeId: firstEmpId,
+    });
+
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [CREDIT NOTE] ✅ COMPLETE                                  ║');
     console.log(`║ Total commission reversed: -₹${totalCommissionAdjustment}`);
@@ -245,6 +258,12 @@ async function processCreditNoteCreated(payload: any): Promise<void> {
 
   } catch (error: any) {
     console.error('[Process] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType,
+      status: 'FAILED',
+      payload,
+      errorMessage: error.message,
+    });
   }
 }
 
@@ -254,9 +273,11 @@ async function processCreditNoteCreated(payload: any): Promise<void> {
  */
 router.post('/updated', (req: Request, res: Response) => {
   const rawPayload = req.body;
+  const eventType = 'CREDIT_NOTE_UPDATED';
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║ [CREDIT NOTE UPDATED] Webhook received                     ║');
+  console.log('║ [WEBHOOK] Route: /creditNote/updated                       ║');
+  console.log(`║ [WEBHOOK] Event Type: ${eventType}                        ║`);
   console.log('╚════════════════════════════════════════════════════════════╝');
 
   res.status(200).json({
@@ -264,12 +285,12 @@ router.post('/updated', (req: Request, res: Response) => {
     message: 'Credit note update received'
   });
 
-  processCreditNoteUpdated(rawPayload).catch(err => {
+  processCreditNoteUpdated(rawPayload, eventType).catch(err => {
     console.error('[Credit Update] ❌ Error:', err.message);
   });
 });
 
-async function processCreditNoteUpdated(payload: any): Promise<void> {
+async function processCreditNoteUpdated(payload: any, eventType: string = 'CREDIT_NOTE_UPDATED'): Promise<void> {
   try {
     const data = payload.data || payload;
     const creditNote = data.creditNote || data;
@@ -334,8 +355,22 @@ async function processCreditNoteUpdated(payload: any): Promise<void> {
 
     console.log(`[Update] ✅ Status updated to ${updatedStatus} for Credit Note ${creditNoteNo}`);
 
+    await createWebhookLog({
+      eventType,
+      status: 'SUCCESS',
+      payload,
+      billId: creditNoteNo,
+      amount: Number(creditNote.creditAmount || creditNote.totalAmount || 0),
+    });
+
   } catch (error: any) {
     console.error('[Update] Error:', error.message);
+    await createWebhookLog({
+      eventType,
+      status: 'FAILED',
+      payload,
+      errorMessage: error.message,
+    });
   }
 }
 
