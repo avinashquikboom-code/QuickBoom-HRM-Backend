@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
-import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails } from '../utils/commissionHelper';
+import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent } from '../utils/commissionHelper';
 
 /**
  * Stores raw HopKid webhook payload into HopkidWebhookLog table
@@ -381,35 +381,50 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
         console.log(`[Save]   ✅ Sale & Commission created: ID ${createdTx.id}`);
         processedSalesCount++;
 
-        // Emit WebSocket events to trigger immediate UI refresh on mobile and admin dashboards
+        // ✅ Create Sales record in DB if not existing so it shows up in Sales History
         try {
-          const { getWebSocketInstance } = require('../utils/websocketSingleton');
-          const ws = getWebSocketInstance();
-          if (ws) {
-            console.log(`[WebSocket] Broadcasting commissionUpdate for Employee ID ${salesman.id}, Bill ID ${uniqueBillId}`);
-            if (typeof ws.broadcastCommissionUpdate === 'function') {
-              await ws.broadcastCommissionUpdate(salesman.id, {
-                success: true,
+          const existingSale = await prisma.sales.findFirst({
+            where: { billId: uniqueBillId },
+          });
+          if (!existingSale) {
+            await prisma.sales.create({
+              data: {
                 billId: uniqueBillId,
-                amount: product.productNetAmount,
-                commission: product.productCommission,
                 employeeId: salesman.id,
-                createdAt: validDate.toISOString(),
-              });
-            } else {
-              ws.getServer().to(`employee_${salesman.id}`).emit('commissionUpdate', {
-                success: true,
-                billId: uniqueBillId,
-                amount: product.productNetAmount,
-                commission: product.productCommission,
-                employeeId: salesman.id,
-                createdAt: validDate.toISOString(),
-              });
-            }
+                netAmount: product.productNetAmount,
+                saleDate: validDate,
+                status: 'ACTIVE',
+                source: 'HOPKID',
+                description: `HopKid Invoice ${primaryBillId} - ${product.productName}`,
+              },
+            });
           }
-        } catch (wsErr: any) {
-          console.error('[WebSocket] Failed to broadcast update:', wsErr.message);
+        } catch (salesErr: any) {
+          console.error('[Sales Create Error]:', salesErr.message);
         }
+
+        // ✅ Update Employee Wallet Balance
+        const commAmt = Math.round(product.productCommission * 100) / 100;
+        if (commAmt > 0) {
+          await updateEmployeeWalletCommission(
+            salesman.id,
+            commAmt,
+            true,
+            `Commission Earned - HopKid Invoice ${uniqueBillId}`,
+            'Commission Earned'
+          );
+        }
+
+        // Emit WebSocket events to trigger immediate UI refresh on mobile and admin dashboards
+        await broadcastCommissionEvent(salesman.id, {
+          success: true,
+          eventType: 'INVOICE_CREATED',
+          billId: uniqueBillId,
+          amount: product.productNetAmount,
+          commission: commAmt,
+          employeeId: salesman.id,
+          createdAt: validDate.toISOString(),
+        });
       }
     } catch (salesmanErr: any) {
       console.error(`[Save] ❌ Error processing salesman ${salesman.firstName}:`, salesmanErr.message);
@@ -423,9 +438,11 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   console.log(`╚════════════════════════════════════════════════════════════╝\n`);
 
   if (logEntry) {
+    const firstSalesmanId = Array.from(commissionMap.keys())[0];
     await prisma.webhookLog.update({
       where: { id: logEntry.id },
       data: {
+        employeeId: firstSalesmanId || undefined,
         status: processedSalesCount > 0 ? 'SUCCESS' : (commissionMap.size === 0 ? 'SUCCESS' : 'FAILED'),
         errorMessage: lastError ?? undefined,
         processedAt: new Date(),

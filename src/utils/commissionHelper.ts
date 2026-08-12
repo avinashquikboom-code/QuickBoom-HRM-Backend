@@ -344,9 +344,12 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
 
   const employeeIdentifier =
     firstItem?.employeeCode ||
+    firstItem?.salesmanCode ||
     firstItem?.code ||
     firstItem?.empCode ||
     firstItem?.hopkidCode ||
+    firstItem?.employeeId ||
+    firstItem?.salesmanId ||
     firstItem?.employeePhoneNo ||
     firstItem?.employeeContactNo ||
     firstItem?.mobileNo ||
@@ -355,6 +358,26 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     firstItem?.phoneNumber ||
     firstItem?.employeeName ||
     firstItem?.name ||
+    invoice?.employeeCode ||
+    invoice?.salesmanCode ||
+    invoice?.empCode ||
+    invoice?.hopkidCode ||
+    invoice?.employeeId ||
+    invoice?.salesmanId ||
+    invoice?.mobileNo ||
+    invoice?.mobileNumber ||
+    invoice?.phone ||
+    invoice?.phoneNumber ||
+    invoice?.employeeName ||
+    invoice?.salesmanName ||
+    invoice?.salesman ||
+    payload?.data?.employeeCode ||
+    payload?.data?.salesmanCode ||
+    payload?.data?.employeeId ||
+    payload?.data?.salesmanId ||
+    payload?.data?.mobileNo ||
+    payload?.data?.mobileNumber ||
+    payload?.data?.employeeName ||
     payload?.employeeCode ||
     payload?.code ||
     payload?.empCode ||
