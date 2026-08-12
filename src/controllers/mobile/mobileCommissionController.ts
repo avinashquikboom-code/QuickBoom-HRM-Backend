@@ -378,30 +378,72 @@ export const getMobileWebhookLogs = async (
 
     const results: any[] = [];
 
-    // 2. WebhookLog — filter by employeeId directly
+    // Pre-fetch employee's Credit Note line items
+    let empCreditNoteLines: any[] = [];
+    try {
+      empCreditNoteLines = await prisma.creditNoteLine.findMany({
+        where: { employeeId: employee.id },
+        include: { creditNote: true },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+    } catch (_) {}
+
+    const cnBillIds = empCreditNoteLines.map(c => c.creditNote.creditNoteNo).filter(Boolean);
+    const cnInvoiceNos = empCreditNoteLines.map(c => c.creditNote.invoiceNo).filter(Boolean);
+
+    // 2. WebhookLog — filter by employeeId directly OR linked Credit Note numbers
     try {
       const wLogs = await prisma.webhookLog.findMany({
-        where: { employeeId: employee.id },
+        where: {
+          OR: [
+            { employeeId: employee.id },
+            cnBillIds.length > 0 ? { billId: { in: cnBillIds } } : {},
+            cnInvoiceNos.length > 0 ? { billId: { in: cnInvoiceNos } } : {},
+          ].filter(o => Object.keys(o).length > 0)
+        },
         orderBy: { createdAt: 'desc' },
-        take: limitNum,
+        take: limitNum * 2,
       });
 
       for (const log of wLogs) {
         const meta = extractWebhookMeta(log.payload);
+        const isCreditNote = String(log.eventType || '').toUpperCase().includes('CREDIT_NOTE') || String(log.billId || '').startsWith('CN-');
+        const matchedCnLine = empCreditNoteLines.find(c => c.creditNote.creditNoteNo === log.billId);
+
         results.push({
           id: log.id,
           eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
           status: log.status || 'SUCCESS',
           billId: log.billId || meta.billId || null,
-          invoiceNo: meta.invoiceNumber || null,
-          amount: log.amount ?? meta.amount ?? 0,
-          commissionAmount: meta.commissionAmount ?? 0,
-          customerName: meta.customerName || '-',
+          invoiceNo: meta.invoiceNumber || (matchedCnLine ? matchedCnLine.creditNote.invoiceNo : null),
+          amount: isCreditNote && matchedCnLine ? Number(matchedCnLine.creditAmount) : (log.amount ?? meta.amount ?? 0),
+          commissionAmount: isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : (meta.commissionAmount ?? 0),
+          customerName: meta.customerName && meta.customerName !== 'N/A' ? meta.customerName : '-',
           errorMessage: log.errorMessage || null,
           createdAt: log.createdAt,
         });
       }
     } catch (_) { /* table may not exist */ }
+
+    // Fallback: If any CreditNoteLine for this employee is missing from WebhookLog, add log item
+    for (const line of empCreditNoteLines) {
+      const cnNo = line.creditNote.creditNoteNo;
+      if (!results.some((r) => r.billId === cnNo)) {
+        results.push({
+          id: `cn-${line.id}`,
+          eventType: 'CREDIT_NOTE_CREATED',
+          status: 'SUCCESS',
+          billId: cnNo,
+          invoiceNo: line.creditNote.invoiceNo,
+          amount: Number(line.creditAmount),
+          commissionAmount: -Number(line.commissionAdjustment),
+          customerName: 'Customer',
+          errorMessage: null,
+          createdAt: line.createdAt,
+        });
+      }
+    }
 
     // 3. HopkidWebhookLog — match by employeeCode or mobileNumber in meta
     try {
@@ -664,9 +706,9 @@ export const getMobileCommissionBills = async (
       skip: offsetNum,
     });
 
-    const total = await prisma.commissionTransaction.count({ where });
+    const totalTxs = await prisma.commissionTransaction.count({ where });
 
-    const bills = txs.map((t) => ({
+    const bills: any[] = txs.map((t) => ({
       id: String(t.id),
       billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
       saleAmount: t.saleAmount,
@@ -675,6 +717,42 @@ export const getMobileCommissionBills = async (
       status: t.status,
       description: t.notes,
     }));
+
+    // Pre-fetch employee's Credit Note line item reversals in range
+    try {
+      const cnLines = await prisma.creditNoteLine.findMany({
+        where: {
+          employeeId: employee.id,
+          createdAt: {
+            gte: fromDate,
+            lte: toDate,
+          },
+        },
+        include: { creditNote: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      for (const line of cnLines) {
+        const cnNo = line.creditNote.creditNoteNo;
+        if (!bills.some((b) => b.billId === cnNo)) {
+          bills.push({
+            id: `cn-${line.id}`,
+            billId: cnNo,
+            invoiceNo: line.creditNote.invoiceNo,
+            saleAmount: -Number(line.creditAmount),
+            commission: -Number(line.commissionAdjustment),
+            date: line.createdAt,
+            status: 'REVERSED',
+            description: `Credit Note (${cnNo}) - Reversal: ${line.productDescription}`,
+            eventType: 'CREDIT_NOTE_CREATED',
+          });
+        }
+      }
+    } catch (_) {}
+
+    // Sort merged list by date desc
+    bills.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const total = totalTxs + bills.filter(b => b.id.startsWith('cn-')).length;
 
     res.json({
       success: true,
