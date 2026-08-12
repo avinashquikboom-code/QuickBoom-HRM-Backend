@@ -35,11 +35,86 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
 
     const data = payload.data || payload;
     const creditNote = data.creditNote || data;
-    const lineItems = data.lineItems || creditNote.lineItems || [];
+    const lineItems =
+      data.CreditNoteProducts ||
+      creditNote.CreditNoteProducts ||
+      payload.CreditNoteProducts ||
+      data.lineItems ||
+      creditNote.lineItems ||
+      payload.lineItems ||
+      data.products ||
+      creditNote.products ||
+      payload.products ||
+      [];
 
-    const creditNoteNo = String(creditNote.creditNoteNo || creditNote.number || `CN-${Date.now()}`);
-    const invoiceNo = String(creditNote.invoiceNo || creditNote.invoiceNumber || creditNote.billId || '');
-    const totalCreditAmount = Number(creditNote.creditAmount || creditNote.totalAmount || creditNote.amount || 0);
+    const creditNoteNo = String(
+      creditNote.CNNo ||
+      creditNote.CNID ||
+      creditNote.creditNoteNo ||
+      creditNote.number ||
+      payload.CNNo ||
+      payload.CNID ||
+      payload.creditNoteNo ||
+      `CN-${Date.now()}`
+    );
+
+    let invoiceNo = String(
+      creditNote.InvoiceNo ||
+      creditNote.invoiceNo ||
+      creditNote.invoiceNumber ||
+      creditNote.SalesID ||
+      creditNote.billId ||
+      payload.InvoiceNo ||
+      payload.SalesID ||
+      payload.invoiceNo ||
+      ''
+    );
+
+    const salesId = creditNote.SalesID || payload.SalesID || null;
+
+    // Resolve original sale record from DB if invoiceNo / SalesID is present
+    let originalSaleRecord: any = null;
+    if (invoiceNo || salesId) {
+      originalSaleRecord = await prisma.sales.findFirst({
+        where: {
+          OR: [
+            invoiceNo ? { billId: invoiceNo } : {},
+            salesId ? { id: String(salesId) } : {},
+            invoiceNo ? { billId: { contains: invoiceNo } } : {}
+          ].filter(o => Object.keys(o).length > 0)
+        }
+      });
+      if (originalSaleRecord && !invoiceNo) {
+        invoiceNo = originalSaleRecord.billId;
+      }
+    }
+
+    let totalCreditAmount = Number(
+      creditNote.CNAmount ??
+      creditNote.creditAmount ??
+      creditNote.RefundAmount ??
+      creditNote.BillAmount ??
+      creditNote.totalAmount ??
+      creditNote.amount ??
+      payload.CNAmount ??
+      payload.RefundAmount ??
+      payload.creditAmount ??
+      0
+    );
+
+    if (totalCreditAmount <= 0 && lineItems.length > 0) {
+      for (const item of lineItems) {
+        const itemAmt = Number(
+          item.CNAmount ??
+          item.creditAmount ??
+          item.Amount ??
+          item.amount ??
+          item.productNetAmount ??
+          (Number(item.Price || item.price || 0) * Number(item.Quantity || item.quantity || 1))
+        ) || 0;
+        totalCreditAmount += itemAmt;
+      }
+    }
 
     if (!creditNoteNo) {
       console.error('[Process] ❌ Invalid credit note payload structure');
@@ -49,6 +124,7 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
     console.log('[Process] ✅ Valid credit note:', {
       creditNoteNo,
       invoiceNo,
+      salesId,
       totalCreditAmount,
       lineItemCount: lineItems.length
     });
@@ -70,7 +146,7 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
       data: {
         creditNoteNo,
         invoiceNo,
-        creditDate: new Date(creditNote.creditDate || creditNote.date || new Date()),
+        creditDate: new Date(creditNote.CNDate || creditNote.creditDate || creditNote.date || payload.CNDate || new Date()),
         creditAmount: totalCreditAmount,
         creditReason: creditNote.reason || creditNote.creditReason || 'Product Return / Discount adjustment',
         status: 'ACTIVE'
@@ -89,48 +165,68 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
 
     for (let i = 0; i < itemsToProcess.length; i++) {
       const lineItem = itemsToProcess[i];
-      const productName = lineItem.productName || lineItem.name || 'Returned Product';
-      const productId = lineItem.productID || lineItem.productId || lineItem.id || null;
-      const creditAmount = Number(lineItem.creditAmount || lineItem.amount || lineItem.productNetAmount || totalCreditAmount) || 0;
+      const productName = lineItem.ProductName || lineItem.productName || lineItem.name || 'Returned Product';
+      const productId = lineItem.ProductID || lineItem.productID || lineItem.productId || lineItem.id || null;
+      const returnedQty = Number(lineItem.Quantity || lineItem.ReturnQuantity || lineItem.quantity || 1);
+      const unitPrice = Number(lineItem.Price || lineItem.price || 0);
 
-      console.log(`\n[LineItem ${i + 1}] Processing returned item: ${productName} (Credit: ₹${creditAmount})`);
+      const creditAmount = Number(
+        lineItem.CNAmount ??
+        lineItem.creditAmount ??
+        lineItem.Amount ??
+        lineItem.amount ??
+        lineItem.productNetAmount ??
+        (unitPrice > 0 ? unitPrice * returnedQty : (totalCreditAmount / itemsToProcess.length))
+      ) || 0;
+
+      console.log(`\n[LineItem ${i + 1}] Processing returned item: ${productName} (Qty: ${returnedQty}, Credit: ₹${creditAmount})`);
 
       try {
         // Resolve employee assigned to this returned product
         const employeeIdentifier =
+          lineItem.Salesman ||
+          lineItem.CreatedBy ||
           lineItem.employeeCode ||
           lineItem.code ||
           lineItem.empCode ||
+          lineItem.salesmanCode ||
           lineItem.employeePhoneNo ||
           lineItem.employeeContactNo ||
           lineItem.mobileNo ||
           lineItem.employeeName ||
+          creditNote.Salesman ||
+          creditNote.CreatedBy ||
           creditNote.employeeCode ||
-          creditNote.employeePhoneNo;
+          creditNote.employeePhoneNo ||
+          payload.Salesman ||
+          payload.CreatedBy ||
+          payload.employeeCode;
 
         let employee: any = null;
         if (employeeIdentifier) {
           employee = await prisma.employee.findFirst({
             where: {
               OR: [
-                { employeeCode: String(employeeIdentifier) },
-                { mobileNumber: String(employeeIdentifier) },
-                { employeeID: String(employeeIdentifier) }
+                { employeeCode: { equals: String(employeeIdentifier), mode: 'insensitive' } },
+                { mobileNumber: { contains: String(employeeIdentifier) } },
+                { employeeID: { equals: String(employeeIdentifier), mode: 'insensitive' } },
+                { firstName: { equals: String(employeeIdentifier), mode: 'insensitive' } },
+                { lastName: { equals: String(employeeIdentifier), mode: 'insensitive' } }
               ]
             }
           });
         }
 
-        // Fallback: search original commission transaction for this invoice to identify original salesman
+        // Fallback 1: search original commission transaction for this invoice / sale
         let originalTx: any = null;
-        if (invoiceNo) {
+        if (invoiceNo || salesId) {
           originalTx = await prisma.commissionTransaction.findFirst({
             where: {
               OR: [
-                { billId: invoiceNo },
-                { invoiceNumber: invoiceNo },
-                { billId: { startsWith: `${invoiceNo}-` } }
-              ],
+                invoiceNo ? { billId: invoiceNo } : {},
+                invoiceNo ? { invoiceNumber: invoiceNo } : {},
+                invoiceNo ? { billId: { startsWith: `${invoiceNo}-` } } : {}
+              ].filter(o => Object.keys(o).length > 0),
               ...(employee ? { employeeId: employee.id } : {})
             },
             include: { employee: true }
@@ -138,6 +234,13 @@ async function processCreditNoteCreated(payload: any, eventType: string = 'CREDI
           if (!employee && originalTx?.employee) {
             employee = originalTx.employee;
           }
+        }
+
+        // Fallback 2: search original sale record
+        if (!employee && originalSaleRecord?.employeeId) {
+          employee = await prisma.employee.findUnique({
+            where: { id: originalSaleRecord.employeeId }
+          });
         }
 
         if (!employee) {

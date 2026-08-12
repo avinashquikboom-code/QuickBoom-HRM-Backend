@@ -135,6 +135,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
             employeeId: null,
             amount: amountVal || 0,
             billId: billIdVal || null,
+            invoiceNo: meta.invoiceNumber || null,
             customerName: meta.customerName || 'N/A',
             employeeName: resolvedEmpName,
             storeName: resolvedStoreName,
@@ -156,7 +157,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     // Map WebhookLog items
     const mappedWebhookLogs = webhookLogs.map((log) => {
       const meta = extractWebhookMeta(log.payload);
-      const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
+      const amountVal = log.amount !== null && log.amount !== undefined && log.amount !== 0 ? log.amount : meta.amount;
       const billIdVal = log.billId || meta.billId;
       const resolvedEmpName = resolveEmpName(log.employeeId, meta, null);
       const resolvedStoreName = resolveStoreName(meta, null);
@@ -165,6 +166,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         ...log,
         amount: amountVal || 0,
         billId: billIdVal || null,
+        invoiceNo: meta.invoiceNumber || null,
         customerName: meta.customerName || 'N/A',
         employeeName: resolvedEmpName,
         storeName: resolvedStoreName,
@@ -180,6 +182,47 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     for (const hLog of hopkidLogsMapped) {
       if (!hLog.billId || !existingBillIds.has(hLog.billId)) {
         combined.push(hLog);
+      }
+    }
+
+    // Enrich Credit Note logs from DB if fields are missing or amount is 0
+    for (let i = 0; i < combined.length; i++) {
+      const log = combined[i];
+      const isCreditNote = String(log.eventType || '').toUpperCase().includes('CREDIT_NOTE') || String(log.billId || '').startsWith('CN-');
+
+      if (isCreditNote) {
+        try {
+          if (log.billId) {
+            const cnRecord = await prisma.creditNote.findUnique({
+              where: { creditNoteNo: log.billId },
+              include: { lineItems: true }
+            });
+            if (cnRecord) {
+              if (!log.amount || log.amount === 0) {
+                log.amount = Number(cnRecord.creditAmount) || 0;
+              }
+              if (!log.invoiceNo && cnRecord.invoiceNo) {
+                log.invoiceNo = cnRecord.invoiceNo;
+              }
+              if ((!log.employeeName || log.employeeName === 'N/A') && cnRecord.invoiceNo) {
+                const saleRecord = await prisma.sales.findFirst({
+                  where: {
+                    OR: [
+                      { billId: cnRecord.invoiceNo },
+                      { billId: { contains: cnRecord.invoiceNo } }
+                    ]
+                  }
+                });
+                if (saleRecord?.employeeId) {
+                  const emp = allEmployees.find(e => e.id === saleRecord.employeeId);
+                  if (emp) log.employeeName = `${emp.firstName} ${emp.lastName}`.trim();
+                }
+              }
+            }
+          }
+        } catch (e) {
+          // ignore enrichment error
+        }
       }
     }
 
