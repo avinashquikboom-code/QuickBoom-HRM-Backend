@@ -809,14 +809,7 @@ export const updateEmployee = async (
           : (currentSS?.bonus || 0);
 
         const totalCalc = basicVal + hraVal + medicalVal + travelVal + specialVal + incentiveVal + bonusVal;
-
-        let grossVal = ssInput.grossSalary !== undefined && parseFloat(String(ssInput.grossSalary)) > 0
-          ? parseFloat(String(ssInput.grossSalary))
-          : totalCalc;
-
-        if (grossVal === 0 && basicVal > 0) {
-          grossVal = basicVal;
-        }
+        const grossVal = totalCalc > 0 ? totalCalc : (basicVal > 0 ? basicVal : 0);
 
         const advanceLimitVal = (advanceLimit !== undefined && advanceLimit !== null && advanceLimit !== '')
           ? parseFloat(String(advanceLimit))
@@ -858,6 +851,7 @@ export const updateEmployee = async (
             esicEnabled: esicEnabledVal,
           },
         });
+
         console.log(`✅ Salary structure updated for employee ${employeeId}: Basic=${basicVal}, Gross=${grossVal}`);
       } catch (ssErr) {
         console.error('Failed to update salary structure in updateEmployee:', ssErr);

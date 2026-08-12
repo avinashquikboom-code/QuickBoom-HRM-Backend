@@ -524,6 +524,9 @@ export const updateSalaryStructureById = async (
     }
 
     const currentSS = emp.salaryStructure;
+    console.log(`[SalaryStructure Update] Employee ID: ${emp.id} (${emp.employeeCode})`);
+    console.log(`[SalaryStructure Update] Request body:`, req.body);
+    console.log(`[SalaryStructure Update] DB values before update:`, currentSS);
 
     const newBasic = basicSalary !== undefined ? parseFloat(basicSalary) : (currentSS?.basicSalary || 0);
     const newHra = hra !== undefined ? parseFloat(hra) : (currentSS?.hra || 0);
@@ -535,10 +538,10 @@ export const updateSalaryStructureById = async (
     const newAdvanceLimit = salaryAdvanceLimit !== undefined ? parseFloat(salaryAdvanceLimit) : (currentSS?.salaryAdvanceLimit || 25000);
 
     const calcTotal = newBasic + newHra + newMedical + newTravel + newSpecial + newIncentive + newBonus;
-    let grossTotal = grossSalary !== undefined && parseFloat(grossSalary) > 0 ? parseFloat(grossSalary) : calcTotal;
-    if (grossTotal === 0 && newBasic > 0) {
-      grossTotal = newBasic;
-    }
+    const grossTotal = calcTotal > 0 ? calcTotal : (newBasic > 0 ? newBasic : 0);
+
+    console.log(`[SalaryStructure Update] Component sum: Basic(${newBasic}) + HRA(${newHra}) + Med(${newMedical}) + Trv(${newTravel}) + Spc(${newSpecial}) + Inc(${newIncentive}) + Bns(${newBonus}) = ₹${calcTotal}`);
+    console.log(`[SalaryStructure Update] Calculated Gross Total: ₹${grossTotal}`);
 
     const dataToUpdate: any = {
       basicSalary: newBasic,
@@ -553,10 +556,6 @@ export const updateSalaryStructureById = async (
       monthlySalary: grossTotal,
     };
 
-    if (monthlySalary !== undefined) dataToUpdate.monthlySalary = parseFloat(monthlySalary);
-    if (grossSalary !== undefined) dataToUpdate.grossSalary = parseFloat(grossSalary);
-    if (incentive !== undefined) dataToUpdate.incentive = parseFloat(incentive);
-    if (bonus !== undefined) dataToUpdate.bonus = parseFloat(bonus);
     if (pfEnabled !== undefined) dataToUpdate.pfEnabled = Boolean(pfEnabled);
     if (esicEnabled !== undefined) dataToUpdate.esicEnabled = Boolean(esicEnabled);
 
@@ -568,6 +567,8 @@ export const updateSalaryStructureById = async (
         ...dataToUpdate,
       },
     });
+
+    console.log(`[SalaryStructure Update] DB values after update:`, updatedStructure);
 
     try {
       await prisma.auditLog.create({
