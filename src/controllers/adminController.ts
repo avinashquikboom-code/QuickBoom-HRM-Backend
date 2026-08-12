@@ -435,6 +435,7 @@ export const fetchEmployees = async (
               availableBalance: true,
             },
           },
+          salaryStructure: true,
         },
         orderBy: { createdAt: 'desc' },
         ...(skip !== undefined ? { skip } : {}),
@@ -462,6 +463,29 @@ export const fetchEmployees = async (
       shiftType: emp.shiftTypeId,
       workModeId: emp.workModeId,
       shiftTypeId: emp.shiftTypeId,
+      basicSalary: emp.salaryStructure?.basicSalary || 0,
+      grossSalary: emp.salaryStructure?.grossSalary || 0,
+      hra: emp.salaryStructure?.hra || 0,
+      medicalAllowance: emp.salaryStructure?.medicalAllowance || 0,
+      travelAllowance: emp.salaryStructure?.travelAllowance || 0,
+      specialAllowance: emp.salaryStructure?.specialAllowance || 0,
+      incentive: emp.salaryStructure?.incentive || 0,
+      bonus: emp.salaryStructure?.bonus || 0,
+      salaryStructure: emp.salaryStructure ? {
+        id: emp.salaryStructure.id,
+        basicSalary: emp.salaryStructure.basicSalary,
+        grossSalary: emp.salaryStructure.grossSalary,
+        monthlySalary: emp.salaryStructure.monthlySalary,
+        hra: emp.salaryStructure.hra,
+        medicalAllowance: emp.salaryStructure.medicalAllowance,
+        travelAllowance: emp.salaryStructure.travelAllowance,
+        specialAllowance: emp.salaryStructure.specialAllowance,
+        incentive: emp.salaryStructure.incentive,
+        bonus: emp.salaryStructure.bonus,
+        salaryAdvanceLimit: emp.salaryStructure.salaryAdvanceLimit,
+        pfEnabled: emp.salaryStructure.pfEnabled,
+        esicEnabled: emp.salaryStructure.esicEnabled,
+      } : null,
       shift: emp.shiftAssignments?.[0]?.shift
         ? {
             id: emp.shiftAssignments[0].shift.id.toString(),
@@ -818,7 +842,7 @@ export const updateEmployee = async (
         const pfEnabledVal = ssInput.pfEnabled !== undefined ? Boolean(ssInput.pfEnabled) : (currentSS?.pfEnabled ?? false);
         const esicEnabledVal = ssInput.esicEnabled !== undefined ? Boolean(ssInput.esicEnabled) : (currentSS?.esicEnabled ?? false);
 
-        await prisma.salaryStructure.upsert({
+        const savedSS = await prisma.salaryStructure.upsert({
           where: { employeeId },
           update: {
             basicSalary: basicVal,
@@ -852,16 +876,34 @@ export const updateEmployee = async (
           },
         });
 
-        console.log(`✅ Salary structure updated for employee ${employeeId}: Basic=${basicVal}, Gross=${grossVal}`);
+        console.log(`[Edit Employee Salary] Updated salary structure for employee ${employeeId}:`, savedSS);
       } catch (ssErr) {
         console.error('Failed to update salary structure in updateEmployee:', ssErr);
       }
     }
 
+    // Re-fetch latest salary structure to ensure return object has full updated data
+    const finalSS = await prisma.salaryStructure.findUnique({ where: { employeeId } });
+
+    const finalEmployeePayload = {
+      ...updatedEmployee,
+      basicSalary: finalSS?.basicSalary || 0,
+      grossSalary: finalSS?.grossSalary || 0,
+      hra: finalSS?.hra || 0,
+      medicalAllowance: finalSS?.medicalAllowance || 0,
+      travelAllowance: finalSS?.travelAllowance || 0,
+      specialAllowance: finalSS?.specialAllowance || 0,
+      incentive: finalSS?.incentive || 0,
+      bonus: finalSS?.bonus || 0,
+      salaryStructure: finalSS,
+    };
+
+    console.log(`[Edit Employee Salary] Returning final employee payload:`, finalEmployeePayload);
+
     res.json({
       success: true,
       message: 'Employee updated successfully.',
-      employee: updatedEmployee,
+      employee: finalEmployeePayload,
     });
   } catch (error: any) {
     console.error('Update employee error:', error);
