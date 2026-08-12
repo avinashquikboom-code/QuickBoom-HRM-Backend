@@ -710,6 +710,11 @@ export const updateEmployee = async (
         updateData.officeId = null;
       }
     }
+    const phoneVal = req.body.phone !== undefined ? req.body.phone : (req.body.mobileNumber !== undefined ? req.body.mobileNumber : req.body.mobile);
+    if (phoneVal !== undefined) {
+      updateData.mobileNumber = phoneVal ? String(phoneVal).trim() : null;
+    }
+
     if (customPunchRadius !== undefined) updateData.customPunchRadius = customPunchRadius ? parseFloat(customPunchRadius) : null;
     if (commissionPercentage !== undefined) {
       updateData.commissionPercentage = (commissionPercentage === null || commissionPercentage === '')
@@ -882,28 +887,133 @@ export const updateEmployee = async (
       }
     }
 
-    // Re-fetch latest salary structure to ensure return object has full updated data
-    const finalSS = await prisma.salaryStructure.findUnique({ where: { employeeId } });
+    // Re-fetch latest employee record with ALL relations to return clean mapped payload
+    const fullEmp = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      include: {
+        user: true,
+        office: true,
+        store: true,
+        department: true,
+        designationRelation: true,
+        shiftAssignments: {
+          where: { effectiveTo: null },
+          orderBy: { effectiveFrom: 'desc' },
+          take: 1,
+          include: { shift: true },
+        },
+        wallet: true,
+        salaryStructure: true,
+      },
+    });
 
-    const finalEmployeePayload = {
-      ...updatedEmployee,
-      basicSalary: finalSS?.basicSalary || 0,
-      grossSalary: finalSS?.grossSalary || 0,
-      hra: finalSS?.hra || 0,
-      medicalAllowance: finalSS?.medicalAllowance || 0,
-      travelAllowance: finalSS?.travelAllowance || 0,
-      specialAllowance: finalSS?.specialAllowance || 0,
-      incentive: finalSS?.incentive || 0,
-      bonus: finalSS?.bonus || 0,
-      salaryStructure: finalSS,
+    if (!fullEmp) {
+      res.status(500).json({ success: false, message: 'Failed to retrieve updated employee.' });
+      return;
+    }
+
+    const mappedUpdatedEmployee = {
+      id: fullEmp.id,
+      employeeID: fullEmp.employeeID,
+      employeeCode: fullEmp.employeeCode,
+      firstName: fullEmp.firstName,
+      lastName: fullEmp.lastName,
+      mobileNumber: fullEmp.mobileNumber || '',
+      phone: fullEmp.mobileNumber || '',
+      designation: fullEmp.designation,
+      designationId: fullEmp.designationId,
+      designationRelation: fullEmp.designationRelation ?? null,
+      status: fullEmp.status,
+      source: fullEmp.source ?? 'MANUAL',
+      workMode: fullEmp.workModeId,
+      shiftType: fullEmp.shiftTypeId,
+      workModeId: fullEmp.workModeId,
+      shiftTypeId: fullEmp.shiftTypeId,
+      basicSalary: fullEmp.salaryStructure?.basicSalary || 0,
+      grossSalary: fullEmp.salaryStructure?.grossSalary || 0,
+      hra: fullEmp.salaryStructure?.hra || 0,
+      medicalAllowance: fullEmp.salaryStructure?.medicalAllowance || 0,
+      travelAllowance: fullEmp.salaryStructure?.travelAllowance || 0,
+      specialAllowance: fullEmp.salaryStructure?.specialAllowance || 0,
+      incentive: fullEmp.salaryStructure?.incentive || 0,
+      bonus: fullEmp.salaryStructure?.bonus || 0,
+      salaryStructure: fullEmp.salaryStructure ? {
+        id: fullEmp.salaryStructure.id,
+        basicSalary: fullEmp.salaryStructure.basicSalary,
+        grossSalary: fullEmp.salaryStructure.grossSalary,
+        monthlySalary: fullEmp.salaryStructure.monthlySalary,
+        hra: fullEmp.salaryStructure.hra,
+        medicalAllowance: fullEmp.salaryStructure.medicalAllowance,
+        travelAllowance: fullEmp.salaryStructure.travelAllowance,
+        specialAllowance: fullEmp.salaryStructure.specialAllowance,
+        incentive: fullEmp.salaryStructure.incentive,
+        bonus: fullEmp.salaryStructure.bonus,
+        salaryAdvanceLimit: fullEmp.salaryStructure.salaryAdvanceLimit,
+        pfEnabled: fullEmp.salaryStructure.pfEnabled,
+        esicEnabled: fullEmp.salaryStructure.esicEnabled,
+      } : null,
+      shift: fullEmp.shiftAssignments?.[0]?.shift
+        ? {
+            id: fullEmp.shiftAssignments[0].shift.id.toString(),
+            name: fullEmp.shiftAssignments[0].shift.name,
+            startTime: fullEmp.shiftAssignments[0].shift.startTime,
+            endTime: fullEmp.shiftAssignments[0].shift.endTime,
+            color: fullEmp.shiftAssignments[0].shift.color,
+          }
+        : null,
+      officeId: fullEmp.officeId?.toString() || null,
+      office: fullEmp.office
+        ? {
+            id: fullEmp.office.id.toString(),
+            name: fullEmp.office.name,
+            latitude: fullEmp.office.latitude,
+            longitude: fullEmp.office.longitude,
+            idealRadiusMeters: fullEmp.office.idealRadiusMeters,
+            maxPunchRadiusMeters: fullEmp.office.maxPunchRadiusMeters,
+          }
+        : null,
+      storeId: fullEmp.storeId?.toString() || null,
+      store: fullEmp.store
+        ? {
+            id: fullEmp.store.id.toString(),
+            name: fullEmp.store.name,
+            branchId: null,
+            branch: null,
+          }
+        : null,
+      branchId: null,
+      branch: null,
+      departmentId: fullEmp.departmentId?.toString() || null,
+      department: fullEmp.department
+        ? {
+            id: fullEmp.department.id,
+            name: fullEmp.department.name,
+            code: fullEmp.department.code,
+          }
+        : null,
+      commissionPercentage: fullEmp.commissionPercentage || 0,
+      user: fullEmp.user
+        ? {
+            id: fullEmp.user.id,
+            email: fullEmp.user.email,
+            role: fullEmp.user.role,
+            isActive: fullEmp.user.isActive,
+          }
+        : null,
+      wallet: fullEmp.wallet
+        ? {
+            advanceLimit: fullEmp.wallet.advanceLimit,
+            availableBalance: fullEmp.wallet.availableBalance,
+          }
+        : null,
     };
 
-    console.log(`[Edit Employee Salary] Returning final employee payload:`, finalEmployeePayload);
+    console.log(`[Update Employee] Returning updated employee payload for ID ${employeeId}:`, mappedUpdatedEmployee);
 
     res.json({
       success: true,
       message: 'Employee updated successfully.',
-      employee: finalEmployeePayload,
+      employee: mappedUpdatedEmployee,
     });
   } catch (error: any) {
     console.error('Update employee error:', error);
