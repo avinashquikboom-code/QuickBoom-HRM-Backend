@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
+import { createWebhookLog } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -41,12 +42,19 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
 
     if (!exchange) {
       console.error('[Process] ❌ Invalid payload');
+      await createWebhookLog({
+        eventType: 'SALES_EXCHANGE_CREATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload: missing salesExchange data'
+      });
       return;
     }
 
     const exchangeNo = String(exchange.exchangeNo || exchange.number || `EX-${Date.now()}`);
     const originalInvoiceNo = String(exchange.originalInvoiceNo || exchange.originalInvoiceNumber || exchange.billId || '');
     const newInvoiceNo = String(exchange.newInvoiceNo || exchange.newInvoiceNumber || `INV-EX-${Date.now()}`);
+    const totalAmount = Number(exchange.totalAmount || exchange.amount || 0);
 
     console.log('[Process] ✅ Valid exchange:', {
       exchangeNo: exchangeNo,
@@ -54,13 +62,19 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
       newInvoice: newInvoiceNo
     });
 
-    // Idempotency check
     const existingExchange = await prisma.salesExchange.findUnique({
       where: { exchangeNo: exchangeNo }
     });
 
     if (existingExchange) {
       console.log(`[Process] ℹ️ Sales exchange record already exists: ${existingExchange.id}`);
+      await createWebhookLog({
+        eventType: 'SALES_EXCHANGE_CREATED',
+        status: 'SUCCESS',
+        payload: payload,
+        billId: exchangeNo,
+        amount: totalAmount
+      });
       return;
     }
 
@@ -112,149 +126,134 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
         }
 
         if (!employee) {
-          console.error(`[LineItem] ❌ Employee not found for line item ${i + 1}`);
+          console.warn('[LineItem] ⚠️ Employee not identified for exchange item:', lineItem.productName);
           continue;
         }
 
-        if (!primaryNewEmployeeId) {
-          primaryNewEmployeeId = employee.id;
-        }
+        if (!primaryNewEmployeeId) primaryNewEmployeeId = employee.id;
 
-        const newAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || 0);
+        const productNetAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || 0);
+        const uniqueBillId = `${newInvoiceNo}-${lineItem.productID || i + 1}`;
 
         const newSale = await prisma.sales.create({
           data: {
             employeeId: employee.id,
-            netAmount: newAmount,
-            billId: `${newInvoiceNo}-${lineItem.productID || lineItem.productName || i + 1}`,
+            netAmount: productNetAmount,
+            billId: uniqueBillId,
             saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
-            description: `Exchange: ${originalInvoiceNo} → ${newInvoiceNo}`,
-            source: 'EXCHANGE',
+            description: `Exchange New Item: ${lineItem.productName || 'Product'} (EX: ${exchangeNo})`,
+            source: 'HOPKID',
             status: 'ACTIVE'
           }
         });
 
-        newSaleIds.push(newSale.id);
-        totalNewSales += newAmount;
+        totalNewSales += productNetAmount;
+        newSaleIds.push(newSale.id.toString());
+        console.log('[LineItem] ✅ Created new sale:', newSale.id);
 
-        console.log(`[LineItem] ✅ New sale created: ₹${newAmount}`);
-
-      } catch (error: any) {
-        console.error(`[LineItem] ❌ Error:`, error.message);
+      } catch (itemError: any) {
+        console.error('[LineItem] ❌ Error:', itemError.message);
         continue;
       }
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: CALCULATE COMMISSIONS
+    // STEP 4: CREATE SALES EXCHANGE RECORD
     // ═════════════════════════════════════════════════════════════════════════
 
-    console.log('[Process] Step 4: Calculate commissions');
+    console.log('[Process] Step 4: Create sales exchange record');
 
-    const effectiveEmpId = primaryNewEmployeeId || originalSale?.employeeId || 1;
-    const employee = await prisma.employee.findUnique({
-      where: { id: effectiveEmpId }
-    });
+    const origAmountVal = Number(originalSale?.netAmount || 0);
+    const newAmountVal = Number(totalNewSales || 0);
+    const diffAmountVal = newAmountVal - origAmountVal;
 
-    const rate = employee?.commissionPercentage || 0;
-    const originalAmount = Number(originalSale?.netAmount || 0);
-    const originalCommission = (originalAmount * rate) / 100;
-    const newCommission = (totalNewSales * rate) / 100;
-    const commissionDifference = newCommission - originalCommission;
-
-    console.log('[Process] Commissions:', {
-      original: originalCommission,
-      new: newCommission,
-      difference: commissionDifference
-    });
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 5: CREATE EXCHANGE RECORD
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Process] Step 5: Create exchange record');
-
-    await prisma.salesExchange.create({
+    const exchangeRecord = await prisma.salesExchange.create({
       data: {
         exchangeNo: exchangeNo,
         originalInvoiceNo: originalInvoiceNo,
-        originalSaleId: originalSale?.id || null,
         newInvoiceNo: newInvoiceNo,
-        newSaleId: newSaleIds[0] || null,
-        employeeId: effectiveEmpId,
         exchangeDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
-        reason: exchange.reason || 'Product exchange',
-        originalAmount: originalAmount,
-        newAmount: totalNewSales,
-        amountDifference: totalNewSales - originalAmount,
-        originalCommission: originalCommission,
-        newCommission: newCommission,
-        commissionDifference: commissionDifference,
+        originalSaleId: originalSale?.id || null,
+        newSaleId: newSaleIds.join(','),
+        employeeId: primaryNewEmployeeId || 1,
+        originalAmount: origAmountVal,
+        newAmount: newAmountVal,
+        amountDifference: diffAmountVal,
+        originalCommission: 0,
+        newCommission: 0,
+        commissionDifference: 0,
+        reason: exchange.reason || 'Sales Exchange',
         status: 'ACTIVE'
       }
     });
 
-    console.log('[Process] ✅ Exchange record created');
+    console.log('[Process] ✅ Sales exchange created:', exchangeRecord.id);
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 6: UPDATE ORIGINAL SALE STATUS
+    // STEP 5: RECALCULATE COMMISSION
     // ═════════════════════════════════════════════════════════════════════════
 
-    if (originalSale) {
-      console.log('[Process] Step 6: Mark original sale as EXCHANGED');
+    console.log('[Process] Step 5: Recalculate commission');
 
-      await prisma.sales.update({
-        where: { id: originalSale.id },
-        data: {
-          status: 'EXCHANGED',
-          replacedBySaleId: newSaleIds[0] || null,
-          returnDate: new Date(),
-          returnReason: 'Exchanged for new product'
-        }
-      });
+    const exDate = new Date(exchange.exchangeDate || exchange.date || new Date());
+    const month = `${exDate.getFullYear()}-${String(exDate.getMonth() + 1).padStart(2, '0')}`;
 
-      console.log('[Process] ✅ Original sale marked as EXCHANGED');
+    if (originalSale?.employeeId) {
+      const calculation = await CommissionService.calculateMonthlyCommission(
+        originalSale.employeeId,
+        month
+      );
+      await CommissionService.upsertMonthlyCommission(
+        originalSale.employeeId,
+        month,
+        calculation
+      );
+    }
+
+    if (primaryNewEmployeeId && primaryNewEmployeeId !== originalSale?.employeeId) {
+      const calculation = await CommissionService.calculateMonthlyCommission(
+        primaryNewEmployeeId,
+        month
+      );
+      await CommissionService.upsertMonthlyCommission(
+        primaryNewEmployeeId,
+        month,
+        calculation
+      );
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 7: RECALCULATE COMMISSION
+    // STEP 6: CREATE WEBHOOK LOG
     // ═════════════════════════════════════════════════════════════════════════
 
-    console.log('[Process] Step 7: Recalculate commission');
-
-    const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-
-    const calculation = await CommissionService.calculateMonthlyCommission(
-      effectiveEmpId,
-      month
-    );
-
-    await CommissionService.upsertMonthlyCommission(
-      effectiveEmpId,
-      month,
-      calculation
-    );
-
-    console.log('[Process] ✅ Commission updated');
+    await createWebhookLog({
+      eventType: 'SALES_EXCHANGE_CREATED',
+      status: 'SUCCESS',
+      payload: payload,
+      billId: exchangeNo,
+      amount: totalAmount || totalNewSales,
+      employeeId: primaryNewEmployeeId
+    });
 
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [SALES EXCHANGE CREATED] ✅ COMPLETE                       ║');
-    console.log(`║ Commission change: ${commissionDifference > 0 ? '+' : ''}₹${commissionDifference}`);
     console.log('╚════════════════════════════════════════════════════════════╝\n');
 
   } catch (error: any) {
-    console.error('[Process] 💥 FATAL ERROR:', error.message);
+    console.error('[Exchange] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'SALES_EXCHANGE_CREATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 6️⃣ SALES EXCHANGE UPDATED - Status changed
+// 6️⃣ SALES EXCHANGE UPDATED - Status changed or void
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * POST /api/webhook/salesExchange/updated
- * HopKid sends: salesExchange.updated event
- */
 router.post('/updated', (req: Request, res: Response) => {
   const rawPayload = req.body;
 
@@ -268,62 +267,85 @@ router.post('/updated', (req: Request, res: Response) => {
   });
 
   processSalesExchangeUpdated(rawPayload).catch(err => {
-    console.error('[Update] ❌ Error:', err.message);
+    console.error('[Exchange Update] ❌ Error:', err.message);
   });
 });
 
 export async function processSalesExchangeUpdated(payload: any): Promise<void> {
   try {
+    console.log('[Update] Step 1: Validate payload');
+
     const data = payload.data || payload;
     const exchange = data.salesExchange || payload.salesExchange || data;
-    if (!exchange) return;
-
     const exchangeNo = String(exchange.exchangeNo || exchange.number || '');
-    if (!exchangeNo) return;
+    const totalAmount = Number(exchange.totalAmount || exchange.amount || 0);
 
-    console.log(`[Update] Exchange: ${exchangeNo}`);
-    console.log(`[Update] Status: ${exchange.status}`);
-
-    const updatedStatus = exchange.status?.toUpperCase() || 'ACTIVE';
-
-    if (updatedStatus === 'CANCELLED' || updatedStatus === 'REVERSED') {
-      console.log('[Update] Exchange cancelled - recalculating commission...');
-
-      const exchangeRecord = await prisma.salesExchange.findUnique({
-        where: { exchangeNo: exchangeNo }
+    if (!exchange || !exchangeNo) {
+      console.error('[Update] ❌ Invalid payload');
+      await createWebhookLog({
+        eventType: 'SALES_EXCHANGE_UPDATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload: missing exchangeNo'
       });
+      return;
+    }
 
-      if (exchangeRecord) {
-        const month = `${exchangeRecord.exchangeDate.getFullYear()}-${String(exchangeRecord.exchangeDate.getMonth() + 1).padStart(2, '0')}`;
+    const existingExchange = await prisma.salesExchange.findUnique({
+      where: { exchangeNo: exchangeNo }
+    });
 
-        const calculation = await CommissionService.calculateMonthlyCommission(
-          exchangeRecord.employeeId,
-          month
-        );
+    if (!existingExchange) {
+      console.warn('[Update] ⚠️ Exchange not found, creating new...');
+      await processSalesExchangeCreated(payload, 'SALES_EXCHANGE_UPDATED');
+      return;
+    }
 
-        await CommissionService.upsertMonthlyCommission(
-          exchangeRecord.employeeId,
-          month,
-          calculation
-        );
-
-        console.log('[Update] ✅ Commission recalculated');
-      }
+    const newStatus = exchange.status?.toUpperCase() || 'COMPLETED';
+    let ourStatus = 'COMPLETED';
+    if (newStatus === 'CANCELLED' || newStatus === 'VOID' || newStatus === 'INACTIVE') {
+      ourStatus = 'CANCELLED';
     }
 
     await prisma.salesExchange.update({
-      where: { exchangeNo: exchangeNo },
+      where: { id: existingExchange.id },
       data: {
-        status: updatedStatus,
-        cancelledDate: updatedStatus === 'CANCELLED' || updatedStatus === 'REVERSED' ? new Date() : null,
+        status: ourStatus,
         updatedAt: new Date()
       }
     });
 
-    console.log(`[Update] ✅ Status updated to ${updatedStatus}`);
+    const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+
+    if (existingExchange.originalSaleId) {
+      const origSale = await prisma.sales.findUnique({ where: { id: existingExchange.originalSaleId } });
+      if (origSale?.employeeId) {
+        const calculation = await CommissionService.calculateMonthlyCommission(origSale.employeeId, month);
+        await CommissionService.upsertMonthlyCommission(origSale.employeeId, month, calculation);
+      }
+    }
+
+    await createWebhookLog({
+      eventType: 'SALES_EXCHANGE_UPDATED',
+      status: 'SUCCESS',
+      payload: payload,
+      billId: exchangeNo,
+      amount: totalAmount,
+      employeeId: null
+    });
+
+    console.log('\n╔════════════════════════════════════════════════════════════╗');
+    console.log('║ [SALES EXCHANGE UPDATED] ✅ COMPLETE                       ║');
+    console.log('╚════════════════════════════════════════════════════════════╝\n');
 
   } catch (error: any) {
-    console.error('[Update] Error:', error.message);
+    console.error('[Exchange Update] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'SALES_EXCHANGE_UPDATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 

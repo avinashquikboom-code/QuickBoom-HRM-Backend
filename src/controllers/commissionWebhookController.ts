@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
+import { createWebhookLog } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -41,19 +42,25 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
 
     if (!invoice || (!invoice.invoiceNo && !invoice.billId)) {
       console.error('[Process] ❌ Invalid payload structure');
+      await createWebhookLog({
+        eventType: 'INVOICE_CREATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload structure: missing invoice number'
+      });
       return;
     }
+
+    const invoiceNo = String(invoice.invoiceNo || invoice.billId);
+    const invoiceTotal = Number(invoice.netAmount || invoice.totalAmount || invoice.grandTotal || 0);
 
     if (lineItems.length === 0) {
       console.warn('[Process] ⚠️ No line items');
-      return;
     }
-
-    const invoiceNo = invoice.invoiceNo || invoice.billId;
 
     console.log('[Process] ✅ Valid invoice:', {
       invoiceNo: invoiceNo,
-      totalAmount: invoice.netAmount || invoice.totalAmount,
+      totalAmount: invoiceTotal,
       lineItemCount: lineItems.length,
       date: invoice.invoiceDate || invoice.date
     });
@@ -73,14 +80,12 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
       try {
         let employee: any = null;
 
-        // Find employee by code
         if (lineItem.employeeCode) {
           employee = await prisma.employee.findUnique({
             where: { employeeCode: String(lineItem.employeeCode) }
           }).catch(() => null);
         }
 
-        // Fallback: search by phone
         if (!employee && lineItem.employeePhoneNo) {
           const cleanPhone = String(lineItem.employeePhoneNo)
             .replace(/[^0-9]/g, '')
@@ -90,7 +95,6 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
           }).catch(() => null);
         }
 
-        // Fallback: search by name
         if (!employee && lineItem.employeeName) {
           employee = await prisma.employee.findFirst({
             where: {
@@ -110,19 +114,16 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
         const empName = `${employee.firstName} ${employee.lastName}`;
         console.log(`[LineItem] ✅ Employee found: ${empName}`);
 
-        // Get product net amount (not invoice total)
         const productNetAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || 0);
         const rate = employee.commissionPercentage || 0;
         const commission = (productNetAmount * rate) / 100;
 
         console.log(`[LineItem] Amount: ₹${productNetAmount}, Commission: ₹${commission}`);
 
-        // Create unique bill ID for this product if multiple salesmen
         const uniqueBillId = lineItems.length > 1 
           ? `${invoiceNo}-${lineItem.productID || lineItem.productName || i + 1}`
           : invoiceNo;
 
-        // Check idempotency
         const existingSale = await prisma.sales.findFirst({
           where: { billId: uniqueBillId }
         });
@@ -130,7 +131,6 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
         if (existingSale) {
           console.log(`[LineItem] ℹ️ Sale record already exists: ${existingSale.id}`);
         } else {
-          // Create sales record
           const sale = await prisma.sales.create({
             data: {
               employeeId: employee.id,
@@ -146,7 +146,6 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
           console.log(`[LineItem] ✅ Sale record created: ${sale.id}`);
         }
 
-        // Group by employee for commission calculation
         if (!employeeCommissionMap.has(employee.id)) {
           employeeCommissionMap.set(employee.id, {
             employee: employee,
@@ -195,13 +194,32 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
       console.log(`[Commission] ✅ Updated. New total: ₹${calculation.totalCommissionAmount}`);
     }
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 4: CREATE WEBHOOK LOG Persistence
+    // ═════════════════════════════════════════════════════════════════════════
+
+    const firstEmpId = Array.from(employeeCommissionMap.keys())[0] || null;
+    await createWebhookLog({
+      eventType: 'INVOICE_CREATED',
+      status: 'SUCCESS',
+      payload: payload,
+      billId: invoiceNo,
+      amount: invoiceTotal,
+      employeeId: firstEmpId
+    });
+
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [INVOICE CREATED] ✅ COMPLETE                              ║');
     console.log('╚════════════════════════════════════════════════════════════╝\n');
 
   } catch (error: any) {
     console.error('[Invoice Created] 💥 FATAL ERROR:', error.message);
-    console.error(error.stack);
+    await createWebhookLog({
+      eventType: 'INVOICE_CREATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 
@@ -236,10 +254,17 @@ export async function processInvoiceUpdated(payload: any): Promise<void> {
 
     const data = payload.data || payload;
     const invoice = data.invoice || payload.invoice || data;
-    const invoiceNo = invoice.invoiceNo || invoice.billId;
+    const invoiceNo = String(invoice.invoiceNo || invoice.billId || '');
+    const invoiceTotal = Number(invoice.netAmount || invoice.totalAmount || invoice.grandTotal || 0);
 
     if (!invoice || !invoiceNo) {
       console.error('[Update] ❌ Invalid payload');
+      await createWebhookLog({
+        eventType: 'INVOICE_UPDATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload: missing invoiceNo'
+      });
       return;
     }
 
@@ -248,28 +273,13 @@ export async function processInvoiceUpdated(payload: any): Promise<void> {
       status: invoice.status
     });
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 2: FIND SALE RECORDS
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Update] Step 2: Find sale records');
-
     const sales = await prisma.sales.findMany({
       where: { billId: { contains: invoiceNo } }
     });
 
     if (sales.length === 0) {
       console.warn('[Update] ⚠️ No sales found for invoice:', invoiceNo);
-      return;
     }
-
-    console.log(`[Update] ✅ Found ${sales.length} sale(s)`);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 3: MAP STATUS & HANDLE CANCELLATION
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Update] Step 3: Handle status change');
 
     const newStatus = invoice.status?.toUpperCase() || 'ACTIVE';
     let ourStatus = 'ACTIVE';
@@ -290,25 +300,12 @@ export async function processInvoiceUpdated(payload: any): Promise<void> {
         ourStatus = 'ACTIVE';
     }
 
-    console.log(`[Update] Status mapped: ${newStatus} → ${ourStatus}`);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: UPDATE SALES & REVERSE COMMISSION IF NEEDED
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Update] Step 4: Update sales and commission');
-
     const employeeCommissionMap = new Map();
 
     for (const sale of sales) {
       const wasActive = sale.status === 'ACTIVE';
       const isNowInactive = ourStatus === 'CANCELLED' || ourStatus === 'RETURNED' || ourStatus === 'INACTIVE';
 
-      if (wasActive && isNowInactive) {
-        console.log(`[Sale] ${sale.billId}: ACTIVE → ${ourStatus} (will reverse commission)`);
-      }
-
-      // Update sale status
       await prisma.sales.update({
         where: { id: sale.id },
         data: {
@@ -317,7 +314,6 @@ export async function processInvoiceUpdated(payload: any): Promise<void> {
         }
       });
 
-      // Track commission reversal
       if (wasActive && isNowInactive) {
         if (!employeeCommissionMap.has(sale.employeeId)) {
           employeeCommissionMap.set(sale.employeeId, 0);
@@ -328,12 +324,6 @@ export async function processInvoiceUpdated(payload: any): Promise<void> {
         );
       }
     }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 5: RECALCULATE COMMISSION
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Update] Step 5: Recalculate commission');
 
     const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
 
@@ -350,9 +340,17 @@ export async function processInvoiceUpdated(payload: any): Promise<void> {
         month,
         calculation
       );
-
-      console.log(`[Commission] ✅ Recalculated. New total: ₹${calculation.totalCommissionAmount}`);
     }
+
+    const firstEmpId = sales.length > 0 ? sales[0].employeeId : null;
+    await createWebhookLog({
+      eventType: 'INVOICE_UPDATED',
+      status: 'SUCCESS',
+      payload: payload,
+      billId: invoiceNo,
+      amount: invoiceTotal,
+      employeeId: firstEmpId
+    });
 
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [INVOICE UPDATED] ✅ COMPLETE                              ║');
@@ -360,6 +358,12 @@ export async function processInvoiceUpdated(payload: any): Promise<void> {
 
   } catch (error: any) {
     console.error('[Invoice Update] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'INVOICE_UPDATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 

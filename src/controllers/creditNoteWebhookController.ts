@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
+import { createWebhookLog } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -41,6 +42,12 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
 
     if (!creditNote) {
       console.error('[Process] ❌ Invalid payload');
+      await createWebhookLog({
+        eventType: 'CREDIT_NOTE_CREATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload: missing creditNote data'
+      });
       return;
     }
 
@@ -59,13 +66,11 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
       lineItemCount: lineItems.length
     });
 
-    // Idempotency check
     let creditNoteRecord = await prisma.creditNote.findUnique({
       where: { creditNoteNo: creditNoteNo }
     });
 
     if (!creditNoteRecord) {
-      // Create credit note record
       creditNoteRecord = await prisma.creditNote.create({
         data: {
           creditNoteNo: creditNoteNo,
@@ -85,9 +90,8 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
     // STEP 2: PROCESS LINE ITEMS
     // ═════════════════════════════════════════════════════════════════════════
 
-    console.log('[Process] Step 2: Process line items');
-
     const employeeCommissionMap = new Map();
+    let firstEmpId: number | null = null;
 
     for (const lineItem of lineItems) {
       try {
@@ -100,79 +104,77 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
         }
 
         if (!employee && lineItem.employeePhoneNo) {
-          const cleanPhone = String(lineItem.employeePhoneNo)
-            .replace(/[^0-9]/g, '')
-            .slice(-10);
+          const cleanPhone = String(lineItem.employeePhoneNo).replace(/[^0-9]/g, '').slice(-10);
           employee = await prisma.employee.findFirst({
             where: { mobileNumber: { contains: cleanPhone } }
           }).catch(() => null);
         }
 
-        if (!employee && lineItem.employeeName) {
-          employee = await prisma.employee.findFirst({
-            where: {
-              OR: [
-                { firstName: { contains: lineItem.employeeName, mode: 'insensitive' } },
-                { lastName: { contains: lineItem.employeeName, mode: 'insensitive' } }
-              ]
-            }
-          }).catch(() => null);
+        if (!employee && invoiceNo) {
+          const originalSale = await prisma.sales.findFirst({
+            where: { billId: { contains: invoiceNo } },
+            include: { employee: true }
+          });
+          if (originalSale) employee = originalSale.employee;
         }
 
         if (!employee) {
-          console.error(`[LineItem] ❌ Employee not found: ${lineItem.employeeName || lineItem.employeeCode}`);
+          console.warn('[LineItem] ⚠️ Employee not identified for line item:', lineItem.productName);
           continue;
         }
 
+        if (!firstEmpId) firstEmpId = employee.id;
+
         const empName = `${employee.firstName} ${employee.lastName}`;
-        const creditAmount = Number(lineItem.creditAmount || lineItem.amount || 0);
-        const rate = employee.commissionPercentage || 0;
-        const commissionAdjustment = (creditAmount * rate) / 100;
+        const returnedAmount = Number(lineItem.creditAmount || lineItem.amount || lineItem.productNetAmount || 0);
 
-        console.log(`[LineItem] ✅ ${empName}: Credit ₹${creditAmount}, Commission adjustment ₹${commissionAdjustment}`);
-
-        // Create credit line
-        await prisma.creditNoteLine.create({
-          data: {
+        const existingItem = await prisma.creditNoteLine.findFirst({
+          where: {
             creditNoteId: creditNoteRecord.id,
-            employeeId: employee.id,
-            productDescription: lineItem.productName || lineItem.productDescription || 'Credit adjustment',
-            creditAmount: creditAmount,
-            commissionAdjustment: commissionAdjustment,
-            reason: lineItem.reason || creditNote.reason || 'Credit note'
+            productId: String(lineItem.productID || lineItem.productId || lineItem.name || 'ITEM')
           }
         });
 
-        // Track for commission recalculation
+        if (!existingItem) {
+          await prisma.creditNoteLine.create({
+            data: {
+              creditNoteId: creditNoteRecord.id,
+              productId: String(lineItem.productID || lineItem.productId || lineItem.name || 'ITEM'),
+              productDescription: String(lineItem.productName || lineItem.name || 'Product'),
+              creditAmount: returnedAmount,
+              commissionAdjustment: (returnedAmount * (employee.commissionPercentage || 0)) / 100,
+              employeeId: employee.id,
+              reason: creditNote.reason || 'Return'
+            }
+          });
+        }
+
         if (!employeeCommissionMap.has(employee.id)) {
           employeeCommissionMap.set(employee.id, {
             employee: employee,
-            totalCredit: 0,
-            totalAdjustment: 0
+            totalReturnAmount: 0
           });
         }
 
         const empData = employeeCommissionMap.get(employee.id);
-        empData.totalCredit += creditAmount;
-        empData.totalAdjustment += commissionAdjustment;
+        empData.totalReturnAmount += returnedAmount;
 
-      } catch (error: any) {
-        console.error(`[LineItem] ❌ Error:`, error.message);
+      } catch (itemError: any) {
+        console.error('[LineItem] ❌ Error:', itemError.message);
         continue;
       }
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 3: RECALCULATE COMMISSION
+    // STEP 3: RECALCULATE COMMISSION FOR AFFECTED EMPLOYEES
     // ═════════════════════════════════════════════════════════════════════════
 
-    console.log('[Process] Step 3: Recalculate commission');
-
-    const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const cnDate = new Date(creditNote.creditDate || creditNote.date || new Date());
+    const month = `${cnDate.getFullYear()}-${String(cnDate.getMonth() + 1).padStart(2, '0')}`;
 
     for (const [empId, empData] of employeeCommissionMap.entries()) {
       const empName = `${empData.employee.firstName} ${empData.employee.lastName}`;
-      console.log(`[Commission] Recalculating for ${empName}...`);
+      console.log(`[Commission] Recalculating for ${empName} due to Credit Note (₹${empData.totalReturnAmount} return)...`);
 
       const calculation = await CommissionService.calculateMonthlyCommission(
         empId,
@@ -184,27 +186,40 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
         month,
         calculation
       );
-
-      console.log(`[Commission] ✅ Updated. New total: ₹${calculation.totalCommissionAmount}`);
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 4: CREATE WEBHOOK LOG
+    // ═════════════════════════════════════════════════════════════════════════
+
+    await createWebhookLog({
+      eventType: 'CREDIT_NOTE_CREATED',
+      status: 'SUCCESS',
+      payload: payload,
+      billId: creditNoteNo,
+      amount: totalAmount,
+      employeeId: firstEmpId
+    });
 
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [CREDIT NOTE CREATED] ✅ COMPLETE                          ║');
     console.log('╚════════════════════════════════════════════════════════════╝\n');
 
   } catch (error: any) {
-    console.error('[Process] 💥 FATAL ERROR:', error.message);
+    console.error('[Credit Note] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'CREDIT_NOTE_CREATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4️⃣ CREDIT NOTE UPDATED - Status changed
+// 4️⃣ CREDIT NOTE UPDATED - Void, cancel, or amount change
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * POST /api/webhook/creditNote/updated
- * HopKid sends: creditNote.updated event
- */
 router.post('/updated', (req: Request, res: Response) => {
   const rawPayload = req.body;
 
@@ -218,36 +233,95 @@ router.post('/updated', (req: Request, res: Response) => {
   });
 
   processCreditNoteUpdated(rawPayload).catch(err => {
-    console.error('[Credit Update] ❌ Error:', err.message);
+    console.error('[Credit Note Update] ❌ Error:', err.message);
   });
 });
 
 export async function processCreditNoteUpdated(payload: any): Promise<void> {
   try {
+    console.log('[Update] Step 1: Validate payload');
+
     const data = payload.data || payload;
     const creditNote = data.creditNote || payload.creditNote || data;
-    if (!creditNote) return;
-
     const creditNoteNo = String(creditNote.creditNoteNo || creditNote.CNNo || creditNote.number || '');
-    if (!creditNoteNo) return;
+    const totalAmount = Number(creditNote.totalAmount || creditNote.creditAmount || creditNote.amount || 0);
 
-    console.log(`[Update] Credit note: ${creditNoteNo}`);
-    console.log(`[Update] New status: ${creditNote.status}`);
+    if (!creditNote || !creditNoteNo) {
+      console.error('[Update] ❌ Invalid payload');
+      await createWebhookLog({
+        eventType: 'CREDIT_NOTE_UPDATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload: missing creditNoteNo'
+      });
+      return;
+    }
 
-    const updatedStatus = creditNote.status?.toUpperCase() || 'ACTIVE';
+    let creditNoteRecord = await prisma.creditNote.findUnique({
+      where: { creditNoteNo: creditNoteNo },
+      include: { lineItems: true }
+    });
+
+    if (!creditNoteRecord) {
+      console.warn('[Update] ⚠️ Credit note not found, processing as created...');
+      await processCreditNoteCreated(payload, 'CREDIT_NOTE_UPDATED');
+      return;
+    }
+
+    const newStatus = creditNote.status?.toUpperCase() || 'ACTIVE';
+    let ourStatus = 'ACTIVE';
+    if (newStatus === 'CANCELLED' || newStatus === 'VOID' || newStatus === 'INACTIVE') {
+      ourStatus = 'CANCELLED';
+    }
 
     await prisma.creditNote.update({
-      where: { creditNoteNo: creditNoteNo },
+      where: { id: creditNoteRecord.id },
       data: {
-        status: updatedStatus,
+        status: ourStatus,
         updatedAt: new Date()
       }
     });
 
-    console.log(`[Update] ✅ Status updated to ${updatedStatus}`);
+    const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const empIds = new Set<number>();
+    for (const item of creditNoteRecord.lineItems) {
+      if (item.employeeId) empIds.add(item.employeeId);
+    }
+
+    for (const empId of empIds) {
+      const calculation = await CommissionService.calculateMonthlyCommission(
+        empId,
+        month
+      );
+      await CommissionService.upsertMonthlyCommission(
+        empId,
+        month,
+        calculation
+      );
+    }
+
+    const firstEmpId = Array.from(empIds)[0] || null;
+    await createWebhookLog({
+      eventType: 'CREDIT_NOTE_UPDATED',
+      status: 'SUCCESS',
+      payload: payload,
+      billId: creditNoteNo,
+      amount: totalAmount,
+      employeeId: firstEmpId
+    });
+
+    console.log('\n╔════════════════════════════════════════════════════════════╗');
+    console.log('║ [CREDIT NOTE UPDATED] ✅ COMPLETE                          ║');
+    console.log('╚════════════════════════════════════════════════════════════╝\n');
 
   } catch (error: any) {
-    console.error('[Update] Error:', error.message);
+    console.error('[Credit Note Update] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'CREDIT_NOTE_UPDATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 

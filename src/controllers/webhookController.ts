@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
-import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent } from '../utils/commissionHelper';
+import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent, createWebhookLog } from '../utils/commissionHelper';
 import { processCreditNoteCreated } from './creditNoteWebhookController';
 import { processSalesExchangeCreated } from './salesExchangeWebhookController';
 import { processEmployeeCreated, processEmployeeUpdated, processEmployeeDeleted } from './employeeWebhookController';
@@ -35,7 +35,16 @@ export async function storeWebhookData(data: any): Promise<void> {
         rawPayload: typeof data === 'string' ? data : JSON.stringify(data),
       },
     });
-    console.log(`[HopKid Raw Store] Log stored in HopkidWebhookLog for Bill ID: ${billId || 'N/A'}, Amount: ₹${amountVal}, Date: ${parsedDate.toISOString()}`);
+
+    await createWebhookLog({
+      eventType: meta.eventType || 'INVOICE_CREATED',
+      status: 'SUCCESS',
+      payload: data,
+      billId: billId,
+      amount: amountVal,
+    }).catch(() => null);
+
+    console.log(`[HopKid Raw Store] Log stored in HopkidWebhookLog & WebhookLog for Bill ID: ${billId || 'N/A'}, Amount: ₹${amountVal}, Date: ${parsedDate.toISOString()}`);
   } catch (error: any) {
     console.error('[HopKid Store Error]:', error.message);
   }
