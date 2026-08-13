@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
 import { createWebhookLog } from '../utils/commissionHelper';
+import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 const router = Router();
 
@@ -200,6 +201,16 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
       amount: totalAmount,
       employeeId: firstEmpId
     });
+
+    try {
+      getWebSocketInstance().broadcastCommissionUpdate(firstEmpId || 0, {
+        eventType: 'CREDIT_NOTE_CREATED',
+        creditNoteNo,
+        amount: totalAmount
+      });
+    } catch (wsErr) {
+      console.error('❌ Failed to emit WebSocket commission update:', wsErr);
+    }
 
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [CREDIT NOTE CREATED] ✅ COMPLETE                          ║');

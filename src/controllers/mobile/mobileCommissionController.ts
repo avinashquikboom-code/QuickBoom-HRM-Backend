@@ -137,7 +137,7 @@ export const getMobileCommissionTransactions = async (
 
     const transactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
       take: parseInt(limit as string),
       skip: parseInt(offset as string),
     });

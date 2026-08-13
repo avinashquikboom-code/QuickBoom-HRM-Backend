@@ -155,10 +155,11 @@ class WebSocketService {
 
   // Real-time commission & sales updates
   async broadcastCommissionUpdate(employeeId: number, data: any): Promise<void> {
-    console.log(`[WebSocket Broadcast] Emitting commissionUpdate to employee_${employeeId}, role_HR, and role_ADMIN`);
+    console.log(`[WebSocket Broadcast] Emitting commissionUpdate to employee_${employeeId}, role_HR, role_ADMIN, and all connected clients`);
     this.io.to(`employee_${employeeId}`).emit('commissionUpdate', data);
     this.io.to('role_HR').emit('commissionUpdate', data);
     this.io.to('role_ADMIN').emit('commissionUpdate', data);
+    this.io.emit('commissionUpdate', data);
   }
 
   // Send real-time data to specific socket

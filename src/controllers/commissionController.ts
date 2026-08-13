@@ -289,11 +289,7 @@ export const getCommissionTransactions = async (
   try {
     const { employeeId, storeId, status, startDate, endDate, search, billId } = req.query;
 
-    const whereClause: any = {
-      employee: {
-        source: { not: 'MANUAL' },
-      },
-    };
+    const whereClause: any = {};
     if (employeeId) {
       const resolvedId = await resolveEmployeeId(employeeId as string);
       whereClause.employeeId = resolvedId !== null ? resolvedId : -1;
@@ -347,7 +343,7 @@ export const getCommissionTransactions = async (
         store: true,
         policy: true,
       },
-      orderBy: { id: 'desc' },
+      orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
     });
 
     const transactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
