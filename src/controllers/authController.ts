@@ -781,6 +781,20 @@ export const logout = async (req: AuthenticatedRequest, res: Response): Promise<
         deviceInfo: req.headers['user-agent'] || 'Unknown Device',
         action: 'USER_LOGOUT',
       });
+
+      logActivity({
+        actorId: req.user.id,
+        actorName: req.user.email,
+        actorRole: req.user.role,
+        source: ['super_admin', 'platform_admin', 'hr_admin', 'admin'].includes(req.user.role?.toLowerCase() || '') ? 'ADMIN_PANEL' : 'MOBILE',
+        action: ['super_admin', 'platform_admin', 'hr_admin', 'admin'].includes(req.user.role?.toLowerCase() || '') ? 'LOGOUT' : 'MOBILE_LOGOUT',
+        entityType: 'User',
+        entityId: req.user.id,
+        description: `User ${req.user.email} logged out`,
+        ipAddress: req.ip || null,
+        userAgent: req.headers['user-agent'] || null,
+        status: 'SUCCESS'
+      }).catch(() => null);
     }
 
     res.json({

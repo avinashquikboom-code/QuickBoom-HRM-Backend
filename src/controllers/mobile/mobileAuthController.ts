@@ -8,6 +8,7 @@ import userSessionService from '../../services/userSessionService';
 import auditLogService from '../../services/auditLogService';
 import { syncHopkidEmployees } from '../../utils/employeeSync';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
+import { logActivity } from '../../utils/activityLogger';
 
 // Mobile-specific login - supports email, mobile number, or employee code + password
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
@@ -406,6 +407,20 @@ export const mobileLogout = async (req: AuthenticatedRequest, res: Response): Pr
         deviceInfo: req.headers['user-agent'] || 'Mobile App',
         action: 'MOBILE_USER_LOGOUT',
       });
+
+      logActivity({
+        actorId: req.user.id,
+        actorName: req.user.email,
+        actorRole: req.user.role || 'EMPLOYEE',
+        source: 'MOBILE',
+        action: 'MOBILE_LOGOUT',
+        entityType: 'User',
+        entityId: req.user.id,
+        description: `Mobile user ${req.user.email} logged out`,
+        ipAddress: req.ip || null,
+        userAgent: req.headers['user-agent'] || null,
+        status: 'SUCCESS'
+      }).catch(() => null);
     }
 
     res.json({
