@@ -5,11 +5,12 @@ import { Prisma } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import bcrypt from 'bcryptjs';
 import { pushNotificationService } from '../services/pushNotificationService';
-import { syncHopkidEmployees } from '../utils/employeeSync';
+import { syncHopkidEmployees, pushEmployeeToHopkidERP } from '../utils/employeeSync';
 import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 import { clearIntegrationCache } from '../utils/configService';
 import leaveBalanceService from '../services/leaveBalanceService';
+import { logActivity } from '../utils/activityLogger';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -1007,6 +1008,34 @@ export const updateEmployee = async (
 
     console.log(`[Update Employee] Returning updated employee payload for ID ${employeeId}:`, mappedUpdatedEmployee);
 
+    // Push employee update to HopKid ERP API asynchronously
+    pushEmployeeToHopkidERP({
+      employeeID: fullEmp.employeeID,
+      employeeCode: fullEmp.employeeCode,
+      firstName: fullEmp.firstName,
+      lastName: fullEmp.lastName,
+      mobileNumber: fullEmp.mobileNumber,
+      designation: fullEmp.designation,
+      commissionPercentage: fullEmp.commissionPercentage,
+      basicSalary: fullEmp.salaryStructure?.basicSalary,
+      storeName: fullEmp.store?.name
+    }).catch(err => console.error('[HopKid ERP Push] Notice:', err));
+
+    logActivity({
+      actorId: req.user?.id,
+      actorName: req.user?.email || 'Admin',
+      actorRole: req.user?.role || 'HR_ADMIN',
+      source: req.user?.role?.toLowerCase() === 'super_admin' ? 'SUPER_ADMIN' : 'HR_ADMIN',
+      action: 'EMPLOYEE_UPDATED',
+      entityType: 'Employee',
+      entityId: fullEmp.id,
+      description: `Updated employee ${fullEmp.firstName} ${fullEmp.lastName} (${fullEmp.employeeCode})`,
+      metadata: { employeeCode: fullEmp.employeeCode, designation: fullEmp.designation, status: fullEmp.status },
+      ipAddress: req.ip || null,
+      userAgent: req.headers['user-agent'] || null,
+      status: 'SUCCESS'
+    }).catch(() => null);
+
     res.json({
       success: true,
       message: 'Employee updated successfully.',
@@ -1455,6 +1484,17 @@ export const createEmployee = async (
     } catch (salaryError) {
       console.error('Failed to create salary structure for employee:', salaryError);
     }
+
+    pushEmployeeToHopkidERP({
+      employeeID: newEmployee.employeeID,
+      employeeCode: newEmployee.employeeCode,
+      firstName: newEmployee.firstName,
+      lastName: newEmployee.lastName,
+      mobileNumber: newEmployee.mobileNumber,
+      designation: newEmployee.designation,
+      commissionPercentage: newEmployee.commissionPercentage,
+      basicSalary: salaryStructure?.basicSalary ? parseFloat(String(salaryStructure.basicSalary)) : 0,
+    }).catch(err => console.error('[HopKid ERP Push] Create notice:', err));
 
     res.status(201).json({
       success: true,

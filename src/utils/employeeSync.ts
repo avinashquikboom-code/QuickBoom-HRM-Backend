@@ -221,3 +221,66 @@ export async function syncHopkidEmployees(): Promise<void> {
     console.error('❌ [syncHopkidEmployees] Error during employee synchronization:', error);
   }
 }
+
+/**
+ * Pushes employee updates from HRM Admin Panel to external HopKid ERP API
+ */
+export async function pushEmployeeToHopkidERP(employeeData: {
+  employeeID?: string | null;
+  employeeCode?: string | null;
+  firstName?: string;
+  lastName?: string;
+  mobileNumber?: string | null;
+  designation?: string | null;
+  commissionPercentage?: number | null;
+  basicSalary?: number | null;
+  storeName?: string | null;
+}): Promise<{ success: boolean; message?: string }> {
+  try {
+    const { hopkidApiUrl, hopkidApiKey } = await getIntegrationSettings();
+    const baseUrl = hopkidApiUrl.replace(/\/Employee\/.*$/i, '');
+    const endpoints = [
+      `${baseUrl}/Employee/UpdateEmployee`,
+      `${baseUrl}/Employee/SaveEmployee`,
+      `${baseUrl}/Employee/EditEmployee`
+    ];
+
+    const payload = {
+      EmployeeID: employeeData.employeeID || undefined,
+      EmployeeCode: employeeData.employeeCode || undefined,
+      FirstName: employeeData.firstName,
+      LastName: employeeData.lastName,
+      Name: `${employeeData.firstName || ''} ${employeeData.lastName || ''}`.trim(),
+      MobileNo: employeeData.mobileNumber,
+      Designation: employeeData.designation,
+      CommissionRate: employeeData.commissionPercentage ?? 0,
+      BasicSalary: employeeData.basicSalary ?? 0,
+      BranchName: employeeData.storeName
+    };
+
+    console.log(`[HopKid ERP Push] Pushing employee update to HopKid ERP for Code: ${employeeData.employeeCode || employeeData.employeeID}...`);
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'x-api-key': hopkidApiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (response.ok) {
+          console.log(`[HopKid ERP Push] ✅ Successfully pushed update for ${employeeData.employeeCode || employeeData.employeeID} via ${endpoint}`);
+          return { success: true };
+        }
+      } catch (attemptErr: any) {
+        console.warn(`[HopKid ERP Push] Attempt failed for ${endpoint}:`, attemptErr.message);
+      }
+    }
+  } catch (err: any) {
+    console.error('[HopKid ERP Push] ❌ Error pushing employee update to HopKid ERP:', err.message);
+  }
+  return { success: false, message: 'HopKid ERP update endpoint notice' };
+}

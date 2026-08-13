@@ -1243,6 +1243,31 @@ model WebhookLog {
   @@index([createdAt])
 }
 
+model ActivityLog {
+  id           String   @id @default(uuid())
+  actorId      String?
+  actorName    String?
+  actorRole    String?
+  source       String   @default("SYSTEM") // ADMIN_PANEL, SUPER_ADMIN, HR_ADMIN, MOBILE, HOPKID_WEBHOOK, SYSTEM
+  action       String
+  entityType   String?
+  entityId     String?
+  description  String?
+  metadata     String?  @db.Text
+  ipAddress    String?
+  userAgent    String?
+  status       String   @default("SUCCESS") // SUCCESS, FAILED, PENDING
+  createdAt    DateTime @default(now())
+
+  @@index([source])
+  @@index([action])
+  @@index([actorId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([status])
+}
+
 // Existing Sales model - add these fields if not present
 model Sales {
   id                    String   @id @default(uuid())

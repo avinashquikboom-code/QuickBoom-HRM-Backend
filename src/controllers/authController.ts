@@ -6,6 +6,7 @@ import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import userSessionService from '../services/userSessionService';
 import auditLogService from '../services/auditLogService';
+import { logActivity } from '../utils/activityLogger';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   const { email, mobileNo, mobileNumber, identifier: rawId, password } = req.body;
@@ -144,11 +145,25 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     await auditLogService.log({
       userId: user.id,
       employeeId: employeeRecord?.id || undefined,
-      branchId: employeeRecord?.officeId || undefined,
-      ipAddress,
-      deviceInfo,
+      branchId: employeeRecord?.storeId || undefined,
+      ipAddress: req.ip || undefined,
+      deviceInfo: req.headers['user-agent'] || undefined,
       action: 'USER_LOGIN',
     });
+
+    logActivity({
+      actorId: user.id,
+      actorName: user.profile?.fullName || user.email,
+      actorRole: user.role,
+      source: ['super_admin', 'platform_admin', 'hr_admin', 'admin'].includes(user.role?.toLowerCase() || '') ? 'ADMIN_PANEL' : 'MOBILE',
+      action: ['super_admin', 'platform_admin', 'hr_admin', 'admin'].includes(user.role?.toLowerCase() || '') ? 'LOGIN' : 'MOBILE_LOGIN',
+      entityType: 'User',
+      entityId: user.id,
+      description: `User ${user.email} logged in successfully`,
+      ipAddress: req.ip || null,
+      userAgent: req.headers['user-agent'] || null,
+      status: 'SUCCESS'
+    }).catch(() => null);
 
     console.log('✅ [LOGIN] Token generated for:', email);
 

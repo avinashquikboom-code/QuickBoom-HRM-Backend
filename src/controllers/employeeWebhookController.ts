@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
 import { createWebhookLog } from '../utils/commissionHelper';
+import { logActivity } from '../utils/activityLogger';
 
 const router = Router();
 
@@ -283,6 +284,18 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
       payload: payload,
       employeeId: newEmployee.id
     });
+
+    logActivity({
+      actorName: 'HopKid ERP Gateway',
+      actorRole: 'HOPKID_SYSTEM',
+      source: 'HOPKID_WEBHOOK',
+      action: 'EMPLOYEE_CREATED',
+      entityType: 'Employee',
+      entityId: newEmployee.id,
+      description: `HopKid Employee Created: ${newEmployee.firstName} ${newEmployee.lastName} (${newEmployee.employeeCode})`,
+      metadata: payload,
+      status: 'SUCCESS'
+    }).catch(() => null);
 
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [EMPLOYEE CREATED] ✅ COMPLETE                             ║');

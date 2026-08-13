@@ -177,3 +177,19 @@ export const authMiddleware = async (
 // Alias for backward compatibility
 export const authenticateToken = authMiddleware;
 
+export const requireRole = (allowedRoles: string[]) => {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!req.user || !req.user.role) {
+      res.status(403).json({ success: false, message: 'Access denied: No role assigned.' });
+      return;
+    }
+    const roleLower = String(req.user.role).toLowerCase();
+    const isAllowed = allowedRoles.some(r => r.toLowerCase() === roleLower);
+    if (!isAllowed) {
+      res.status(403).json({ success: false, message: 'Access denied: Insufficient permissions.' });
+      return;
+    }
+    next();
+  };
+};
+
