@@ -3,6 +3,7 @@ import { prisma } from '../utils/db';
 import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent } from '../utils/commissionHelper';
 import { processCreditNoteCreated } from './creditNoteWebhookController';
 import { processSalesExchangeCreated } from './salesExchangeWebhookController';
+import { processEmployeeCreated, processEmployeeUpdated, processEmployeeDeleted } from './employeeWebhookController';
 
 /**
  * Stores raw HopKid webhook payload into HopkidWebhookLog table
@@ -274,6 +275,21 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   if (meta.eventType === 'SALES_EXCHANGE_CREATED' || meta.eventType === 'SALES_EXCHANGE_UPDATED') {
     console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to SalesExchange processor...`);
     await processSalesExchangeCreated(effectiveData, meta.eventType);
+    return;
+  }
+  if (meta.eventType === 'EMPLOYEE_CREATED') {
+    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to Employee processor...`);
+    await processEmployeeCreated(effectiveData);
+    return;
+  }
+  if (meta.eventType === 'EMPLOYEE_UPDATED') {
+    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to Employee processor...`);
+    await processEmployeeUpdated(effectiveData);
+    return;
+  }
+  if (meta.eventType === 'EMPLOYEE_DELETED') {
+    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to Employee processor...`);
+    await processEmployeeDeleted(effectiveData);
     return;
   }
 
