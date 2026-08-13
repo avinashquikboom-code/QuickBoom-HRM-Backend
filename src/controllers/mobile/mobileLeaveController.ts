@@ -6,6 +6,7 @@ import { pushNotificationService } from '../../services/pushNotificationService'
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import leaveBalanceService from '../../services/leaveBalanceService';
+import { logActivity } from '../../utils/activityLogger';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -281,8 +282,22 @@ export const applyLeave = async (
       }
     } catch (notificationError) {
       console.error('❌ Failed to send HR notifications:', notificationError);
-      // Don't fail the request if notifications fail
     }
+
+    logActivity({
+      actorId: req.user?.id,
+      actorName: `${employee.firstName} ${employee.lastName}`,
+      actorRole: req.user?.role || 'EMPLOYEE',
+      source: 'MOBILE',
+      action: 'LEAVE_APPLIED',
+      entityType: 'LeaveRequest',
+      entityId: leaveRequest.id,
+      description: `Leave applied (${leaveRequest.type}) by ${employee.firstName} ${employee.lastName} from ${fromDate} to ${toDate}`,
+      metadata: { type: leaveRequest.type, fromDate, toDate, reason: leaveRequest.reason },
+      ipAddress: req.ip || null,
+      userAgent: req.headers['user-agent'] || null,
+      status: 'SUCCESS'
+    }).catch(() => null);
 
     res.status(201).json({
       success: true,

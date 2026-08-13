@@ -6,6 +6,7 @@ import geofenceService from '../../services/geofenceService';
 import { Role } from '@prisma/client';
 const PdfPrinter = require('pdfmake');
 import auditLogService from '../../services/auditLogService';
+import { logActivity } from '../../utils/activityLogger';
 
 // Primary color for all PDF reports
 const PRIMARY_COLOR = '#3BA38B';
@@ -392,7 +393,22 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     } catch (wsError) {
       console.error('❌ Failed to broadcast attendance update:', wsError);
     }
-    
+
+    logActivity({
+      actorId: req.user?.id,
+      actorName: `${employee.firstName} ${employee.lastName}`,
+      actorRole: req.user?.role || 'EMPLOYEE',
+      source: 'MOBILE',
+      action: 'ATTENDANCE_CHECK_IN',
+      entityType: 'Attendance',
+      entityId: attendance.id,
+      description: `Employee ${employee.firstName} ${employee.lastName} punched in (${attendance.office?.name || 'Office'})`,
+      metadata: { latitude, longitude, checkInTime: attendance.checkIn },
+      ipAddress: req.ip || null,
+      userAgent: req.headers['user-agent'] || null,
+      status: 'SUCCESS'
+    }).catch(() => null);
+
     res.json({
       success: true,
       message: 'Punched in successfully.',
@@ -661,6 +677,21 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     } catch (wsError) {
       console.error('❌ Failed to broadcast attendance update:', wsError);
     }
+
+    logActivity({
+      actorId: req.user?.id,
+      actorName: `${employee.firstName} ${employee.lastName}`,
+      actorRole: req.user?.role || 'EMPLOYEE',
+      source: 'MOBILE',
+      action: 'ATTENDANCE_CHECK_OUT',
+      entityType: 'Attendance',
+      entityId: updatedAttendance.id,
+      description: `Employee ${employee.firstName} ${employee.lastName} punched out (${workHours}h ${workMinutes}m worked)`,
+      metadata: { checkOutTime: updatedAttendance.checkOut, workHours, workMinutes },
+      ipAddress: req.ip || null,
+      userAgent: req.headers['user-agent'] || null,
+      status: 'SUCCESS'
+    }).catch(() => null);
 
     res.json({
       success: true,
