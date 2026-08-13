@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
+import { createWebhookLog } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -39,6 +40,12 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     const employee = data.employee || payload.employee || data;
     if (!employee || !employee.employeeCode) {
       console.error('[Process] ❌ Invalid payload structure');
+      await createWebhookLog({
+        eventType: 'EMPLOYEE_CREATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload structure: missing employeeCode'
+      });
       return;
     }
 
@@ -47,7 +54,8 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
       name: employee.name || `${employee.firstName || ''} ${employee.lastName || ''}`.trim(),
       code: empCode,
       phone: employee.mobileNo || employee.mobileNumber || employee.phone,
-      email: employee.email
+      email: employee.email,
+      salary: employee.basicSalary || employee.salary || employee.basicPay
     });
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -62,6 +70,13 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 
     if (existing) {
       console.log('[Process] ⚠️ Employee already exists:', existing.id);
+      await createWebhookLog({
+        eventType: 'EMPLOYEE_CREATED',
+        status: 'SUCCESS',
+        payload: payload,
+        employeeId: existing.id,
+        errorMessage: 'Employee already exists'
+      });
       return;
     }
 
@@ -80,6 +95,7 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 
     const mobileNumber = employee.mobileNo || employee.mobileNumber || employee.phone ? String(employee.mobileNo || employee.mobileNumber || employee.phone) : null;
     const commissionRate = Number(employee.commissionRate || employee.commissionPercentage || 1);
+    const basicSalary = Number(employee.basicSalary || employee.salary || employee.basicPay || employee.grossSalary || 0);
 
     const newEmployee = await prisma.employee.create({
       data: {
@@ -100,10 +116,34 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     });
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: CREATE INITIAL COMMISSION RECORD FOR THIS MONTH
+    // STEP 4: UPSERT SALARY STRUCTURE
     // ═════════════════════════════════════════════════════════════════════════
 
-    console.log('[Process] Step 4: Create commission record');
+    if (basicSalary > 0) {
+      console.log(`[Process] Step 4: Creating Salary Structure with basicSalary: ₹${basicSalary}`);
+      await prisma.salaryStructure.upsert({
+        where: { employeeId: newEmployee.id },
+        update: {
+          basicSalary: basicSalary,
+          grossSalary: basicSalary,
+          monthlySalary: basicSalary,
+          updatedAt: new Date()
+        },
+        create: {
+          employeeId: newEmployee.id,
+          basicSalary: basicSalary,
+          grossSalary: basicSalary,
+          monthlySalary: basicSalary,
+        }
+      });
+      console.log('[Process] ✅ Salary structure created');
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 5: CREATE INITIAL COMMISSION RECORD FOR THIS MONTH
+    // ═════════════════════════════════════════════════════════════════════════
+
+    console.log('[Process] Step 5: Create commission record');
 
     const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
 
@@ -112,6 +152,17 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 
     console.log('[Process] ✅ Commission record created');
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 6: CREATE WEBHOOK LOG
+    // ═════════════════════════════════════════════════════════════════════════
+
+    await createWebhookLog({
+      eventType: 'EMPLOYEE_CREATED',
+      status: 'SUCCESS',
+      payload: payload,
+      employeeId: newEmployee.id
+    });
+
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [EMPLOYEE CREATED] ✅ COMPLETE                             ║');
     console.log(`║ Employee: ${newEmployee.firstName} ${newEmployee.lastName} (${newEmployee.employeeCode})`);
@@ -119,6 +170,12 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 
   } catch (error: any) {
     console.error('[Process] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'EMPLOYEE_CREATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 
@@ -155,6 +212,12 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
     const employee = data.employee || payload.employee || data;
     if (!employee || !employee.employeeCode) {
       console.error('[Update] ❌ Invalid payload');
+      await createWebhookLog({
+        eventType: 'EMPLOYEE_UPDATED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload: missing employeeCode'
+      });
       return;
     }
 
@@ -216,34 +279,50 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       changes.push(`Commission: ${existingEmployee.commissionPercentage}% → ${newRate}%`);
     }
 
-    if (changes.length === 0) {
-      console.log('[Update] ℹ️ No changes detected');
-      return;
+    // Update salary structure if salary is present
+    const rawSalary = employee.basicSalary || employee.salary || employee.basicPay || employee.grossSalary;
+    if (rawSalary !== undefined && rawSalary !== null) {
+      const newSalary = Number(rawSalary);
+      changes.push(`Salary: ₹${newSalary}`);
+
+      await prisma.salaryStructure.upsert({
+        where: { employeeId: existingEmployee.id },
+        update: {
+          basicSalary: newSalary,
+          grossSalary: newSalary,
+          monthlySalary: newSalary,
+          updatedAt: new Date()
+        },
+        create: {
+          employeeId: existingEmployee.id,
+          basicSalary: newSalary,
+          grossSalary: newSalary,
+          monthlySalary: newSalary
+        }
+      });
+      console.log(`[Update] ✅ Salary structure updated: ₹${newSalary}`);
     }
 
-    console.log('[Update] ✅ Changes found:', changes);
+    if (changes.length > 0) {
+      console.log('[Update] ✅ Changes found:', changes);
+      updateData.updatedAt = new Date();
+
+      await prisma.employee.update({
+        where: { id: existingEmployee.id },
+        data: updateData
+      });
+
+      console.log('[Update] ✅ Employee updated');
+    } else {
+      console.log('[Update] ℹ️ No core employee property changes detected');
+    }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: UPDATE EMPLOYEE
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Update] Step 4: Update employee record');
-
-    updateData.updatedAt = new Date();
-
-    const updated = await prisma.employee.update({
-      where: { id: existingEmployee.id },
-      data: updateData
-    });
-
-    console.log('[Update] ✅ Employee updated');
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 5: IF COMMISSION RATE CHANGED, RECALCULATE CURRENT MONTH
+    // STEP 4: IF COMMISSION RATE CHANGED, RECALCULATE CURRENT MONTH
     // ═════════════════════════════════════════════════════════════════════════
 
     if (updateData.commissionPercentage !== undefined) {
-      console.log('[Update] Step 5: Recalculate commission (rate changed)');
+      console.log('[Update] Step 4: Recalculate commission (rate changed)');
 
       const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
 
@@ -259,10 +338,21 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       );
 
       console.log('[Update] ✅ Commission recalculated:', {
-        newRate: updated.commissionPercentage,
+        newRate: updateData.commissionPercentage,
         newCommission: calculation.totalCommissionAmount
       });
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 5: CREATE WEBHOOK LOG
+    // ═════════════════════════════════════════════════════════════════════════
+
+    await createWebhookLog({
+      eventType: 'EMPLOYEE_UPDATED',
+      status: 'SUCCESS',
+      payload: payload,
+      employeeId: existingEmployee.id
+    });
 
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [EMPLOYEE UPDATED] ✅ COMPLETE                             ║');
@@ -270,6 +360,12 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
 
   } catch (error: any) {
     console.error('[Update] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'EMPLOYEE_UPDATED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 
@@ -306,6 +402,12 @@ export async function processEmployeeDeleted(payload: any): Promise<void> {
     const employee = data.employee || payload.employee || data;
     if (!employee || !employee.employeeCode) {
       console.error('[Delete] ❌ Invalid payload');
+      await createWebhookLog({
+        eventType: 'EMPLOYEE_DELETED',
+        status: 'FAILED',
+        payload: payload,
+        errorMessage: 'Invalid payload: missing employeeCode'
+      });
       return;
     }
 
@@ -324,6 +426,12 @@ export async function processEmployeeDeleted(payload: any): Promise<void> {
 
     if (!existingEmployee) {
       console.warn('[Delete] ⚠️ Employee not found');
+      await createWebhookLog({
+        eventType: 'EMPLOYEE_DELETED',
+        status: 'SUCCESS',
+        payload: payload,
+        errorMessage: 'Employee not found'
+      });
       return;
     }
 
@@ -346,6 +454,17 @@ export async function processEmployeeDeleted(payload: any): Promise<void> {
 
     console.log('[Delete] ✅ Employee deactivated (soft delete)');
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 4: CREATE WEBHOOK LOG
+    // ═════════════════════════════════════════════════════════════════════════
+
+    await createWebhookLog({
+      eventType: 'EMPLOYEE_DELETED',
+      status: 'SUCCESS',
+      payload: payload,
+      employeeId: existingEmployee.id
+    });
+
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [EMPLOYEE DELETED] ✅ COMPLETE                             ║');
     console.log(`║ Employee: ${empName} (${existingEmployee.employeeCode})`);
@@ -354,6 +473,12 @@ export async function processEmployeeDeleted(payload: any): Promise<void> {
 
   } catch (error: any) {
     console.error('[Delete] 💥 FATAL ERROR:', error.message);
+    await createWebhookLog({
+      eventType: 'EMPLOYEE_DELETED',
+      status: 'FAILED',
+      payload: payload,
+      errorMessage: error.message
+    });
   }
 }
 

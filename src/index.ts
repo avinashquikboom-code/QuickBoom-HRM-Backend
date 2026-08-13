@@ -426,17 +426,9 @@ server.listen(port, host, () => {
     .then(() => console.log('✅ [Startup Patch] Role permissions verified/initialized.'))
     .catch(err => console.error('❌ [Startup Patch] Role permissions initialization failed:', err));
 
-  // Schedule background HopKid employee sync (every 30 minutes)
-  const THIRTY_MINUTES = 30 * 60 * 1000;
-  setTimeout(() => {
-    console.log('🔄 [Background Schedule] Running initial HopKid employee sync...');
-    syncHopkidEmployees().catch(err => console.error('Background sync error:', err));
-  }, 5000);
-
-  setInterval(() => {
-    console.log('🔄 [Background Schedule] Running periodic 30-min HopKid employee sync...');
-    syncHopkidEmployees().catch(err => console.error('Background sync error:', err));
-  }, THIRTY_MINUTES);
+  // HopKid employees are now synchronized via Webhook events (EMPLOYEE_CREATED, EMPLOYEE_UPDATED, EMPLOYEE_DELETED)
+  // Background API polling disabled to prevent rate limits and latency
+  console.log('ℹ️ [Startup] HopKid Employee synchronization active via Real-time Webhooks');
 
   // On day start, check holidays
   cron.schedule('0 0 * * *', async () => { // Midnight IST

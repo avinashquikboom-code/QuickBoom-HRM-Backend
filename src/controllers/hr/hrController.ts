@@ -331,8 +331,7 @@ export const fetchHREmployees = async (
 ): Promise<void> => {
   console.log('👥 [HR EMPLOYEES] Fetch employee list started');
   
-  // Sync external Hopkid employees to keep DB up to date
-  await syncHopkidEmployees().catch(err => console.error('Error syncing Hopkid employees in fetchHREmployees:', err));
+  // Employee data is synchronized via real-time webhooks (EMPLOYEE_CREATED, EMPLOYEE_UPDATED, EMPLOYEE_DELETED)
   console.log('👥 [HR EMPLOYEES] User:', req.user?.email, 'Role:', req.user?.role);
   
   const {

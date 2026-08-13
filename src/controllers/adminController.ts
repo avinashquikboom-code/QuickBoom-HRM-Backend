@@ -44,10 +44,7 @@ export const fetchPlatformUsers = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Automatically trigger Hopkid employee sync to ensure local database is updated
-    await syncHopkidEmployees().catch((err) =>
-      console.error('Hopkid sync error in fetchPlatformUsers:', err)
-    );
+    // Employee data is synchronized via real-time webhooks (EMPLOYEE_CREATED, EMPLOYEE_UPDATED, EMPLOYEE_DELETED)
 
     const users = await prisma.user.findMany({
       include: {
