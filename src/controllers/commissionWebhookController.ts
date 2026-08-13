@@ -143,7 +143,29 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
             }
           });
 
-          console.log(`[LineItem] ✅ Sale record created: ${sale.id}`);
+          const existingCommTxn = await prisma.commissionTransaction.findFirst({
+            where: { employeeId: employee.id, billId: uniqueBillId }
+          });
+
+          if (!existingCommTxn) {
+            await prisma.commissionTransaction.create({
+              data: {
+                employeeId: employee.id,
+                storeId: employee.storeId || null,
+                saleAmount: productNetAmount,
+                commissionType: 'PERCENTAGE',
+                commissionPercent: rate,
+                commissionAmount: commission,
+                billId: uniqueBillId,
+                invoiceNumber: invoiceNo,
+                status: 'APPROVED',
+                createdAt: new Date(invoice.invoiceDate || invoice.date || new Date()),
+                notes: `Invoice ${invoiceNo}`
+              }
+            });
+          }
+
+          console.log(`[LineItem] ✅ Sale & CommissionTransaction created: ${sale.id}`);
         }
 
         if (!employeeCommissionMap.has(employee.id)) {
