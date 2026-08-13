@@ -52,24 +52,31 @@ export function safeParseDate(val: any): Date {
     if (!isNaN(d.getTime())) return d;
   }
 
-  if (str.includes('Z') || str.includes('+')) {
-    // Has explicit timezone info — parse as-is
+  // If string contains explicit numeric timezone offset (e.g. +05:30, -04:00)
+  if (/[\+\-]\d{2}:?\d{2}$/.test(str)) {
     const d = new Date(str);
     if (!isNaN(d.getTime())) return d;
-  } else if (str.includes('T')) {
-    // DateTime WITHOUT timezone (e.g. HopKid: "2026-08-12T14:30:00")
-    const [datePart, timePart] = str.split('T');
+  }
+
+  // Parse ISO / DateTime strings (e.g. "2026-08-12T11:30:00", "2026-08-12T11:30:00Z", "2026-08-12 11:30:00")
+  // Treat numerical hours/mins as IST local clock time (UTC+5:30)
+  const cleanIso = str.replace(/Z$/i, '');
+  if (cleanIso.includes('T') || cleanIso.includes(' ')) {
+    const separator = cleanIso.includes('T') ? 'T' : ' ';
+    const [datePart, timePart] = cleanIso.split(separator);
     const dateParts = datePart.split('-');
     const timeParts = (timePart || '12:00:00').split(':');
-    const year = parseInt(dateParts[0], 10);
-    const month = parseInt(dateParts[1], 10) - 1;
-    const day = parseInt(dateParts[2], 10);
-    const hour = parseInt(timeParts[0], 10) || 0;
-    const min = parseInt(timeParts[1], 10) || 0;
-    const sec = parseInt((timeParts[2] || '0').split('.')[0], 10) || 0;
-    const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
-    const d = new Date(utcMs);
-    if (!isNaN(d.getTime())) return d;
+    if (dateParts.length >= 3) {
+      const year = parseInt(dateParts[0], 10);
+      const month = parseInt(dateParts[1], 10) - 1;
+      const day = parseInt(dateParts[2], 10);
+      const hour = parseInt(timeParts[0], 10) || 0;
+      const min = parseInt(timeParts[1], 10) || 0;
+      const sec = parseInt((timeParts[2] || '0').split('.')[0], 10) || 0;
+      const utcMs = Date.UTC(year, month, day, hour, min, sec) - 5.5 * 60 * 60 * 1000;
+      const d = new Date(utcMs);
+      if (!isNaN(d.getTime())) return d;
+    }
   } else if (str.includes('-')) {
     // Date-only YYYY-MM-DD -> treat as 12:00 noon IST to avoid UTC day-shift
     const parts = str.split('-');

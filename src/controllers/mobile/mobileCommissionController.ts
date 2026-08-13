@@ -818,15 +818,19 @@ export const getMobileCommissionBillDetail = async (
     }
 
     // Try to load HopkidWebhookLog to get rich metadata
-    const baseBillId = billIdStr.split('-')[0];
-    const webhookLog = await prisma.hopkidWebhookLog.findFirst({
-      where: {
-        OR: [
-          { billId: billIdStr },
-          { billId: baseBillId }
-        ]
-      }
+    let webhookLog = await prisma.hopkidWebhookLog.findFirst({
+      where: { billId: billIdStr }
     });
+
+    if (!webhookLog) {
+      // Match parent billId robustly against hyphenated invoice numbers
+      const logs = await prisma.hopkidWebhookLog.findMany({
+        where: { billId: { not: null } },
+        orderBy: { id: 'desc' },
+        take: 100,
+      });
+      webhookLog = logs.find(l => l.billId && (billIdStr === l.billId || billIdStr.startsWith(l.billId) || l.billId.startsWith(billIdStr))) || null;
+    }
 
     let customerName = 'Retail Customer';
     let customerPhone = '-';
@@ -864,16 +868,43 @@ export const getMobileCommissionBillDetail = async (
       grossSale = safeParseAmount(invoiceData.grandTotal || invoiceData.grossAmount || sale.saleAmount);
       discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
       tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || invoiceData.vat || 0);
-    } else {
-      products = [{
-        name: sale.notes || 'Retail product',
-        quantity: 1,
-        price: sale.saleAmount
-      }];
+    }
+
+    // Fallback: If products array is missing, query sibling CommissionTransactions sharing parent invoice
+    if (!products || products.length === 0) {
+      const parentInvoiceNo = sale.invoiceNumber || sale.billId?.replace(/-[^-]+$/, '') || billIdStr;
+      const siblingTxs = await prisma.commissionTransaction.findMany({
+        where: {
+          employeeId: employee.id,
+          OR: [
+            { billId: parentInvoiceNo },
+            { invoiceNumber: parentInvoiceNo },
+            { billId: { startsWith: `${parentInvoiceNo}-` } },
+          ],
+        },
+        orderBy: { id: 'asc' },
+      });
+
+      if (siblingTxs.length > 0) {
+        products = siblingTxs.map(t => ({
+          name: t.notes?.replace(/^HopKid Invoice [^\s]+ - Product:\s*/i, '') || t.notes || 'Retail product',
+          quantity: 1,
+          price: t.saleAmount,
+        }));
+        grossSale = siblingTxs.reduce((sum, t) => sum + t.saleAmount, 0);
+      } else {
+        products = [{
+          name: sale.notes || 'Retail product',
+          quantity: 1,
+          price: sale.saleAmount
+        }];
+      }
     }
 
     const rate = sale.commissionPercent ?? employee.commissionPercentage ?? 0;
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
+
+    console.log(`[MOBILE-BILL-DETAIL] Returning detail for billId=${billIdStr} | products=${products.length} | saleAmount=₹${sale.saleAmount} | date=${sale.createdAt.toISOString()}`);
 
     res.json({
       success: true,
