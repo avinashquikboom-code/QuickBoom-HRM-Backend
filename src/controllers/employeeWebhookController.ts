@@ -8,52 +8,110 @@ const router = Router();
 console.log('[Employee Webhook Controller] ✅ Loaded');
 
 /**
- * Helper to resolve or auto-create matching Store & Office for branch names
+ * Robust Store & Office resolver supporting all HopKid store payload variations:
+ * - Flat IDs: assignedStoreId, storeId, store_id, branchId, outletId
+ * - Flat Names: branchName, storeName, assignedStoreName, location
+ * - Nested Objects: assignedStore: { id, name, code }, store: { id, name, code }, branch: { id, name, code }
  */
-async function resolveStoreAndOffice(branchNameInput: string | null | undefined): Promise<{ storeId: number | null; officeId: number | null }> {
-  if (!branchNameInput) return { storeId: null, officeId: null };
+export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeId: number | null; officeId: number | null }> {
+  if (!employeeData) return { storeId: null, officeId: null };
 
-  const branchName = String(branchNameInput).trim();
-  if (!branchName) return { storeId: null, officeId: null };
+  // Extract nested store object if present
+  const storeObj = employeeData.assignedStore || employeeData.store || employeeData.branch || employeeData.outlet;
+
+  // Extract candidate store ID (number or string code)
+  let rawStoreId: any = employeeData.assignedStoreId || employeeData.assigned_store_id || 
+                        employeeData.storeId || employeeData.storeID || employeeData.store_id || 
+                        employeeData.branchId || employeeData.branch_id || employeeData.outletId ||
+                        (typeof storeObj === 'object' && storeObj !== null ? (storeObj.id || storeObj.storeId || storeObj.code) : null);
+
+  // Extract candidate store Name
+  let rawStoreName: any = employeeData.branchName || employeeData.storeName || employeeData.assignedStoreName ||
+                          (typeof storeObj === 'string' ? storeObj : (typeof storeObj === 'object' && storeObj !== null ? storeObj.name : null)) ||
+                          employeeData.branch || employeeData.store || employeeData.outlet || employeeData.location;
+
+  if (!rawStoreId && !rawStoreName && typeof employeeData === 'string') {
+    rawStoreName = employeeData;
+  }
+
+  if (!rawStoreId && !rawStoreName) {
+    return { storeId: null, officeId: null };
+  }
 
   try {
-    let store = await prisma.store.findFirst({
-      where: { name: { equals: branchName, mode: 'insensitive' } }
-    });
+    let store: any = null;
 
-    if (!store) {
-      const baseCode = branchName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase() || 'STORE';
+    // 1. Try finding Store by numeric database ID
+    if (rawStoreId && !isNaN(Number(rawStoreId))) {
+      const numId = Number(rawStoreId);
+      store = await prisma.store.findUnique({ where: { id: numId } }).catch(() => null);
+    }
+
+    // 2. Try finding Store by string Code or Name
+    if (!store && rawStoreId) {
+      const idStr = String(rawStoreId).trim();
+      store = await prisma.store.findFirst({
+        where: {
+          OR: [
+            { code: { equals: idStr, mode: 'insensitive' } },
+            { name: { equals: idStr, mode: 'insensitive' } }
+          ]
+        }
+      }).catch(() => null);
+    }
+
+    // 3. Try finding Store by rawStoreName
+    if (!store && rawStoreName) {
+      const nameStr = String(rawStoreName).trim();
+      if (nameStr) {
+        store = await prisma.store.findFirst({
+          where: { name: { equals: nameStr, mode: 'insensitive' } }
+        }).catch(() => null);
+      }
+    }
+
+    // 4. Auto-create Store if missing in local DB
+    const displayName = rawStoreName ? String(rawStoreName).trim() : (rawStoreId ? `Store ${rawStoreId}` : 'Main Store');
+    if (!store && displayName) {
+      const baseCode = displayName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase() || 'STORE';
       const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
       store = await prisma.store.create({
         data: {
-          name: branchName,
+          name: displayName,
           code: `${baseCode}_${randomSuffix}`,
         }
       });
-      console.log(`[Store Resolve] ✅ Created Store for branch "${branchName}" (ID: ${store.id})`);
+      console.log(`[Store Resolve] ✅ Auto-created missing Store "${displayName}" (ID: ${store.id})`);
     }
 
+    if (!store) return { storeId: null, officeId: null };
+
+    // 5. Resolve or auto-create matching Office
     let office = await prisma.office.findFirst({
-      where: { name: { equals: branchName, mode: 'insensitive' } }
-    });
+      where: {
+        OR: [
+          ...(store.code ? [{ code: store.code }] : []),
+          { name: { equals: store.name, mode: 'insensitive' } }
+        ]
+      }
+    }).catch(() => null);
 
     if (!office) {
-      const baseCode = branchName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase() || 'OFFICE';
-      const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
+      const baseCode = store.code || `OFF_${store.id}`;
       office = await prisma.office.create({
         data: {
-          name: branchName,
-          code: `${baseCode}_${randomSuffix}`,
-          address: store.address || branchName,
+          name: store.name,
+          code: baseCode,
+          address: store.address || store.name,
           latitude: store.latitude || 0.0,
           longitude: store.longitude || 0.0,
           maxPunchRadiusMeters: store.maxPunchRadiusMeters || 50.0,
         }
-      });
-      console.log(`[Office Resolve] ✅ Created Office for branch "${branchName}" (ID: ${office.id})`);
+      }).catch(() => null);
+      console.log(`[Office Resolve] ✅ Auto-created matching Office for Store "${store.name}" (ID: ${office?.id})`);
     }
 
-    return { storeId: store.id, officeId: office.id };
+    return { storeId: store.id, officeId: office ? office.id : null };
   } catch (err: any) {
     console.error('[Store/Office Resolve Error]:', err.message);
     return { storeId: null, officeId: null };
@@ -117,13 +175,17 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     const rawSalary = employee.basicSalary || employee.salary || employee.basicPay || employee.grossSalary;
     const basicSalary = rawSalary !== undefined && rawSalary !== null ? Number(rawSalary) : 0;
 
+    // Resolve store and office
+    const { storeId, officeId } = await resolveStoreAndOffice(employee);
+
     console.log('[Process] ✅ Valid employee payload:', {
       name: employee.name || `${employee.firstName || ''} ${employee.lastName || ''}`.trim(),
       code: empCode,
       phone: mobileNumber,
       commissionRate: commissionRate,
       salary: basicSalary,
-      branch: employee.branchName || employee.store || employee.storeName
+      storeId: storeId,
+      officeId: officeId
     });
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -156,17 +218,10 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     console.log('[Process] ✅ New employee, creating...');
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 3: RESOLVE STORE & OFFICE
+    // STEP 3: CREATE EMPLOYEE RECORD
     // ═════════════════════════════════════════════════════════════════════════
 
-    const branchInput = employee.branchName || employee.store || employee.storeName || employee.branch;
-    const { storeId, officeId } = await resolveStoreAndOffice(branchInput);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: CREATE EMPLOYEE RECORD
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Process] Step 4: Create employee record');
+    console.log('[Process] Step 3: Create employee record');
 
     const rawName = String(employee.name || `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Employee').trim();
     const nameParts = rawName.split(' ');
@@ -196,15 +251,16 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
       name: `${newEmployee.firstName} ${newEmployee.lastName}`,
       code: newEmployee.employeeCode,
       mobile: newEmployee.mobileNumber,
-      commission: newEmployee.commissionPercentage
+      commission: newEmployee.commissionPercentage,
+      storeId: newEmployee.storeId
     });
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 5: UPSERT SALARY STRUCTURE IF PROVIDED
+    // STEP 4: UPSERT SALARY STRUCTURE IF PROVIDED
     // ═════════════════════════════════════════════════════════════════════════
 
     if (basicSalary > 0) {
-      console.log(`[Process] Step 5: Creating Salary Structure with basicSalary: ₹${basicSalary}`);
+      console.log(`[Process] Step 4: Creating Salary Structure with basicSalary: ₹${basicSalary}`);
       await prisma.salaryStructure.upsert({
         where: { employeeId: newEmployee.id },
         update: {
@@ -224,7 +280,7 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 6: CREATE INITIAL COMMISSION RECORD FOR THIS MONTH
+    // STEP 5: CREATE INITIAL COMMISSION RECORD FOR THIS MONTH
     // ═════════════════════════════════════════════════════════════════════════
 
     const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -232,7 +288,7 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     await CommissionService.upsertMonthlyCommission(newEmployee.id, month, calculation);
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 7: CREATE WEBHOOK LOG
+    // STEP 6: CREATE WEBHOOK LOG
     // ═════════════════════════════════════════════════════════════════════════
 
     await createWebhookLog({
@@ -379,15 +435,12 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       }
     }
 
-    // Branch / Store update
-    const branchInput = employee.branchName || employee.store || employee.storeName || employee.branch;
-    if (branchInput) {
-      const { storeId, officeId } = await resolveStoreAndOffice(branchInput);
-      if (storeId && storeId !== existingEmployee.storeId) {
-        updateData.storeId = storeId;
-        updateData.officeId = officeId;
-        changes.push(`Store/Branch: ${branchInput}`);
-      }
+    // Branch / Store update (PATCH style: only update if store data is present in payload)
+    const { storeId, officeId } = await resolveStoreAndOffice(employee);
+    if (storeId !== null && storeId !== existingEmployee.storeId) {
+      updateData.storeId = storeId;
+      if (officeId) updateData.officeId = officeId;
+      changes.push(`Store/Branch ID: ${existingEmployee.storeId || 'None'} → ${storeId}`);
     }
 
     // Salary structure update if salary is present
