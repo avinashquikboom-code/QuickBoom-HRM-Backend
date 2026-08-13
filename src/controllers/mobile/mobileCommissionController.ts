@@ -708,7 +708,7 @@ export const getMobileCommissionBills = async (
 
     const txs = await prisma.commissionTransaction.findMany({
       where,
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
       take: limitNum,
       skip: offsetNum,
     });
