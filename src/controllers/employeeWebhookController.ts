@@ -8,24 +8,49 @@ const router = Router();
 console.log('[Employee Webhook Controller] ✅ Loaded');
 
 /**
- * Robust Store & Office resolver supporting all HopKid store payload variations:
- * - Flat IDs: assignedStoreId, storeId, store_id, branchId, outletId
- * - Flat Names: branchName, storeName, assignedStoreName, location
- * - Nested Objects: assignedStore: { id, name, code }, store: { id, name, code }, branch: { id, name, code }
+ * Helper to safely extract candidate employee code / GUID / identifier from raw webhook payload
+ */
+export function extractEmployeeIdentifier(payload: any): string | null {
+  if (!payload) return null;
+  const data = payload.data || payload;
+  const employee = data.employee || payload.employee || data;
+
+  const id =
+    employee.employeeCode ||
+    employee.code ||
+    employee.empCode ||
+    employee.employeeID ||
+    employee.employeeId ||
+    employee.id ||
+    data.employeeCode ||
+    data.code ||
+    data.empCode ||
+    data.employeeID ||
+    data.employeeId ||
+    data.id ||
+    payload.employeeCode ||
+    payload.code ||
+    payload.empCode ||
+    payload.employeeID ||
+    payload.employeeId ||
+    payload.id;
+
+  return id ? String(id).trim() : null;
+}
+
+/**
+ * Robust Store & Office resolver supporting all HopKid store payload variations
  */
 export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeId: number | null; officeId: number | null }> {
   if (!employeeData) return { storeId: null, officeId: null };
 
-  // Extract nested store object if present
   const storeObj = employeeData.assignedStore || employeeData.store || employeeData.branch || employeeData.outlet;
 
-  // Extract candidate store ID (number or string code)
   let rawStoreId: any = employeeData.assignedStoreId || employeeData.assigned_store_id || 
                         employeeData.storeId || employeeData.storeID || employeeData.store_id || 
                         employeeData.branchId || employeeData.branch_id || employeeData.outletId ||
                         (typeof storeObj === 'object' && storeObj !== null ? (storeObj.id || storeObj.storeId || storeObj.code) : null);
 
-  // Extract candidate store Name
   let rawStoreName: any = employeeData.branchName || employeeData.storeName || employeeData.assignedStoreName ||
                           (typeof storeObj === 'string' ? storeObj : (typeof storeObj === 'object' && storeObj !== null ? storeObj.name : null)) ||
                           employeeData.branch || employeeData.store || employeeData.outlet || employeeData.location;
@@ -41,13 +66,11 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
   try {
     let store: any = null;
 
-    // 1. Try finding Store by numeric database ID
     if (rawStoreId && !isNaN(Number(rawStoreId))) {
       const numId = Number(rawStoreId);
       store = await prisma.store.findUnique({ where: { id: numId } }).catch(() => null);
     }
 
-    // 2. Try finding Store by string Code or Name
     if (!store && rawStoreId) {
       const idStr = String(rawStoreId).trim();
       store = await prisma.store.findFirst({
@@ -60,7 +83,6 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
       }).catch(() => null);
     }
 
-    // 3. Try finding Store by rawStoreName
     if (!store && rawStoreName) {
       const nameStr = String(rawStoreName).trim();
       if (nameStr) {
@@ -70,7 +92,6 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
       }
     }
 
-    // 4. Auto-create Store if missing in local DB
     const displayName = rawStoreName ? String(rawStoreName).trim() : (rawStoreId ? `Store ${rawStoreId}` : 'Main Store');
     if (!store && displayName) {
       const baseCode = displayName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 10).toUpperCase() || 'STORE';
@@ -86,7 +107,6 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
 
     if (!store) return { storeId: null, officeId: null };
 
-    // 5. Resolve or auto-create matching Office
     let office = await prisma.office.findFirst({
       where: {
         OR: [
@@ -108,7 +128,6 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
           maxPunchRadiusMeters: store.maxPunchRadiusMeters || 50.0,
         }
       }).catch(() => null);
-      console.log(`[Office Resolve] ✅ Auto-created matching Office for Store "${store.name}" (ID: ${office?.id})`);
     }
 
     return { storeId: store.id, officeId: office ? office.id : null };
@@ -122,10 +141,6 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
 // 7️⃣ EMPLOYEE CREATED - New employee from HopKid
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * POST /api/webhook/employee/created
- * HopKid sends: employee.created event
- */
 router.post('/created', (req: Request, res: Response) => {
   const rawPayload = req.body;
 
@@ -145,28 +160,27 @@ router.post('/created', (req: Request, res: Response) => {
 
 export async function processEmployeeCreated(payload: any): Promise<void> {
   try {
-    console.log('[Process] Step 1: Validate payload');
+    console.log('[Process] Step 1: Extract employee identifier');
 
-    const data = payload.data || payload;
-    const employee = data.employee || payload.employee || data;
-    if (!employee || (!employee.employeeCode && !employee.code && !employee.employeeID)) {
+    const empCode = extractEmployeeIdentifier(payload);
+    if (!empCode) {
       console.error('[Process] ❌ Invalid payload structure: missing employee identifier');
       await createWebhookLog({
         eventType: 'EMPLOYEE_CREATED',
         status: 'FAILED',
         payload: payload,
-        errorMessage: 'Invalid payload structure: missing employeeCode'
+        errorMessage: 'Invalid payload structure: missing employee identifier'
       });
       return;
     }
 
-    const empCode = String(employee.employeeCode || employee.code || employee.empCode || employee.employeeID);
+    const data = payload.data || payload;
+    const employee = data.employee || payload.employee || data;
     const hopkidEmployeeId = employee.employeeID || employee.id ? String(employee.employeeID || employee.id).toLowerCase() : null;
 
     const rawMobile = employee.mobileNo || employee.mobileNumber || employee.phone || employee.phoneNumber || employee.contactNo;
     const mobileNumber = rawMobile ? String(rawMobile).trim() : null;
 
-    // Parse commission rate cleanly without defaulting 0% to 1%
     const rawComm = employee.commissionRate !== undefined ? employee.commissionRate :
                     (employee.commissionPercentage !== undefined ? employee.commissionPercentage :
                     (employee.commission !== undefined ? employee.commission : 0));
@@ -175,7 +189,6 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     const rawSalary = employee.basicSalary || employee.salary || employee.basicPay || employee.grossSalary;
     const basicSalary = rawSalary !== undefined && rawSalary !== null ? Number(rawSalary) : 0;
 
-    // Resolve store and office
     const { storeId, officeId } = await resolveStoreAndOffice(employee);
 
     console.log('[Process] ✅ Valid employee payload:', {
@@ -184,21 +197,14 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
       phone: mobileNumber,
       commissionRate: commissionRate,
       salary: basicSalary,
-      storeId: storeId,
-      officeId: officeId
+      storeId: storeId
     });
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 2: CHECK IF ALREADY EXISTS
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Process] Step 2: Check if employee exists');
 
     const existing = await prisma.employee.findFirst({
       where: {
         OR: [
-          { employeeCode: empCode },
-          ...(hopkidEmployeeId ? [{ employeeID: hopkidEmployeeId }] : [])
+          { employeeCode: { equals: empCode, mode: 'insensitive' as any } },
+          ...(hopkidEmployeeId ? [{ employeeID: { equals: hopkidEmployeeId, mode: 'insensitive' as any } }] : [])
         ]
       }
     }).catch(() => null);
@@ -216,12 +222,6 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     }
 
     console.log('[Process] ✅ New employee, creating...');
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 3: CREATE EMPLOYEE RECORD
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Process] Step 3: Create employee record');
 
     const rawName = String(employee.name || `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Employee').trim();
     const nameParts = rawName.split(' ');
@@ -251,16 +251,11 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
       name: `${newEmployee.firstName} ${newEmployee.lastName}`,
       code: newEmployee.employeeCode,
       mobile: newEmployee.mobileNumber,
-      commission: newEmployee.commissionPercentage,
-      storeId: newEmployee.storeId
+      commission: newEmployee.commissionPercentage
     });
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: UPSERT SALARY STRUCTURE IF PROVIDED
-    // ═════════════════════════════════════════════════════════════════════════
-
     if (basicSalary > 0) {
-      console.log(`[Process] Step 4: Creating Salary Structure with basicSalary: ₹${basicSalary}`);
+      console.log(`[Process] Creating Salary Structure with basicSalary: ₹${basicSalary}`);
       await prisma.salaryStructure.upsert({
         where: { employeeId: newEmployee.id },
         update: {
@@ -276,20 +271,11 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
           monthlySalary: basicSalary,
         }
       });
-      console.log('[Process] ✅ Salary structure created');
     }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 5: CREATE INITIAL COMMISSION RECORD FOR THIS MONTH
-    // ═════════════════════════════════════════════════════════════════════════
 
     const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
     const calculation = await CommissionService.calculateMonthlyCommission(newEmployee.id, month);
     await CommissionService.upsertMonthlyCommission(newEmployee.id, month, calculation);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 6: CREATE WEBHOOK LOG
-    // ═════════════════════════════════════════════════════════════════════════
 
     await createWebhookLog({
       eventType: 'EMPLOYEE_CREATED',
@@ -318,10 +304,6 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 // 8️⃣ EMPLOYEE UPDATED - Salary, commission rate, mobile, or store changes
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * POST /api/webhook/employee/updated
- * HopKid sends: employee.updated event
- */
 router.post('/updated', (req: Request, res: Response) => {
   const rawPayload = req.body;
 
@@ -341,35 +323,29 @@ router.post('/updated', (req: Request, res: Response) => {
 
 export async function processEmployeeUpdated(payload: any): Promise<void> {
   try {
-    console.log('[Update] Step 1: Validate payload');
+    console.log('[Update] Step 1: Extract employee identifier');
 
-    const data = payload.data || payload;
-    const employee = data.employee || payload.employee || data;
-    if (!employee || (!employee.employeeCode && !employee.code && !employee.employeeID)) {
-      console.error('[Update] ❌ Invalid payload: missing employeeCode');
+    const empCode = extractEmployeeIdentifier(payload);
+    if (!empCode) {
+      console.error('[Update] ❌ Invalid payload: missing employee identifier');
       await createWebhookLog({
         eventType: 'EMPLOYEE_UPDATED',
         status: 'FAILED',
         payload: payload,
-        errorMessage: 'Invalid payload: missing employeeCode'
+        errorMessage: 'Invalid payload: missing employee identifier'
       });
       return;
     }
 
-    const empCode = String(employee.employeeCode || employee.code || employee.empCode || employee.employeeID);
+    const data = payload.data || payload;
+    const employee = data.employee || payload.employee || data;
     const hopkidEmployeeId = employee.employeeID || employee.id ? String(employee.employeeID || employee.id).toLowerCase() : null;
-
-    console.log('[Update] Employee identifier:', empCode);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 2: FIND EMPLOYEE
-    // ═════════════════════════════════════════════════════════════════════════
 
     let existingEmployee = await prisma.employee.findFirst({
       where: {
         OR: [
-          { employeeCode: empCode },
-          ...(hopkidEmployeeId ? [{ employeeID: hopkidEmployeeId }] : [])
+          { employeeCode: { equals: empCode, mode: 'insensitive' as any } },
+          ...(hopkidEmployeeId ? [{ employeeID: { equals: hopkidEmployeeId, mode: 'insensitive' as any } }] : [])
         ]
       }
     });
@@ -383,14 +359,9 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
     const currentName = `${existingEmployee.firstName} ${existingEmployee.lastName}`;
     console.log('[Update] ✅ Employee found:', currentName);
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 3: PREPARE PATCH-STYLE UPDATE DATA
-    // ═════════════════════════════════════════════════════════════════════════
-
     const updateData: any = {};
     const changes: string[] = [];
 
-    // Name update
     if (employee.name || employee.firstName) {
       const rawName = String(employee.name || `${employee.firstName || ''} ${employee.lastName || ''}`.trim()).trim();
       const nameParts = rawName.split(' ');
@@ -404,7 +375,6 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       }
     }
 
-    // Mobile number update
     const rawMobile = employee.mobileNo || employee.mobileNumber || employee.phone || employee.phoneNumber || employee.contactNo;
     if (rawMobile !== undefined && rawMobile !== null) {
       const cleanMobile = String(rawMobile).trim();
@@ -414,7 +384,6 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       }
     }
 
-    // Commission rate update (supports 2% → 0% and 0% → 1%)
     const rawComm = employee.commissionRate !== undefined ? employee.commissionRate :
                     (employee.commissionPercentage !== undefined ? employee.commissionPercentage :
                     (employee.commission !== undefined ? employee.commission : undefined));
@@ -426,7 +395,6 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       }
     }
 
-    // Designation update
     if (employee.designation !== undefined || employee.role !== undefined) {
       const newDesig = employee.designation || employee.role || null;
       if (newDesig !== existingEmployee.designation) {
@@ -435,7 +403,6 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       }
     }
 
-    // Branch / Store update (PATCH style: only update if store data is present in payload)
     const { storeId, officeId } = await resolveStoreAndOffice(employee);
     if (storeId !== null && storeId !== existingEmployee.storeId) {
       updateData.storeId = storeId;
@@ -443,7 +410,6 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       changes.push(`Store/Branch ID: ${existingEmployee.storeId || 'None'} → ${storeId}`);
     }
 
-    // Salary structure update if salary is present
     const rawSalary = employee.basicSalary || employee.salary || employee.basicPay || employee.grossSalary;
     if (rawSalary !== undefined && rawSalary !== null) {
       const newSalary = Number(rawSalary);
@@ -464,7 +430,6 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
           monthlySalary: newSalary
         }
       });
-      console.log(`[Update] ✅ Salary structure updated: ₹${newSalary}`);
     }
 
     if (changes.length > 0) {
@@ -475,19 +440,9 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
         where: { id: existingEmployee.id },
         data: updateData
       });
-
-      console.log('[Update] ✅ Employee record updated in DB');
-    } else {
-      console.log('[Update] ℹ️ No employee field changes detected');
     }
 
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: RECALCULATE COMMISSION IF RATE CHANGED
-    // ═════════════════════════════════════════════════════════════════════════
-
     if (updateData.commissionPercentage !== undefined) {
-      console.log('[Update] Step 4: Recalculate monthly commission (rate changed)');
-
       const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
       const calculation = await CommissionService.calculateMonthlyCommission(
         existingEmployee.id,
@@ -499,16 +454,7 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
         month,
         calculation
       );
-
-      console.log('[Update] ✅ Commission recalculated:', {
-        newRate: updateData.commissionPercentage,
-        newCommission: calculation.totalCommissionAmount
-      });
     }
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 5: CREATE WEBHOOK LOG
-    // ═════════════════════════════════════════════════════════════════════════
 
     await createWebhookLog({
       eventType: 'EMPLOYEE_UPDATED',
@@ -536,10 +482,6 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
 // 9️⃣ EMPLOYEE DELETED - Soft delete/deactivate
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * POST /api/webhook/employee/deleted
- * HopKid sends: employee.deleted event
- */
 router.post('/deleted', (req: Request, res: Response) => {
   const rawPayload = req.body;
 
@@ -559,71 +501,58 @@ router.post('/deleted', (req: Request, res: Response) => {
 
 export async function processEmployeeDeleted(payload: any): Promise<void> {
   try {
-    console.log('[Delete] Step 1: Validate payload');
+    console.log('[Delete] Step 1: Extract employee identifier from payload');
 
-    const data = payload.data || payload;
-    const employee = data.employee || payload.employee || data;
-    if (!employee || (!employee.employeeCode && !employee.code && !employee.employeeID)) {
-      console.error('[Delete] ❌ Invalid payload: missing employeeCode');
+    const identifier = extractEmployeeIdentifier(payload);
+    if (!identifier) {
+      console.error('[Delete] ❌ Missing employee identifier in payload');
       await createWebhookLog({
         eventType: 'EMPLOYEE_DELETED',
         status: 'FAILED',
         payload: payload,
-        errorMessage: 'Invalid payload: missing employeeCode'
+        errorMessage: 'Invalid payload: missing employee identifier'
       });
       return;
     }
 
-    const empCode = String(employee.employeeCode || employee.code || employee.empCode || employee.employeeID);
-    const hopkidEmployeeId = employee.employeeID || employee.id ? String(employee.employeeID || employee.id).toLowerCase() : null;
-
-    console.log('[Delete] Employee code:', empCode);
+    console.log('[Delete] Target employee identifier:', identifier);
 
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 2: FIND EMPLOYEE
+    // STEP 2: FIND EXISTING EMPLOYEE BEFORE DEACTIVATION
     // ═════════════════════════════════════════════════════════════════════════
 
     const existingEmployee = await prisma.employee.findFirst({
       where: {
         OR: [
-          { employeeCode: empCode },
-          ...(hopkidEmployeeId ? [{ employeeID: hopkidEmployeeId }] : [])
+          { employeeCode: { equals: identifier, mode: 'insensitive' as any } },
+          { employeeID: { equals: identifier, mode: 'insensitive' as any } },
+          ...(identifier.length >= 7 ? [{ mobileNumber: { contains: identifier.slice(-10) } }] : [])
         ]
-      }
+      },
+      include: { store: true, office: true }
     });
 
     if (!existingEmployee) {
-      console.warn('[Delete] ⚠️ Employee not found');
+      console.warn('[Delete] ⚠️ Employee not found in local DB:', identifier);
       await createWebhookLog({
         eventType: 'EMPLOYEE_DELETED',
         status: 'SUCCESS',
         payload: payload,
-        errorMessage: 'Employee not found'
+        errorMessage: `Employee not found for identifier "${identifier}"`
       });
       return;
     }
 
-    const empName = `${existingEmployee.firstName} ${existingEmployee.lastName}`;
-    console.log('[Delete] ✅ Employee found:', empName);
-
-    // ═════════════════════════════════════════════════════════════════════════
-    // STEP 3: SOFT DELETE (MARK INACTIVE - PRESERVE HISTORICAL DATA)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    console.log('[Delete] Step 3: Deactivate employee (soft delete)');
-
-    await prisma.employee.update({
-      where: { id: existingEmployee.id },
-      data: {
-        status: 'inactive',
-        updatedAt: new Date()
-      }
+    const empName = `${existingEmployee.firstName} ${existingEmployee.lastName}`.trim();
+    console.log('[Delete] ✅ Employee found in DB BEFORE deactivation:', {
+      id: existingEmployee.id,
+      name: empName,
+      code: existingEmployee.employeeCode,
+      store: existingEmployee.store?.name
     });
 
-    console.log('[Delete] ✅ Employee deactivated (soft delete)');
-
     // ═════════════════════════════════════════════════════════════════════════
-    // STEP 4: CREATE WEBHOOK LOG
+    // STEP 3: CREATE WEBHOOK LOG LINKED TO AUTHORITATIVE EMPLOYEE RECORD
     // ═════════════════════════════════════════════════════════════════════════
 
     await createWebhookLog({
@@ -633,10 +562,22 @@ export async function processEmployeeDeleted(payload: any): Promise<void> {
       employeeId: existingEmployee.id
     });
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 4: MARK EMPLOYEE INACTIVE (SOFT DELETE) - PRESERVE ALL HISTORICAL DATA
+    // ═════════════════════════════════════════════════════════════════════════
+
+    await prisma.employee.update({
+      where: { id: existingEmployee.id },
+      data: {
+        status: 'inactive',
+        updatedAt: new Date()
+      }
+    });
+
     console.log('\n╔════════════════════════════════════════════════════════════╗');
     console.log('║ [EMPLOYEE DELETED] ✅ COMPLETE                             ║');
     console.log(`║ Employee: ${empName} (${existingEmployee.employeeCode})`);
-    console.log('║ Status: INACTIVE                                           ║');
+    console.log('║ Status: INACTIVE (soft deleted)                            ║');
     console.log('╚════════════════════════════════════════════════════════════╝\n');
 
   } catch (error: any) {

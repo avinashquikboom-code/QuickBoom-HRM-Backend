@@ -25,40 +25,86 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     const statusFilter = status ? String(status).toUpperCase() : null;
     const eventTypeFilter = eventType ? normalizeEventType(String(eventType)) : null;
 
-    // Pre-fetch employee lookup maps for resolving employee names
+    // Pre-fetch employee lookup maps for resolving employee names and assigned stores
     let allEmployees: any[] = [];
     try {
       allEmployees = await prisma.employee.findMany({
-        select: { id: true, employeeCode: true, mobileNumber: true, firstName: true, lastName: true },
+        select: {
+          id: true,
+          employeeID: true,
+          employeeCode: true,
+          mobileNumber: true,
+          firstName: true,
+          lastName: true,
+          storeId: true,
+          store: { select: { id: true, name: true } }
+        },
       });
     } catch (e) {
       allEmployees = [];
     }
 
-    const empById = new Map<number, string>();
-    const empByCode = new Map<string, string>();
-    const empByMobile = new Map<string, string>();
-
-    for (const emp of allEmployees) {
-      const name = `${emp.firstName || ''} ${emp.lastName || ''}`.trim();
-      if (name) {
-        empById.set(emp.id, name);
-        if (emp.employeeCode) empByCode.set(emp.employeeCode.toLowerCase(), name);
-        if (emp.mobileNumber) empByMobile.set(emp.mobileNumber.toLowerCase(), name);
-      }
+    interface EmpInfo {
+      id: number;
+      name: string;
+      storeName: string | null;
     }
 
-    const resolveEmpName = (empId: number | null, rawMeta: any, rawLogName?: string | null) => {
+    const empById = new Map<number, EmpInfo>();
+    const empByGuid = new Map<string, EmpInfo>();
+    const empByCode = new Map<string, EmpInfo>();
+    const empByMobile = new Map<string, EmpInfo>();
+
+    for (const emp of allEmployees) {
+      const name = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || emp.employeeCode || 'Employee';
+      const storeName = emp.store?.name || null;
+      const info: EmpInfo = { id: emp.id, name, storeName };
+
+      empById.set(emp.id, info);
+      if (emp.employeeID) empByGuid.set(emp.employeeID.toLowerCase(), info);
+      if (emp.employeeCode) empByCode.set(emp.employeeCode.toLowerCase(), info);
+      if (emp.mobileNumber) empByMobile.set(emp.mobileNumber.toLowerCase(), info);
+    }
+
+    const findEmpInfo = (empId: number | null, rawMeta: any, rawPayload: any): EmpInfo | null => {
       if (empId && empById.has(empId)) return empById.get(empId)!;
+
+      const candidateIds = [
+        rawMeta.employeeIdentifier,
+        rawPayload?.employeeId,
+        rawPayload?.employeeID,
+        rawPayload?.id,
+        rawPayload?.data?.employeeId,
+        rawPayload?.data?.employeeID,
+        rawPayload?.data?.employee?.employeeID,
+        rawPayload?.data?.employee?.employeeId,
+        rawPayload?.data?.employee?.employeeCode,
+        rawPayload?.employee?.employeeID,
+        rawPayload?.employee?.employeeId,
+        rawPayload?.employee?.employeeCode,
+      ].filter(Boolean);
+
+      for (const cand of candidateIds) {
+        const str = String(cand).toLowerCase();
+        if (empByGuid.has(str)) return empByGuid.get(str)!;
+        if (empByCode.has(str)) return empByCode.get(str)!;
+        if (empByMobile.has(str)) return empByMobile.get(str)!;
+      }
+
+      return null;
+    };
+
+    const resolveEmpName = (empId: number | null, rawMeta: any, rawLogName?: string | null, rawPayload?: any) => {
+      const info = findEmpInfo(empId, rawMeta, rawPayload);
+      if (info) return info.name;
+
       if (rawMeta.employeeName) return rawMeta.employeeName;
       if (rawLogName) return rawLogName;
 
-      if (rawMeta.employeeIdentifier) {
-        const idLower = String(rawMeta.employeeIdentifier).toLowerCase();
-        if (empByCode.has(idLower)) return empByCode.get(idLower)!;
-        if (empByMobile.has(idLower)) return empByMobile.get(idLower)!;
-        return rawMeta.employeeIdentifier;
-      }
+      const pName = rawPayload?.name || rawPayload?.data?.name || rawPayload?.employee?.name || rawPayload?.data?.employee?.name;
+      if (pName) return String(pName);
+
+      if (rawMeta.employeeIdentifier) return rawMeta.employeeIdentifier;
 
       return 'N/A';
     };
@@ -83,11 +129,17 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    const resolveStoreName = (rawMeta: any, rawLogStoreId?: number | null) => {
+    const resolveStoreName = (rawMeta: any, rawLogStoreId?: number | null, empId?: number | null, rawPayload?: any) => {
       if (rawMeta.storeName) return rawMeta.storeName;
       if (rawMeta.branchName) return rawMeta.branchName;
       if (rawMeta.storeId && storeById.has(rawMeta.storeId)) return storeById.get(rawMeta.storeId)!;
       if (rawLogStoreId && storeById.has(rawLogStoreId)) return storeById.get(rawLogStoreId)!;
+
+      const info = findEmpInfo(empId || null, rawMeta, rawPayload);
+      if (info?.storeName) return info.storeName;
+
+      const pStore = rawPayload?.branchName || rawPayload?.storeName || rawPayload?.store || rawPayload?.data?.branchName || rawPayload?.data?.storeName || rawPayload?.data?.employee?.branchName || rawPayload?.data?.employee?.store;
+      if (pStore) return typeof pStore === 'string' ? pStore : (pStore.name || 'N/A');
 
       return 'N/A';
     };
@@ -124,8 +176,8 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           const meta = extractWebhookMeta(log.rawPayload);
           const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
           const billIdVal = log.billId || meta.billId;
-          const resolvedEmpName = resolveEmpName(null, meta, log.name);
-          const resolvedStoreName = resolveStoreName(meta, log.storeId);
+          const resolvedEmpName = resolveEmpName(null, meta, log.name, log.rawPayload);
+          const resolvedStoreName = resolveStoreName(meta, log.storeId, null, log.rawPayload);
 
           return {
             id: `hopkid-${log.id}`,
@@ -159,8 +211,8 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       const meta = extractWebhookMeta(log.payload);
       const amountVal = log.amount !== null && log.amount !== undefined && log.amount !== 0 ? log.amount : meta.amount;
       const billIdVal = log.billId || meta.billId;
-      const resolvedEmpName = resolveEmpName(log.employeeId, meta, null);
-      const resolvedStoreName = resolveStoreName(meta, null);
+      const resolvedEmpName = resolveEmpName(log.employeeId, meta, null, log.payload);
+      const resolvedStoreName = resolveStoreName(meta, null, log.employeeId, log.payload);
 
       return {
         ...log,
