@@ -28,7 +28,7 @@ router.post('/created', (req: Request, res: Response) => {
   });
 });
 
-async function processSalesExchangeCreated(payload: any, eventType: string = 'SALES_EXCHANGE_CREATED'): Promise<void> {
+export async function processSalesExchangeCreated(payload: any, eventType: string = 'SALES_EXCHANGE_CREATED'): Promise<void> {
   try {
     console.log('[Process] Step 1: Validate exchange payload');
 

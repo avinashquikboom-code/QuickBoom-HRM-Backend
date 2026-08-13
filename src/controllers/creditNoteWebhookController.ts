@@ -29,7 +29,7 @@ router.post('/created', (req: Request, res: Response) => {
   });
 });
 
-async function processCreditNoteCreated(payload: any, eventType: string = 'CREDIT_NOTE_CREATED'): Promise<void> {
+export async function processCreditNoteCreated(payload: any, eventType: string = 'CREDIT_NOTE_CREATED'): Promise<void> {
   try {
     console.log('[Process] Step 1: Validate payload');
 

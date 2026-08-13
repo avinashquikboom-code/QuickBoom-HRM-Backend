@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent } from '../utils/commissionHelper';
+import { processCreditNoteCreated } from './creditNoteWebhookController';
+import { processSalesExchangeCreated } from './salesExchangeWebhookController';
 
 /**
  * Stores raw HopKid webhook payload into HopkidWebhookLog table
@@ -263,6 +265,18 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   let effectiveData = rawSalesData;
   let meta = extractWebhookMeta(effectiveData);
 
+  // ✅ Delegate Credit Note and Sales Exchange events if received on main webhook endpoint
+  if (meta.eventType === 'CREDIT_NOTE_CREATED' || meta.eventType === 'CREDIT_NOTE_UPDATED') {
+    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to CreditNote processor...`);
+    await processCreditNoteCreated(effectiveData, meta.eventType);
+    return;
+  }
+  if (meta.eventType === 'SALES_EXCHANGE_CREATED' || meta.eventType === 'SALES_EXCHANGE_UPDATED') {
+    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to SalesExchange processor...`);
+    await processSalesExchangeCreated(effectiveData, meta.eventType);
+    return;
+  }
+
   const invoice = meta.invoice || {};
   const lineItems = meta.lineItems || [];
 
@@ -347,7 +361,28 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
         });
 
         if (existingTx) {
-          console.log(`[Save]   ⚠️ Already exists (idempotent skip)`);
+          console.log(`[Save]   ⚠️ Transaction ${uniqueBillId} already exists. Updating record & broadcasting WebSocket event...`);
+          const commAmt = Math.round(product.productCommission * 100) / 100;
+          await prisma.commissionTransaction.update({
+            where: { id: existingTx.id },
+            data: {
+              saleAmount: product.productNetAmount,
+              commissionAmount: commAmt,
+              notes: `HopKid Invoice ${primaryBillId} - Product: ${product.productName} (Updated)`,
+              updatedAt: new Date(),
+            },
+          }).catch(() => {});
+
+          await broadcastCommissionEvent(salesman.id, {
+            success: true,
+            eventType: meta.eventType || 'INVOICE_UPDATED',
+            billId: uniqueBillId,
+            amount: product.productNetAmount,
+            commission: commAmt,
+            employeeId: salesman.id,
+            createdAt: validDate.toISOString(),
+          });
+          processedSalesCount++;
           continue;
         }
 

@@ -639,44 +639,51 @@ export const getMobileCommissionBills = async (
 
     let fromDate: Date;
     let toDate = new Date();
-    const now = toDate; // alias for switch cases
+
+    // Calculate IST time
+    const nowUtcMs = Date.now();
+    const istMs = nowUtcMs + 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(istMs);
+
+    const year = istNow.getUTCFullYear();
+    const month = istNow.getUTCMonth();
+    const dateVal = istNow.getUTCDate();
 
     switch (period) {
       case 'today': {
-        const s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-        fromDate = s;
-        toDate   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        fromDate = new Date(Date.UTC(year, month, dateVal, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+        toDate   = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
       }
       case 'this_week': {
-        const dow = now.getDay() === 0 ? 6 : now.getDay() - 1;
-        fromDate  = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow, 0, 0, 0, 0);
-        toDate    = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        const dow = istNow.getUTCDay() === 0 ? 6 : istNow.getUTCDay() - 1;
+        fromDate  = new Date(Date.UTC(year, month, dateVal - dow, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+        toDate    = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
       }
       case 'last_week': {
-        const dow = now.getDay() === 0 ? 6 : now.getDay() - 1;
-        const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow, 0, 0, 0, 0);
-        toDate    = new Date(weekStart.getTime() - 1);
-        fromDate  = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate() - 6, 0, 0, 0, 0);
+        const dow = istNow.getUTCDay() === 0 ? 6 : istNow.getUTCDay() - 1;
+        const weekStartMs = Date.UTC(year, month, dateVal - dow, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000;
+        toDate    = new Date(weekStartMs - 1);
+        fromDate  = new Date(Date.UTC(year, month, dateVal - dow - 7, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
         break;
       }
       case 'previous_month':
-        fromDate = new Date(toDate.getFullYear(), toDate.getMonth() - 1, 1);
-        toDate   = new Date(toDate.getFullYear(), toDate.getMonth(), 0, 23, 59, 59, 999);
+        fromDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+        toDate   = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
       case 'all_time':
         fromDate = new Date(2020, 0, 1);
-        toDate   = new Date(now.getFullYear() + 1, 0, 1);
+        toDate   = new Date(year + 1, 0, 1);
         break;
       case 'custom_range':
-        fromDate = from ? new Date(from as string) : new Date(toDate.getFullYear(), toDate.getMonth(), 1);
-        toDate   = to   ? new Date(to as string)   : toDate;
+        fromDate = from ? new Date(from as string) : new Date(Date.UTC(year, month, 1, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+        toDate   = to   ? new Date(to as string)   : new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
       case 'current_month':
       default:
-        fromDate = new Date(toDate.getFullYear(), toDate.getMonth(), 1);
-        toDate   = new Date(toDate.getFullYear(), toDate.getMonth() + 1, 0, 23, 59, 59, 999);
+        fromDate = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+        toDate   = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
     }
 
@@ -701,7 +708,7 @@ export const getMobileCommissionBills = async (
 
     const txs = await prisma.commissionTransaction.findMany({
       where,
-      orderBy: { id: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limitNum,
       skip: offsetNum,
     });
