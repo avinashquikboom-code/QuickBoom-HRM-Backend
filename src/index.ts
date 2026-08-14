@@ -82,8 +82,16 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Ensure uploads directory structure exists on startup
+import fs from 'fs';
+const uploadsBase = path.join(process.cwd(), 'uploads', 'receipts');
+if (!fs.existsSync(uploadsBase)) {
+  fs.mkdirSync(uploadsBase, { recursive: true });
+}
+
 // Serve static upload files (public access, no auth)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/uploads', uploadRoutes);
 app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
 app.use('/api/uploads', uploadRoutes);
 
