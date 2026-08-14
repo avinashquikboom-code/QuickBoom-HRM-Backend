@@ -223,7 +223,7 @@ export class ExpenseReceiptService {
             {
               stack: [
                 { text: '[ DIGITAL SYSTEM STAMP ]', fontSize: 8, bold: true, color: '#4F46E5', alignment: 'center' },
-                { text: 'HRM Official Finance Approval', fontSize: 7, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
+                { text: 'HOPKID Official Finance Approval', fontSize: 7, color: '#6B7280', alignment: 'center', margin: [0, 2, 0, 0] },
                 { text: 'Authenticated & Sealed', fontSize: 7, italics: true, color: '#059669', alignment: 'center', margin: [0, 2, 0, 0] },
               ],
               width: '40%',
