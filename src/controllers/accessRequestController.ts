@@ -90,8 +90,10 @@ export const createAccessRequest = async (req: Request, res: Response): Promise<
       await prisma.auditLog.create({
         data: {
           action: 'ACCESS_REQUEST_SUBMITTED',
-          actor: `${employee.firstName} ${employee.lastName || ''}`.trim(),
-          details: `Employee #${employee.employeeCode} requested access to module '${featureName}'`,
+          employeeId: employee.id,
+          userId: employee.userId ?? null,
+          ipAddress: req.ip || null,
+          deviceInfo: req.headers['user-agent'] || null,
         },
       });
     } catch (auditErr) {
@@ -194,6 +196,24 @@ export const approveAccessRequest = async (req: Request, res: Response): Promise
       });
     }
 
+    // Broadcast permission update event via WebSocket for instant live mobile sync
+    try {
+      if (userId) {
+        const { getWebSocketInstance } = require('../utils/websocketSingleton');
+        const ws = getWebSocketInstance();
+        if (ws) {
+          await ws.broadcastPermissionUpdate(userId, {
+            userId,
+            featureName: accessRequest.featureName,
+            status: 'APPROVED',
+            permissionGranted: true,
+          });
+        }
+      }
+    } catch (wsErr) {
+      console.warn('WebSocket broadcast notice:', wsErr);
+    }
+
     // Send FCM Push Notification to employee
     try {
       if (userId) {
@@ -213,8 +233,10 @@ export const approveAccessRequest = async (req: Request, res: Response): Promise
       await prisma.auditLog.create({
         data: {
           action: 'ACCESS_REQUEST_APPROVED',
-          actor: String(reviewerId),
-          details: `Approved '${accessRequest.featureName}' access for Employee #${accessRequest.employee.employeeCode}`,
+          userId: typeof reviewerId === 'number' ? reviewerId : (Number(reviewerId) || null),
+          employeeId: accessRequest.employeeId,
+          ipAddress: req.ip || null,
+          deviceInfo: req.headers['user-agent'] || null,
         },
       });
     } catch (auditErr) {
@@ -281,8 +303,10 @@ export const rejectAccessRequest = async (req: Request, res: Response): Promise<
       await prisma.auditLog.create({
         data: {
           action: 'ACCESS_REQUEST_REJECTED',
-          actor: String(reviewerId),
-          details: `Rejected '${accessRequest.featureName}' access for Employee #${accessRequest.employee.employeeCode}`,
+          userId: typeof reviewerId === 'number' ? reviewerId : (Number(reviewerId) || null),
+          employeeId: accessRequest.employeeId,
+          ipAddress: req.ip || null,
+          deviceInfo: req.headers['user-agent'] || null,
         },
       });
     } catch (auditErr) {
