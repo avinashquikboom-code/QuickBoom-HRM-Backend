@@ -801,20 +801,31 @@ export const getMobileCommissionBillDetail = async (
     const rawBillId = req.params.billId;
     const billIdStr = Array.isArray(rawBillId) ? String(rawBillId[0]) : String(rawBillId);
 
-    const sale = await prisma.commissionTransaction.findFirst({
+    // 1. Try finding sale by current employee ID first
+    let sale = await prisma.commissionTransaction.findFirst({
       where: {
         employeeId: employee.id,
-        OR: [{ billId: billIdStr }, { invoiceNumber: billIdStr }],
+        OR: [
+          { billId: billIdStr },
+          { invoiceNumber: billIdStr },
+          ...(isNaN(Number(billIdStr.replace('TXN-', ''))) ? [] : [{ id: Number(billIdStr.replace('TXN-', '')) }])
+        ],
       },
       include: { store: true }
     });
 
+    // 2. Fallback: Search across all commission transactions if not matched to logged-in employee ID directly
     if (!sale) {
-      res.status(404).json({
-        success: false,
-        message: 'Bill not found',
+      sale = await prisma.commissionTransaction.findFirst({
+        where: {
+          OR: [
+            { billId: billIdStr },
+            { invoiceNumber: billIdStr },
+            ...(isNaN(Number(billIdStr.replace('TXN-', ''))) ? [] : [{ id: Number(billIdStr.replace('TXN-', '')) }])
+          ],
+        },
+        include: { store: true }
       });
-      return;
     }
 
     // Try to load HopkidWebhookLog to get rich metadata
@@ -830,6 +841,67 @@ export const getMobileCommissionBillDetail = async (
         take: 100,
       });
       webhookLog = logs.find(l => l.billId && (billIdStr === l.billId || billIdStr.startsWith(l.billId) || l.billId.startsWith(billIdStr))) || null;
+    }
+
+    // 3. If no commissionTransaction exists, but a Webhook Log exists, construct detail response directly from Webhook Log
+    if (!sale && webhookLog) {
+      const meta = extractWebhookMeta(webhookLog.rawPayload);
+      const invoiceData = meta.invoice || {};
+      const grossSale = safeParseAmount(webhookLog.amount || invoiceData.grandTotal || invoiceData.grossAmount || 0);
+      const discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
+      const tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || 0);
+      const commAmount = safeParseAmount(meta.commissionAmount || 0);
+
+      let products: any[] = [];
+      if (meta.lineItems && meta.lineItems.length > 0) {
+        products = meta.lineItems.map((item: any) => ({
+          name: item.productName || item.name || 'Unknown Product',
+          quantity: item.qty || item.quantity || 1,
+          price: safeParseAmount(item.productPrice || item.price || item.productNetAmount || item.amount || 0)
+        }));
+      } else {
+        products = [{
+          name: meta.firstItem?.productName || 'HopKid POS Product',
+          quantity: 1,
+          price: grossSale,
+        }];
+      }
+
+      res.json({
+        success: true,
+        data: {
+          billId: meta.invoiceNumber || webhookLog.billId || billIdStr,
+          saleAmount: grossSale,
+          netAmount: grossSale,
+          commissionRate: employee.commissionPercentage ?? 0,
+          commissionAmount: commAmount,
+          date: webhookLog.createdAt,
+          status: 'APPROVED',
+          description: `Live POS Webhook Event (${meta.eventType || 'INVOICE_CREATED'})`,
+          createdAt: webhookLog.createdAt,
+          customerName: meta.customerName || 'Retail Customer',
+          customerPhone: meta.customerPhone || '-',
+          paymentMode: meta.paymentMode || '-',
+          storeName: meta.storeName || employee.store?.name || 'HopKid Store',
+          products,
+          grossSale,
+          discount,
+          tax,
+          employee: {
+            name: `${employee.firstName} ${employee.lastName}`.trim(),
+            code: employee.employeeCode,
+          },
+        },
+      });
+      return;
+    }
+
+    if (!sale) {
+      res.status(404).json({
+        success: false,
+        message: `Bill details not found for ID: ${billIdStr}`,
+      });
+      return;
     }
 
     let customerName = 'Retail Customer';
