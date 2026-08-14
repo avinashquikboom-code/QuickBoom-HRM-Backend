@@ -34,8 +34,27 @@ export class CommissionService {
       }
     });
 
-    const totalNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
-    const totalCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+    let creditLines: any[] = [];
+    try {
+      creditLines = await prisma.creditNoteLine.findMany({
+        where: {
+          employeeId: employeeId,
+          createdAt: {
+            gte: dayStart,
+            lte: dayEnd
+          }
+        }
+      });
+    } catch (_) {}
+
+    const rawNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
+    const rawCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+
+    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
+    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+
+    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
+    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
 
     console.log(`[Daily Metrics] ✅ Results:`, {
       date: displayDateStr,
@@ -130,8 +149,27 @@ export class CommissionService {
       }
     });
 
-    const totalNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
-    const totalCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+    let creditLines: any[] = [];
+    try {
+      creditLines = await prisma.creditNoteLine.findMany({
+        where: {
+          employeeId: employeeId,
+          createdAt: {
+            gte: monday,
+            lte: sunday
+          }
+        }
+      });
+    } catch (_) {}
+
+    const rawNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
+    const rawCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+
+    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
+    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+
+    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
+    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
 
     return {
       start: monday.toISOString().split('T')[0],
