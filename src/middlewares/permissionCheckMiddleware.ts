@@ -7,29 +7,38 @@ export function requirePermission(permissionKey: string) {
     try {
       const user = req.user;
       if (!user) {
-        return res.status(401).json({ error: 'Unauthorized' });
+        res.status(401).json({ success: false, error: 'Unauthorized', message: 'Authentication required' });
+        return;
       }
 
       // HR, ADMIN, and SUPER_ADMIN bypass individual employee permission restrictions
       if (user.role === 'HR' || user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'PLATFORM_ADMIN') {
-        return next();
+        next();
+        return;
       }
 
       const effectivePerms = await getEffectiveUserPermissions(user.id);
       
-      // If permission key is explicitly set to false, deny access
+      // If permission key is explicitly set to false or omitted when required, deny access with HTTP 403
       if (effectivePerms[permissionKey] === false) {
-        return res.status(403).json({
+        res.status(403).json({
+          success: false,
           error: 'Forbidden',
-          message: `Access denied: Permission '${permissionKey}' is disabled for your account.`,
+          message: `Access denied: Module permission '${permissionKey}' is disabled by HR.`,
           permissionKey,
         });
+        return;
       }
 
       next();
     } catch (error) {
       console.error(`Error in requirePermission middleware for [${permissionKey}]:`, error);
-      next(); // Fail open on internal error to avoid locking out users
+      res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: `Access denied: Permission check failed for '${permissionKey}'.`,
+        permissionKey,
+      });
     }
   };
 }

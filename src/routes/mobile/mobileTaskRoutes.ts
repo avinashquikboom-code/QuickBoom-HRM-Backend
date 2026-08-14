@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
+import { requirePermission } from '../../middlewares/permissionCheckMiddleware';
 import { Role } from '@prisma/client';
 import {
   getMobileTasks,
@@ -12,8 +13,9 @@ import {
 
 const router = Router();
 
-// Apply auth middleware to protect all mobile task routes
+// Apply auth middleware and permission guard to protect all mobile task routes
 router.use(authMiddleware);
+router.use(requirePermission('canViewTasks'));
 
 // Restrict access to mobile roles (Store Manager, Salesman, Helper, Employee, HR, Admins)
 const mobileRoles = ['STORE_MANAGER', 'SALESMAN', 'HELPER', 'EMPLOYEE', 'HR', 'SUPER_ADMIN', 'ADMIN'];

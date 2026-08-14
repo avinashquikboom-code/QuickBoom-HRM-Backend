@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
+import { requirePermission } from '../../middlewares/permissionCheckMiddleware';
 import {
   getMobileCommissionDashboard,
   getMobileCommissionTransactions,
@@ -15,8 +16,9 @@ import {
 
 const router = Router();
 
-// Apply auth middleware to protect all mobile commission routes
+// Apply auth middleware and permission guard to protect all mobile commission routes
 router.use(authMiddleware);
+router.use(requirePermission('canViewCommission'));
 
 // Allow all employee roles (EMPLOYEE, STORE_MANAGER, SALESMAN, HELPER, etc.)
 const mobileRoles = ['EMPLOYEE', 'STORE_MANAGER', 'SALESMAN', 'HELPER', 'ADMIN', 'SUPERADMIN'];

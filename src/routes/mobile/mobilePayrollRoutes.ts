@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
+import { requirePermission } from '../../middlewares/permissionCheckMiddleware';
 import { getMyPayslips, downloadPayslip } from '../../controllers/mobile/mobilePayrollController';
 import { getMySalaryStructure } from '../../controllers/salaryController';
 
 const router = Router();
 
-// Apply auth middleware to protect all mobile payroll routes
+// Apply auth middleware and permission guard to protect all mobile payroll routes
 router.use(authMiddleware);
+router.use(requirePermission('canViewSalary'));
 
 // Allow all authenticated employee/manager/admin roles to view their own mobile payslips
 const allowedRoles = [
