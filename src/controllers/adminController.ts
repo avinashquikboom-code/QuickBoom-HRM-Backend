@@ -5762,7 +5762,7 @@ export const fetchAttendanceReportDetails = async (
   res: Response
 ): Promise<void> => {
   const { month } = req.query;
-  const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+  const targetMonth = (month as string) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' }).slice(0, 7);
 
   try {
     let employeeWhere: Prisma.EmployeeWhereInput = {};
@@ -5893,7 +5893,7 @@ export const downloadAttendanceReport = async (
 ): Promise<void> => {
   try {
     const { month, employeeId } = req.query;
-    const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+    const targetMonth = (month as string) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' }).slice(0, 7);
 
     // Role guard
     const allowedRoles = ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
@@ -6036,7 +6036,7 @@ export const downloadAttendanceReport = async (
       if (!dateInput) return '—';
       const d = new Date(dateInput);
       if (isNaN(d.getTime())) return '—';
-      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
     };
 
     const formatDateStr = (dateStr: string): string => {
@@ -8279,12 +8279,12 @@ export const exportDashboardExcelReport = async (
   try {
     const { from, to, format = 'excel' } = req.query as { from?: string; to?: string; format?: string };
 
-    const now = new Date();
-    const fromDate = from ? new Date(from) : new Date(now.getFullYear(), now.getMonth(), 1);
-    const toDate = to ? new Date(to) : new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    const fromStr = fromDate.toISOString().split('T')[0];
-    const toStr = toDate.toISOString().split('T')[0];
+    const todayStr = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
+    const currentMonthPrefix = todayStr.slice(0, 7);
+    const fromStr = from || `${currentMonthPrefix}-01`;
+    const toStr = to || todayStr;
+    const fromDate = new Date(`${fromStr}T00:00:00.000Z`);
+    const toDate = new Date(`${toStr}T23:59:59.999Z`);
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'QuickBoom HRM';
@@ -8320,8 +8320,8 @@ export const exportDashboardExcelReport = async (
         code: att.employee.employeeCode,
         name: `${att.employee.firstName} ${att.employee.lastName}`,
         office: att.employee.office?.name || 'N/A',
-        checkIn: att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN') : '—',
-        checkOut: att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN') : '—',
+        checkIn: att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—',
+        checkOut: att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—',
         status: att.status,
         breakMin: Math.floor((att.totalBreakSeconds || 0) / 60),
         notes: att.notes || '',
@@ -8503,8 +8503,8 @@ export const exportDashboardExcelReport = async (
         name: `${b.employee.firstName} ${b.employee.lastName}`,
         type: b.type,
         date: b.date,
-        startAt: new Date(b.startAt).toLocaleTimeString('en-IN'),
-        endAt: b.endAt ? new Date(b.endAt).toLocaleTimeString('en-IN') : 'Active',
+        startAt: new Date(b.startAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }),
+        endAt: b.endAt ? new Date(b.endAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : 'Active',
       });
     });
 

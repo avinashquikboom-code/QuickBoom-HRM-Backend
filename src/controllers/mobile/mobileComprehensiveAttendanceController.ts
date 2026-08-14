@@ -35,8 +35,11 @@ export const getMobileComprehensiveReport = async (
       return;
     }
 
-    const startDate = new Date(yearNum, monthNum - 1, 1);
-    const endDate = new Date(yearNum, monthNum, 0);
+    const monthPadded = String(monthNum).padStart(2, '0');
+    const lastDayNum = new Date(yearNum, monthNum, 0).getDate();
+    const lastDayPadded = String(lastDayNum).padStart(2, '0');
+    const startDateStr = `${yearNum}-${monthPadded}-01`;
+    const endDateStr = `${yearNum}-${monthPadded}-${lastDayPadded}`;
 
     const attendanceData = await prisma.$queryRaw`
       SELECT 
@@ -83,8 +86,8 @@ export const getMobileComprehensiveReport = async (
       LEFT JOIN Office o ON a.officeId = o.id
       LEFT JOIN User u ON e.userId = u.id
       WHERE u.id = ${userId}
-        AND a.date >= ${startDate.toISOString().split('T')[0]} 
-        AND a.date <= ${endDate.toISOString().split('T')[0]}
+        AND a.date >= ${startDateStr} 
+        AND a.date <= ${endDateStr}
       ORDER BY a.date DESC
     ` as any[];
 
@@ -132,8 +135,8 @@ export const getMobileComprehensiveReport = async (
         period: {
           month: monthNum,
           year: yearNum,
-          startDate: startDate.toISOString().split('T')[0],
-          endDate: endDate.toISOString().split('T')[0]
+          startDate: startDateStr,
+          endDate: endDateStr
         },
         summary,
         attendanceRecords: attendanceData.map((a: any) => ({

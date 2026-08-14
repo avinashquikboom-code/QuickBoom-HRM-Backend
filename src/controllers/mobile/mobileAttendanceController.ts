@@ -1485,7 +1485,7 @@ export const downloadMyAttendanceReport = async (
     }
 
     const { month } = req.query;
-    const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+    const targetMonth = (month as string) || getLocalDateString('Asia/Kolkata').slice(0, 7);
 
     const attendances = await prisma.attendance.findMany({
       where: {
@@ -1648,7 +1648,7 @@ export const downloadAttendanceReport = async (
 ): Promise<void> => {
   try {
     const { month, employeeId } = req.query;
-    const targetMonth = (month as string) || new Date().toISOString().slice(0, 7);
+    const targetMonth = (month as string) || getLocalDateString('Asia/Kolkata').slice(0, 7);
 
     // Check if user is HR or Admin
     const user = await prisma.user.findUnique({

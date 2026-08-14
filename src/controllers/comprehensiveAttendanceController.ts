@@ -112,8 +112,11 @@ export const getComprehensiveAttendanceReport = async (
     }
 
     // Build date range for the month
-    const startDate = new Date(yearNum, monthNum - 1, 1);
-    const endDate = new Date(yearNum, monthNum, 0); // Last day of month
+    const monthPadded = String(monthNum).padStart(2, '0');
+    const lastDayNum = new Date(yearNum, monthNum, 0).getDate();
+    const lastDayPadded = String(lastDayNum).padStart(2, '0');
+    const startDateStr = `${yearNum}-${monthPadded}-01`;
+    const endDateStr = `${yearNum}-${monthPadded}-${lastDayPadded}`;
 
     console.log(`📊 [ATTENDANCE] Generating comprehensive report for ${monthNum}/${yearNum}`);
 
@@ -160,7 +163,7 @@ export const getComprehensiveAttendanceReport = async (
         CASE 
           WHEN a.status = 'PRESENT' AND a.checkIn IS NOT NULL AND a.checkOut IS NOT NULL
           THEN CASE 
-            WHEN EXTRACT(EPOCH FROM (a.checkOut - a.checkOut)) - a.totalBreakSeconds >= 14400 -- 4 hours
+            WHEN EXTRACT(EPOCH FROM (a.checkOut - a.checkIn)) - a.totalBreakSeconds >= 14400 -- 4 hours
             THEN 'FULL_DAY'
             ELSE 'HALF_DAY'
           END
@@ -180,8 +183,8 @@ export const getComprehensiveAttendanceReport = async (
       LEFT JOIN Office o ON a.officeId = o.id
       LEFT JOIN User u ON e.userId = u.id
       LEFT JOIN Profile p ON u.id = p.userId
-      WHERE a.date >= ${startDate.toISOString().split('T')[0]} 
-        AND a.date <= ${endDate.toISOString().split('T')[0]}
+      WHERE a.date >= ${startDateStr} 
+        AND a.date <= ${endDateStr}
         ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
         ${departmentId ? `AND e.departmentId = ${parseInt(departmentId as string)}` : ''}
       ORDER BY a.date DESC, e.firstName, e.lastName
@@ -214,8 +217,8 @@ export const getComprehensiveAttendanceReport = async (
           END as locationStatus
         FROM Attendance a
         LEFT JOIN Employee e ON a.employeeId = e.id
-        WHERE a.date >= ${startDate.toISOString().split('T')[0]} 
-          AND a.date <= ${endDate.toISOString().split('T')[0]}
+        WHERE a.date >= ${startDateStr} 
+          AND a.date <= ${endDateStr}
           ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
         ORDER BY a.date DESC, a.checkIn
       ` as any[];
@@ -248,8 +251,8 @@ export const getComprehensiveAttendanceReport = async (
           END as breakType
         FROM Attendance a
         LEFT JOIN Employee e ON a.employeeId = e.id
-        WHERE a.date >= ${startDate.toISOString().split('T')[0]} 
-          AND a.date <= ${endDate.toISOString().split('T')[0]}
+        WHERE a.date >= ${startDateStr} 
+          AND a.date <= ${endDateStr}
           ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
           AND a.totalBreakSeconds > 0
         ORDER BY a.date DESC, a.breakStartTime
@@ -272,9 +275,9 @@ export const getComprehensiveAttendanceReport = async (
         period: {
           month: monthNum,
           year: yearNum,
-          startDate: startDate.toISOString().split('T')[0],
-          endDate: endDate.toISOString().split('T')[0],
-          totalDays: endDate.getDate()
+          startDate: startDateStr,
+          endDate: endDateStr,
+          totalDays: lastDayNum
         },
         summary: monthlySummary,
         dailySummaries,
@@ -752,8 +755,11 @@ export const downloadComprehensiveAttendanceReport = async (
     }
 
     // Build date range for the month
-    const startDate = new Date(yearNum, monthNum - 1, 1);
-    const endDate = new Date(yearNum, monthNum, 0);
+    const monthPadded = String(monthNum).padStart(2, '0');
+    const lastDayNum = new Date(yearNum, monthNum, 0).getDate();
+    const lastDayPadded = String(lastDayNum).padStart(2, '0');
+    const startDateStr = `${yearNum}-${monthPadded}-01`;
+    const endDateStr = `${yearNum}-${monthPadded}-${lastDayPadded}`;
 
     console.log(`📊 [ATTENDANCE] Downloading comprehensive report for ${monthNum}/${yearNum}`);
 
@@ -786,8 +792,8 @@ export const downloadComprehensiveAttendanceReport = async (
       LEFT JOIN Employee e ON a.employeeId = e.id
       LEFT JOIN Department d ON e.departmentId = d.id
       LEFT JOIN Office o ON a.officeId = o.id
-      WHERE a.date >= ${startDate.toISOString().split('T')[0]}
-        AND a.date <= ${endDate.toISOString().split('T')[0]}
+      WHERE a.date >= ${startDateStr}
+        AND a.date <= ${endDateStr}
         ${employeeId ? `AND a.employeeId = ${parseInt(employeeId as string)}` : ''}
         ${departmentId ? `AND e.departmentId = ${parseInt(departmentId as string)}` : ''}
       ORDER BY e.firstName, e.lastName, a.date

@@ -83,7 +83,7 @@ export const getTodayAttendance = async (
   res: Response
 ): Promise<void> => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
     
     const attendance = await prisma.attendance.findMany({
       where: {
@@ -151,7 +151,7 @@ export const markAttendance = async (
       return;
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' });
     const now = new Date();
 
     // Check if attendance already exists for today
