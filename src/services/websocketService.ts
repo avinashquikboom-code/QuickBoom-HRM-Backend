@@ -153,6 +153,13 @@ class WebSocketService {
     this.io.to('role_ADMIN').emit('leaveBalanceUpdate', data);
   }
 
+  // Real-time permission updates
+  async broadcastPermissionUpdate(employeeId: number, data: any): Promise<void> {
+    console.log(`[WebSocket Broadcast] Emitting permissionUpdate for employee_${employeeId}`);
+    this.io.to(`employee_${employeeId}`).emit('permissionUpdate', data);
+    this.io.emit('permissionUpdate', data);
+  }
+
   // Real-time commission & sales updates
   async broadcastCommissionUpdate(employeeId: number, data: any): Promise<void> {
     console.log(`[WebSocket Broadcast] Emitting commissionUpdate to employee_${employeeId}, role_HR, role_ADMIN, and all connected clients`);

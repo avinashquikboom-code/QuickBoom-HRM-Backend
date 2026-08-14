@@ -3,6 +3,8 @@ import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import bcrypt from 'bcryptjs';
+import { firebaseNotificationService } from '../services/firebaseNotificationService';
+import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 // Get global permissions for all roles
 export const getGlobalPermissions = async (req: Request, res: Response) => {
@@ -282,6 +284,31 @@ export const patchHREmployeePermissions = async (req: Request, res: Response) =>
       employeeId: targetUser.id,
       newPermissions: updatedPermissions,
     });
+
+    // Send FCM Push Notification to employee
+    try {
+      await firebaseNotificationService.sendNotificationToUser(
+        targetUser.id,
+        'Permissions Updated',
+        'Your access permissions have been updated by HR. Mobile features refreshed.',
+        { type: 'PERMISSIONS_UPDATED' }
+      );
+    } catch (fcmErr) {
+      console.warn('⚠️ [FCM] Notification notice:', fcmErr);
+    }
+
+    // Broadcast WebSocket event
+    try {
+      const ws = getWebSocketInstance();
+      if (ws) {
+        await ws.broadcastPermissionUpdate(targetUser.id, {
+          userId: targetUser.id,
+          permissions: updatedPermissions,
+        });
+      }
+    } catch (wsErr) {
+      console.warn('⚠️ [WS] Broadcast notice:', wsErr);
+    }
 
     res.json({
       success: true,

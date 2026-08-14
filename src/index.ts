@@ -41,6 +41,7 @@ import mobileTaskRoutes from './routes/mobile/mobileTaskRoutes';
 import mobileStoreRoutes from './routes/mobile/mobileStoreRoutes';
 import mobileDocumentRoutes from './routes/mobile/mobileDocumentRoutes';
 import mobileHolidayRoutes from './routes/mobile/mobileHolidayRoutes';
+import mobileFeatureAccessRoutes from './routes/mobile/mobileFeatureAccessRoutes';
 import mobileEmployeeTaskRoutes from './routes/mobile/mobileEmployeeTaskRoutes';
 import mobileHrTaskRoutes from './routes/mobile/mobileHrTaskRoutes';
 import leaveBalanceRoutes from './routes/leaveBalanceRoutes';
@@ -286,6 +287,7 @@ app.use('/api/mobile/commission', mobileCommissionRoutes);
 app.use('/api/mobile/tasks', mobileTaskRoutes);
 app.use('/api/mobile/store', mobileStoreRoutes);
 app.use('/api/mobile/holidays', mobileHolidayRoutes);
+app.use('/api/mobile/features', mobileFeatureAccessRoutes);
 app.use('/api', accessRequestRoutes);
 
 app.get('/api/holidays', authenticateToken, async (req, res) => {
