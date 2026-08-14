@@ -890,7 +890,7 @@ export const downloadComprehensiveAttendanceReport = async (
       pageMargins: [20, 25, 20, 30],
       footer: (currentPage: number, pageCount: number) => ({
         columns: [
-          { text: `HopKid HRM  •  Comprehensive Attendance Report`, style: 'footer', alignment: 'left' },
+          { text: `HOPKID  •  Comprehensive Attendance Report`, style: 'footer', alignment: 'left' },
           { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
         ],
         margin: [20, 8, 20, 0],
@@ -907,7 +907,7 @@ export const downloadComprehensiveAttendanceReport = async (
           columns: [
             {
               stack: [
-                { text: 'HOPKID HRM  •  ENTERPRISE REPORTS', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -58, 0, 2] },
+                { text: 'HOPKID  •  ENTERPRISE REPORTS', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -58, 0, 2] },
                 { text: 'Comprehensive Attendance Report', fontSize: 15, bold: true, color: 'white', margin: [0, 0, 0, 2] },
                 { text: `Organisation-wide detailed logs  •  Period: ${monthLabel}`, fontSize: 8, color: '#94A3B8' },
               ],

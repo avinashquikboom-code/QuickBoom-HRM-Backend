@@ -1571,7 +1571,7 @@ export const downloadMyAttendanceReport = async (
       pageMargins: [36, 40, 36, 45],
       footer: (currentPage: number, pageCount: number) => ({
         columns: [
-          { text: `HopKid HRM  •  Employee Attendance Report`, style: 'footer', alignment: 'left' },
+          { text: `HOPKID  •  Employee Attendance Report`, style: 'footer', alignment: 'left' },
           { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
         ],
         margin: [36, 12, 36, 0],
@@ -1588,7 +1588,7 @@ export const downloadMyAttendanceReport = async (
           columns: [
             {
               stack: [
-                { text: 'HOPKID HRM  •  MY ATTENDANCE REPORT', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -68, 0, 2] },
+                { text: 'HOPKID  •  MY ATTENDANCE REPORT', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -68, 0, 2] },
                 { text: `${employee.firstName} ${employee.lastName}`, fontSize: 16, bold: true, color: 'white', margin: [0, 0, 0, 2] },
                 { text: `Code: ${employee.employeeCode}  •  Dept: ${employee.department?.name || 'Operations'}  •  Store: ${employee.office?.name || 'Headquarters'}`, fontSize: 9, color: '#94A3B8' },
               ],
@@ -1857,7 +1857,7 @@ export const downloadAttendanceReport = async (
       pageMargins: [20, 25, 20, 30],
       footer: (currentPage: number, pageCount: number) => ({
         columns: [
-          { text: `HopKid HRM  •  HR Attendance Summary Report`, style: 'footer', alignment: 'left' },
+          { text: `HOPKID  •  HR Attendance Summary Report`, style: 'footer', alignment: 'left' },
           { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
         ],
         margin: [20, 8, 20, 0],
@@ -1874,7 +1874,7 @@ export const downloadAttendanceReport = async (
           columns: [
             {
               stack: [
-                { text: 'HOPKID HRM  •  HR MANAGEMENT REPORTS', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -58, 0, 2] },
+                { text: 'HOPKID  •  HR MANAGEMENT REPORTS', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -58, 0, 2] },
                 { text: 'HR Attendance Report', fontSize: 15, bold: true, color: 'white', margin: [0, 0, 0, 2] },
                 { text: `Organisation-wide employee logs  •  Month: ${targetMonth}`, fontSize: 8, color: '#94A3B8' },
               ],

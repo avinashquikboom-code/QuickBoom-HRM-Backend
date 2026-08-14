@@ -82,7 +82,7 @@ export class ExpenseReceiptService {
       pageMargins: [36, 36, 36, 56],
       footer: (currentPage: number, pageCount: number) => ({
         columns: [
-          { text: 'HopKid HRM Enterprise Portal  •  Official Reimbursement Receipt  •  Digitally Verified', fontSize: 8, color: '#64748B', alignment: 'left' },
+          { text: 'HopKid Enterprise Portal  •  Official Reimbursement Receipt  •  Digitally Verified', fontSize: 8, color: '#64748B', alignment: 'left' },
           { text: `Generated: ${approvalDate}  •  Page ${currentPage} of ${pageCount}`, fontSize: 8, color: '#64748B', alignment: 'right' },
         ],
         margin: [36, 0, 36, 0],
@@ -235,7 +235,7 @@ export class ExpenseReceiptService {
 
         { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E2E8F0' }], margin: [0, 0, 0, 12] },
         {
-          text: 'This document is a computer-generated official expense reimbursement receipt issued by HopKid HRM Portal. No physical signature is required.',
+          text: 'This document is a computer-generated official expense reimbursement receipt issued by HopKid Portal. No physical signature is required.',
           fontSize: 7.5,
           color: '#94A3B8',
           italics: true,

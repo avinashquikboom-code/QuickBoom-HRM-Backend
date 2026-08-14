@@ -317,7 +317,7 @@ export const downloadPayslip = async (
     const docDefinition = {
       content: [
         // Title Header
-        { text: 'HRM PORTAL', style: 'companyName', alignment: 'center' },
+        { text: 'HOPKID PORTAL', style: 'companyName', alignment: 'center' },
         { text: 'Human Resources · Payroll Division', style: 'companySub', alignment: 'center', margin: [0, 2, 0, 15] },
         
         { text: 'SALARY SLIP', style: 'docTitle', alignment: 'center', margin: [0, 0, 0, 20] },

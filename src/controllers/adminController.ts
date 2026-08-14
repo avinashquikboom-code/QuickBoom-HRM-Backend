@@ -4719,7 +4719,7 @@ export const downloadLeaveReport = async (
       pageMargins: [36, 36, 36, 56],
       footer: (currentPage: number, pageCount: number) => ({
         columns: [
-          { text: `HRM Portal  •  Confidential`, style: 'footer', alignment: 'left' },
+          { text: `HOPKID Portal  •  Confidential`, style: 'footer', alignment: 'left' },
           { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
         ],
         margin: [36, 0, 36, 0],
@@ -4737,7 +4737,7 @@ export const downloadLeaveReport = async (
           columns: [
             {
               stack: [
-                { text: 'HRM Portal', fontSize: 9, color: 'white', opacity: 0.7, margin: [0, -80, 0, 2] },
+                { text: 'HOPKID Portal', fontSize: 9, color: 'white', opacity: 0.7, margin: [0, -80, 0, 2] },
                 { text: reportTitle, fontSize: 18, bold: true, color: 'white', margin: [0, 0, 0, 2] },
                 { text: isSingle ? `${emp0.employeeCode}  •  ${(emp0 as any).department?.name || 'No Department'}  •  ${emp0.office?.name || 'No Office'}` : 'Organisation-wide leave summary', fontSize: 9, color: 'white', opacity: 0.8 },
               ],
@@ -6124,7 +6124,7 @@ export const downloadAttendanceReport = async (
       pageMargins: [20, 25, 20, 30],
       footer: (currentPage: number, pageCount: number) => ({
         columns: [
-          { text: `HopKid HRM  •  Confidential Enterprise Report`, style: 'footer', alignment: 'left' },
+          { text: `HOPKID  •  Confidential Enterprise Report`, style: 'footer', alignment: 'left' },
           { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
         ],
         margin: [20, 8, 20, 0],
@@ -6142,7 +6142,7 @@ export const downloadAttendanceReport = async (
           columns: [
             {
               stack: [
-                { text: 'HOPKID HRM  •  ATTENDANCE REPORT', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -58, 0, 2] },
+                { text: 'HOPKID  •  ATTENDANCE REPORT', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -58, 0, 2] },
                 { text: reportTitle, fontSize: 15, bold: true, color: 'white', margin: [0, 0, 0, 2] },
                 { text: isSingle ? `Employee Code: ${emp0.employeeCode}  •  Dept: ${(emp0 as any).department?.name || 'Operations'}  •  Store: ${emp0.office?.name || 'Headquarters'}` : `Organisation-wide attendance summary  •  Month: ${monthLabel}`, fontSize: 8, color: '#94A3B8' },
               ],
@@ -6483,7 +6483,7 @@ export const fetchAdminSettings = async (
         data: {
           id: 1,
           company: {
-            name: 'HRM Portal',
+            name: 'HOPKID Portal',
             logo: '',
             timezone: 'Asia/Kolkata',
             workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
@@ -6566,7 +6566,7 @@ export const fetchAdminSettings = async (
 
     const settings = {
       company: settingsRecord.company || {
-        name: 'HRM Portal',
+        name: 'HOPKID Portal',
         logo: '',
         timezone: 'Asia/Kolkata',
         workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
@@ -6602,7 +6602,7 @@ export const fetchAdminSettings = async (
       success: true,
       settings: {
         company: {
-          name: 'HRM Portal',
+          name: 'HOPKID Portal',
           logo: '',
           timezone: 'Asia/Kolkata',
           workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
@@ -8310,7 +8310,7 @@ export const exportDashboardExcelReport = async (
     const toDate = new Date(`${toStr}T23:59:59.999Z`);
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'QuickBoom HRM';
+    workbook.creator = 'QuickBoom HOPKID';
     workbook.created = new Date();
 
     // Sheet 1: Attendance

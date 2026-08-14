@@ -5,7 +5,7 @@ import { initializeFirebaseFromDb } from '../config/firebase';
 
 const DEFAULT_SYSTEM_SETTINGS = {
   id: 1,
-  platformName: 'Super HRM',
+  platformName: 'Super HOPKID',
   supportEmail: 'admin@hrm.com',
   currency: 'INR',
   locale: 'en',
@@ -50,7 +50,7 @@ export const getSettings = async (req: Request, res: Response): Promise<void> =>
         settings = await prisma.systemSetting.create({
           data: {
             id: 1,
-            platformName: 'Super HRM',
+            platformName: 'Super HOPKID',
             supportEmail: 'admin@hrm.com',
             currency: 'INR',
             locale: 'en',

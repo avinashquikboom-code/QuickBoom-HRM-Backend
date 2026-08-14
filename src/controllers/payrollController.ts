@@ -337,7 +337,7 @@ export const generatePayslipPDF = async (
       pageMargins: [36, 36, 36, 56],
       footer: (currentPage: number, pageCount: number) => ({
         columns: [
-          { text: 'HRM Portal  \u2022  Confidential  \u2022  Computer Generated', fontSize: 8, color: '#9CA3AF', alignment: 'left' },
+          { text: 'HOPKID Portal  \u2022  Confidential  \u2022  Computer Generated', fontSize: 8, color: '#9CA3AF', alignment: 'left' },
           { text: `Generated on ${generatedOn}  \u2022  Page ${currentPage} of ${pageCount}`, fontSize: 8, color: '#9CA3AF', alignment: 'right' },
         ],
         margin: [36, 0, 36, 0],
@@ -350,7 +350,7 @@ export const generatePayslipPDF = async (
         ]},
         { columns: [
           { stack: [
-            { text: 'HRM Portal', fontSize: 9, color: 'white', opacity: 0.7, margin: [0, -80, 0, 2] },
+            { text: 'HOPKID Portal', fontSize: 9, color: 'white', opacity: 0.7, margin: [0, -80, 0, 2] },
             { text: 'SALARY SLIP', fontSize: 20, bold: true, color: 'white', margin: [0, 0, 0, 2] },
             { text: `${payslip.employeeName}  \u2022  ${payslip.employeeCode}  \u2022  ${payslip.department || '\u2014'}`, fontSize: 9, color: 'white', opacity: 0.85 },
           ]},
