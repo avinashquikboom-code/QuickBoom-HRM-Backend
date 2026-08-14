@@ -56,6 +56,7 @@ import locationTrackingRoutes from './routes/locationTrackingRoutes';
 import salaryRoutes from './routes/salaryRoutes';
 import resetRoutes from './routes/resetRoutes';
 import uploadRoutes from './routes/uploadRoutes';
+import accessRequestRoutes from './routes/accessRequestRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import commissionWebhookController from './controllers/commissionWebhookController';
 import creditNoteWebhookController from './controllers/creditNoteWebhookController';
@@ -285,6 +286,7 @@ app.use('/api/mobile/commission', mobileCommissionRoutes);
 app.use('/api/mobile/tasks', mobileTaskRoutes);
 app.use('/api/mobile/store', mobileStoreRoutes);
 app.use('/api/mobile/holidays', mobileHolidayRoutes);
+app.use('/api', accessRequestRoutes);
 
 app.get('/api/holidays', authenticateToken, async (req, res) => {
   try {
