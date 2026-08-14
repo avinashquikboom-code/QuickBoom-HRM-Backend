@@ -130,21 +130,24 @@ export class CommissionService {
     const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
     const istDate = new Date(istTime);
 
-    // Calculate Monday of current week in IST
-    const utcDay = istDate.getUTCDay();
-    const dayDiff = utcDay === 0 ? -6 : 1 - utcDay; // Monday is 1, Sunday is 0
-    const monday = new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate() + dayDiff) - 5.5 * 60 * 60 * 1000);
-    const sunday = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000 - 1); // end of Sunday IST
+    const year = istDate.getUTCFullYear();
+    const month = istDate.getUTCMonth();
+    const dateVal = istDate.getUTCDate();
 
-    console.log(`[Weekly Metrics] Employee: ${employeeId}, IST Week Start: ${monday.toISOString()} to ${sunday.toISOString()}`);
+    // Start of 7 days ago in UTC corresponding to 00:00:00.000 IST
+    const weekStart = new Date(Date.UTC(year, month, dateVal - 6, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+    // End of today in UTC corresponding to 23:59:59.999 IST
+    const weekEnd = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+
+    console.log(`[Weekly Metrics] Employee: ${employeeId}, IST 7 Days: ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] },
         createdAt: {
-          gte: monday,
-          lte: sunday
+          gte: weekStart,
+          lte: weekEnd
         }
       }
     });
@@ -155,8 +158,8 @@ export class CommissionService {
         where: {
           employeeId: employeeId,
           createdAt: {
-            gte: monday,
-            lte: sunday
+            gte: weekStart,
+            lte: weekEnd
           }
         }
       });
@@ -172,8 +175,8 @@ export class CommissionService {
     const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
 
     return {
-      start: monday.toISOString().split('T')[0],
-      end: sunday.toISOString().split('T')[0],
+      start: weekStart.toISOString().split('T')[0],
+      end: weekEnd.toISOString().split('T')[0],
       netSales: totalNetSales,
       commission: totalCommission,
       billCount: sales.length

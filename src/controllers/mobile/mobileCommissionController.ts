@@ -655,9 +655,9 @@ export const getMobileCommissionBills = async (
         toDate   = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
       }
-      case 'this_week': {
-        const dow = istNow.getUTCDay() === 0 ? 6 : istNow.getUTCDay() - 1;
-        fromDate  = new Date(Date.UTC(year, month, dateVal - dow, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+      case 'this_week':
+      case 'last_7_days': {
+        fromDate  = new Date(Date.UTC(year, month, dateVal - 6, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
         toDate    = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
       }
