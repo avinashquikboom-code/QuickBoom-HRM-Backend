@@ -1518,110 +1518,184 @@ export const downloadMyAttendanceReport = async (
       }
     });
 
-    const docDefinition = {
+    const generatedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+
+    const statusColor = (s: string) => {
+      switch (s) {
+        case 'PRESENT': return '#059669';
+        case 'LATE': return '#D97706';
+        case 'HALF_DAY': return '#4F46E5';
+        case 'LEAVE': return '#7C3AED';
+        case 'ABSENT': return '#DC2626';
+        default: return '#64748B';
+      }
+    };
+
+    const statusBg = (s: string) => {
+      switch (s) {
+        case 'PRESENT': return '#ECFDF5';
+        case 'LATE': return '#FFFBEB';
+        case 'HALF_DAY': return '#EEF2FF';
+        case 'LEAVE': return '#F5F3FF';
+        case 'ABSENT': return '#FEF2F2';
+        default: return '#F1F5F9';
+      }
+    };
+
+    const formatDateStr = (dateStr: string): string => {
+      if (!dateStr) return '—';
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return dateStr;
+      const mIdx = parseInt(parts[1], 10) - 1;
+      const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${parts[2]} ${shortMonths[mIdx]} ${parts[0]}`;
+    };
+
+    const formatWorkHours = (checkIn?: Date | string | null, checkOut?: Date | string | null, breakSec: number = 0): string => {
+      if (!checkIn || !checkOut) return '—';
+      const inTime = new Date(checkIn);
+      const outTime = new Date(checkOut);
+      if (isNaN(inTime.getTime()) || isNaN(outTime.getTime())) return '—';
+      const diffSec = Math.floor((outTime.getTime() - inTime.getTime()) / 1000) - (breakSec || 0);
+      if (diffSec <= 0) return '0m';
+      const hours = Math.floor(diffSec / 3600);
+      const mins = Math.floor((diffSec % 3600) / 60);
+      if (hours === 0) return `${mins}m`;
+      if (mins === 0) return `${hours}h`;
+      return `${hours}h ${mins}m`;
+    };
+
+    const docDefinition: any = {
+      pageSize: 'A4',
+      pageOrientation: 'portrait',
+      pageMargins: [36, 40, 36, 45],
+      footer: (currentPage: number, pageCount: number) => ({
+        columns: [
+          { text: `HopKid HRM  •  Employee Attendance Report`, style: 'footer', alignment: 'left' },
+          { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
+        ],
+        margin: [36, 12, 36, 0],
+      }),
       content: [
+        // ── HEADER BANNER
         {
           canvas: [
-            {
-              type: 'rect',
-              x: -20,
-              y: -60,
-              w: 595,
-              h: 50,
-              color: PRIMARY_COLOR
-            }
-          ]
-        },
-        {
-          text: 'Attendance Report',
-          style: 'header',
-          color: 'white',
-          alignment: 'center',
-          margin: [0, -45, 0, 20]
+            { type: 'rect', x: -36, y: -40, w: 595, h: 80, color: '#0F172A' },
+            { type: 'rect', x: -36, y: 40, w: 595, h: 4, color: PRIMARY_COLOR },
+          ],
         },
         {
           columns: [
             {
-              text: `Employee: ${employee.firstName} ${employee.lastName}`,
-              style: 'subheader'
+              stack: [
+                { text: 'HOPKID HRM  •  MY ATTENDANCE REPORT', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -68, 0, 2] },
+                { text: `${employee.firstName} ${employee.lastName}`, fontSize: 16, bold: true, color: 'white', margin: [0, 0, 0, 2] },
+                { text: `Code: ${employee.employeeCode}  •  Dept: ${employee.department?.name || 'Operations'}  •  Store: ${employee.office?.name || 'Headquarters'}`, fontSize: 9, color: '#94A3B8' },
+              ],
             },
             {
-              text: `Employee Code: ${employee.employeeCode}`,
-              style: 'subheader'
-            }
+              stack: [
+                { text: `Month: ${targetMonth}`, fontSize: 10, bold: true, color: 'white', alignment: 'right', margin: [0, -68, 0, 4] },
+                { text: `Generated On: ${generatedOn}`, fontSize: 8, color: '#94A3B8', alignment: 'right' },
+              ],
+            },
           ],
-          margin: [0, 0, 0, 10]
+          margin: [0, 0, 0, 20],
         },
+
+        // ── SUMMARY STAT CARDS
         {
           columns: [
             {
-              text: `Department: ${employee.department?.name || 'N/A'}`,
-              style: 'normal'
+              stack: [
+                { text: totalDays.toString(), fontSize: 18, bold: true, color: PRIMARY_COLOR, alignment: 'center' },
+                { text: 'TOTAL DAYS', fontSize: 7, bold: true, color: '#64748B', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
             },
             {
-              text: `Office: ${employee.office?.name || 'N/A'}`,
-              style: 'normal'
-            }
+              stack: [
+                { text: present.toString(), fontSize: 18, bold: true, color: '#059669', alignment: 'center' },
+                { text: 'PRESENT', fontSize: 7, bold: true, color: '#64748B', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+            },
+            {
+              stack: [
+                { text: late.toString(), fontSize: 18, bold: true, color: '#D97706', alignment: 'center' },
+                { text: 'LATE', fontSize: 7, bold: true, color: '#64748B', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+            },
+            {
+              stack: [
+                { text: (absent + leave).toString(), fontSize: 18, bold: true, color: '#DC2626', alignment: 'center' },
+                { text: 'ABSENT/LEAVE', fontSize: 7, bold: true, color: '#64748B', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+            },
+            {
+              stack: [
+                { text: `${attendanceRate}%`, fontSize: 18, bold: true, color: '#6366F1', alignment: 'center' },
+                { text: 'RATE', fontSize: 7, bold: true, color: '#64748B', alignment: 'center', margin: [0, 2, 0, 0] },
+              ],
+              alignment: 'center',
+            },
           ],
-          margin: [0, 0, 0, 10]
+          margin: [0, 0, 0, 14],
         },
-        {
-          text: `Month: ${targetMonth}`,
-          style: 'normal',
-          margin: [0, 0, 0, 20]
-        },
-        {
-          text: 'Attendance Summary',
-          style: 'subheader',
-          margin: [0, 0, 0, 10]
-        },
-        {
-          ul: [
-            `Present: ${present} days`,
-            `Late: ${late} days`,
-            `Absent: ${absent} days`,
-            `Half Day: ${halfDay} days`,
-            `Leave: ${leave} days`,
-            `Attendance Rate: ${attendanceRate}%`
-          ],
-          margin: [0, 0, 0, 20]
-        },
-        {
-          text: 'Daily Attendance Details',
-          style: 'subheader',
-          margin: [0, 0, 0, 10]
-        },
+        { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 1, lineColor: '#E2E8F0' }], margin: [0, 0, 0, 14] },
+
+        // ── ATTENDANCE DETAILS TABLE
+        { text: 'Daily Attendance Details', bold: true, fontSize: 11, color: '#0F172A', margin: [0, 0, 0, 8] },
         {
           table: {
             headerRows: 1,
-            widths: ['*', '*', '*', '*'],
+            dontBreakRows: true,
+            widths: [80, 85, 85, 55, 75, '*'],
             body: [
-              ['Date', 'Check In', 'Check Out', 'Status'],
-              ...attendances.map((att: AttendanceWithOffice) => [
-                att.date,
-                att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
-                att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
-                att.status
+              [
+                { text: 'Date', style: 'colHeader' },
+                { text: 'Check In', style: 'colHeader' },
+                { text: 'Check Out', style: 'colHeader' },
+                { text: 'Break', style: 'colHeader', alignment: 'center' },
+                { text: 'Work Hours', style: 'colHeader', alignment: 'center' },
+                { text: 'Status', style: 'colHeader', alignment: 'center' },
+              ],
+              ...attendances.map((att: AttendanceWithOffice, i: number) => [
+                { text: formatDateStr(att.date), fontSize: 8, color: '#0F172A', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                { text: att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—', fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                { text: att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—', fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                { text: att.totalBreakSeconds > 0 ? `${Math.floor(att.totalBreakSeconds / 60)}m` : '—', fontSize: 8, color: '#374151', alignment: 'center', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                { text: formatWorkHours(att.checkIn, att.checkOut, att.totalBreakSeconds), fontSize: 8, color: '#0F172A', alignment: 'center', bold: true, fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                {
+                  text: att.status,
+                  fontSize: 7,
+                  bold: true,
+                  color: statusColor(att.status),
+                  fillColor: statusBg(att.status),
+                  alignment: 'center',
+                },
               ])
             ]
-          }
+          },
+          layout: {
+            hLineWidth: (i: number) => (i === 0 || i === 1) ? 1.5 : 0.5,
+            vLineWidth: () => 0,
+            hLineColor: (i: number) => i === 0 || i === 1 ? PRIMARY_COLOR : '#E2E8F0',
+            paddingLeft: () => 6,
+            paddingRight: () => 6,
+            paddingTop: () => 5,
+            paddingBottom: () => 5,
+          },
+          margin: [0, 0, 0, 16]
         }
       ],
       styles: {
-        header: {
-          fontSize: 18,
-          bold: true,
-          margin: [0, 0, 0, 10]
-        },
-        subheader: {
-          fontSize: 14,
-          bold: true,
-          margin: [0, 0, 0, 5]
-        },
-        normal: {
-          fontSize: 12
-        }
-      }
+        colHeader: { fontSize: 8, bold: true, color: 'white', fillColor: PRIMARY_COLOR, alignment: 'left' },
+        footer: { fontSize: 8, color: '#94A3B8' }
+      },
+      defaultStyle: { font: 'Roboto' }
     };
 
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
@@ -1730,111 +1804,161 @@ export const downloadAttendanceReport = async (
       }
     });
 
-    const docDefinition = {
+    const generatedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+
+    const statusColor = (s: string) => {
+      switch (s) {
+        case 'PRESENT': return '#059669';
+        case 'LATE': return '#D97706';
+        case 'HALF_DAY': return '#4F46E5';
+        case 'LEAVE': return '#7C3AED';
+        case 'ABSENT': return '#DC2626';
+        default: return '#64748B';
+      }
+    };
+
+    const statusBg = (s: string) => {
+      switch (s) {
+        case 'PRESENT': return '#ECFDF5';
+        case 'LATE': return '#FFFBEB';
+        case 'HALF_DAY': return '#EEF2FF';
+        case 'LEAVE': return '#F5F3FF';
+        case 'ABSENT': return '#FEF2F2';
+        default: return '#F1F5F9';
+      }
+    };
+
+    const formatDateStr = (dateStr: string): string => {
+      if (!dateStr) return '—';
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return dateStr;
+      const mIdx = parseInt(parts[1], 10) - 1;
+      const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${parts[2]} ${shortMonths[mIdx]} ${parts[0]}`;
+    };
+
+    const formatWorkHours = (checkIn?: Date | string | null, checkOut?: Date | string | null, breakSec: number = 0): string => {
+      if (!checkIn || !checkOut) return '—';
+      const inTime = new Date(checkIn);
+      const outTime = new Date(checkOut);
+      if (isNaN(inTime.getTime()) || isNaN(outTime.getTime())) return '—';
+      const diffSec = Math.floor((outTime.getTime() - inTime.getTime()) / 1000) - (breakSec || 0);
+      if (diffSec <= 0) return '0m';
+      const hours = Math.floor(diffSec / 3600);
+      const mins = Math.floor((diffSec % 3600) / 60);
+      if (hours === 0) return `${mins}m`;
+      if (mins === 0) return `${hours}h`;
+      return `${hours}h ${mins}m`;
+    };
+
+    const docDefinition: any = {
+      pageSize: 'A4',
+      pageOrientation: 'landscape',
+      pageMargins: [36, 40, 36, 45],
+      footer: (currentPage: number, pageCount: number) => ({
+        columns: [
+          { text: `HopKid HRM  •  HR Attendance Summary Report`, style: 'footer', alignment: 'left' },
+          { text: `Generated on ${generatedOn}  •  Page ${currentPage} of ${pageCount}`, style: 'footer', alignment: 'right' },
+        ],
+        margin: [36, 12, 36, 0],
+      }),
       content: [
+        // ── HEADER BANNER
         {
           canvas: [
+            { type: 'rect', x: -36, y: -40, w: 842, h: 80, color: '#0F172A' },
+            { type: 'rect', x: -36, y: 40, w: 842, h: 4, color: PRIMARY_COLOR },
+          ],
+        },
+        {
+          columns: [
             {
-              type: 'rect',
-              x: -20,
-              y: -60,
-              w: 595,
-              h: 50,
-              color: PRIMARY_COLOR
-            }
-          ]
+              stack: [
+                { text: 'HOPKID HRM  •  HR MANAGEMENT REPORTS', fontSize: 8, bold: true, color: PRIMARY_COLOR, margin: [0, -68, 0, 2] },
+                { text: 'HR Attendance Report', fontSize: 16, bold: true, color: 'white', margin: [0, 0, 0, 2] },
+                { text: `Organisation-wide employee logs  •  Month: ${targetMonth}`, fontSize: 9, color: '#94A3B8' },
+              ],
+            },
+            {
+              stack: [
+                { text: `Month: ${targetMonth}`, fontSize: 10, bold: true, color: 'white', alignment: 'right', margin: [0, -68, 0, 4] },
+                { text: `Generated By: ${user.employee?.firstName || user.email} (${user.role})`, fontSize: 8, color: '#94A3B8', alignment: 'right' },
+                { text: `Generated On: ${generatedOn}`, fontSize: 8, color: '#94A3B8', alignment: 'right' },
+              ],
+            },
+          ],
+          margin: [0, 0, 0, 20],
         },
-        {
-          text: 'HR Attendance Report',
-          style: 'header',
-          color: 'white',
-          alignment: 'center',
-          margin: [0, -45, 0, 20]
-        },
-        {
-          text: `Month: ${targetMonth}`,
-          style: 'subheader',
-          margin: [0, 0, 0, 20]
-        },
-        {
-          text: `Generated by: ${user.employee?.firstName || user.email} (${user.role})`,
-          style: 'normal',
-          margin: [0, 0, 0, 20]
-        },
+
+        // ── EMPLOYEE SECTIONS
         ...employeeData.map((empData: any, index: number) => [
           {
-            text: `Employee: ${empData.employee.firstName} ${empData.employee.lastName} (${empData.employee.employeeCode})`,
-            style: 'subheader',
-            margin: [0, 20, 0, 10],
-            pageBreak: index > 0 ? 'before' : undefined
-          },
-          {
             columns: [
-              {
-                text: `Department: ${empData.employee.department?.name || 'N/A'}`,
-                style: 'normal'
-              },
-              {
-                text: `Office: ${empData.employee.office?.name || 'N/A'}`,
-                style: 'normal'
-              }
+              { text: `Employee: ${empData.employee.firstName} ${empData.employee.lastName} (${empData.employee.employeeCode})`, bold: true, fontSize: 11, color: '#0F172A' },
+              { text: `Dept: ${empData.employee.department?.name || 'Operations'}  •  Store: ${empData.employee.office?.name || 'Headquarters'}  •  Rate: ${empData.attendanceRate}%`, fontSize: 9, color: '#64748B', alignment: 'right' },
             ],
-            margin: [0, 0, 0, 10]
-          },
-          {
-            text: 'Attendance Summary',
-            style: 'subheader',
-            margin: [0, 0, 0, 10]
-          },
-          {
-            ul: [
-              `Present: ${empData.present} days`,
-              `Late: ${empData.late} days`,
-              `Absent: ${empData.absent} days`,
-              `Half Day: ${empData.halfDay} days`,
-              `Leave: ${empData.leave} days`,
-              `Attendance Rate: ${empData.attendanceRate}%`
-            ],
-            margin: [0, 0, 0, 20]
-          },
-          {
-            text: 'Daily Attendance Details',
-            style: 'subheader',
-            margin: [0, 0, 0, 10]
+            margin: [0, 8, 0, 8],
+            pageBreak: index > 0 ? 'before' : undefined
           },
           {
             table: {
               headerRows: 1,
-              widths: ['*', '*', '*', '*'],
+              dontBreakRows: true,
+              widths: [65, 55, 95, 80, 75, 65, 65, 50, 60, 55, '*'],
               body: [
-                ['Date', 'Check In', 'Check Out', 'Status'],
-                ...empData.attendances.map((att: AttendanceWithOffice) => [
-                  att.date,
-                  att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
-                  att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '--:--',
-                  att.status
+                [
+                  { text: 'Date', style: 'colHeader' },
+                  { text: 'Code', style: 'colHeader' },
+                  { text: 'Employee Name', style: 'colHeader' },
+                  { text: 'Store / Branch', style: 'colHeader' },
+                  { text: 'Department', style: 'colHeader' },
+                  { text: 'Check In', style: 'colHeader' },
+                  { text: 'Check Out', style: 'colHeader' },
+                  { text: 'Break', style: 'colHeader', alignment: 'center' },
+                  { text: 'Work Hours', style: 'colHeader', alignment: 'center' },
+                  { text: 'Status', style: 'colHeader', alignment: 'center' },
+                  { text: 'Notes / Remarks', style: 'colHeader' }
+                ],
+                ...empData.attendances.map((att: AttendanceWithOffice, i: number) => [
+                  { text: formatDateStr(att.date), fontSize: 8, color: '#0F172A', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: empData.employee.employeeCode, fontSize: 7, color: '#64748B', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: `${empData.employee.firstName} ${empData.employee.lastName}`, fontSize: 8, color: '#0F172A', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: empData.employee.office?.name || 'Headquarters', fontSize: 8, color: '#64748B', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: empData.employee.department?.name || 'Operations', fontSize: 8, color: '#64748B', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: att.checkIn ? new Date(att.checkIn).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—', fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: att.checkOut ? new Date(att.checkOut).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—', fontSize: 8, color: '#374151', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: att.totalBreakSeconds > 0 ? `${Math.floor(att.totalBreakSeconds / 60)}m` : '—', fontSize: 8, color: '#374151', alignment: 'center', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  { text: formatWorkHours(att.checkIn, att.checkOut, att.totalBreakSeconds), fontSize: 8, color: '#0F172A', alignment: 'center', bold: true, fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' },
+                  {
+                    text: att.status,
+                    fontSize: 7,
+                    bold: true,
+                    color: statusColor(att.status),
+                    fillColor: statusBg(att.status),
+                    alignment: 'center',
+                  },
+                  { text: att.notes || '—', fontSize: 8, color: '#64748B', fillColor: i % 2 === 0 ? '#F8FAFC' : 'white' }
                 ])
               ]
             },
-            margin: [0, 0, 0, 30]
+            layout: {
+              hLineWidth: (i: number) => (i === 0 || i === 1) ? 1.5 : 0.5,
+              vLineWidth: () => 0,
+              hLineColor: (i: number) => i === 0 || i === 1 ? PRIMARY_COLOR : '#E2E8F0',
+              paddingLeft: () => 5,
+              paddingRight: () => 5,
+              paddingTop: () => 4,
+              paddingBottom: () => 4,
+            },
+            margin: [0, 0, 0, 16]
           }
-        ])
+        ]).flat()
       ],
       styles: {
-        header: {
-          fontSize: 18,
-          bold: true,
-          margin: [0, 0, 0, 10]
-        },
-        subheader: {
-          fontSize: 14,
-          bold: true,
-          margin: [0, 0, 0, 5]
-        },
-        normal: {
-          fontSize: 12
-        }
-      }
+        colHeader: { fontSize: 8, bold: true, color: 'white', fillColor: PRIMARY_COLOR, alignment: 'left' },
+        footer: { fontSize: 8, color: '#94A3B8' }
+      },
+      defaultStyle: { font: 'Roboto' }
     };
 
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
