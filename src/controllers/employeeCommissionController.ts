@@ -231,14 +231,67 @@ export const fetchCommissionHistory = async (
       }
     }
 
-    const transactions = await prisma.commissionTransaction.findMany({
+    let transactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
       orderBy: { createdAt: 'desc' },
       take: parseInt(limit as string, 10),
       skip: skipVal,
     });
 
-    const totalCount = await prisma.commissionTransaction.count({ where: whereClause });
+    let totalCount = await prisma.commissionTransaction.count({ where: whereClause });
+
+    // Fallback: If no transactions found for employee in CommissionTransaction table, pull live POS Webhook logs
+    if (totalCount === 0 && !status && !startDate && !month) {
+      const webhookLogs = await prisma.hopkidWebhookLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: parseInt(limit as string, 10),
+        skip: skipVal,
+      });
+
+      if (webhookLogs.length > 0) {
+        totalCount = await prisma.hopkidWebhookLog.count();
+        const mappedFromLogs = webhookLogs.map(log => {
+          let meta: any = {};
+          try {
+            if (typeof log.rawPayload === 'string') {
+              meta = JSON.parse(log.rawPayload);
+            } else if (log.rawPayload) {
+              meta = log.rawPayload;
+            }
+          } catch (e) {}
+
+          const invoiceNo = log.billId || meta.invoiceNumber || meta.billId || `WH-${log.id}`;
+          const amount = log.amount || meta.grossAmount || meta.grandTotal || 0;
+          const comm = meta.commissionAmount || 0;
+          const pct = amount > 0 ? (comm / amount) * 100 : 0;
+          const cust = meta.customerName || meta.customerPhone || 'POS Customer';
+
+          return {
+            id: `WH-${log.id}`,
+            invoiceNumber: invoiceNo,
+            customerName: cust,
+            billAmount: amount,
+            commissionPercentage: Math.round(pct * 10) / 10,
+            commissionEarned: comm,
+            generatedDate: log.createdAt.toISOString(),
+            paymentDate: log.createdAt.toISOString(),
+            status: 'Paid',
+            remarks: meta.eventType || log.description || 'POS Sale Event',
+          };
+        });
+
+        res.json({
+          success: true,
+          data: {
+            transactions: mappedFromLogs,
+            totalCount,
+            currentPage: parseInt(page as string, 10),
+            totalPages: Math.ceil(totalCount / parseInt(limit as string, 10)) || 1,
+          }
+        });
+        return;
+      }
+    }
 
     res.json({
       success: true,
