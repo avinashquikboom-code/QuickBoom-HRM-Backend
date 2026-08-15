@@ -739,22 +739,26 @@ export const getAdminPayrollSlips = async (
   try {
     const { month } = req.query as { month?: string };
     
-    if (!month) {
-      res.status(400).json({
-        success: false,
-        message: 'Month parameter is required.',
-        errorCode: 'MISSING_MONTH'
-      });
-      return;
+    let whereClause: any = {};
+    let targetMonth: number | null = null;
+    let targetYear: number | null = null;
+
+    if (!month || month === 'current') {
+      const now = new Date();
+      targetMonth = now.getMonth() + 1;
+      targetYear = now.getFullYear();
+      whereClause = { month: targetMonth, year: targetYear };
+    } else if (month !== 'ALL') {
+      const [year, monthNum] = month.split('-').map(Number);
+      if (year && monthNum) {
+        targetMonth = monthNum;
+        targetYear = year;
+        whereClause = { month: monthNum, year: year };
+      }
     }
 
-    const [year, monthNum] = month.split('-').map(Number);
-    
-    const slips = await prisma.payslip.findMany({
-      where: {
-        month: monthNum,
-        year: year
-      },
+    let slips = await prisma.payslip.findMany({
+      where: whereClause,
       include: {
         employee: {
           include: {
@@ -766,24 +770,75 @@ export const getAdminPayrollSlips = async (
       orderBy: { createdAt: 'desc' }
     });
 
-    // Transform to match frontend expectations
-    const transformedSlips = slips.map(slip => ({
-      id: slip.employeeId,
-      employeeCode: slip.employee.employeeCode,
-      name: `${slip.employee.firstName} ${slip.employee.lastName}`,
-      designation: slip.employee.designation || 'Employee',
-      department: slip.employee.department?.name || 'General',
-      office: slip.employee.office?.name || 'Main Office',
-      baseSalary: slip.baseSalary,
-      netSalary: slip.netSalary,
-      allowance: slip.allowance,
-      deductions: slip.deductions,
-      status: slip.status === 'Approved' ? 'Approved' : 'Pending Approval'
-    }));
+    // If querying a specific month/year and 0 payslips exist, auto-generate payroll for all active employees
+    if (slips.length === 0 && targetMonth !== null && targetYear !== null) {
+      console.log(`ℹ️ [PayslipManager] No payslips found for ${targetMonth}/${targetYear}. Auto-generating payroll...`);
+      await payrollService.autoGenerateMonthlyPayroll(targetMonth, targetYear);
+
+      slips = await prisma.payslip.findMany({
+        where: whereClause,
+        include: {
+          employee: {
+            include: {
+              department: true,
+              office: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
+
+    // Transform to match frontend expectations safely
+    const transformedSlips = slips.map(slip => {
+      const empName = slip.employee ? `${slip.employee.firstName} ${slip.employee.lastName}`.trim() : slip.employeeName || `Employee #${slip.employeeId}`;
+      const empCode = slip.employee?.employeeCode || slip.employeeCode || `EMP-${slip.employeeId}`;
+      const desig = slip.employee?.designation || slip.designation || 'Employee';
+      const dept = slip.employee?.department?.name || slip.department || 'General';
+      const off = slip.employee?.office?.name || slip.officeName || 'Main Office';
+
+      return {
+        id: slip.employeeId,
+        employeeId: slip.employeeId,
+        employeeCode: empCode,
+        name: empName,
+        employeeName: empName,
+        designation: desig,
+        department: dept,
+        office: off,
+        baseSalary: slip.baseSalary || 0,
+        netSalary: slip.netSalary || 0,
+        allowance: slip.allowance || 0,
+        deductions: slip.deductions || 0,
+        status: slip.status || 'Approved',
+        month: slip.month,
+        year: slip.year,
+        presentDays: slip.presentDays || 0,
+        absentDays: slip.absentDays || 0,
+        halfDays: slip.halfDays || 0,
+        paidLeaveDays: slip.paidLeaveDays || 0,
+        unpaidLeaveDays: slip.unpaidLeaveDays || 0,
+        holidayCount: slip.holidayCount || 0,
+        weeklyOffCount: slip.weeklyOffCount || 0,
+        holidayWorkedCount: slip.holidayWorkedCount || 0,
+        weeklyOffWorkedCount: slip.weeklyOffWorkedCount || 0,
+        extraHolidayPayout: slip.extraHolidayPayout || 0,
+        extraWeeklyOffPayout: slip.extraWeeklyOffPayout || 0,
+        dailySalary: slip.dailySalary || 0,
+        workingDays: slip.workingDays || 26,
+        totalCalendarDays: slip.totalCalendarDays || 30,
+        commissionEarned: slip.commissionEarned || 0,
+        createdAt: slip.createdAt,
+        updatedAt: slip.updatedAt,
+      };
+    });
 
     res.json({
       success: true,
-      slips: transformedSlips
+      slips: transformedSlips,
+      data: transformedSlips,
+      records: transformedSlips,
+      total: transformedSlips.length
     });
   } catch (error) {
     console.error('Get admin payroll slips error:', error);

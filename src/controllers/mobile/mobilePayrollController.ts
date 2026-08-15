@@ -47,97 +47,57 @@ export const getMyPayslips = async (
       ]
     });
 
-    let payslips = await Promise.all(rawPayslips.map(async (ps) => {
-      const monthStart = new Date(ps.year, ps.month - 1, 1, 0, 0, 0, 0);
-      const monthEnd = new Date(ps.year, ps.month, 0, 23, 59, 59, 999);
-
-      // Commission sum
-      const commAggregate = await prisma.commissionTransaction.aggregate({
-        where: {
-          employeeId: employee.id,
-          createdAt: { gte: monthStart, lte: monthEnd },
-          status: { in: ['PENDING', 'APPROVED', 'PAID'] }
-        },
-        _sum: { commissionAmount: true }
-      });
-      let commissionEarned = commAggregate._sum?.commissionAmount || 0;
-      if (commissionEarned === 0) {
-        const empCommSum = await prisma.commissionTransaction.aggregate({
-          where: {
-            employeeId: employee.id,
-            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
-          },
-          _sum: { commissionAmount: true }
-        });
-        commissionEarned = empCommSum._sum?.commissionAmount || 0;
-      }
-
-      const startDateStr = monthStart.toISOString().split('T')[0];
-      const endDateStr = monthEnd.toISOString().split('T')[0];
-
-      // Attendance records for month
-      const attendance = await prisma.attendance.findMany({
-        where: {
-          employeeId: employee.id,
-          date: { gte: startDateStr, lte: endDateStr }
-        }
-      });
-
-      const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
-      const halfDays = attendance.filter(a => a.status === 'HALF_DAY').length;
-      const leaveDays = attendance.filter(a => a.status === 'LEAVE' || a.status === 'UNPLANNED_LEAVE').length;
-      const absentDays = attendance.filter(a => a.status === 'ABSENT').length;
-
-      const workingDays = 30;
-      const dailySalary = ps.baseSalary > 0 ? (ps.baseSalary / workingDays) : 0;
-      const halfDayDeduction = halfDays * (dailySalary * 0.5);
-      const leaveDeduction = leaveDays * dailySalary;
-
+    let payslips = rawPayslips.map((ps) => {
       return {
         ...ps,
-        commissionEarned,
-        presentDays,
-        halfDays,
-        halfDayDeduction,
-        leaveDays,
-        leaveDeduction,
-        absentDays
+        commissionEarned: ps.commissionEarned || 0,
+        presentDays: ps.presentDays || 0,
+        absentDays: ps.absentDays || 0,
+        halfDays: ps.halfDays || 0,
+        paidLeaveDays: ps.paidLeaveDays || 0,
+        unpaidLeaveDays: ps.unpaidLeaveDays || 0,
+        holidayCount: ps.holidayCount || 0,
+        weeklyOffCount: ps.weeklyOffCount || 0,
+        holidayWorkedCount: ps.holidayWorkedCount || 0,
+        weeklyOffWorkedCount: ps.weeklyOffWorkedCount || 0,
+        extraHolidayPayout: ps.extraHolidayPayout || 0,
+        extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
+        dailySalary: ps.dailySalary || 0,
+        workingDays: ps.workingDays || 26,
+        totalCalendarDays: ps.totalCalendarDays || 30
       };
-    }));
+    });
 
     if (payslips.length === 0) {
       const now = new Date();
       const year = now.getFullYear();
       const month = now.getMonth() + 1;
-      const calculation = await payrollService.calculatePayroll(employee.id, month, year);
+      await payrollService.autoGenerateMonthlyPayroll(month, year);
 
-      let previewComm = calculation.commissionEarned || 0;
-      if (previewComm === 0) {
-        const empCommSum = await prisma.commissionTransaction.aggregate({
-          where: {
-            employeeId: employee.id,
-            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
-          },
-          _sum: { commissionAmount: true }
-        });
-        previewComm = empCommSum._sum?.commissionAmount || 0;
-      }
+      const updatedRaw = await prisma.payslip.findMany({
+        where: { employeeId: employee.id },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }]
+      });
 
-      const previewPayslip = {
-        id: 0,
-        employeeId: employee.id,
-        month,
-        year,
-        baseSalary: calculation.baseSalary,
-        allowance: calculation.allowance,
-        deductions: calculation.deductions,
-        netSalary: calculation.netSalary,
-        status: 'Pending Approval',
-        employeeCode: employee.employeeCode,
-        employeeName: `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || employee.employeeCode,
-        designation: employee.designation || 'Sales Employee',
-        department: 'Sales',
-        officeName: 'Main Store',
+      payslips = updatedRaw.map(ps => ({
+        ...ps,
+        commissionEarned: ps.commissionEarned || 0,
+        presentDays: ps.presentDays || 0,
+        absentDays: ps.absentDays || 0,
+        halfDays: ps.halfDays || 0,
+        paidLeaveDays: ps.paidLeaveDays || 0,
+        unpaidLeaveDays: ps.unpaidLeaveDays || 0,
+        holidayCount: ps.holidayCount || 0,
+        weeklyOffCount: ps.weeklyOffCount || 0,
+        holidayWorkedCount: ps.holidayWorkedCount || 0,
+        weeklyOffWorkedCount: ps.weeklyOffWorkedCount || 0,
+        extraHolidayPayout: ps.extraHolidayPayout || 0,
+        extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
+        dailySalary: ps.dailySalary || 0,
+        workingDays: ps.workingDays || 26,
+        totalCalendarDays: ps.totalCalendarDays || 30
+      }));
+    }
         netInWords: '',
         createdAt: new Date().toISOString(),
         commissionEarned: previewComm,
