@@ -2047,106 +2047,203 @@ export const fetchAllEmployeesAttendance = async (
     return;
   }
 
-  const { from, to, limit = '50', page = '1', employeeId, departmentId, officeId } = req.query;
-  const limitInt = Math.min(500, Math.max(1, parseInt(limit as string, 10) || 50));
+  const { from, to, limit = '500', page = '1', employeeId, departmentId, officeId } = req.query;
+  const limitInt = Math.min(1000, Math.max(1, parseInt(limit as string, 10) || 500));
   const pageInt = Math.max(1, parseInt(page as string, 10) || 1);
-  const skip = (pageInt - 1) * limitInt;
 
-  const whereClause: any = {};
+  // Determine date bounds (default to current month if not specified)
+  const now = new Date();
+  const defaultFrom = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().split('T')[0];
+  const defaultTo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().split('T')[0];
 
-  // 3. Date Range Filter
-  if (from || to) {
-    whereClause.date = {};
-    if (from) whereClause.date.gte = from as string;
-    if (to) whereClause.date.lte = to as string;
+  const fromStr = (from as string) || defaultFrom;
+  const toStr = (to as string) || defaultTo;
+
+  // Generate complete calendar dates array (YYYY-MM-DD)
+  const startDate = new Date(fromStr + 'T00:00:00Z');
+  const endDate = new Date(toStr + 'T23:59:59Z');
+  const calendarDates: string[] = [];
+  const curDate = new Date(startDate);
+  while (curDate <= endDate) {
+    const y = curDate.getUTCFullYear();
+    const m = String(curDate.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(curDate.getUTCDate()).padStart(2, '0');
+    calendarDates.push(`${y}-${m}-${d}`);
+    curDate.setUTCDate(curDate.getUTCDate() + 1);
   }
 
-  // 4. Data Scope Enforcement
+  // 4. Data Scope Enforcement & Target Employee Query
+  const empWhere: any = {};
   if (isHRAdmin) {
-    // HR/Admin: Full organisation scope with optional query filters
-    if (employeeId) whereClause.employeeId = parseInt(employeeId as string, 10);
-    if (departmentId) whereClause.employee = { departmentId: parseInt(departmentId as string, 10) };
-    if (officeId) whereClause.officeId = parseInt(officeId as string, 10);
+    if (employeeId) empWhere.id = parseInt(employeeId as string, 10);
+    if (departmentId) empWhere.departmentId = parseInt(departmentId as string, 10);
+    if (officeId) empWhere.officeId = parseInt(officeId as string, 10);
   } else if (isStoreManager) {
-    // Store Manager: Scoped to assigned store
-    if (employee.officeId) {
-      whereClause.officeId = employee.officeId;
-    }
-    if (employeeId) {
-      whereClause.employeeId = parseInt(employeeId as string, 10);
-    }
+    if (employee.officeId) empWhere.officeId = employee.officeId;
+    if (employeeId) empWhere.id = parseInt(employeeId as string, 10);
   } else {
-    // Regular Employee: Strictly scoped to OWN attendance records only
-    whereClause.employeeId = employee.id;
+    empWhere.id = employee.id;
   }
 
   try {
-    const total = await prisma.attendance.count({ where: whereClause });
-
-    const records = await prisma.attendance.findMany({
-      where: whereClause,
+    const targetEmployees = await prisma.employee.findMany({
+      where: empWhere,
       include: {
-        employee: {
-          include: {
-            department: true,
-            user: {
-              include: {
-                profile: true
-              }
-            }
-          }
-        },
+        department: true,
         office: true,
-      },
-      orderBy: { date: 'desc' },
-      skip,
-      take: limitInt,
+        user: {
+          include: {
+            profile: true
+          }
+        }
+      }
     });
 
-    const mappedRecords = records.map((att) => ({
-      id: att.id,
-      date: att.date,
-      checkIn: att.checkIn ? att.checkIn.toISOString() : null,
-      checkOut: att.checkOut ? att.checkOut.toISOString() : null,
-      status: att.status,
-      notes: att.notes,
-      employee: {
-        id: att.employee.id,
-        employeeCode: att.employee.employeeCode,
-        firstName: att.employee.firstName,
-        lastName: att.employee.lastName,
-        designation: att.employee.designation,
-        department: att.employee.department ? {
-          id: att.employee.department.id,
-          name: att.employee.department.name
-        } : null,
-        email: att.employee.user?.email,
-        phone: att.employee.user?.profile?.phone,
-      },
-      office: att.office
-        ? {
-            id: att.office.id,
-            name: att.office.name,
-            address: att.office.address,
+    if (targetEmployees.length === 0) {
+      res.json({
+        success: true,
+        from: fromStr,
+        to: toStr,
+        page: pageInt,
+        limit: limitInt,
+        total: 0,
+        records: [],
+        data: [],
+        attendances: []
+      });
+      return;
+    }
+
+    const employeeIds = targetEmployees.map(e => e.id);
+
+    // Fetch actual database records for date range
+    const [attendances, holidays, leaves] = await Promise.all([
+      prisma.attendance.findMany({
+        where: {
+          employeeId: { in: employeeIds },
+          date: { gte: fromStr, lte: toStr }
+        },
+        include: {
+          office: true
+        }
+      }),
+      prisma.holiday.findMany({
+        where: {
+          date: { gte: new Date(fromStr + 'T00:00:00Z'), lte: new Date(toStr + 'T23:59:59Z') }
+        }
+      }),
+      prisma.leaveRequest.findMany({
+        where: {
+          employeeId: { in: employeeIds },
+          status: 'APPROVED',
+          fromDate: { lte: new Date(toStr + 'T23:59:59Z') },
+          toDate: { gte: new Date(fromStr + 'T00:00:00Z') }
+        }
+      })
+    ]);
+
+    // Synthesize date-by-date records for each employee
+    const synthesizedRecords: any[] = [];
+
+    // Sort calendar dates descending (newest first)
+    const descDates = [...calendarDates].reverse();
+
+    for (const emp of targetEmployees) {
+      const officeWorkingDays: string[] = (emp.office as any)?.workingDays || [
+        'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
+      ];
+
+      for (const dateStr of descDates) {
+        const dateObj = new Date(dateStr + 'T12:00:00Z');
+        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+        const isWeeklyOff = !officeWorkingDays.includes(dayName);
+
+        const att = attendances.find(a => a.employeeId === emp.id && a.date === dateStr);
+        const holiday = holidays.find(h => h.date.toISOString().split('T')[0] === dateStr);
+        const leave = leaves.find(l => {
+          if (l.employeeId !== emp.id) return false;
+          const fStr = l.fromDate.toISOString().split('T')[0];
+          const tStr = l.toDate.toISOString().split('T')[0];
+          return fStr <= dateStr && dateStr <= tStr;
+        });
+
+        let finalStatus = 'ABSENT';
+        if (att) {
+          if (att.status === 'HOLIDAY_WORKED' || (holiday && att.checkIn)) {
+            finalStatus = 'HOLIDAY_WORKED';
+          } else if (att.status === 'WEEKLY_OFF_WORKED' || (isWeeklyOff && att.checkIn)) {
+            finalStatus = 'WEEKLY_OFF_WORKED';
+          } else {
+            finalStatus = att.status;
           }
-        : null,
-      isOnBreak: att.isOnBreak,
-      breakStartTime: att.breakStartTime ? att.breakStartTime.toISOString() : null,
-      totalBreakSeconds: att.totalBreakSeconds,
-      latitude: att.latitude,
-      longitude: att.longitude,
-    }));
+        } else if (leave) {
+          if (leave.type === 'UNPAID' || leave.type === 'LOP' || (leave as any).leaveCategory === 'UNPAID') {
+            finalStatus = 'UNPAID_LEAVE';
+          } else {
+            finalStatus = 'PAID_LEAVE';
+          }
+        } else if (holiday) {
+          finalStatus = 'HOLIDAY';
+        } else if (isWeeklyOff) {
+          finalStatus = 'WEEKLY_OFF';
+        } else {
+          finalStatus = 'ABSENT';
+        }
+
+        synthesizedRecords.push({
+          id: att ? att.id : `virt_${emp.id}_${dateStr.replace(/-/g, '')}`,
+          date: dateStr,
+          checkIn: att && att.checkIn ? att.checkIn.toISOString() : null,
+          checkOut: att && att.checkOut ? att.checkOut.toISOString() : null,
+          status: finalStatus,
+          notes: att ? att.notes : (leave ? `Leave: ${leave.type}` : (holiday ? `Holiday: ${holiday.name}` : null)),
+          employee: {
+            id: emp.id,
+            employeeCode: emp.employeeCode,
+            firstName: emp.firstName,
+            lastName: emp.lastName,
+            designation: emp.designation,
+            department: emp.department ? {
+              id: emp.department.id,
+              name: emp.department.name
+            } : null,
+            email: emp.user?.email,
+            phone: emp.user?.profile?.phone,
+          },
+          office: att?.office
+            ? {
+                id: att.office.id,
+                name: att.office.name,
+                address: att.office.address,
+              }
+            : (emp.office ? {
+                id: emp.office.id,
+                name: emp.office.name,
+                address: emp.office.address,
+              } : null),
+          isOnBreak: att ? att.isOnBreak : false,
+          breakStartTime: att && att.breakStartTime ? att.breakStartTime.toISOString() : null,
+          totalBreakSeconds: att ? att.totalBreakSeconds : 0,
+          latitude: att ? att.latitude : null,
+          longitude: att ? att.longitude : null,
+        });
+      }
+    }
+
+    const total = synthesizedRecords.length;
+    const skip = (pageInt - 1) * limitInt;
+    const pagedRecords = synthesizedRecords.slice(skip, skip + limitInt);
 
     res.json({
       success: true,
-      from: from || null,
-      to: to || null,
+      from: fromStr,
+      to: toStr,
       page: pageInt,
       limit: limitInt,
       total,
-      records: mappedRecords,
-      data: mappedRecords,
-      attendances: mappedRecords
+      records: pagedRecords,
+      data: pagedRecords,
+      attendances: pagedRecords
     });
   } catch (error) {
     console.error('Fetch all employees attendance error:', error);
