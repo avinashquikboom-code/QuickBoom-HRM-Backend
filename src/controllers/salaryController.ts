@@ -3,6 +3,8 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { getEffectiveUserPermissions, DEFAULT_EMPLOYEE_PERMISSIONS } from '../utils/permissionHelper';
 
+import payrollService from '../services/payrollService';
+
 export const getSalarySlip = async (
   req: AuthenticatedRequest,
   res: Response
@@ -32,7 +34,7 @@ export const getSalarySlip = async (
 
     const employee = await prisma.employee.findUnique({
       where: { id: targetEmployeeId },
-      include: { user: true, salaryStructure: true }
+      include: { user: true, salaryStructure: true, office: true, department: true }
     });
 
     if (!employee) {
@@ -68,9 +70,42 @@ export const getSalarySlip = async (
       }
     }
 
+    // Use persistent database Payslip record or calculate via PayrollService
+    let dbPayslip = await prisma.payslip.findFirst({
+      where: {
+        employeeId: targetEmployeeId,
+        month: targetMonth,
+        year: targetYear
+      }
+    });
+
+    let calcResult: any = null;
+    if (!dbPayslip) {
+      calcResult = await payrollService.calculatePayroll(targetEmployeeId, targetMonth, targetYear);
+    }
+
+    const baseSalary = dbPayslip?.baseSalary ?? calcResult?.baseSalary ?? (employee.salaryStructure?.basicSalary || 0);
+    const allowance = dbPayslip?.allowance ?? calcResult?.allowance ?? 0;
+    const deductions = dbPayslip?.deductions ?? calcResult?.deductions ?? 0;
+    const netSalary = dbPayslip?.netSalary ?? calcResult?.netSalary ?? 0;
+    const commissionEarned = dbPayslip?.commissionEarned ?? calcResult?.commissionEarned ?? 0;
+    const presentDays = dbPayslip?.presentDays ?? calcResult?.presentDays ?? 0;
+    const absentDays = dbPayslip?.absentDays ?? calcResult?.absentDays ?? 0;
+    const halfDays = dbPayslip?.halfDays ?? calcResult?.halfDays ?? 0;
+    const paidLeaveDays = dbPayslip?.paidLeaveDays ?? calcResult?.paidLeaveDays ?? 0;
+    const unpaidLeaveDays = dbPayslip?.unpaidLeaveDays ?? calcResult?.unpaidLeaveDays ?? 0;
+    const holidayCount = dbPayslip?.holidayCount ?? calcResult?.holidayCount ?? 0;
+    const weeklyOffCount = dbPayslip?.weeklyOffCount ?? calcResult?.weeklyOffCount ?? 0;
+    const holidayWorkedCount = dbPayslip?.holidayWorkedCount ?? calcResult?.holidayWorkedCount ?? 0;
+    const weeklyOffWorkedCount = dbPayslip?.weeklyOffWorkedCount ?? calcResult?.weeklyOffWorkedCount ?? 0;
+    const extraHolidayPayout = dbPayslip?.extraHolidayPayout ?? calcResult?.extraHolidayPayout ?? 0;
+    const extraWeeklyOffPayout = dbPayslip?.extraWeeklyOffPayout ?? calcResult?.extraWeeklyOffPayout ?? 0;
+    const dailySalary = dbPayslip?.dailySalary ?? calcResult?.dailySalary ?? 0;
+    const workingDays = dbPayslip?.workingDays ?? calcResult?.workingDays ?? 26;
+    const totalCalendarDays = dbPayslip?.totalCalendarDays ?? calcResult?.totalCalendarDays ?? new Date(targetYear, targetMonth, 0).getDate();
+
     const ss = employee.salaryStructure;
-    const grossVal = ss?.grossSalary || ss?.monthlySalary || 0;
-    const basicSalary = ss?.basicSalary || (grossVal > 0 ? Math.round(grossVal * 0.5) : 0);
+    const basicSalary = ss?.basicSalary || baseSalary;
     const hra = ss?.hra || 0;
     const medical = ss?.medicalAllowance || 0;
     const travel = ss?.travelAllowance || 0;
@@ -78,56 +113,6 @@ export const getSalarySlip = async (
     const bonus = ss?.bonus || 0;
     const incentive = ss?.incentive || 0;
     const salaryAdvanceLimit = ss?.salaryAdvanceLimit || 25000;
-
-    const baseSalary = basicSalary;
-
-    // Date range for month
-    const monthStart = new Date(targetYear, targetMonth - 1, 1);
-    const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
-    const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
-    const workingDays = 25;
-
-    // 1. Commission THIS MONTH only (if permitted)
-    let commission = 0;
-    if (perms.canViewCommission !== false) {
-      const commissionTxns = await prisma.commissionTransaction.findMany({
-        where: {
-          employeeId: targetEmployeeId,
-          createdAt: { gte: monthStart, lte: monthEnd },
-          status: { notIn: ['REJECTED', 'CANCELLED'] }
-        }
-      });
-      commission = commissionTxns.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
-    }
-
-    // 2. Attendance THIS MONTH
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        employeeId: targetEmployeeId,
-        date: { startsWith: monthPrefix },
-      }
-    });
-
-    const presentRecords = attendances.filter(a =>
-      a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'HALF_DAY' || a.checkIn !== null
-    );
-    const presentDays = presentRecords.length > 0 ? presentRecords.length : 20;
-
-    const halfDays = attendances.filter(a =>
-      a.status === 'HALF_DAY' || (a as any).halfDay === true || (a as any).isHalfDay === true
-    ).length || 2;
-
-    const leaveDays = attendances.filter(a => a.status === 'LEAVE').length || 3;
-
-    // Deductions calculations
-    const perDayRate = baseSalary / workingDays;
-    const halfDayDeduction = Math.round(halfDays * (perDayRate / 2));
-    const leaveDeduction = Math.round(leaveDays * perDayRate);
-    const totalDeductions = halfDayDeduction + leaveDeduction;
-
-    const otherBenefits = hra + medical + travel + special;
-    const grossTotal = baseSalary + otherBenefits + commission + bonus + incentive;
-    const netSalary = Math.max(0, grossTotal - totalDeductions);
 
     // Fetch salary advance used
     const advances = await prisma.salaryAdvance.findMany({
@@ -143,15 +128,40 @@ export const getSalarySlip = async (
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
     const monthName = monthNames[targetMonth - 1];
+    const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+
+    const grossTotal = baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout);
 
     const responsePayload = {
       employeeId: employee.id,
       employeeCode: employee.employeeCode,
       employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
       designation: employee.designation || 'Staff',
+      officeName: employee.office?.name || 'Main Office',
+      departmentName: employee.department?.name || 'General',
       month: monthName,
       year: targetYear,
       monthStr: monthPrefix,
+
+      baseSalary,
+      allowance,
+      deductionsTotal: deductions,
+      netSalary,
+
+      presentDays,
+      absentDays,
+      halfDays,
+      paidLeaveDays,
+      unpaidLeaveDays,
+      holidayCount,
+      weeklyOffCount,
+      holidayWorkedCount,
+      weeklyOffWorkedCount,
+      extraHolidayPayout,
+      extraWeeklyOffPayout,
+      dailySalary,
+      workingDays,
+      totalCalendarDays,
 
       earnings: {
         baseSalary,
@@ -160,26 +170,31 @@ export const getSalarySlip = async (
         medical,
         travel,
         special,
-        commission,
+        commission: commissionEarned,
+        extraPayout: extraHolidayPayout + extraWeeklyOffPayout,
         bonus,
         incentive,
-        otherBenefits,
         grossTotal,
       },
 
       deductions: {
-        halfDayDeduction,
-        leaveDeduction,
-        totalDeductions,
+        deductions,
+        totalDeductions: deductions,
       },
-
-      netSalary,
 
       details: {
         presentDays,
+        absentDays,
         halfDays,
-        leaveDays,
+        paidLeaveDays,
+        unpaidLeaveDays,
+        holidayCount,
+        weeklyOffCount,
+        holidayWorkedCount,
+        weeklyOffWorkedCount,
         workingDays,
+        totalCalendarDays,
+        dailySalary,
         commissionRate: employee.commissionPercentage || 1.0,
         salaryAdvanceLimit,
         salaryAdvanceUsed,
