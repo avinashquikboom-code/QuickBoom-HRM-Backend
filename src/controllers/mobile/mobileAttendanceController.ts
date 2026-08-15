@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import geofenceService from '../../services/geofenceService';
 import { Role } from '@prisma/client';
+import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 const PdfPrinter = require('pdfmake');
 import auditLogService from '../../services/auditLogService';
 import { logActivity } from '../../utils/activityLogger';
@@ -1978,57 +1979,80 @@ export const downloadAttendanceReport = async (
   }
 };
 
-// Fetch all employees' attendance (HR/Admin only)
+// Fetch all employees' attendance (Scoped by Employee Rights & Role Data Scope)
 export const fetchAllEmployeesAttendance = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { from, to, limit = '50', page = '1', employeeId, departmentId, officeId } = req.query;
+  const userId = req.user?.id;
+  if (!userId) {
+    res.status(401).json({ success: false, message: 'Unauthorized', errorCode: 'UNAUTHORIZED' });
+    return;
+  }
 
-  // Only HR, ADMIN, SUPER_ADMIN, PLATFORM_ADMIN, and STORE_MANAGER can access this
-  if (
-    req.user?.role !== Role.HR &&
-    req.user?.role !== Role.ADMIN &&
-    req.user?.role !== Role.SUPER_ADMIN &&
-    req.user?.role !== Role.PLATFORM_ADMIN &&
-    req.user?.role !== Role.STORE_MANAGER
-  ) {
+  const userRole = req.user?.role;
+  const isHRAdmin = [Role.HR, Role.ADMIN, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN].includes(userRole as any);
+  const isStoreManager = userRole === Role.STORE_MANAGER;
+
+  // 1. Employee Rights & Role Verification
+  const userPerms = await getEffectiveUserPermissions(userId);
+  const hasAccess = isHRAdmin || isStoreManager || Boolean(userPerms.canViewAttendance);
+
+  if (!hasAccess) {
     res.status(403).json({
       success: false,
-      message: 'Access denied. HR, Admin, and Store Managers only.',
+      message: 'Access denied. You do not have permission to view attendance history.',
       errorCode: 'ACCESS_DENIED'
     });
     return;
   }
 
-  const limitInt = parseInt(limit as string, 10);
-  const pageInt = parseInt(page as string, 10);
+  // 2. Fetch Employee Record for Data Scoping
+  const employee = await prisma.employee.findFirst({
+    where: { userId },
+    include: { office: true, department: true }
+  });
+
+  if (!employee) {
+    res.status(404).json({
+      success: false,
+      message: 'Employee record not found for authenticated user.',
+      errorCode: 'EMPLOYEE_NOT_FOUND'
+    });
+    return;
+  }
+
+  const { from, to, limit = '50', page = '1', employeeId, departmentId, officeId } = req.query;
+  const limitInt = Math.min(500, Math.max(1, parseInt(limit as string, 10) || 50));
+  const pageInt = Math.max(1, parseInt(page as string, 10) || 1);
   const skip = (pageInt - 1) * limitInt;
 
   const whereClause: any = {};
 
+  // 3. Date Range Filter
   if (from || to) {
     whereClause.date = {};
-    if (from) {
-      whereClause.date.gte = from as string;
+    if (from) whereClause.date.gte = from as string;
+    if (to) whereClause.date.lte = to as string;
+  }
+
+  // 4. Data Scope Enforcement
+  if (isHRAdmin) {
+    // HR/Admin: Full organisation scope with optional query filters
+    if (employeeId) whereClause.employeeId = parseInt(employeeId as string, 10);
+    if (departmentId) whereClause.employee = { departmentId: parseInt(departmentId as string, 10) };
+    if (officeId) whereClause.officeId = parseInt(officeId as string, 10);
+  } else if (isStoreManager) {
+    // Store Manager: Scoped to assigned store
+    if (employee.officeId) {
+      whereClause.officeId = employee.officeId;
     }
-    if (to) {
-      whereClause.date.lte = to as string;
+    if (employeeId) {
+      whereClause.employeeId = parseInt(employeeId as string, 10);
     }
-  }
-
-  if (employeeId) {
-    whereClause.employeeId = parseInt(employeeId as string);
-  }
-
-  if (departmentId) {
-    whereClause.employee = {
-      departmentId: parseInt(departmentId as string)
-    };
-  }
-
-  if (officeId) {
-    whereClause.officeId = parseInt(officeId as string);
+  } else {
+    // Regular Employee: Strictly scoped to OWN attendance records only
+    whereClause.employeeId = employee.id;
   }
 
   try {
@@ -2096,10 +2120,12 @@ export const fetchAllEmployeesAttendance = async (
       limit: limitInt,
       total,
       records: mappedRecords,
+      data: mappedRecords,
+      attendances: mappedRecords
     });
   } catch (error) {
     console.error('Fetch all employees attendance error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load attendance data.' });
+    res.status(500).json({ success: false, message: 'Failed to load attendance data.', errorCode: 'FETCH_ATTENDANCE_ERROR' });
   }
 };
 
