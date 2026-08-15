@@ -98,22 +98,11 @@ export const getMyPayslips = async (
         totalCalendarDays: ps.totalCalendarDays || 30
       }));
     }
-        netInWords: '',
-        createdAt: new Date().toISOString(),
-        commissionEarned: previewComm,
-        presentDays: calculation.presentDays,
-        halfDays: calculation.halfDays,
-        halfDayDeduction: calculation.halfDayDeduction,
-        leaveDays: calculation.leaveDays,
-        leaveDeduction: calculation.leaveDeduction,
-        workingDays: calculation.workingDays
-      };
-      payslips = [previewPayslip as any];
-    }
 
     res.json({
       success: true,
-      data: payslips
+      data: payslips,
+      payslips: payslips
     });
   } catch (error: any) {
     console.error('Get my payslips error — userId:', req.user?.id, '| detail:', error?.message ?? error);
