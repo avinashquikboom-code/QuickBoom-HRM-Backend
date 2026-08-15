@@ -11,15 +11,9 @@ export function requirePermission(permissionKey: string) {
         return;
       }
 
-      // HR, ADMIN, and SUPER_ADMIN bypass individual employee permission restrictions
-      if (user.role === 'HR' || user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'PLATFORM_ADMIN') {
-        next();
-        return;
-      }
-
       const effectivePerms = await getEffectiveUserPermissions(user.id);
       
-      // If permission key is explicitly set to false or omitted when required, deny access with HTTP 403
+      // If permission key is explicitly set to false in custom rights, block access
       if (effectivePerms[permissionKey] === false) {
         res.status(403).json({
           success: false,
