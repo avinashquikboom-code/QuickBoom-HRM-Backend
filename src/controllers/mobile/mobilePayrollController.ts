@@ -48,6 +48,7 @@ export const getMyPayslips = async (
     });
 
     let payslips = rawPayslips.map((ps) => {
+      const calendarDays = new Date(ps.year, ps.month, 0).getDate();
       return {
         ...ps,
         commissionEarned: ps.commissionEarned || 0,
@@ -64,7 +65,7 @@ export const getMyPayslips = async (
         extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
         dailySalary: ps.dailySalary || 0,
         workingDays: ps.workingDays || 26,
-        totalCalendarDays: ps.totalCalendarDays || 30
+        totalCalendarDays: ps.totalCalendarDays || calendarDays
       };
     });
 
@@ -79,24 +80,27 @@ export const getMyPayslips = async (
         orderBy: [{ year: 'desc' }, { month: 'desc' }]
       });
 
-      payslips = updatedRaw.map(ps => ({
-        ...ps,
-        commissionEarned: ps.commissionEarned || 0,
-        presentDays: ps.presentDays || 0,
-        absentDays: ps.absentDays || 0,
-        halfDays: ps.halfDays || 0,
-        paidLeaveDays: ps.paidLeaveDays || 0,
-        unpaidLeaveDays: ps.unpaidLeaveDays || 0,
-        holidayCount: ps.holidayCount || 0,
-        weeklyOffCount: ps.weeklyOffCount || 0,
-        holidayWorkedCount: ps.holidayWorkedCount || 0,
-        weeklyOffWorkedCount: ps.weeklyOffWorkedCount || 0,
-        extraHolidayPayout: ps.extraHolidayPayout || 0,
-        extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
-        dailySalary: ps.dailySalary || 0,
-        workingDays: ps.workingDays || 26,
-        totalCalendarDays: ps.totalCalendarDays || 30
-      }));
+      payslips = updatedRaw.map(ps => {
+        const calendarDays = new Date(ps.year, ps.month, 0).getDate();
+        return {
+          ...ps,
+          commissionEarned: ps.commissionEarned || 0,
+          presentDays: ps.presentDays || 0,
+          absentDays: ps.absentDays || 0,
+          halfDays: ps.halfDays || 0,
+          paidLeaveDays: ps.paidLeaveDays || 0,
+          unpaidLeaveDays: ps.unpaidLeaveDays || 0,
+          holidayCount: ps.holidayCount || 0,
+          weeklyOffCount: ps.weeklyOffCount || 0,
+          holidayWorkedCount: ps.holidayWorkedCount || 0,
+          weeklyOffWorkedCount: ps.weeklyOffWorkedCount || 0,
+          extraHolidayPayout: ps.extraHolidayPayout || 0,
+          extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
+          dailySalary: ps.dailySalary || 0,
+          workingDays: ps.workingDays || 26,
+          totalCalendarDays: ps.totalCalendarDays || calendarDays
+        };
+      });
     }
 
     res.json({

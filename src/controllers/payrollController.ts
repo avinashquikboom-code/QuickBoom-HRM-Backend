@@ -826,7 +826,7 @@ export const getAdminPayrollSlips = async (
         extraWeeklyOffPayout: slip.extraWeeklyOffPayout || 0,
         dailySalary: slip.dailySalary || 0,
         workingDays: slip.workingDays || 26,
-        totalCalendarDays: slip.totalCalendarDays || 30,
+        totalCalendarDays: slip.totalCalendarDays || new Date(slip.year, slip.month, 0).getDate(),
         commissionEarned: slip.commissionEarned || 0,
         createdAt: slip.createdAt,
         updatedAt: slip.updatedAt,
