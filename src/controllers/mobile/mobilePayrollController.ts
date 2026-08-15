@@ -26,7 +26,8 @@ export const getMyPayslips = async (
   try {
 
     const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id }
+      where: { userId: req.user?.id },
+      include: { office: true }
     });
 
     if (!employee) {
@@ -39,6 +40,17 @@ export const getMyPayslips = async (
       return;
     }
 
+    const calculateScheduledWorkingDays = (year: number, month: number, office: any): number => {
+      const calendarDays = new Date(year, month, 0).getDate();
+      const officeDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      let count = 0;
+      for (let d = 1; d <= calendarDays; d++) {
+        const dayName = new Date(year, month - 1, d).toLocaleDateString('en-US', { weekday: 'long' });
+        if (officeDays.includes(dayName)) count++;
+      }
+      return count > 0 ? count : 26;
+    };
+
     const rawPayslips = await prisma.payslip.findMany({
       where: { employeeId: employee.id },
       orderBy: [
@@ -49,6 +61,7 @@ export const getMyPayslips = async (
 
     let payslips = rawPayslips.map((ps) => {
       const calendarDays = new Date(ps.year, ps.month, 0).getDate();
+      const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
       return {
         ...ps,
         commissionEarned: ps.commissionEarned || 0,
@@ -64,7 +77,7 @@ export const getMyPayslips = async (
         extraHolidayPayout: ps.extraHolidayPayout || 0,
         extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
         dailySalary: ps.dailySalary || 0,
-        workingDays: ps.workingDays || 26,
+        workingDays: schedWorkingDays,
         totalCalendarDays: ps.totalCalendarDays || calendarDays
       };
     });
@@ -82,6 +95,7 @@ export const getMyPayslips = async (
 
       payslips = updatedRaw.map(ps => {
         const calendarDays = new Date(ps.year, ps.month, 0).getDate();
+        const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
         return {
           ...ps,
           commissionEarned: ps.commissionEarned || 0,
@@ -97,7 +111,7 @@ export const getMyPayslips = async (
           extraHolidayPayout: ps.extraHolidayPayout || 0,
           extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
           dailySalary: ps.dailySalary || 0,
-          workingDays: ps.workingDays || 26,
+          workingDays: schedWorkingDays,
           totalCalendarDays: ps.totalCalendarDays || calendarDays
         };
       });

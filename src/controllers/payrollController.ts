@@ -789,6 +789,17 @@ export const getAdminPayrollSlips = async (
       });
     }
 
+    const calculateScheduledWorkingDays = (year: number, month: number, office: any): number => {
+      const calendarDays = new Date(year, month, 0).getDate();
+      const officeDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      let count = 0;
+      for (let d = 1; d <= calendarDays; d++) {
+        const dayName = new Date(year, month - 1, d).toLocaleDateString('en-US', { weekday: 'long' });
+        if (officeDays.includes(dayName)) count++;
+      }
+      return count > 0 ? count : 26;
+    };
+
     // Transform to match frontend expectations safely
     const transformedSlips = slips.map(slip => {
       const empName = slip.employee ? `${slip.employee.firstName} ${slip.employee.lastName}`.trim() : slip.employeeName || `Employee #${slip.employeeId}`;
@@ -796,6 +807,7 @@ export const getAdminPayrollSlips = async (
       const desig = slip.employee?.designation || slip.designation || 'Employee';
       const dept = slip.employee?.department?.name || slip.department || 'General';
       const off = slip.employee?.office?.name || slip.officeName || 'Main Office';
+      const schedWorkingDays = slip.workingDays || calculateScheduledWorkingDays(slip.year, slip.month, slip.employee?.office);
 
       return {
         id: slip.employeeId,
@@ -825,7 +837,7 @@ export const getAdminPayrollSlips = async (
         extraHolidayPayout: slip.extraHolidayPayout || 0,
         extraWeeklyOffPayout: slip.extraWeeklyOffPayout || 0,
         dailySalary: slip.dailySalary || 0,
-        workingDays: slip.workingDays || 26,
+        workingDays: schedWorkingDays,
         totalCalendarDays: slip.totalCalendarDays || new Date(slip.year, slip.month, 0).getDate(),
         commissionEarned: slip.commissionEarned || 0,
         createdAt: slip.createdAt,
