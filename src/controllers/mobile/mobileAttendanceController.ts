@@ -1725,27 +1725,52 @@ export const downloadAttendanceReport = async (
     const { month, employeeId } = req.query;
     const targetMonth = (month as string) || getLocalDateString('Asia/Kolkata').slice(0, 7);
 
-    // Check if user is HR or Admin
+    // Check permissions and employee scope
     const user = await prisma.user.findUnique({
       where: { id: req.user?.id },
       include: { employee: true }
     });
 
-    if (!user || (user.role !== 'HR' && user.role !== 'ADMIN')) {
-      res.status(403).json({ success: false, message: 'Access denied. HR or Admin role required.' });
+    if (!user || !user.employee) {
+      res.status(404).json({ success: false, message: 'User or employee record not found.' });
+      return;
+    }
+
+    const isHRAdmin = [Role.HR, Role.ADMIN, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN].includes(user.role as any);
+    const isStoreManager = user.role === Role.STORE_MANAGER;
+    const userPerms = await getEffectiveUserPermissions(user.id);
+    const hasAccess = isHRAdmin || isStoreManager || Boolean(userPerms.canViewAttendance);
+
+    if (!hasAccess) {
+      res.status(403).json({ success: false, message: 'Access denied. You do not have permission to download attendance reports.', errorCode: 'ACCESS_DENIED' });
       return;
     }
 
     let employees;
-    if (employeeId) {
-      // Specific employee report
+    if (isHRAdmin) {
+      if (employeeId) {
+        employees = await prisma.employee.findMany({
+          where: { id: parseInt(employeeId as string, 10) },
+          include: { office: true, department: true },
+        });
+      } else {
+        employees = await prisma.employee.findMany({
+          include: { office: true, department: true },
+        });
+      }
+    } else if (isStoreManager) {
+      const storeWhere: any = user.employee.officeId ? { officeId: user.employee.officeId } : {};
+      if (employeeId) {
+        storeWhere.id = parseInt(employeeId as string, 10);
+      }
       employees = await prisma.employee.findMany({
-        where: { id: parseInt(employeeId as string) },
+        where: storeWhere,
         include: { office: true, department: true },
       });
     } else {
-      // All employees report
+      // Normal employee: Own report only
       employees = await prisma.employee.findMany({
+        where: { id: user.employee.id },
         include: { office: true, department: true },
       });
     }
