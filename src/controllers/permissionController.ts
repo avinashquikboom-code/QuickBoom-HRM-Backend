@@ -5,6 +5,7 @@ import { prisma } from '../utils/db';
 import bcrypt from 'bcryptjs';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
+import { normalizePermissionKey } from './accessRequestController';
 
 // Get global permissions for all roles
 export const getGlobalPermissions = async (req: Request, res: Response) => {
@@ -268,6 +269,8 @@ export const patchHREmployeePermissions = async (req: Request, res: Response) =>
 
     Object.keys(payload).forEach((key) => {
       if (typeof payload[key] === 'boolean') {
+        const normKey = normalizePermissionKey(key);
+        updatedPermissions[normKey] = payload[key];
         updatedPermissions[key] = payload[key];
       }
     });

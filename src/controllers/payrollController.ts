@@ -271,10 +271,36 @@ export const getEmployeePayrollHistory = async (
       ],
       take: limitNum
     });
+    const transformedHistory = payslips.map(ps => {
+      const grossSalary = Math.round((ps.baseSalary + ps.allowance + (ps.commissionEarned || 0) + (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0)) * 100) / 100;
+      return {
+        ...ps,
+        grossSalary,
+        netPay: ps.netSalary,
+        netTakeHomePay: ps.netSalary,
+        commissionEarned: ps.commissionEarned || 0,
+        extraPayout: (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0),
+        presentDays: ps.presentDays || 0,
+        absentDays: ps.absentDays || 0,
+        halfDays: ps.halfDays || 0,
+        paidLeaveDays: ps.paidLeaveDays || 0,
+        unpaidLeaveDays: ps.unpaidLeaveDays || 0,
+        holidayCount: ps.holidayCount || 0,
+        weeklyOffCount: ps.weeklyOffCount || 0,
+        holidayWorkedCount: ps.holidayWorkedCount || 0,
+        weeklyOffWorkedCount: ps.weeklyOffWorkedCount || 0,
+        dailySalary: ps.dailySalary || 0,
+        workingDays: ps.workingDays || 26,
+        totalCalendarDays: ps.totalCalendarDays || new Date(ps.year, ps.month, 0).getDate()
+      };
+    });
 
     res.json({
       success: true,
-      payslips
+      payslips: transformedHistory,
+      history: transformedHistory,
+      data: transformedHistory,
+      records: transformedHistory
     });
   } catch (error) {
     console.error('Get employee payroll history error:', error);

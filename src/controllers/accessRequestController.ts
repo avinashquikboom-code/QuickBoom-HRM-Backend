@@ -143,7 +143,69 @@ export const getAccessRequests = async (req: Request, res: Response): Promise<vo
 };
 
 /**
- * Approve access request, update UserPermission in DB, send FCM notification & log audit
+ * Comprehensive mapping & normalization of module names to internal permission keys
+ */
+export const normalizePermissionKey = (featureName: string): string => {
+  if (!featureName) return 'canViewProfile';
+  const clean = featureName.trim();
+
+  if (clean.startsWith('canView') || clean.startsWith('canLog') || clean.startsWith('canApply') || clean.startsWith('canSubmit') || clean.startsWith('canRequest')) {
+    return clean;
+  }
+
+  const map: Record<string, string> = {
+    'dashboard': 'canViewGeofence',
+    'Dashboard': 'canViewGeofence',
+    'attendance': 'canViewAttendance',
+    'Attendance': 'canViewAttendance',
+    'Attendance Reports': 'canViewAttendance',
+    'leave': 'canViewLeaveBalance',
+    'Leave': 'canViewLeaveBalance',
+    'Leave Reports': 'canViewLeaveBalance',
+    'sales': 'canLogSale',
+    'Sales': 'canLogSale',
+    'Sales Reports': 'canLogSale',
+    'wallet': 'canViewSalary',
+    'Wallet': 'canViewSalary',
+    'commission': 'canViewCommission',
+    'Commission': 'canViewCommission',
+    'Commission Reports': 'canViewCommission',
+    'salary': 'canViewSalary',
+    'Salary': 'canViewSalary',
+    'payroll': 'canViewSalary',
+    'Payroll': 'canViewSalary',
+    'expenses': 'canViewExpenses',
+    'Expenses': 'canViewExpenses',
+    'Expense Claims': 'canViewExpenses',
+    'Expense Reports': 'canViewExpenses',
+    'tasks': 'canViewTasks',
+    'Tasks': 'canViewTasks',
+    'shift': 'canViewShiftGuidelines',
+    'Shift': 'canViewShiftGuidelines',
+    'Shift Guidelines': 'canViewShiftGuidelines',
+    'remote_work': 'canViewRemoteWorkStatus',
+    'Remote Work': 'canViewRemoteWorkStatus',
+    'notifications': 'canViewNotifications',
+    'Notifications': 'canViewNotifications',
+    'profile': 'canViewProfile',
+    'Profile': 'canViewProfile',
+    'store': 'canViewStore',
+    'Store': 'canViewStore',
+    'reports': 'canViewReports',
+    'Reports': 'canViewReports',
+    'analytics': 'canViewAnalytics',
+    'Analytics': 'canViewAnalytics',
+    'audit_logs': 'canViewAuditLogs',
+    'Audit Logs': 'canViewAuditLogs',
+    'settings': 'canViewSettings',
+    'Settings': 'canViewSettings',
+  };
+
+  return map[clean] || map[clean.toLowerCase()] || `canView${clean.charAt(0).toUpperCase() + clean.slice(1)}`;
+};
+
+/**
+ * Approve access request, update UserPermission in DB atomically, send FCM notification & log audit
  */
 export const approveAccessRequest = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -160,41 +222,106 @@ export const approveAccessRequest = async (req: Request, res: Response): Promise
       return;
     }
 
-    // Update Access Request status
-    const updatedRequest = await prisma.featureAccessRequest.update({
-      where: { id },
-      data: {
-        status: 'APPROVED',
-        reviewedBy: String(reviewerId),
-        reviewedAt: new Date(),
-        reviewNote: req.body.reviewNote || 'Approved by HR Admin',
-      },
-      include: { employee: true },
-    });
+    const employee = accessRequest.employee;
+    let userId = employee.userId;
 
-    // Update UserPermission in Prisma DB
-    const userId = accessRequest.employee.userId;
-    const permKey = MODULE_TO_PERMISSION_KEY[accessRequest.featureName] || accessRequest.featureName;
-
-    if (userId) {
-      const existingUserPerm = await prisma.userPermission.findUnique({
-        where: { userId },
+    // Auto-link/provision User if employee record was unlinked
+    if (!userId) {
+      const user = await prisma.user.findFirst({
+        where: { email: { contains: employee.employeeCode.toLowerCase() } }
       });
-
-      const currentPerms = (existingUserPerm?.permissions as Record<string, boolean>) || {};
-      currentPerms[permKey] = true;
-
-      await prisma.userPermission.upsert({
-        where: { userId },
-        create: {
-          userId,
-          permissions: currentPerms,
-        },
-        update: {
-          permissions: currentPerms,
-        },
-      });
+      if (user) {
+        userId = user.id;
+        await prisma.employee.update({
+          where: { id: employee.id },
+          data: { userId: user.id }
+        });
+      }
     }
+
+    const permKey = normalizePermissionKey(accessRequest.featureName);
+
+    // Atomic transaction: Update AccessRequest, UserPermission, and FeatureAccess
+    const [updatedRequest] = await prisma.$transaction(async (tx) => {
+      const updatedReq = await tx.featureAccessRequest.update({
+        where: { id },
+        data: {
+          status: 'APPROVED',
+          reviewedBy: String(reviewerId),
+          reviewedAt: new Date(),
+          reviewNote: req.body.reviewNote || 'Approved by HR Admin',
+        },
+        include: { employee: true },
+      });
+
+      if (userId) {
+        const existingUserPerm = await tx.userPermission.findUnique({
+          where: { userId },
+        });
+
+        const currentPerms = (existingUserPerm?.permissions as Record<string, boolean>) || {};
+        currentPerms[permKey] = true;
+
+        // Automatically enable related operational flags for full module access
+        if (permKey === 'canViewCommission') currentPerms['canLogSale'] = true;
+        if (permKey === 'canViewLeaveBalance') currentPerms['canApplyLeave'] = true;
+        if (permKey === 'canViewExpenses') currentPerms['canSubmitExpenseClaim'] = true;
+        if (permKey === 'canViewSalary') currentPerms['canDownloadSalaryPDF'] = true;
+
+        await tx.userPermission.upsert({
+          where: { userId },
+          create: {
+            userId,
+            permissions: currentPerms,
+          },
+          update: {
+            permissions: currentPerms,
+          },
+        });
+      }
+
+      // Upsert FeatureAccess record for mobile status query
+      try {
+        await tx.featureAccess.upsert({
+          where: {
+            employeeId_featureName: {
+              employeeId: employee.id,
+              featureName: accessRequest.featureName,
+            }
+          },
+          create: {
+            employeeId: employee.id,
+            featureName: accessRequest.featureName,
+            isEnabled: true,
+            reason: 'Approved by HR',
+          },
+          update: {
+            isEnabled: true,
+            reason: 'Approved by HR',
+            updatedAt: new Date(),
+          }
+        });
+      } catch (faErr) {
+        console.warn('FeatureAccess upsert notice:', faErr);
+      }
+
+      // Create Audit Log entry
+      try {
+        await tx.auditLog.create({
+          data: {
+            action: 'ACCESS_REQUEST_APPROVED',
+            userId: typeof reviewerId === 'number' ? reviewerId : (Number(reviewerId) || null),
+            employeeId: accessRequest.employeeId,
+            ipAddress: req.ip || null,
+            deviceInfo: req.headers['user-agent'] || null,
+          },
+        });
+      } catch (auditErr) {
+        console.warn('AuditLog creation notice:', auditErr);
+      }
+
+      return [updatedReq];
+    });
 
     // Broadcast permission update event via WebSocket for instant live mobile sync
     try {
@@ -205,6 +332,7 @@ export const approveAccessRequest = async (req: Request, res: Response): Promise
           await ws.broadcastPermissionUpdate(userId, {
             userId,
             featureName: accessRequest.featureName,
+            permissionKey: permKey,
             status: 'APPROVED',
             permissionGranted: true,
           });
@@ -220,27 +348,12 @@ export const approveAccessRequest = async (req: Request, res: Response): Promise
         await firebaseNotificationService.sendNotificationToUser(
           userId,
           'Access Request Approved',
-          `Your request for ${accessRequest.featureName} module has been approved. Refresh app to access.`,
-          { type: 'ACCESS_REQUEST_APPROVED', featureName: accessRequest.featureName }
+          `Your request for ${accessRequest.featureName} access has been approved. Mobile features unlocked.`,
+          { type: 'ACCESS_REQUEST_APPROVED', featureName: accessRequest.featureName, permissionKey: permKey }
         );
       }
     } catch (fcmErr) {
       console.warn('FCM push notification notice:', fcmErr);
-    }
-
-    // Audit Log entry
-    try {
-      await prisma.auditLog.create({
-        data: {
-          action: 'ACCESS_REQUEST_APPROVED',
-          userId: typeof reviewerId === 'number' ? reviewerId : (Number(reviewerId) || null),
-          employeeId: accessRequest.employeeId,
-          ipAddress: req.ip || null,
-          deviceInfo: req.headers['user-agent'] || null,
-        },
-      });
-    } catch (auditErr) {
-      console.warn('AuditLog creation notice:', auditErr);
     }
 
     res.json({
