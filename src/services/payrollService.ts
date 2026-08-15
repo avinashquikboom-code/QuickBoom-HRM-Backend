@@ -7,19 +7,33 @@ export interface PayrollCalculation {
   month: number;
   year: number;
   baseSalary: number;
+  monthlySalary: number;
+  dailySalary: number;
   allowance: number;
   deductions: number;
+  statutoryDeductions: number;
+  policyDeductions: number;
   overtime: number;
   bonus: number;
   netSalary: number;
   grossSalary: number;
   workingDays: number;
+  totalCalendarDays: number;
   presentDays: number;
   absentDays: number;
   leaveDays: number;
   halfDays: number;
+  paidLeaveDays: number;
+  unpaidLeaveDays: number;
+  holidayCount: number;
+  weeklyOffCount: number;
+  holidayWorkedCount: number;
+  weeklyOffWorkedCount: number;
   halfDayDeduction: number;
-  leaveDeduction: number;
+  leaveDeduction: number; // unpaid leave deduction
+  absentDeduction: number;
+  extraHolidayPayout: number;
+  extraWeeklyOffPayout: number;
   commissionEarned: number;
   overtimeHours: number;
 }
@@ -44,6 +58,8 @@ export interface SalaryStructure {
   id: number;
   employeeId: number;
   baseSalary: number;
+  monthlySalary: number;
+  grossSalary: number;
   hra: number;
   da: number;
   conveyance: number;
@@ -60,7 +76,7 @@ export interface SalaryStructure {
 
 class PayrollService {
   /**
-   * Calculate payroll for an employee
+   * Calculate payroll for an employee with attendance-driven logic & status priority
    */
   async calculatePayroll(employeeId: number, month: number, year: number): Promise<PayrollCalculation> {
     try {
@@ -80,28 +96,31 @@ class PayrollService {
       // Get salary structure
       const salaryStructure = await this.getSalaryStructure(employeeId, new Date(year, month - 1, 1));
 
-      // Get attendance data for the month
-      const attendanceData = await this.getAttendanceData(employeeId, month, year);
+      // Monthly & Base Salary
+      const monthlySalary = salaryStructure.monthlySalary || salaryStructure.grossSalary || (salaryStructure.baseSalary + salaryStructure.hra + salaryStructure.medical + salaryStructure.conveyance + salaryStructure.special) || salaryStructure.baseSalary || 12000;
+      const baseSalary = salaryStructure.baseSalary || monthlySalary;
+      const totalAllowance = (salaryStructure.hra || 0) + (salaryStructure.medical || 0) + (salaryStructure.conveyance || 0) + (salaryStructure.special || 0);
 
-      // Calculate salary based on present days
-      // Formula: (baseSalary / workingDays) * presentDays
-      const workingDays = attendanceData.workingDays || 30;
-      const dailySalary = salaryStructure.baseSalary / workingDays;
-      const calculatedBaseSalary = dailySalary * attendanceData.presentDays;
+      // Get attendance breakdown data for the month
+      const attendanceData = await this.getAttendanceData(employeeId, month, year, employee.office);
 
-      // Calculate allowance (pro-rated based on present days)
-      const totalAllowance = salaryStructure.hra + salaryStructure.da + salaryStructure.conveyance + salaryStructure.medical + salaryStructure.special;
-      const dailyAllowance = totalAllowance / workingDays;
-      const calculatedAllowance = dailyAllowance * attendanceData.presentDays;
+      const workingDays = attendanceData.workingDays || 26;
+      const totalCalendarDays = attendanceData.totalCalendarDays || new Date(year, month, 0).getDate();
 
-      // Calculate half-day and leave deductions
-      const halfDayDeduction = attendanceData.halfDays * (dailySalary * 0.5);
-      const leaveDeduction = attendanceData.leaveDays * dailySalary;
-      
-      // Calculate overtime
+      // Daily Salary formula: Monthly Salary / Scheduled Working Days
+      const dailySalary = Math.round((monthlySalary / workingDays) * 100) / 100;
+
+      // Attendance Deductions (decimal-safe)
+      const absentDeduction = Math.round((attendanceData.absentDays * dailySalary) * 100) / 100;
+      const halfDayDeduction = Math.round((attendanceData.halfDays * 0.5 * dailySalary) * 100) / 100;
+      const unpaidLeaveDeduction = Math.round((attendanceData.unpaidLeaveDays * dailySalary) * 100) / 100;
+
+      // Extra Payouts for Holiday / Weekly-Off Work (default multiplier 1.0x)
+      const extraHolidayPayout = Math.round((attendanceData.holidayWorkedCount * dailySalary * 1.0) * 100) / 100;
+      const extraWeeklyOffPayout = Math.round((attendanceData.weeklyOffWorkedCount * dailySalary * 1.0) * 100) / 100;
+
+      // Calculate overtime & bonus (if any)
       const overtime = this.calculateOvertime(attendanceData, salaryStructure);
-      
-      // Calculate bonus (if any)
       const bonus = await this.calculateBonus(employeeId, month, year);
 
       // Fetch commission earned for this month
@@ -115,41 +134,65 @@ class PayrollService {
         },
         _sum: { commissionAmount: true }
       });
-      const commissionEarned = commAggregate._sum?.commissionAmount || 0;
-      
-      // Calculate gross salary
-      const grossSalary = calculatedBaseSalary + calculatedAllowance + overtime + bonus + commissionEarned;
-      
+      let commissionEarned = commAggregate._sum?.commissionAmount || 0;
+      if (commissionEarned === 0) {
+        const empCommSum = await prisma.commissionTransaction.aggregate({
+          where: {
+            employeeId,
+            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+          },
+          _sum: { commissionAmount: true }
+        });
+        commissionEarned = empCommSum._sum?.commissionAmount || 0;
+      }
+
+      // Gross Salary: Regular Monthly Salary + Extra Payouts + Bonus + Overtime + Commission
+      const grossSalary = Math.round((monthlySalary + extraHolidayPayout + extraWeeklyOffPayout + bonus + overtime + commissionEarned) * 100) / 100;
+
       // Calculate statutory deductions
-      const statutoryDeductions = this.calculateDeductions(grossSalary, salaryStructure, attendanceData);
-      
-      // Calculate policy-based deductions (late marks, leaves, absences)
+      const statutoryDeductions = this.calculateDeductions(grossSalary, salaryStructure);
+
+      // Calculate policy-based deductions
       const policyDeductions = await this.applyPolicyDeductions(employeeId, attendanceData, grossSalary);
-      
-      // Total deductions (including half-day & leave deductions)
-      const deductions = statutoryDeductions + policyDeductions + halfDayDeduction + leaveDeduction;
-      
-      // Calculate net salary
-      const netSalary = Math.max(0, grossSalary - deductions);
+
+      // Total Deductions
+      const totalDeductions = Math.round((statutoryDeductions + policyDeductions + absentDeduction + halfDayDeduction + unpaidLeaveDeduction) * 100) / 100;
+
+      // Net Salary
+      const netSalary = Math.max(0, Math.round((grossSalary - totalDeductions) * 100) / 100);
 
       const calculation: PayrollCalculation = {
         employeeId,
         month,
         year,
-        baseSalary: calculatedBaseSalary,
-        allowance: calculatedAllowance,
-        deductions,
+        baseSalary,
+        monthlySalary,
+        dailySalary,
+        allowance: totalAllowance,
+        deductions: totalDeductions,
+        statutoryDeductions,
+        policyDeductions,
         overtime,
         bonus,
         netSalary,
         grossSalary,
         workingDays,
+        totalCalendarDays,
         presentDays: attendanceData.presentDays,
         absentDays: attendanceData.absentDays,
-        leaveDays: attendanceData.leaveDays,
+        leaveDays: attendanceData.paidLeaveDays + attendanceData.unpaidLeaveDays,
         halfDays: attendanceData.halfDays,
+        paidLeaveDays: attendanceData.paidLeaveDays,
+        unpaidLeaveDays: attendanceData.unpaidLeaveDays,
+        holidayCount: attendanceData.holidayCount,
+        weeklyOffCount: attendanceData.weeklyOffCount,
+        holidayWorkedCount: attendanceData.holidayWorkedCount,
+        weeklyOffWorkedCount: attendanceData.weeklyOffWorkedCount,
         halfDayDeduction,
-        leaveDeduction,
+        leaveDeduction: unpaidLeaveDeduction,
+        absentDeduction,
+        extraHolidayPayout,
+        extraWeeklyOffPayout,
         commissionEarned,
         overtimeHours: attendanceData.overtimeHours
       };
@@ -272,6 +315,52 @@ class PayrollService {
   }
 
   /**
+   * Automatically generate payroll for completed period with strict idempotency (no duplicates)
+   */
+  async autoGenerateMonthlyPayroll(month: number, year: number): Promise<{ processed: number; skipped: number; totalAmount: number }> {
+    try {
+      const activeEmployees = await prisma.employee.findMany({
+        where: { status: { in: ['ACTIVE', 'active'] } }
+      });
+
+      let processed = 0;
+      let skipped = 0;
+      let totalAmount = 0;
+
+      for (const emp of activeEmployees) {
+        // Idempotency check: Check if payslip already exists for this period
+        const existingPayslip = await prisma.payslip.findUnique({
+          where: {
+            employeeId_month_year: {
+              employeeId: emp.id,
+              month,
+              year
+            }
+          }
+        });
+
+        if (existingPayslip) {
+          skipped++;
+          console.log(`ℹ️ [AutoPayroll] Payslip for employee #${emp.id} (${emp.employeeCode}) for ${month}/${year} already exists. Skipping.`);
+          continue;
+        }
+
+        const calc = await this.calculatePayroll(emp.id, month, year);
+        await this.savePayslip(calc);
+        await this.sendPayrollNotification(emp.id, calc);
+        processed++;
+        totalAmount += calc.netSalary;
+      }
+
+      console.log(`✅ [AutoPayroll] Completed for ${month}/${year}: Processed ${processed}, Skipped ${skipped}. Total Net Volume: ₹${totalAmount}`);
+      return { processed, skipped, totalAmount };
+    } catch (error) {
+      console.error('Auto generate monthly payroll error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get salary structure for an employee
    */
   async getSalaryStructure(employeeId: number, effectiveDate: Date): Promise<SalaryStructure> {
@@ -299,7 +388,7 @@ class PayrollService {
       }
 
       const basic = structure.basicSalary || structure.monthlySalary || 0;
-      const gross = structure.grossSalary || basic;
+      const gross = structure.grossSalary || structure.monthlySalary || basic;
       const pf = structure.pfEnabled ? basic * (structure.employeePfRate / 100) : 0;
       const esi = structure.esicEnabled ? gross * (structure.employeeEsicRate / 100) : 0;
 
@@ -307,6 +396,8 @@ class PayrollService {
         id: structure.id,
         employeeId: structure.employeeId,
         baseSalary: basic,
+        monthlySalary: structure.monthlySalary || gross,
+        grossSalary: gross,
         hra: structure.hra || 0,
         da: 0,
         conveyance: structure.travelAllowance || 0,
@@ -325,6 +416,8 @@ class PayrollService {
         id: 0,
         employeeId,
         baseSalary: 0,
+        monthlySalary: 0,
+        grossSalary: 0,
         hra: 0,
         da: 0,
         conveyance: 0,
@@ -383,6 +476,8 @@ class PayrollService {
         id: structure.id,
         employeeId: structure.employeeId,
         baseSalary: basicSalary,
+        monthlySalary: structure.monthlySalary || grossSalary,
+        grossSalary,
         hra,
         da: 0,
         conveyance: travelAllowance,
@@ -440,7 +535,7 @@ class PayrollService {
         total_deductions += p.deductions || 0;
 
         const st = p.status?.toLowerCase() || '';
-        if (st === 'approved') {
+        if (st === 'approved' || st === 'paid') {
           approved_payslips++;
         } else if (st === 'pending') {
           pending_payslips++;
@@ -527,84 +622,150 @@ class PayrollService {
   }
 
   /**
-   * Helper methods
+   * Day-by-day attendance & leave & holiday classification with deterministic priority
    */
-  private async getAttendanceData(employeeId: number, month: number, year: number): Promise<any> {
+  private async getAttendanceData(employeeId: number, month: number, year: number, office?: any): Promise<any> {
     try {
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 0);
+      const totalCalendarDays = new Date(year, month, 0).getDate();
+      const startDateStr = `${year}-${String(month).padStart(2, '0')}-01`;
+      const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(totalCalendarDays).padStart(2, '0')}`;
 
-      const attendance = await prisma.attendance.findMany({
+      const startDate = new Date(year, month - 1, 1, 0, 0, 0, 0);
+      const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+
+      // Fetch attendance records for month
+      const attendanceRecords = await prisma.attendance.findMany({
         where: {
           employeeId,
-          date: {
-            gte: startDate.toISOString(),
-            lte: endDate.toISOString()
-          }
+          date: { gte: startDateStr, lte: endDateStr }
         }
       });
 
-      // Get holidays for the month
+      // Fetch holidays for month
       const holidays = await prisma.holiday.findMany({
         where: {
-          date: {
-            gte: startDate.toISOString(),
-            lte: endDate.toISOString()
-          }
+          date: { gte: startDate, lte: endDate }
         }
       });
 
-      // Get employee's office to calculate actual working days
-      const employee = await prisma.employee.findUnique({
-        where: { id: employeeId },
-        include: { office: true }
+      // Fetch approved leave requests for employee covering month
+      const approvedLeaves = await prisma.leaveRequest.findMany({
+        where: {
+          employeeId,
+          status: 'APPROVED',
+          fromDate: { lte: endDate },
+          toDate: { gte: startDate }
+        }
       });
 
-      const office = employee?.office;
-      const workingDaysInMonth = office?.workingDays?.length || 5; // Default to 5 days
-      const totalDaysInMonth = new Date(year, month, 0).getDate();
-      
-      // Calculate actual working days (excluding weekends and holidays)
-      let actualWorkingDays = 0;
-      for (let day = 1; day <= totalDaysInMonth; day++) {
-        const date = new Date(year, month - 1, day);
-        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-        const isWorkingDay = office?.workingDays?.includes(dayName) || false;
-        const isHoliday = holidays.some(h => new Date(h.date).toDateString() === date.toDateString());
-        
-        if (isWorkingDay && !isHoliday) {
-          actualWorkingDays++;
+      const officeWorkingDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+      let scheduledWorkingDays = 0;
+      let presentDays = 0;
+      let halfDays = 0;
+      let paidLeaveDays = 0;
+      let unpaidLeaveDays = 0;
+      let absentDays = 0;
+      let holidayCount = 0;
+      let weeklyOffCount = 0;
+      let holidayWorkedCount = 0;
+      let weeklyOffWorkedCount = 0;
+      let lateMarks = 0;
+
+      for (let day = 1; day <= totalCalendarDays; day++) {
+        const dayStr = String(day).padStart(2, '0');
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${dayStr}`;
+        const dateObj = new Date(year, month - 1, day, 12, 0, 0);
+        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+
+        const isWeeklyOff = !officeWorkingDays.includes(dayName);
+        const isHoliday = holidays.some(h => {
+          const hStr = h.date.toISOString().split('T')[0];
+          return hStr === dateStr;
+        });
+
+        const att = attendanceRecords.find(a => a.date === dateStr);
+        const leave = approvedLeaves.find(l => {
+          const fStr = l.fromDate.toISOString().split('T')[0];
+          const tStr = l.toDate.toISOString().split('T')[0];
+          return fStr <= dateStr && dateStr <= tStr;
+        });
+
+        // 9-Tier Deterministic Priority Classification
+        if (isHoliday) {
+          if (att && (att.checkIn || att.status === 'PRESENT' || att.status === 'HOLIDAY_WORKED')) {
+            holidayWorkedCount++;
+          } else {
+            holidayCount++;
+          }
+        } else if (isWeeklyOff) {
+          if (att && (att.checkIn || att.status === 'PRESENT' || att.status === 'WEEKLY_OFF_WORKED')) {
+            weeklyOffWorkedCount++;
+          } else {
+            weeklyOffCount++;
+          }
+        } else {
+          // Scheduled Working Day
+          scheduledWorkingDays++;
+
+          if (att) {
+            if (att.status === 'PRESENT') {
+              presentDays++;
+              if (att.checkIn && office?.workingHoursStart) {
+                const checkInTime = new Date(att.checkIn).toTimeString().slice(0, 5);
+                if (checkInTime > office.workingHoursStart) {
+                  lateMarks++;
+                }
+              }
+            } else if (att.status === 'HALF_DAY') {
+              halfDays++;
+            } else if (att.status === 'LEAVE' || att.status === 'PAID') {
+              if (leave && (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID')) {
+                unpaidLeaveDays++;
+              } else {
+                paidLeaveDays++;
+              }
+            } else if (att.status === 'ABSENT') {
+              if (leave) {
+                if (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID') {
+                  unpaidLeaveDays++;
+                } else {
+                  paidLeaveDays++;
+                }
+              } else {
+                absentDays++;
+              }
+            } else {
+              presentDays++;
+            }
+          } else if (leave) {
+            if (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID') {
+              unpaidLeaveDays++;
+            } else {
+              paidLeaveDays++;
+            }
+          } else {
+            absentDays++;
+          }
         }
       }
 
-      const presentDays = attendance.filter(a => a.status === 'PRESENT').length;
-      const absentDays = attendance.filter(a => a.status === 'ABSENT').length;
-      const leaveDays = attendance.filter(a => a.status === 'LEAVE' || a.status === 'UNPLANNED_LEAVE').length;
-      const halfDays = attendance.filter(a => a.status === 'HALF_DAY').length;
-      
-      // Count late marks (check-in after office start time)
-      const officeStartTime = office?.workingHoursStart || '09:00';
-      const lateMarks = attendance.filter(a => {
-        if (a.checkIn && a.status === 'PRESENT') {
-          const checkInTime = new Date(a.checkIn).toTimeString().slice(0, 5);
-          return checkInTime > officeStartTime;
-        }
-        return false;
-      }).length;
-      
-      // Calculate overtime hours (placeholder)
-      const overtimeHours = 0;
+      const finalWorkingDays = scheduledWorkingDays > 0 ? scheduledWorkingDays : (totalCalendarDays - weeklyOffCount - holidayCount) || 26;
 
       return {
-        workingDays: actualWorkingDays,
-        totalDaysInMonth,
+        workingDays: finalWorkingDays,
+        totalCalendarDays,
         presentDays,
         absentDays,
-        leaveDays,
         halfDays,
+        paidLeaveDays,
+        unpaidLeaveDays,
+        holidayCount,
+        weeklyOffCount,
+        holidayWorkedCount,
+        weeklyOffWorkedCount,
         lateMarks,
-        holidays: holidays.length,
-        overtimeHours
+        overtimeHours: 0
       };
     } catch (error) {
       console.error('Get attendance data error:', error);
@@ -613,18 +774,14 @@ class PayrollService {
   }
 
   private calculateOvertime(attendanceData: any, salaryStructure: SalaryStructure): number {
-    // Placeholder for overtime calculation
-    // This would typically be based on overtime hours and overtime rate
     return 0;
   }
 
   private async calculateBonus(employeeId: number, month: number, year: number): Promise<number> {
-    // Placeholder for bonus calculation
-    // This could be based on performance, company policy, etc.
     return 0;
   }
 
-  private calculateDeductions(grossSalary: number, structure: SalaryStructure, attendanceData: any): number {
+  private calculateDeductions(grossSalary: number, structure: SalaryStructure): number {
     let deductions = 0;
 
     // Statutory deductions
@@ -633,17 +790,11 @@ class PayrollService {
     deductions += structure.professionalTax || 0;
     deductions += structure.tds || 0;
 
-    // Attendance-based deductions
-    const absentDays = attendanceData.absentDays;
-    const dailySalary = grossSalary / attendanceData.workingDays;
-    deductions += absentDays * dailySalary * 0.5; // 50% deduction for absent days
-
     return deductions;
   }
 
   private async applyPolicyDeductions(employeeId: number, attendanceData: any, grossSalary: number): Promise<number> {
     try {
-      // Get applicable policies for the employee
       const employee = await prisma.employee.findUnique({
         where: { id: employeeId },
         include: {
@@ -661,7 +812,7 @@ class PayrollService {
           OR: [
             { departmentId: employee.departmentId },
             { officeId: employee.officeId },
-            { departmentId: null, officeId: null } // Global policies
+            { departmentId: null, officeId: null }
           ]
         }
       });
@@ -688,14 +839,13 @@ class PayrollService {
         deduction = this.calculateLateMarkDeduction(policy, attendanceData.lateMarks, grossSalary);
         break;
       case 'LEAVE':
-        deduction = this.calculateLeaveDeduction(policy, attendanceData.leaveDays, grossSalary);
+        deduction = this.calculateLeaveDeduction(policy, attendanceData.unpaidLeaveDays, grossSalary);
         break;
       case 'ABSENT':
         deduction = this.calculateAbsentDeduction(policy, attendanceData.absentDays, grossSalary);
         break;
     }
 
-    // Apply max deduction if set
     if (policy.maxDeduction && deduction > policy.maxDeduction) {
       deduction = policy.maxDeduction;
     }
@@ -782,6 +932,21 @@ class PayrollService {
           designation: desigName,
           department: deptName,
           officeName: offName,
+          presentDays: calculation.presentDays,
+          absentDays: calculation.absentDays,
+          halfDays: calculation.halfDays,
+          paidLeaveDays: calculation.paidLeaveDays,
+          unpaidLeaveDays: calculation.unpaidLeaveDays,
+          holidayCount: calculation.holidayCount,
+          weeklyOffCount: calculation.weeklyOffCount,
+          holidayWorkedCount: calculation.holidayWorkedCount,
+          weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
+          extraHolidayPayout: calculation.extraHolidayPayout,
+          extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+          dailySalary: calculation.dailySalary,
+          workingDays: calculation.workingDays,
+          totalCalendarDays: calculation.totalCalendarDays,
+          commissionEarned: calculation.commissionEarned,
           status: 'Approved',
           updatedAt: new Date()
         },
@@ -799,6 +964,21 @@ class PayrollService {
           designation: desigName,
           department: deptName,
           officeName: offName,
+          presentDays: calculation.presentDays,
+          absentDays: calculation.absentDays,
+          halfDays: calculation.halfDays,
+          paidLeaveDays: calculation.paidLeaveDays,
+          unpaidLeaveDays: calculation.unpaidLeaveDays,
+          holidayCount: calculation.holidayCount,
+          weeklyOffCount: calculation.weeklyOffCount,
+          holidayWorkedCount: calculation.holidayWorkedCount,
+          weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
+          extraHolidayPayout: calculation.extraHolidayPayout,
+          extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+          dailySalary: calculation.dailySalary,
+          workingDays: calculation.workingDays,
+          totalCalendarDays: calculation.totalCalendarDays,
+          commissionEarned: calculation.commissionEarned,
           netInWords: '',
           createdAt: new Date()
         }

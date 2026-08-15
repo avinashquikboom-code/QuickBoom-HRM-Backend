@@ -305,14 +305,83 @@ export const downloadPayslip = async (
     const totalDeductions = payslip.deductions;
 
     const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
-    const joinDate = payslip.employee?.joiningDate || payslip.employee?.createdAt;
-    let totalServiceMonths = 1;
-    if (joinDate) {
-      const pDate = new Date(payslip.year, payslip.month - 1, 1);
-      const jDate = new Date(joinDate);
-      const diffMonths = (pDate.getFullYear() - jDate.getFullYear()) * 12 + (pDate.getMonth() - jDate.getMonth()) + 1;
-      totalServiceMonths = Math.max(1, diffMonths);
+
+    const monthStart = new Date(payslip.year, payslip.month - 1, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(payslip.year, payslip.month, 0, 23, 59, 59, 999);
+    const commAggregate = await prisma.commissionTransaction.aggregate({
+      where: {
+        employeeId: payslip.employeeId,
+        createdAt: { gte: monthStart, lte: monthEnd },
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+      },
+      _sum: { commissionAmount: true }
+    });
+    let commissionEarned = commAggregate._sum?.commissionAmount || 0;
+    if (commissionEarned === 0) {
+      const empCommSum = await prisma.commissionTransaction.aggregate({
+        where: {
+          employeeId: payslip.employeeId,
+          status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+        },
+        _sum: { commissionAmount: true }
+      });
+      commissionEarned = empCommSum._sum?.commissionAmount || 0;
     }
+
+    const earningsTableBody: any[] = [
+      // Table Headers
+      [
+        { text: 'Earnings', bold: true, fillColor: '#f3f4f6' },
+        { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' },
+        { text: 'Deductions', bold: true, fillColor: '#f3f4f6' },
+        { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' }
+      ],
+      // Row 1
+      [
+        { text: 'Basic Salary' },
+        { text: `Rs. ${basic.toLocaleString('en-IN')}`, alignment: 'right' },
+        { text: 'Provident Fund (PF)' },
+        { text: `Rs. ${pf.toLocaleString('en-IN')}`, alignment: 'right' }
+      ],
+      // Row 2
+      [
+        { text: 'House Rent Allowance (HRA)' },
+        { text: `Rs. ${hra.toLocaleString('en-IN')}`, alignment: 'right' },
+        { text: 'ESIC' },
+        { text: `Rs. ${esic.toLocaleString('en-IN')}`, alignment: 'right' }
+      ],
+      // Row 3
+      [
+        { text: 'Allowances (Travel/Medical)' },
+        { text: `Rs. ${(ta + medical).toLocaleString('en-IN')}`, alignment: 'right' },
+        { text: 'Other Deductions' },
+        { text: `Rs. ${otherDeductions.toLocaleString('en-IN')}`, alignment: 'right' }
+      ],
+      // Row 4
+      [
+        { text: 'Special Allowance & Bonus' },
+        { text: `Rs. ${(finalSpecial + incentive + bonus).toLocaleString('en-IN')}`, alignment: 'right' },
+        { text: '' },
+        { text: '' }
+      ]
+    ];
+
+    if (commissionEarned > 0) {
+      earningsTableBody.push([
+        { text: 'Commission' },
+        { text: `Rs. ${commissionEarned.toLocaleString('en-IN')}`, alignment: 'right' },
+        { text: '' },
+        { text: '' }
+      ]);
+    }
+
+    // Totals
+    earningsTableBody.push([
+      { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
+      { text: `Rs. ${grossEarnings.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
+      { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
+      { text: `Rs. ${totalDeductions.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
+    ]);
 
     const docDefinition = {
       content: [
@@ -343,7 +412,6 @@ export const downloadPayslip = async (
                     { text: 'Office / Branch:     ', bold: true }, payslip.officeName, '\n',
                     { text: 'Pay Period:          ', bold: true }, periodLabel, '\n',
                     { text: 'Total Days of Month: ', bold: true }, `${totalDaysInMonth} Days`, '\n',
-                    { text: 'Total Months:        ', bold: true }, `${totalServiceMonths} ${totalServiceMonths === 1 ? 'Month' : 'Months'}`, '\n',
                     { text: 'Document ID:         ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
                     { text: 'Status:              ', bold: true }, 'PAID'
                   ],
@@ -361,50 +429,7 @@ export const downloadPayslip = async (
         {
           table: {
             widths: ['*', 'auto', '*', 'auto'],
-            body: [
-              // Table Headers
-              [
-                { text: 'Earnings', bold: true, fillColor: '#f3f4f6' },
-                { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' },
-                { text: 'Deductions', bold: true, fillColor: '#f3f4f6' },
-                { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' }
-              ],
-              // Row 1
-              [
-                { text: 'Basic Salary' },
-                { text: `Rs. ${basic.toLocaleString('en-IN')}`, alignment: 'right' },
-                { text: 'Provident Fund (PF)' },
-                { text: `Rs. ${pf.toLocaleString('en-IN')}`, alignment: 'right' }
-              ],
-              // Row 2
-              [
-                { text: 'House Rent Allowance (HRA)' },
-                { text: `Rs. ${hra.toLocaleString('en-IN')}`, alignment: 'right' },
-                { text: 'ESIC' },
-                { text: `Rs. ${esic.toLocaleString('en-IN')}`, alignment: 'right' }
-              ],
-              // Row 3
-              [
-                { text: 'Allowances (Travel/Medical)' },
-                { text: `Rs. ${(ta + medical).toLocaleString('en-IN')}`, alignment: 'right' },
-                { text: 'Other Deductions' },
-                { text: `Rs. ${otherDeductions.toLocaleString('en-IN')}`, alignment: 'right' }
-              ],
-              // Row 4
-              [
-                { text: 'Special Allowance & Bonus' },
-                { text: `Rs. ${(finalSpecial + incentive + bonus).toLocaleString('en-IN')}`, alignment: 'right' },
-                { text: '' },
-                { text: '' }
-              ],
-              // Totals
-              [
-                { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
-                { text: `Rs. ${grossEarnings.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
-                { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
-                { text: `Rs. ${totalDeductions.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
-              ]
-            ]
+            body: earningsTableBody
           },
           layout: 'grid'
         },

@@ -469,25 +469,40 @@ enum Role {
 }
 
 model Payslip {
-  id                Int      @id @default(autoincrement())
-  employeeId        Int
-  month             Int
-  year              Int
-  baseSalary        Float
-  allowance         Float
-  deductions        Float
-  netSalary         Float
-  status            String   @default("Approved")
-  employeeCode      String
-  employeeName      String
-  designation       String
-  department        String
-  officeName        String
-  netInWords        String
-  advanceDeduction  Float    @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  employee          Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  id                    Int      @id @default(autoincrement())
+  employeeId            Int
+  month                 Int
+  year                  Int
+  baseSalary            Float
+  allowance             Float
+  deductions            Float
+  netSalary             Float
+  status                String   @default("Approved")
+  employeeCode          String
+  employeeName          String
+  designation           String
+  department            String
+  officeName            String
+  netInWords            String
+  advanceDeduction      Float    @default(0)
+  presentDays           Int      @default(0)
+  absentDays            Int      @default(0)
+  halfDays              Int      @default(0)
+  paidLeaveDays         Int      @default(0)
+  unpaidLeaveDays       Int      @default(0)
+  holidayCount          Int      @default(0)
+  weeklyOffCount        Int      @default(0)
+  holidayWorkedCount    Int      @default(0)
+  weeklyOffWorkedCount  Int      @default(0)
+  extraHolidayPayout    Float    @default(0)
+  extraWeeklyOffPayout  Float    @default(0)
+  dailySalary           Float    @default(0)
+  workingDays           Int      @default(26)
+  totalCalendarDays     Int      @default(30)
+  commissionEarned      Float    @default(0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  employee              Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, month, year])
 }

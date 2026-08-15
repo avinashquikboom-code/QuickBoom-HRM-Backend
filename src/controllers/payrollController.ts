@@ -323,14 +323,36 @@ export const generatePayslipPDF = async (
     const fmt = (n: number) => `\u20b9${n.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
     const totalDaysInMonth = new Date(yearNum, monthNum, 0).getDate();
-    const joinDate = payslip.employee?.joiningDate || payslip.employee?.createdAt;
-    let totalServiceMonths = 1;
-    if (joinDate) {
-      const pDate = new Date(yearNum, monthNum - 1, 1);
-      const jDate = new Date(joinDate);
-      const diffMonths = (pDate.getFullYear() - jDate.getFullYear()) * 12 + (pDate.getMonth() - jDate.getMonth()) + 1;
-      totalServiceMonths = Math.max(1, diffMonths);
+
+    const monthStart = new Date(yearNum, monthNum - 1, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(yearNum, monthNum, 0, 23, 59, 59, 999);
+    const commAggregate = await prisma.commissionTransaction.aggregate({
+      where: {
+        employeeId: payslip.employeeId,
+        createdAt: { gte: monthStart, lte: monthEnd },
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+      },
+      _sum: { commissionAmount: true }
+    });
+    const commissionEarned = (payslip as any).commissionEarned ?? (commAggregate._sum?.commissionAmount || 0);
+
+    const earningsTableBody: any[] = [
+      [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }],
+      [{ text: 'Basic Salary',    fontSize: 9, color: '#111827', fillColor: '#F9FAFB' }, { text: fmt(payslip.baseSalary),  fontSize: 9, alignment: 'right', color: '#111827', fillColor: '#F9FAFB' }],
+      [{ text: 'Allowances',      fontSize: 9, color: '#111827' },                       { text: fmt(payslip.allowance),   fontSize: 9, alignment: 'right', color: '#111827' }],
+    ];
+
+    if (commissionEarned > 0) {
+      earningsTableBody.push([
+        { text: 'Commission', fontSize: 9, color: '#111827' },
+        { text: fmt(commissionEarned), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
     }
+
+    earningsTableBody.push([
+      { text: 'Total Earnings',  fontSize: 9, bold: true, color: PRIMARY, fillColor: '#F0FDFA' },
+      { text: fmt(grossSalary), fontSize: 9, bold: true, alignment: 'right', color: PRIMARY, fillColor: '#F0FDFA' }
+    ]);
 
     const docDefinition: any = {
       pageSize: 'A4',
@@ -382,21 +404,49 @@ export const generatePayslipPDF = async (
             { text: [{ text: 'Month: ',               bold: true, fontSize: 8 }, { text: monthLabel,                  fontSize: 8, color: '#374151' }] },
             { text: [{ text: 'Office: ',              bold: true, fontSize: 8 }, { text: payslip.officeName || '\u2014', fontSize: 8, color: '#374151' }] },
             { text: [{ text: 'Total Days of Month: ', bold: true, fontSize: 8 }, { text: `${totalDaysInMonth} Days`,  fontSize: 8, color: '#374151' }] },
-            { text: [{ text: 'Total Months: ',        bold: true, fontSize: 8 }, { text: `${totalServiceMonths} ${totalServiceMonths === 1 ? 'Month' : 'Months'}`, fontSize: 8, color: '#374151' }] },
             { text: [{ text: 'Pay Date: ',            bold: true, fontSize: 8 }, { text: generatedOn,                 fontSize: 8, color: '#374151' }] },
             { text: [{ text: 'Status: ',              bold: true, fontSize: 8 }, { text: payslip.status, fontSize: 8, bold: true, color: statusColor }] },
           ], width: '50%' },
         ], margin: [0,0,0,16] },
         { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E5E7EB' }], margin: [0,0,0,16] },
+        // Attendance Summary Section
+        { text: 'Attendance Summary', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
+        { table: {
+            widths: ['*', 'auto', '*', 'auto'],
+            body: [
+              [
+                { text: 'Total Calendar Days', fontSize: 8, color: '#4B5563' }, { text: `${payslip.totalCalendarDays || totalDaysInMonth}`, fontSize: 8, bold: true },
+                { text: 'Scheduled Working Days', fontSize: 8, color: '#4B5563' }, { text: `${payslip.workingDays || 26}`, fontSize: 8, bold: true }
+              ],
+              [
+                { text: 'Present Days', fontSize: 8, color: '#4B5563' }, { text: `${payslip.presentDays || 0}`, fontSize: 8, bold: true, color: '#059669' },
+                { text: 'Half Days', fontSize: 8, color: '#4B5563' }, { text: `${payslip.halfDays || 0}`, fontSize: 8, bold: true, color: '#D97706' }
+              ],
+              [
+                { text: 'Paid Leave', fontSize: 8, color: '#4B5563' }, { text: `${payslip.paidLeaveDays || 0}`, fontSize: 8, bold: true },
+                { text: 'Unpaid Leave', fontSize: 8, color: '#4B5563' }, { text: `${payslip.unpaidLeaveDays || 0}`, fontSize: 8, bold: true, color: '#DC2626' }
+              ],
+              [
+                { text: 'Absent Days', fontSize: 8, color: '#4B5563' }, { text: `${payslip.absentDays || 0}`, fontSize: 8, bold: true, color: '#DC2626' },
+                { text: 'Holidays (Not Worked)', fontSize: 8, color: '#4B5563' }, { text: `${payslip.holidayCount || 0}`, fontSize: 8, bold: true }
+              ],
+              [
+                { text: 'Weekly Offs', fontSize: 8, color: '#4B5563' }, { text: `${payslip.weeklyOffCount || 0}`, fontSize: 8, bold: true },
+                { text: 'Holiday Worked', fontSize: 8, color: '#4B5563' }, { text: `${payslip.holidayWorkedCount || 0}`, fontSize: 8, bold: true, color: PRIMARY }
+              ],
+              [
+                { text: 'Weekly Off Worked', fontSize: 8, color: '#4B5563' }, { text: `${payslip.weeklyOffWorkedCount || 0}`, fontSize: 8, bold: true, color: PRIMARY },
+                { text: 'Daily Salary', fontSize: 8, color: '#4B5563' }, { text: payslip.dailySalary ? fmt(payslip.dailySalary) : '\u2014', fontSize: 8, bold: true }
+              ]
+            ]
+          },
+          layout: 'lightHorizontalLines',
+          margin: [0,0,0,16]
+        },
         // Earnings
         { text: 'Earnings', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
         { table: { headerRows: 1, widths: ['*', 120],
-            body: [
-              [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }],
-              [{ text: 'Basic Salary',    fontSize: 9, color: '#111827', fillColor: '#F9FAFB' }, { text: fmt(payslip.baseSalary),  fontSize: 9, alignment: 'right', color: '#111827', fillColor: '#F9FAFB' }],
-              [{ text: 'Allowances',      fontSize: 9, color: '#111827' },                       { text: fmt(payslip.allowance),   fontSize: 9, alignment: 'right', color: '#111827' }],
-              [{ text: 'Total Earnings',  fontSize: 9, bold: true, color: PRIMARY, fillColor: '#F0FDFA' }, { text: fmt(grossSalary), fontSize: 9, bold: true, alignment: 'right', color: PRIMARY, fillColor: '#F0FDFA' }],
-            ],
+            body: earningsTableBody,
           },
           layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
           margin: [0,0,0,16],
