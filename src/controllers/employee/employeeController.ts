@@ -4,6 +4,7 @@ import { prisma, ensureBankEditTable } from '../../utils/db';
 import { pushNotificationService } from '../../services/pushNotificationService';
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 import { CommissionService } from '../../services/commissionService';
+import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -58,6 +59,7 @@ export const fetchEmployeeProfile = async (
 
     if (employee && employee.user && employee.user.profile) {
       const { profile } = employee.user;
+      const userPermissions = await getEffectiveUserPermissions(employee.user.id);
       res.json({
         success: true,
         employee: {
@@ -89,7 +91,9 @@ export const fetchEmployeeProfile = async (
         user: {
           role: employee.user?.role || 'EMPLOYEE',
           isActive: employee.user?.isActive ?? true,
+          permissions: userPermissions,
         },
+        permissions: userPermissions,
       });
       return;
     }
@@ -102,6 +106,7 @@ export const fetchEmployeeProfile = async (
       });
 
       if (user && user.profile) {
+        const userPermissions = await getEffectiveUserPermissions(user.id);
         res.json({
           success: true,
           employee: {
@@ -131,7 +136,9 @@ export const fetchEmployeeProfile = async (
           user: {
             role: user.role,
             isActive: user.isActive,
+            permissions: userPermissions,
           },
+          permissions: userPermissions,
         });
         return;
       }

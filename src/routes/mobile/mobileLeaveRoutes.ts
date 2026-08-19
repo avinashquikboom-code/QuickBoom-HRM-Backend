@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
-import { requirePermission } from '../../middlewares/permissionCheckMiddleware';
+import { requirePermission, requireAnyPermission } from '../../middlewares/permissionCheckMiddleware';
 import { Role } from '@prisma/client';
 import {
   fetchMyLeaves,
@@ -19,7 +19,7 @@ const router = Router();
 router.use(authMiddleware);
 
 // GET /api/mobile/leave/my-leaves - Fetch employee's leave requests and balances
-router.get('/my-leaves', requirePermission('canViewLeaveBalance'), fetchMyLeaves);
+router.get('/my-leaves', requireAnyPermission(['canViewLeaveBalance', 'canViewLeaveHistory']), fetchMyLeaves);
 
 // POST /api/mobile/leave/apply - Apply for leave
 router.post('/apply', requirePermission('canApplyLeave'), applyLeave);

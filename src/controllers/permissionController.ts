@@ -192,7 +192,40 @@ export const updateUserPermissions = async (req: Request, res: Response) => {
       create: { userId: targetUser.id, permissions },
     });
 
-    res.json({ message: 'User permissions updated successfully', permissions: updated.permissions });
+    const effective = await getEffectiveUserPermissions(targetUser.id);
+
+    // Send FCM Push Notification to employee
+    try {
+      await firebaseNotificationService.sendNotificationToUser(
+        targetUser.id,
+        'Permissions Updated',
+        'Your access permissions have been updated by HR. Mobile features refreshed.',
+        { type: 'PERMISSIONS_UPDATED' }
+      );
+    } catch (fcmErr) {
+      console.warn('⚠️ [FCM] Notification notice:', fcmErr);
+    }
+
+    // Broadcast via WebSocket
+    try {
+      const ws = getWebSocketInstance();
+      if (ws) {
+        ws.getServer().to(`user_${targetUser.id}`).emit('permissions_updated', {
+          userId: targetUser.id,
+          permissions: effective,
+          timestamp: new Date().toISOString(),
+        });
+        ws.getServer().emit('permissions_updated', {
+          userId: targetUser.id,
+          permissions: effective,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (wsErr) {
+      console.warn('⚠️ [WS] Failed to broadcast permission update:', wsErr);
+    }
+
+    res.json({ message: 'User permissions updated successfully', permissions: updated.permissions, effectivePermissions: effective });
   } catch (error) {
     console.error('Error updating user permissions:', error);
     res.status(500).json({ error: 'Server error updating user permissions' });

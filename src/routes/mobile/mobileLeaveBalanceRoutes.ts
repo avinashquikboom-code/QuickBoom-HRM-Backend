@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
 import { Role } from '@prisma/client';
+import { requirePermission } from '../../middlewares/permissionCheckMiddleware';
 import {
   getMyLeaveBalance,
   getAllEmployeesLeaveBalances,
@@ -16,8 +17,13 @@ const router = Router();
 // Apply authentication middleware to all routes
 router.use(authMiddleware);
 
-// GET /api/mobile/leave-balance/me - Get own leave balance (allow all roles)
-router.get('/me', roleMiddleware([Role.STORE_MANAGER, Role.SALESMAN, Role.HELPER, Role.EMPLOYEE, Role.HR, Role.SUPER_ADMIN, Role.ADMIN]), getMyLeaveBalance);
+// GET /api/mobile/leave-balance/me - Get own leave balance (allow all roles with permission)
+router.get(
+  '/me',
+  roleMiddleware([Role.STORE_MANAGER, Role.SALESMAN, Role.HELPER, Role.EMPLOYEE, Role.HR, Role.SUPER_ADMIN, Role.ADMIN]),
+  requirePermission('canViewLeaveBalance'),
+  getMyLeaveBalance
+);
 
 // Management routes - require Store Manager or HR role
 router.use(roleMiddleware([Role.STORE_MANAGER, Role.HR, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN]));
