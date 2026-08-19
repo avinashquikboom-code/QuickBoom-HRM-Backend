@@ -124,17 +124,19 @@ function getLocalDateString(timezone: string = 'Asia/Kolkata', dateInput: Date =
 // Mobile Punch In
 export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { latitude, longitude } = req.body;
+    const {
+      latitude,
+      longitude,
+      notes = 'Punch in recorded via mobile app',
+      clientTimestamp,
+      timezone,
+      isFingerprint = false,
+      isRemote = false,
+    } = req.body;
 
     console.log('=== MOBILE ATTENDANCE PUNCH IN API CALLED ===');
-    console.log('Request body:', { latitude, longitude });
+    console.log('Request body:', { latitude, longitude, timezone, isFingerprint, isRemote });
     console.log('User making request:', req.user?.email, 'User ID:', req.user?.id);
-
-    // Generate internal notes and timestamp
-    const notes = 'Punch in recorded via mobile app';
-    const clientTimestamp = new Date().toISOString();
-    const timezone = 'Asia/Kolkata';
-    const isFingerprint = false;
 
     // Enhanced logging for debugging
     console.log('🕒 MOBILE PUNCH IN REQUEST:', {
@@ -224,18 +226,55 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       where: {
         employeeId: employee.id,
         date: today,
-        checkIn: { not: null }
+      },
+      orderBy: { id: 'desc' },
+      include: {
+        office: true,
+        breakRecords: true,
       }
     });
 
     if (existingAttendance && existingAttendance.checkIn) {
-      res.status(400).json({
-        success: false,
+      console.log('ℹ️ [PUNCH_IN_DUPLICATE_CHECK] Employee already punched in today:', {
+        employeeId: employee.id,
+        attendanceId: existingAttendance.id,
+        attendanceDate: existingAttendance.date,
+        checkIn: existingAttendance.checkIn.toISOString(),
+        checkOut: existingAttendance.checkOut?.toISOString() || null,
+        status: existingAttendance.status,
+        serverDate: punchInTime.toISOString(),
+        employeeTimezone: userTimezone
+      });
+
+      res.json({
+        success: true,
         message: 'Already punched in today.',
-        errorCode: 'ALREADY_PUNCHED_IN',
         data: {
+          id: existingAttendance.id,
+          employeeId: existingAttendance.employeeId,
+          date: existingAttendance.date,
+          checkIn: existingAttendance.checkIn,
           checkInTime: existingAttendance.checkIn,
-          status: existingAttendance.status
+          checkOut: existingAttendance.checkOut,
+          isOnBreak: existingAttendance.isOnBreak,
+          breakStartTime: existingAttendance.breakStartTime,
+          totalBreakSeconds: existingAttendance.totalBreakSeconds,
+          location: existingAttendance.latitude && existingAttendance.longitude ? {
+            latitude: existingAttendance.latitude,
+            longitude: existingAttendance.longitude
+          } : null,
+          office: existingAttendance.office ? {
+            name: existingAttendance.office.name,
+            address: existingAttendance.office.address
+          } : (employee.office ? {
+            name: employee.office.name,
+            address: employee.office.address
+          } : null),
+          status: existingAttendance.status,
+          notes: existingAttendance.notes,
+          clientTimestamp: clientTimestamp || punchInTime.toISOString(),
+          timezone: userTimezone,
+          timestampSource: 'server'
         }
       });
       return;
@@ -298,71 +337,100 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     let isLate = false;
     
     if (employee.shiftAssignments.length > 0) {
-      const activeShiftAssignment = employee.shiftAssignments[0];
-      const shift = activeShiftAssignment.shift;
+      const shift = employee.shiftAssignments[0].shift;
       
-      // Check if today is a working day for this shift
+      // Parse shift start time (format: "09:00" or "09:00:00")
+      const [startHour, startMinute] = shift.startTime.split(':').map(Number);
       const dayOfWeek = punchInTime.toLocaleDateString('en-US', { weekday: 'long' });
-      if (shift.workingDays.includes(dayOfWeek)) {
-        // Parse shift start time
-        const [shiftHours, shiftMinutes] = shift.startTime.split(':').map(Number);
-        const shiftStartTime = new Date(punchInTime);
-        shiftStartTime.setHours(shiftHours, shiftMinutes, 0, 0);
-        
-        // Add grace minutes
-        const graceTime = new Date(shiftStartTime.getTime() + shift.graceMinutes * 60000);
-        
-        // Check if punch-in is after grace time
-        if (punchInTime > graceTime) {
-          attendanceStatus = 'LATE';
-          isLate = true;
-          console.log('⏰ Late arrival detected:', {
-            shiftStartTime: shiftStartTime.toISOString(),
-            graceTime: graceTime.toISOString(),
-            punchInTime: punchInTime.toISOString(),
-            graceMinutes: shift.graceMinutes
-          });
-        }
+      
+      // Create date object for shift start today in user's timezone
+      const shiftStartTime = new Date(punchInTime);
+      shiftStartTime.setHours(startHour, startMinute, 0, 0);
+      
+      // Calculate grace period end time
+      const graceTime = new Date(shiftStartTime);
+      graceTime.setMinutes(graceTime.getMinutes() + shift.graceMinutes);
+      
+      // Check if punch in is after grace period
+      if (punchInTime > graceTime) {
+        isLate = true;
+        attendanceStatus = 'LATE';
+        console.log('⚠️ Employee is late:', {
+          shiftStartTime: shiftStartTime.toISOString(),
+          graceMinutes: shift.graceMinutes,
+          punchInTime: punchInTime.toISOString(),
+          delayMinutes: Math.round((punchInTime.getTime() - shiftStartTime.getTime()) / (1000 * 60))
+        });
       }
     }
-    
-    // Check if remote work is active for this punch-in
-    const empIdStr = String(employee.id);
-    const activeRemoteReq = await prisma.remoteWorkRequest.findFirst({
-      where: {
-        employeeId: empIdStr,
-        status: 'APPROVED',
-        fromDate: { lte: punchInTime },
-        toDate: { gte: punchInTime }
-      }
-    });
-    const isRemote = Boolean(activeRemoteReq);
 
-    // Create attendance record
-    const attendance = await prisma.attendance.create({
-      data: {
+    // Check for approved remote work requests for today
+    const approvedRemoteWork = await prisma.featureAccessRequest.findFirst({
+      where: {
         employeeId: employee.id,
-        officeId: employee.office.id,
-        date: today,
-        checkIn: punchInTime,
-        status: attendanceStatus,
-        notes: notes || (isRemote ? 'Punch in recorded via Remote Work' : 'Punch in recorded via mobile app'),
-        latitude: punchLat,
-        longitude: punchLon,
-        isFingerprintCheckIn: isFingerprint,
-        isRemoteWork: isRemote,
-      },
-      include: {
-        employee: {
-          include: {
-            user: {
-              include: { profile: true }
-            }
-          }
-        },
-        office: true
+        featureName: 'remote_work',
+        status: 'APPROVED',
+        requestedFromDate: { lte: punchInTime },
+        requestedToDate: { gte: punchInTime }
       }
     });
+
+    if (approvedRemoteWork) {
+      console.log('✅ Approved remote work found for today');
+    }
+
+    // Update existing attendance record (if pre-marked ABSENT/WEEKEND with null checkIn) or create new record
+    let attendance;
+    if (existingAttendance) {
+      attendance = await prisma.attendance.update({
+        where: { id: existingAttendance.id },
+        data: {
+          officeId: employee.office.id,
+          checkIn: punchInTime,
+          status: attendanceStatus,
+          notes: notes || (isRemote ? 'Punch in recorded via Remote Work' : 'Punch in recorded via mobile app'),
+          latitude: punchLat,
+          longitude: punchLon,
+          isFingerprintCheckIn: Boolean(isFingerprint),
+          isRemoteWork: Boolean(isRemote),
+        },
+        include: {
+          employee: {
+            include: {
+              user: {
+                include: { profile: true }
+              }
+            }
+          },
+          office: true
+        }
+      });
+    } else {
+      attendance = await prisma.attendance.create({
+        data: {
+          employeeId: employee.id,
+          officeId: employee.office.id,
+          date: today,
+          checkIn: punchInTime,
+          status: attendanceStatus,
+          notes: notes || (isRemote ? 'Punch in recorded via Remote Work' : 'Punch in recorded via mobile app'),
+          latitude: punchLat,
+          longitude: punchLon,
+          isFingerprintCheckIn: Boolean(isFingerprint),
+          isRemoteWork: Boolean(isRemote),
+        },
+        include: {
+          employee: {
+            include: {
+              user: {
+                include: { profile: true }
+              }
+            }
+          },
+          office: true
+        }
+      });
+    }
 
     // Audit Log
     await auditLogService.log({
@@ -416,6 +484,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       data: {
         id: attendance.id,
         employeeId: attendance.employeeId,
+        date: attendance.date,
         checkIn: attendance.checkIn,
         checkInTime: attendance.checkIn,
         checkOut: null,
@@ -432,8 +501,8 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         },
         status: attendance.status,
         notes: notes,
-        clientTimestamp: clientTimestamp,
-        timezone: timezone || 'UTC',
+        clientTimestamp: clientTimestamp || punchInTime.toISOString(),
+        timezone: userTimezone,
         timestampSource: 'server'
       }
     });
@@ -513,6 +582,11 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
         date: today,
         checkIn: { not: null },
         checkOut: null
+      },
+      orderBy: { id: 'desc' },
+      include: {
+        office: true,
+        breakRecords: true
       }
     });
 
@@ -865,7 +939,7 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
-    const { latitude, longitude, clientTimestamp } = req.body;
+    const { latitude, longitude, clientTimestamp, timezone } = req.body;
 
     if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
       res.status(400).json({
@@ -916,7 +990,8 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
     }
 
     // Get today's attendance record
-    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const userTimezone = resolveTimezone(timezone as string, profileTimezone);
     const today = getLocalDateString(userTimezone, breakStartTime);
     const attendance = await prisma.attendance.findFirst({
       where: {
@@ -924,7 +999,8 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
         date: today,
         checkIn: { not: null },
         checkOut: null
-      }
+      },
+      orderBy: { id: 'desc' }
     });
 
     if (!attendance) {
@@ -1011,7 +1087,7 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
       return;
     }
 
-    const { latitude, longitude, clientTimestamp } = req.body;
+    const { latitude, longitude, clientTimestamp, timezone } = req.body;
 
     if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
       res.status(400).json({
@@ -1062,14 +1138,16 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
     }
 
     // Get today's attendance record
-    const userTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
+    const userTimezone = resolveTimezone(timezone as string, profileTimezone);
     const today = getLocalDateString(userTimezone, breakEndTime);
     const attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
         date: today,
         isOnBreak: true
-      }
+      },
+      orderBy: { id: 'desc' }
     });
 
     if (!attendance) {
@@ -1169,34 +1247,54 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
     
     let dateInput = new Date();
     if (clientTimestamp) {
-      dateInput = new Date(clientTimestamp as string);
+      const parsedClientDate = new Date(clientTimestamp as string);
+      if (!isNaN(parsedClientDate.getTime())) {
+        dateInput = parsedClientDate;
+      }
     }
     const today = getLocalDateString(userTimezone, dateInput);
     
-    const attendance = await prisma.attendance.findFirst({
+    // First query for punched record if exists, otherwise fallback to any record for today
+    let attendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
-        date: today
+        date: today,
+        checkIn: { not: null }
       },
+      orderBy: { id: 'desc' },
       include: {
         office: true,
         breakRecords: true
       }
     });
 
+    if (!attendance) {
+      attendance = await prisma.attendance.findFirst({
+        where: {
+          employeeId: employee.id,
+          date: today
+        },
+        orderBy: { id: 'desc' },
+        include: {
+          office: true,
+          breakRecords: true
+        }
+      });
+    }
+
     const response = {
-      id: attendance?.id,
+      id: attendance?.id || null,
       employeeId: employee.id,
       date: today,
       status: attendance?.status || 'ABSENT',
-      checkIn: attendance?.checkIn,
-      checkOut: attendance?.checkOut,
+      checkIn: attendance?.checkIn || null,
+      checkOut: attendance?.checkOut || null,
       isOnBreak: attendance?.isOnBreak || false,
-      breakStartTime: attendance?.breakStartTime,
+      breakStartTime: attendance?.breakStartTime || null,
       totalBreakSeconds: attendance?.totalBreakSeconds || 0,
       breakRecords: attendance?.breakRecords || [],
       notes: attendance?.notes || '',
-      location: attendance ? {
+      location: attendance?.latitude && attendance?.longitude ? {
         latitude: attendance.latitude,
         longitude: attendance.longitude
       } : null,
@@ -1208,9 +1306,9 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
         maxRadius: employee.office.maxPunchRadiusMeters
       } : null,
       canPunchIn: !attendance || (!attendance.checkIn && !attendance.checkOut),
-      canPunchOut: attendance && attendance.checkIn && !attendance.checkOut && !attendance.isOnBreak,
-      canStartBreak: attendance && attendance.checkIn && !attendance.checkOut && !attendance.isOnBreak,
-      canEndBreak: attendance && attendance.isOnBreak
+      canPunchOut: Boolean(attendance && attendance.checkIn && !attendance.checkOut && !attendance.isOnBreak),
+      canStartBreak: Boolean(attendance && attendance.checkIn && !attendance.checkOut && !attendance.isOnBreak),
+      canEndBreak: Boolean(attendance && attendance.isOnBreak)
     };
 
     res.json({
