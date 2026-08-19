@@ -4463,15 +4463,21 @@ export const fetchLeaveAvailabilityCheck = async (
     const availableStaffCount = Math.max(0, effectiveTotal - onLeaveCount - 1);
     const availabilityPercentage = Math.round((availableStaffCount / effectiveTotal) * 100);
 
+    const sameDeptOverlappingCount = overlappingEmployees.filter(
+      e => e.department === (employee.department?.name || '')
+    ).length;
+
     let warningLevel: 'OPTIMAL' | 'MODERATE' | 'CRITICAL' = 'OPTIMAL';
     let warningMessage = `Optimal coverage: ${availableStaffCount} of ${effectiveTotal} team members available.`;
 
     if (availableStaffCount <= 1 || availabilityPercentage < 40) {
       warningLevel = 'CRITICAL';
-      warningMessage = `CRITICAL UNDERSTAFFING: Only ${availableStaffCount} staff member(s) (${availabilityPercentage}%) remaining available in ${employee.office?.name || 'this branch'} during this period.`;
-    } else if (availabilityPercentage < 70 || onLeaveCount >= 2) {
+      warningMessage = `CRITICAL UNDERSTAFFING: Already ${onLeaveCount} employee(s) off on these dates. Only ${availableStaffCount} staff member(s) (${availabilityPercentage}%) available in ${employee.office?.name || 'this branch'}.`;
+    } else if (onLeaveCount >= 2 || sameDeptOverlappingCount >= 2 || availabilityPercentage < 70) {
       warningLevel = 'MODERATE';
-      warningMessage = `MODERATE COVERAGE: ${onLeaveCount} other team member(s) on approved leave. Staff availability at ${availabilityPercentage}%.`;
+      warningMessage = `Already ${onLeaveCount} employee(s) are off during this period in ${employee.office?.name || 'this branch'}${sameDeptOverlappingCount > 0 ? ` (${sameDeptOverlappingCount} in ${employee.department?.name || 'this department'})` : ''}.`;
+    } else if (onLeaveCount === 1) {
+      warningMessage = `1 employee is already on approved leave during this period.`;
     }
 
     const totalDays = Math.ceil((toDateOnly.getTime() - fromDateOnly.getTime()) / (1000 * 60 * 60 * 24)) + 1;
