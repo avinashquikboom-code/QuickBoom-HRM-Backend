@@ -3,6 +3,7 @@ import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
 import { createWebhookLog } from '../utils/commissionHelper';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
+import { checkWebhookIdempotency } from '../utils/webhookIdempotency';
 
 const router = Router();
 
@@ -35,6 +36,12 @@ router.post('/created', (req: Request, res: Response) => {
 
 export async function processCreditNoteCreated(payload: any, eventType: string = 'CREDIT_NOTE_CREATED'): Promise<void> {
   try {
+    const idempotency = await checkWebhookIdempotency(payload, eventType);
+    if (idempotency.isDuplicate) {
+      console.log(`[CreditNote Webhook] ℹ️ Duplicate ${eventType} event safely ignored (Key: ${idempotency.dedupKey})`);
+      return;
+    }
+
     console.log('[Process] Step 1: Validate payload');
 
     const data = payload.data || payload;

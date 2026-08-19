@@ -4,6 +4,7 @@ import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, 
 import { processCreditNoteCreated } from './creditNoteWebhookController';
 import { processSalesExchangeCreated } from './salesExchangeWebhookController';
 import { processEmployeeCreated, processEmployeeUpdated, processEmployeeDeleted } from './employeeWebhookController';
+import { checkWebhookIdempotency } from '../utils/webhookIdempotency';
 
 /**
  * Stores raw HopKid webhook payload into HopkidWebhookLog table
@@ -528,6 +529,18 @@ export async function handleHopkidWebhook(req: Request, res: Response): Promise<
   console.log(`📥 [HopKid Webhook Ingress] Incoming payload at ${new Date().toISOString()}`);
 
   try {
+    const idempotency = await checkWebhookIdempotency(salesData);
+    if (idempotency.isDuplicate) {
+      console.log(`[HopKid Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.json({
+        success: true,
+        message: 'Duplicate webhook event safely ignored (idempotent)',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
+
     // ✅ Process and await database persistence before responding
     await processHopkidSales(salesData);
 

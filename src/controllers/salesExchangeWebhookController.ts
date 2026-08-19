@@ -3,6 +3,7 @@ import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
 import { createWebhookLog, parseIsOld } from '../utils/commissionHelper';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
+import { checkWebhookIdempotency } from '../utils/webhookIdempotency';
 
 const router = Router();
 
@@ -155,6 +156,12 @@ async function resolveEmployeeForLineItem(lineItem: any, fallbackEmployeeId: num
 
 export async function processSalesExchangeCreated(payload: any, eventType: string = 'SALES_EXCHANGE_CREATED'): Promise<void> {
   try {
+    const idempotency = await checkWebhookIdempotency(payload, eventType);
+    if (idempotency.isDuplicate) {
+      console.log(`[SalesExchange Webhook] ℹ️ Duplicate ${eventType} event safely ignored (Key: ${idempotency.dedupKey})`);
+      return;
+    }
+
     console.log('[Process] Step 1: Validate payload');
 
     const data = payload.data || payload;

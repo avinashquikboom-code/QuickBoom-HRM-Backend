@@ -227,15 +227,28 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       };
     });
 
-    // Combine & deduplicate by billId
-    const combined = [...mappedWebhookLogs];
-    const existingBillIds = new Set(combined.map((c) => c.billId).filter(Boolean));
+    // Combine & deduplicate by (eventType, billId)
+    const combinedRaw = [...mappedWebhookLogs, ...hopkidLogsMapped];
+    const uniqueLogsMap = new Map<string, any>();
 
-    for (const hLog of hopkidLogsMapped) {
-      if (!hLog.billId || !existingBillIds.has(hLog.billId)) {
-        combined.push(hLog);
+    for (const log of combinedRaw) {
+      const normType = normalizeEventType(log.eventType);
+      const normBill = log.billId || log.invoiceNo || `LOG-${log.id}`;
+      const key = `${normType}_${normBill}`;
+
+      if (!uniqueLogsMap.has(key)) {
+        uniqueLogsMap.set(key, log);
+      } else {
+        const existing = uniqueLogsMap.get(key)!;
+        const currentTime = new Date(log.createdAt || log.processedAt || 0).getTime();
+        const existingTime = new Date(existing.createdAt || existing.processedAt || 0).getTime();
+        if (currentTime > existingTime) {
+          uniqueLogsMap.set(key, log);
+        }
       }
     }
+
+    const combined = Array.from(uniqueLogsMap.values());
 
     // Enrich Credit Note logs from DB if fields are missing or amount is 0
     for (let i = 0; i < combined.length; i++) {

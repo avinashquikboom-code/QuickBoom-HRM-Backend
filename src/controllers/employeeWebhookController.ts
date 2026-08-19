@@ -3,6 +3,7 @@ import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
 import { createWebhookLog } from '../utils/commissionHelper';
 import { logActivity } from '../utils/activityLogger';
+import { checkWebhookIdempotency } from '../utils/webhookIdempotency';
 
 const router = Router();
 
@@ -161,6 +162,12 @@ router.post('/created', (req: Request, res: Response) => {
 
 export async function processEmployeeCreated(payload: any): Promise<void> {
   try {
+    const idempotency = await checkWebhookIdempotency(payload, 'EMPLOYEE_CREATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[Employee Webhook] ℹ️ Duplicate EMPLOYEE_CREATED event safely ignored (Key: ${idempotency.dedupKey})`);
+      return;
+    }
+
     console.log('[Process] Step 1: Extract employee identifier');
 
     const empCode = extractEmployeeIdentifier(payload);
