@@ -4338,6 +4338,196 @@ export const updateAdminLeaveStatus = async (
   }
 };
 
+export const fetchLeaveAvailabilityCheck = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+  const leaveIdInt = parseInt(id as string, 10);
+
+  if (isNaN(leaveIdInt)) {
+    res.status(400).json({ success: false, message: 'Invalid Leave ID.' });
+    return;
+  }
+
+  try {
+    const leave = await prisma.leaveRequest.findUnique({
+      where: { id: leaveIdInt },
+      include: {
+        employee: {
+          include: {
+            user: {
+              include: {
+                profile: true,
+              },
+            },
+            department: true,
+            office: true,
+            store: true,
+          },
+        },
+      },
+    });
+
+    if (!leave || !leave.employee) {
+      res.status(404).json({ success: false, message: 'Leave request not found.' });
+      return;
+    }
+
+    const { fromDate, toDate, employee } = leave;
+    const fromDateOnly = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+    const toDateOnly = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate());
+
+    // 1. Fetch Company Holidays in this window
+    const holidays = await prisma.holiday.findMany({
+      where: {
+        date: {
+          gte: fromDateOnly,
+          lte: toDateOnly,
+        },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    // 2. Compute Weekly Offs in this window based on Office workingDays or defaults
+    const officeWorkingDays: string[] = employee.office?.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const weeklyOffDays: Array<{ date: string; dayName: string }> = [];
+
+    const cur = new Date(fromDateOnly);
+    while (cur <= toDateOnly) {
+      const dayName = daysOfWeek[cur.getDay()];
+      if (!officeWorkingDays.includes(dayName)) {
+        weeklyOffDays.push({
+          date: cur.toISOString().split('T')[0],
+          dayName,
+        });
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    // 3. Find other employees on approved leave during the same period in the same office/store
+    const overlappingLeaves = await prisma.leaveRequest.findMany({
+      where: {
+        id: { not: leaveIdInt },
+        status: 'APPROVED',
+        fromDate: { lte: toDateOnly },
+        toDate: { gte: fromDateOnly },
+        ...(employee.officeId ? { employee: { officeId: employee.officeId } } : {}),
+      },
+      include: {
+        employee: {
+          include: {
+            department: true,
+            office: true,
+            user: {
+              include: {
+                profile: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { fromDate: 'asc' },
+    });
+
+    // 4. Calculate total staff counts for store and department
+    const [totalStoreStaff, totalDeptStaff] = await Promise.all([
+      employee.officeId ? prisma.employee.count({ where: { officeId: employee.officeId } }) : prisma.employee.count(),
+      employee.departmentId ? prisma.employee.count({
+        where: {
+          departmentId: employee.departmentId,
+          ...(employee.officeId ? { officeId: employee.officeId } : {}),
+        },
+      }) : 0,
+    ]);
+
+    const overlappingEmployees = overlappingLeaves.map(l => ({
+      id: l.id,
+      employeeId: l.employeeId,
+      employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}`.trim() : 'Staff Member',
+      employeeCode: l.employee?.employeeCode || `EMP-${l.employeeId}`,
+      department: l.employee?.department?.name || 'General',
+      designation: l.employee?.designation || 'Staff',
+      leaveType: l.type,
+      startDate: l.fromDate.toISOString().split('T')[0],
+      endDate: l.toDate.toISOString().split('T')[0],
+      reason: l.reason,
+    }));
+
+    // Deduplicate overlapping count
+    const uniqueOverlappingEmployeeIds = new Set(overlappingEmployees.map(e => e.employeeId));
+    const onLeaveCount = uniqueOverlappingEmployeeIds.size;
+    // Available staff = Total staff - (already on leave) - (1 for this requester)
+    const effectiveTotal = totalStoreStaff > 0 ? totalStoreStaff : 1;
+    const availableStaffCount = Math.max(0, effectiveTotal - onLeaveCount - 1);
+    const availabilityPercentage = Math.round((availableStaffCount / effectiveTotal) * 100);
+
+    let warningLevel: 'OPTIMAL' | 'MODERATE' | 'CRITICAL' = 'OPTIMAL';
+    let warningMessage = `Optimal coverage: ${availableStaffCount} of ${effectiveTotal} team members available.`;
+
+    if (availableStaffCount <= 1 || availabilityPercentage < 40) {
+      warningLevel = 'CRITICAL';
+      warningMessage = `CRITICAL UNDERSTAFFING: Only ${availableStaffCount} staff member(s) (${availabilityPercentage}%) remaining available in ${employee.office?.name || 'this branch'} during this period.`;
+    } else if (availabilityPercentage < 70 || onLeaveCount >= 2) {
+      warningLevel = 'MODERATE';
+      warningMessage = `MODERATE COVERAGE: ${onLeaveCount} other team member(s) on approved leave. Staff availability at ${availabilityPercentage}%.`;
+    }
+
+    const totalDays = Math.ceil((toDateOnly.getTime() - fromDateOnly.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+    res.json({
+      success: true,
+      data: {
+        employee: {
+          id: employee.id,
+          employeeCode: employee.employeeCode,
+          name: `${employee.firstName} ${employee.lastName}`.trim(),
+          department: employee.department?.name || 'Unassigned',
+          store: employee.office?.name || employee.branchName || 'Main Branch',
+          designation: employee.designation || 'Employee',
+          phone: employee.user?.profile?.phone || employee.mobileNumber || '',
+          email: employee.user?.profile?.email || employee.user?.email || '',
+        },
+        leave: {
+          id: leave.id,
+          type: leave.type,
+          status: leave.status,
+          startDate: fromDateOnly.toISOString().split('T')[0],
+          endDate: toDateOnly.toISOString().split('T')[0],
+          totalDays,
+          reason: leave.reason,
+          appliedOn: leave.appliedOn.toISOString(),
+        },
+        scheduleContext: {
+          weeklyOffDays,
+          weeklyOffCount: weeklyOffDays.length,
+          holidays: holidays.map(h => ({
+            id: h.id,
+            name: h.name,
+            date: h.date.toISOString().split('T')[0],
+            type: h.type,
+          })),
+          holidayCount: holidays.length,
+        },
+        availability: {
+          totalStoreStaff: effectiveTotal,
+          totalDeptStaff,
+          otherEmployeesOnLeave: overlappingEmployees,
+          onLeaveCount,
+          availableStaffCount,
+          availabilityPercentage,
+          warningLevel,
+          warningMessage,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Fetch leave availability check error:', error);
+    res.status(500).json({ success: false, message: 'Failed to compute staff availability.' });
+  }
+};
+
 export const fetchAdminLeaveBalances = async (
   req: AuthenticatedRequest,
   res: Response

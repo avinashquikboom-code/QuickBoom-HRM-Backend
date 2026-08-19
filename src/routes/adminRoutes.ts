@@ -42,6 +42,7 @@ import {
   clearTasksData,
   fetchAdminLeaves,
   updateAdminLeaveStatus,
+  fetchLeaveAvailabilityCheck,
   fetchAdminLeaveBalances,
   createAdminLeaveRequest,
   downloadLeaveReport,
@@ -224,6 +225,7 @@ router.get('/attendance/store/:storeId', roleMiddleware(storeManagerAllowedRoles
 router.get('/location/live', roleMiddleware(storeManagerAllowedRoles), fetchLiveLocations);
 router.get('/location/logs', roleMiddleware(storeManagerAllowedRoles), fetchLiveLocationLogs);
 router.get('/leaves', roleMiddleware(storeManagerAllowedRoles), fetchAdminLeaves);
+router.get('/leaves/:id/availability-check', roleMiddleware(storeManagerAllowedRoles), fetchLeaveAvailabilityCheck);
 router.put('/leaves/:id', roleMiddleware(storeManagerAllowedRoles), updateAdminLeaveStatus);
 router.get('/reports', roleMiddleware(storeManagerAllowedRoles), fetchAdminReports);
 router.post('/reports/generate', roleMiddleware(storeManagerAllowedRoles), generateAdminReport);
