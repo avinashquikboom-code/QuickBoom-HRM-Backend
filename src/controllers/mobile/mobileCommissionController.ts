@@ -4,6 +4,7 @@ import { prisma } from '../../utils/db';
 import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { CommissionService } from '../../services/commissionService';
+import { deduplicateCommissionTransactions } from '../../utils/commissionDeduplicator';
 
 // Get commission dashboard stats for logged-in user
 export const getMobileCommissionDashboard = async (
@@ -135,12 +136,14 @@ export const getMobileCommissionTransactions = async (
       }
     }
 
-    const transactions = await prisma.commissionTransaction.findMany({
+    const rawTransactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
       orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
       take: parseInt(limit as string),
       skip: parseInt(offset as string),
     });
+
+    const transactions = deduplicateCommissionTransactions(rawTransactions);
 
     const total = await prisma.commissionTransaction.count({
       where: whereClause,

@@ -145,29 +145,7 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
             }
           });
 
-          const existingCommTxn = await prisma.commissionTransaction.findFirst({
-            where: { employeeId: employee.id, billId: uniqueBillId }
-          });
-
-          if (!existingCommTxn) {
-            await prisma.commissionTransaction.create({
-              data: {
-                employeeId: employee.id,
-                storeId: employee.storeId || null,
-                saleAmount: effectiveSaleAmount,
-                commissionType: 'PERCENTAGE',
-                commissionPercent: rate,
-                commissionAmount: effectiveCommission,
-                billId: uniqueBillId,
-                invoiceNumber: invoiceNo,
-                status: 'APPROVED',
-                createdAt: new Date(invoice.invoiceDate || invoice.date || new Date()),
-                notes: `Invoice ${invoiceNo} ${isOld ? '(IsOld: 1 Return)' : '(IsOld: 0 Sale)'}`
-              }
-            });
-          }
-
-          console.log(`[LineItem] ✅ Sale & CommissionTransaction created: ${sale.id}`);
+          console.log(`[LineItem] ✅ Sale recorded for item: ${uniqueBillId}`);
         }
 
         if (!employeeCommissionMap.has(employee.id)) {
@@ -187,6 +165,57 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
       } catch (lineError: any) {
         console.error(`[LineItem] ❌ Error:`, lineError.message);
         continue;
+      }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // STEP 2.5: UPSERT AGGREGATED COMMISSION TRANSACTIONS (1 per Invoice + Employee)
+    // ═════════════════════════════════════════════════════════════════════════
+    const txnInvDate = new Date(invoice.invoiceDate || invoice.date || new Date());
+
+    for (const [empId, empData] of employeeCommissionMap.entries()) {
+      const rate = empData.employee.commissionPercentage || 0;
+      const roundedAmount = Number(empData.totalAmount.toFixed(2));
+      const roundedCommission = Number(empData.totalCommission.toFixed(2));
+
+      const existingCommTxn = await prisma.commissionTransaction.findFirst({
+        where: {
+          employeeId: empId,
+          OR: [
+            { billId: invoiceNo },
+            { invoiceNumber: invoiceNo }
+          ]
+        }
+      });
+
+      if (existingCommTxn) {
+        await prisma.commissionTransaction.update({
+          where: { id: existingCommTxn.id },
+          data: {
+            saleAmount: roundedAmount,
+            commissionAmount: roundedCommission,
+            commissionPercent: rate,
+            createdAt: txnInvDate,
+          }
+        });
+        console.log(`[CommissionTxn] 🔄 Updated existing aggregated txn #${existingCommTxn.id} for Invoice ${invoiceNo}, Employee #${empId}`);
+      } else {
+        const createdTxn = await prisma.commissionTransaction.create({
+          data: {
+            employeeId: empId,
+            storeId: empData.employee.storeId || null,
+            saleAmount: roundedAmount,
+            commissionType: 'PERCENTAGE',
+            commissionPercent: rate,
+            commissionAmount: roundedCommission,
+            billId: invoiceNo,
+            invoiceNumber: invoiceNo,
+            status: 'APPROVED',
+            createdAt: txnInvDate,
+            notes: `Invoice ${invoiceNo} (HopKid)`
+          }
+        });
+        console.log(`[CommissionTxn] ✅ Created aggregated txn #${createdTxn.id} for Invoice ${invoiceNo}, Employee #${empId}`);
       }
     }
 

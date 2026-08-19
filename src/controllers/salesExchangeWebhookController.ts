@@ -247,6 +247,7 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
     const newSaleIds: string[] = [];
     const affectedEmployeeIds = new Set<number>();
     let primaryNewEmployeeId: number | null = null;
+    const exchangeEmployeeMap = new Map<string, any>();
 
     for (let i = 0; i < lineItems.length; i++) {
       const lineItem = lineItems[i];
@@ -293,28 +294,71 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
           }
         });
 
-        const commTxn = await prisma.commissionTransaction.create({
-          data: {
-            employeeId: employee.id,
-            storeId: employee.storeId || null,
-            saleAmount: effectiveSaleAmount,
-            commissionType: 'PERCENTAGE',
-            commissionPercent: rate,
-            commissionAmount: effectiveCommission,
-            billId: uniqueBillId,
-            invoiceNumber: `${newInvoiceNo}-${isOld ? 'RET' : 'NEW'}`,
-            status: 'APPROVED',
-            createdAt: new Date(exchange.exchangeDate || exchange.date || new Date()),
-            notes: `Sales Exchange ${isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (₹${rawAmount})`
-          }
-        });
+        const key = `${employee.id}_${isOld ? 'RET' : 'NEW'}`;
+        if (!exchangeEmployeeMap.has(key)) {
+          exchangeEmployeeMap.set(key, {
+            employee: employee,
+            isOld: isOld,
+            totalSaleAmount: 0,
+            totalCommissionAmount: 0,
+            rate: rate,
+          });
+        }
+        const group = exchangeEmployeeMap.get(key);
+        group.totalSaleAmount += effectiveSaleAmount;
+        group.totalCommissionAmount += effectiveCommission;
 
         newSaleIds.push(saleRecord.id.toString());
-        console.log(`[LineItem ${i + 1}] ✅ Created sale #${saleRecord.id} & CommTxn #${commTxn.id} for employee #${employee.id} (${isOld ? 'RETURN' : 'NEW SALE'}) - ₹${effectiveSaleAmount}, Comm: ₹${effectiveCommission}`);
+        console.log(`[LineItem ${i + 1}] ✅ Recorded sale #${saleRecord.id} for employee #${employee.id} (${isOld ? 'RETURN' : 'NEW SALE'}) - ₹${effectiveSaleAmount}`);
 
       } catch (itemError: any) {
         console.error(`[LineItem ${i + 1}] ❌ Error:`, itemError.message);
         continue;
+      }
+    }
+
+    // Upsert aggregated CommissionTransactions per (Employee + isOld)
+    const txnExDate = new Date(exchange.exchangeDate || exchange.date || new Date());
+    for (const group of exchangeEmployeeMap.values()) {
+      const exchangeBillId = `${newInvoiceNo}-${group.isOld ? 'RET' : 'NEW'}`;
+      const roundedAmount = Number(group.totalSaleAmount.toFixed(2));
+      const roundedCommission = Number(group.totalCommissionAmount.toFixed(2));
+
+      const existingCommTxn = await prisma.commissionTransaction.findFirst({
+        where: {
+          employeeId: group.employee.id,
+          billId: exchangeBillId
+        }
+      });
+
+      if (existingCommTxn) {
+        await prisma.commissionTransaction.update({
+          where: { id: existingCommTxn.id },
+          data: {
+            saleAmount: roundedAmount,
+            commissionAmount: roundedCommission,
+            commissionPercent: group.rate,
+            createdAt: txnExDate,
+          }
+        });
+        console.log(`[ExchangeTxn] 🔄 Updated aggregated txn #${existingCommTxn.id} for ${exchangeBillId}, Emp #${group.employee.id}`);
+      } else {
+        const commTxn = await prisma.commissionTransaction.create({
+          data: {
+            employeeId: group.employee.id,
+            storeId: group.employee.storeId || null,
+            saleAmount: roundedAmount,
+            commissionType: 'PERCENTAGE',
+            commissionPercent: group.rate,
+            commissionAmount: roundedCommission,
+            billId: exchangeBillId,
+            invoiceNumber: `${newInvoiceNo}-${group.isOld ? 'RET' : 'NEW'}`,
+            status: 'APPROVED',
+            createdAt: txnExDate,
+            notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})`
+          }
+        });
+        console.log(`[ExchangeTxn] ✅ Created aggregated txn #${commTxn.id} for ${exchangeBillId}, Emp #${group.employee.id}`);
       }
     }
 

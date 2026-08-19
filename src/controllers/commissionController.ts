@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee } from '../utils/commissionHelper';
+import { deduplicateCommissionTransactions } from '../utils/commissionDeduplicator';
 
 // Commission Dashboard Stats
 export const getCommissionDashboard = async (
@@ -346,18 +347,8 @@ export const getCommissionTransactions = async (
       orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
     });
 
-    const transactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
-
-    console.log('\n[DEBUG API Response Values]', {
-      count: transactions.length,
-      sample: transactions.slice(0, 3).map((t) => ({
-        id: t.id,
-        billId: t.billId || t.invoiceNumber,
-        saleAmount: t.saleAmount,
-        commissionAmount: t.commissionAmount,
-        createdAt: t.createdAt?.toISOString ? t.createdAt.toISOString() : t.createdAt,
-      })),
-    });
+    const eligible = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
+    const transactions = deduplicateCommissionTransactions(eligible);
 
     res.json({ success: true, transactions });
   } catch (error) {
