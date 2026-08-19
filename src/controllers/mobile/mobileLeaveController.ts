@@ -7,6 +7,7 @@ import { firebaseNotificationService } from '../../services/firebaseNotification
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import leaveBalanceService from '../../services/leaveBalanceService';
 import { logActivity } from '../../utils/activityLogger';
+import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -54,38 +55,57 @@ export const fetchMyLeaves = async (
       .filter(l => l.status === 'APPROVED' && normalizeType(l.type) === 'EARNED')
       .reduce((sum, l) => sum + (Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1), 0);
 
-    const leaveBalances = {
-      casual: {
-        total: 12,
-        used: casualUsed,
-        remaining: Math.max(0, 12 - casualUsed),
-      },
-      sick: {
-        total: 10,
-        used: sickUsed,
-        remaining: Math.max(0, 10 - sickUsed),
-      },
-      earned: {
-        total: 15,
-        used: earnedUsed,
-        remaining: Math.max(0, 15 - earnedUsed),
-      },
-    };
+    const userPermissions = await getEffectiveUserPermissions(req.user!.id);
+    if (userPermissions.canViewLeaveBalance === false && userPermissions.canViewLeaveHistory === false) {
+      res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: "Access denied: Leave permissions are disabled by HR.",
+        permissionKey: 'canViewLeaveBalance',
+      });
+      return;
+    }
 
-    const leaveRequests = allLeaveRequests.map(l => ({
-      id: l.id.toString(),
-      type: l.type,
-      typeLabel: l.type === 'CASUAL' ? 'Casual Leave' : l.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',
-      fromDate: l.fromDate.toISOString().split('T')[0],
-      toDate: l.toDate.toISOString().split('T')[0],
-      reason: l.reason,
-      status: l.status,
-      statusLabel: l.status.charAt(0) + l.status.slice(1).toLowerCase(),
-      appliedOn: l.appliedOn.toISOString().split('T')[0],
-      reviewedBy: l.reviewedBy,
-      reviewNote: l.reviewNote,
-      days: Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1,
-    }));
+    const leaveBalances = userPermissions.canViewLeaveBalance === false
+      ? {
+          casual: { total: 0, used: 0, remaining: 0 },
+          sick: { total: 0, used: 0, remaining: 0 },
+          earned: { total: 0, used: 0, remaining: 0 },
+        }
+      : {
+          casual: {
+            total: 12,
+            used: casualUsed,
+            remaining: Math.max(0, 12 - casualUsed),
+          },
+          sick: {
+            total: 10,
+            used: sickUsed,
+            remaining: Math.max(0, 10 - sickUsed),
+          },
+          earned: {
+            total: 15,
+            used: earnedUsed,
+            remaining: Math.max(0, 15 - earnedUsed),
+          },
+        };
+
+    const leaveRequests = userPermissions.canViewLeaveHistory === false
+      ? []
+      : allLeaveRequests.map(l => ({
+          id: l.id.toString(),
+          type: l.type,
+          typeLabel: l.type === 'CASUAL' ? 'Casual Leave' : l.type === 'SICK' ? 'Sick Leave' : 'Earned Leave',
+          fromDate: l.fromDate.toISOString().split('T')[0],
+          toDate: l.toDate.toISOString().split('T')[0],
+          reason: l.reason,
+          status: l.status,
+          statusLabel: l.status.charAt(0) + l.status.slice(1).toLowerCase(),
+          appliedOn: l.appliedOn.toISOString().split('T')[0],
+          reviewedBy: l.reviewedBy,
+          reviewNote: l.reviewNote,
+          days: Math.ceil((l.toDate.getTime() - l.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1,
+        }));
 
     res.json({
       success: true,
@@ -98,6 +118,8 @@ export const fetchMyLeaves = async (
         },
         leaveRequests,
         leaveBalances,
+        canViewBalance: userPermissions.canViewLeaveBalance !== false,
+        canViewHistory: userPermissions.canViewLeaveHistory !== false,
       },
     });
   } catch (error) {
