@@ -13,6 +13,20 @@ export function safeParseAmount(val: any): number {
 }
 
 /**
+ * Resolves the IsOld flag from a transaction or line item.
+ * IsOld = 1 / true -> Returned / Old Item / Credit Note (Commission SUBTRACTED / REVERSED)
+ * IsOld = 0 / false -> New Sold Item / POS Sale (Commission ADDED / POSITIVE)
+ */
+export function parseIsOld(item: any): boolean {
+  if (item === null || item === undefined) return false;
+  const val = item.IsOld ?? item.isOld ?? item.is_old ?? item.Is_Old ?? item.isOldItem;
+  if (val === true || val === 1 || val === '1' || String(val).trim().toLowerCase() === 'true') {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Safely parses any date value (ISO strings, YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, or timestamps).
  * Resolves Indian date format (DD/MM/YYYY or DD-MM-YYYY) correctly without treating day as month,
  * and ensures date-only strings land on the correct day without shifting to the previous day in UTC.

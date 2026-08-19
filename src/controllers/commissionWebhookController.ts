@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
-import { createWebhookLog } from '../utils/commissionHelper';
+import { createWebhookLog, parseIsOld } from '../utils/commissionHelper';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 const router = Router();
@@ -112,17 +112,18 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
           continue;
         }
 
-        const empName = `${employee.firstName} ${employee.lastName}`;
-        console.log(`[LineItem] ✅ Employee found: ${empName}`);
-
+        const isOld = parseIsOld(lineItem);
         const productNetAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || 0);
         const rate = employee.commissionPercentage || 0;
-        const commission = (productNetAmount * rate) / 100;
+        const rawCommission = (productNetAmount * rate) / 100;
 
-        console.log(`[LineItem] Amount: ₹${productNetAmount}, Commission: ₹${commission}`);
+        const effectiveSaleAmount = isOld ? -Math.abs(productNetAmount) : Math.abs(productNetAmount);
+        const effectiveCommission = isOld ? -Math.abs(rawCommission) : Math.abs(rawCommission);
+
+        console.log(`[LineItem] Amount: ₹${effectiveSaleAmount}, Commission: ₹${effectiveCommission} (IsOld: ${isOld})`);
 
         const uniqueBillId = lineItems.length > 1 
-          ? `${invoiceNo}-${lineItem.productID || lineItem.productName || i + 1}`
+          ? `${invoiceNo}-${lineItem.productID || lineItem.productName || i + 1}-${isOld ? 'RET' : 'NEW'}`
           : invoiceNo;
 
         const existingSale = await prisma.sales.findFirst({
@@ -135,10 +136,10 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
           const sale = await prisma.sales.create({
             data: {
               employeeId: employee.id,
-              netAmount: productNetAmount,
+              netAmount: effectiveSaleAmount,
               billId: uniqueBillId,
               saleDate: new Date(invoice.invoiceDate || invoice.date || new Date()),
-              description: `${lineItem.productName || 'Sale'} - ${invoice.branchName || 'HopKid'}`,
+              description: `${isOld ? 'Return: ' : ''}${lineItem.productName || 'Sale'} - ${invoice.branchName || 'HopKid'}`,
               source: 'HOPKID',
               status: 'ACTIVE'
             }
@@ -153,15 +154,15 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
               data: {
                 employeeId: employee.id,
                 storeId: employee.storeId || null,
-                saleAmount: productNetAmount,
+                saleAmount: effectiveSaleAmount,
                 commissionType: 'PERCENTAGE',
                 commissionPercent: rate,
-                commissionAmount: commission,
+                commissionAmount: effectiveCommission,
                 billId: uniqueBillId,
                 invoiceNumber: invoiceNo,
                 status: 'APPROVED',
                 createdAt: new Date(invoice.invoiceDate || invoice.date || new Date()),
-                notes: `Invoice ${invoiceNo}`
+                notes: `Invoice ${invoiceNo} ${isOld ? '(IsOld: 1 Return)' : '(IsOld: 0 Sale)'}`
               }
             });
           }
@@ -179,8 +180,8 @@ export async function processInvoiceCreated(payload: any): Promise<void> {
         }
 
         const empData = employeeCommissionMap.get(employee.id);
-        empData.totalAmount += productNetAmount;
-        empData.totalCommission += commission;
+        empData.totalAmount += effectiveSaleAmount;
+        empData.totalCommission += effectiveCommission;
         empData.saleCount += 1;
 
       } catch (lineError: any) {

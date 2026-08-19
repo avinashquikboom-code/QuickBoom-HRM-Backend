@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
-import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent, createWebhookLog } from '../utils/commissionHelper';
+import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent, createWebhookLog, parseIsOld } from '../utils/commissionHelper';
 import { processCreditNoteCreated } from './creditNoteWebhookController';
 import { processSalesExchangeCreated } from './salesExchangeWebhookController';
 import { processEmployeeCreated, processEmployeeUpdated, processEmployeeDeleted } from './employeeWebhookController';
@@ -206,23 +206,29 @@ export async function groupAndCalculateCommissionBySalesman(
         productCommission = (productNetAmount * commissionRate) / 100;
       }
 
+      const isOld = parseIsOld(lineItem);
+      const effectiveProdAmount = isOld ? -Math.abs(productNetAmount) : Math.abs(productNetAmount);
+      const effectiveProdComm = isOld ? -Math.abs(productCommission) : Math.abs(productCommission);
+
       console.log(`[Product ${i + 1}] Commission Calculation:`, {
-        netAmount: productNetAmount,
+        netAmount: effectiveProdAmount,
         commissionRate,
-        commission: productCommission,
+        commission: effectiveProdComm,
+        isOld,
       });
 
       if (commissionMap.has(salesman.id)) {
         const existing = commissionMap.get(salesman.id)!;
-        existing.totalAmount += productNetAmount;
-        existing.totalCommission += productCommission;
+        existing.totalAmount += effectiveProdAmount;
+        existing.totalCommission += effectiveProdComm;
         existing.products.push({
           productID: productId,
           productName: productName,
-          productNetAmount: productNetAmount,
-          productCommission: productCommission,
+          productNetAmount: effectiveProdAmount,
+          productCommission: effectiveProdComm,
           policyId: policy ? policy.id : null,
           storeId: targetStoreId,
+          isOld,
         });
 
         console.log(`[Product ${i + 1}] 📊 Merged with existing commission for ${salesman.firstName} ${salesman.lastName}:`, {
@@ -233,16 +239,17 @@ export async function groupAndCalculateCommissionBySalesman(
       } else {
         commissionMap.set(salesman.id, {
           salesman,
-          totalAmount: productNetAmount,
-          totalCommission: productCommission,
+          totalAmount: effectiveProdAmount,
+          totalCommission: effectiveProdComm,
           products: [
             {
               productID: productId,
               productName: productName,
-              productNetAmount: productNetAmount,
-              productCommission: productCommission,
+              productNetAmount: effectiveProdAmount,
+              productCommission: effectiveProdComm,
               policyId: policy ? policy.id : null,
               storeId: targetStoreId,
+              isOld,
             },
           ],
         });

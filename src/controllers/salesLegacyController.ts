@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { pushNotificationService } from '../services/pushNotificationService';
-import { resolveEmployeeId } from '../utils/commissionHelper';
+import { resolveEmployeeId, parseIsOld } from '../utils/commissionHelper';
 
 export const addSales = async (
   req: AuthenticatedRequest,
@@ -304,75 +304,189 @@ export const addSalesExchange = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { billId, invoiceNumber, returnAmount, newSaleAmount, notes } = req.body;
+    const { billId, invoiceNumber, returnAmount, newSaleAmount, employeeId: inputEmpId, notes, SalesExchangeProductList } = req.body;
+    const resolvedInvoiceNumber = invoiceNumber ?? req.body.ExchangeInvoiceNo;
+    const resolvedBillId = billId;
 
-    if (!billId && !invoiceNumber) {
+    // Handle line items if provided in SalesExchangeProductList
+    if (Array.isArray(SalesExchangeProductList) && SalesExchangeProductList.length > 0) {
+      const createdTxns: any[] = [];
+      let totalOldCommission = 0;
+      let totalNewCommission = 0;
+
+      for (const item of SalesExchangeProductList) {
+        const itemAmount = Number(item.Total ?? item.price ?? item.amount ?? item.netAmount ?? 0);
+        if (isNaN(itemAmount) || itemAmount <= 0) continue;
+
+        const isOld = parseIsOld(item);
+        const empIdentifier = item.SalesMan || item.employeeId || item.employeeCode || inputEmpId || req.user?.id;
+        let resolvedEmpId: number | null = null;
+        if (empIdentifier) {
+          resolvedEmpId = await resolveEmployeeId(String(empIdentifier));
+        }
+        if (!resolvedEmpId && inputEmpId) {
+          resolvedEmpId = Number(inputEmpId);
+        }
+
+        const employee = resolvedEmpId ? await prisma.employee.findUnique({
+          where: { id: resolvedEmpId },
+          include: { commissionPolicies: { where: { isActive: true }, orderBy: { priority: 'asc' } } }
+        }) : null;
+
+        const rate = employee?.commissionPercentage ?? 1.0;
+        const baseComm = (itemAmount * rate) / 100;
+        const commAmount = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
+        const effectiveSaleAmount = isOld ? -Math.abs(itemAmount) : Math.abs(itemAmount);
+
+        if (isOld) totalOldCommission += Math.abs(baseComm);
+        else totalNewCommission += Math.abs(baseComm);
+
+        if (employee) {
+          const txn = await prisma.commissionTransaction.create({
+            data: {
+              employeeId: employee.id,
+              storeId: employee.storeId || null,
+              policyId: employee.commissionPolicies?.[0]?.id || null,
+              saleAmount: effectiveSaleAmount,
+              commissionType: 'PERCENTAGE',
+              commissionPercent: rate,
+              commissionAmount: commAmount,
+              billId: resolvedBillId || null,
+              invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-${isOld ? 'RET' : 'NEW'}` : null,
+              status: 'APPROVED',
+              notes: notes || `Sales Exchange ${isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'}: ${item.productName || item.name || 'Product'} (₹${itemAmount})`,
+            }
+          });
+          createdTxns.push(txn);
+        }
+      }
+
+      res.status(201).json({
+        success: true,
+        message: 'Sales Exchange processed with distinct return and new sale commissions.',
+        transactions: createdTxns,
+        summary: {
+          newSaleCommission: totalNewCommission,
+          oldSaleCommissionReversed: totalOldCommission,
+          netCommission: totalNewCommission - totalOldCommission
+        }
+      });
+      return;
+    }
+
+    if (!resolvedBillId && !resolvedInvoiceNumber) {
       res.status(400).json({ success: false, message: 'Either billId or invoiceNumber is required.' });
       return;
     }
 
-    if (returnAmount === undefined || isNaN(Number(returnAmount)) || returnAmount < 0) {
-      res.status(400).json({ success: false, message: 'Valid returnAmount is required.' });
+    const retAmt = Number(returnAmount || 0);
+    const newAmt = Number(newSaleAmount || 0);
+
+    if (retAmt <= 0 && newAmt <= 0) {
+      res.status(400).json({ success: false, message: 'Valid returnAmount or newSaleAmount is required.' });
       return;
     }
 
-    if (newSaleAmount === undefined || isNaN(Number(newSaleAmount)) || newSaleAmount < 0) {
-      res.status(400).json({ success: false, message: 'Valid newSaleAmount is required.' });
-      return;
+    // Resolve employee
+    let employee = null;
+    if (inputEmpId) {
+      const empIdInt = await resolveEmployeeId(String(inputEmpId));
+      if (empIdInt) {
+        employee = await prisma.employee.findUnique({
+          where: { id: empIdInt },
+          include: { commissionPolicies: { where: { isActive: true }, orderBy: { priority: 'asc' } } }
+        });
+      }
     }
 
-    // Find original transaction
     const whereClause: any = {};
-    if (billId) whereClause.billId = billId;
-    if (invoiceNumber) whereClause.invoiceNumber = invoiceNumber;
+    if (resolvedBillId) whereClause.billId = resolvedBillId;
+    if (resolvedInvoiceNumber) whereClause.invoiceNumber = resolvedInvoiceNumber;
 
     const originalTransaction = await prisma.commissionTransaction.findFirst({
       where: whereClause,
-      include: {
-        policy: true,
-      },
+      include: { employee: { include: { commissionPolicies: { where: { isActive: true } } } }, policy: true },
     });
 
-    if (!originalTransaction) {
-      res.status(404).json({ success: false, message: 'Original sale transaction not found.' });
+    if (!employee && originalTransaction?.employee) {
+      employee = originalTransaction.employee;
+    }
+
+    if (!employee && req.user?.id) {
+      employee = await prisma.employee.findFirst({
+        where: { userId: req.user.id },
+        include: { commissionPolicies: { where: { isActive: true } } }
+      });
+    }
+
+    if (!employee) {
+      employee = await prisma.employee.findFirst({
+        where: { status: 'active' },
+        include: { commissionPolicies: { where: { isActive: true } } }
+      });
+    }
+
+    if (!employee) {
+      res.status(400).json({ success: false, message: 'Could not resolve employee for sales exchange.' });
       return;
     }
 
-    const netDifference = Number(newSaleAmount) - Number(returnAmount);
-    let adjustedCommission = 0;
+    const rate = originalTransaction?.commissionPercent ?? employee.commissionPercentage ?? 1.0;
+    const oldComm = (retAmt * rate) / 100;
+    const newComm = (newAmt * rate) / 100;
+    const createdTxns: any[] = [];
 
-    if (originalTransaction.commissionPercent) {
-      adjustedCommission = (netDifference * originalTransaction.commissionPercent) / 100;
-    } else if (originalTransaction.commissionType === 'FIXED') {
-      adjustedCommission = (netDifference / originalTransaction.saleAmount) * originalTransaction.commissionAmount;
+    // 1. Old returned transaction (IsOld = 1) -> negative commission calculated on full return amount
+    if (retAmt > 0) {
+      const oldTxn = await prisma.commissionTransaction.create({
+        data: {
+          employeeId: employee.id,
+          storeId: employee.storeId || originalTransaction?.storeId || null,
+          policyId: originalTransaction?.policyId || employee.commissionPolicies?.[0]?.id || null,
+          saleAmount: -Math.abs(retAmt),
+          commissionType: 'PERCENTAGE',
+          commissionPercent: rate,
+          commissionAmount: -Math.abs(oldComm),
+          billId: resolvedBillId || null,
+          invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-RET` : null,
+          status: 'APPROVED',
+          notes: notes || `Sales Exchange Return: Old Item ₹${retAmt} (IsOld: 1)`,
+        }
+      });
+      createdTxns.push(oldTxn);
     }
 
-    // Create adjustment transaction for exchange
-    const exchangeTransaction = await prisma.commissionTransaction.create({
-      data: {
-        employeeId: originalTransaction.employeeId,
-        storeId: originalTransaction.storeId,
-        policyId: originalTransaction.policyId,
-        saleAmount: netDifference,
-        commissionType: originalTransaction.commissionType,
-        commissionPercent: originalTransaction.commissionPercent,
-        commissionAmount: adjustedCommission,
-        billId: billId || null,
-        invoiceNumber: invoiceNumber ? `${invoiceNumber}-EX` : null,
-        status: 'PENDING',
-        notes: notes || `Sales Exchange: returned ₹${returnAmount}, purchased ₹${newSaleAmount}`,
-      },
-      include: {
-        employee: true,
-        store: true,
-        policy: true,
-      },
-    });
+    // 2. New sale transaction (IsOld = 0) -> positive commission calculated on full new sale amount
+    if (newAmt > 0) {
+      const newTxn = await prisma.commissionTransaction.create({
+        data: {
+          employeeId: employee.id,
+          storeId: employee.storeId || originalTransaction?.storeId || null,
+          policyId: originalTransaction?.policyId || employee.commissionPolicies?.[0]?.id || null,
+          saleAmount: Math.abs(newAmt),
+          commissionType: 'PERCENTAGE',
+          commissionPercent: rate,
+          commissionAmount: Math.abs(newComm),
+          billId: resolvedBillId || null,
+          invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-NEW` : null,
+          status: 'APPROVED',
+          notes: notes || `Sales Exchange New Sale: ₹${newAmt} (IsOld: 0)`,
+        }
+      });
+      createdTxns.push(newTxn);
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Sales Exchange added and commission adjusted successfully.',
-      transaction: exchangeTransaction,
+      message: 'Sales Exchange added with separate new sale and returned item commissions.',
+      transactions: createdTxns,
+      summary: {
+        newSaleAmount: newAmt,
+        newCommission: newComm,
+        returnAmount: retAmt,
+        reversedCommission: -oldComm,
+        netCommission: newComm - oldComm,
+      }
     });
   } catch (error) {
     console.error('Add sales exchange error:', error);
@@ -581,69 +695,112 @@ export const syncSalesBatch = async (
         const resolvedBillId = payload.billId;
         const { notes } = payload;
 
-        let resolvedReturnAmount = payload.returnAmount;
-        let resolvedNewSaleAmount = payload.newSaleAmount;
-
-        // If return/new amounts are missing, compute from SalesExchangeProductList (new DTO shape)
-        if ((resolvedReturnAmount === undefined || resolvedNewSaleAmount === undefined) &&
-            Array.isArray(payload.SalesExchangeProductList)) {
-          let sumReturn = 0;
-          let sumNew = 0;
+        // If line items provided in SalesExchangeProductList
+        if (Array.isArray(payload.SalesExchangeProductList) && payload.SalesExchangeProductList.length > 0) {
           for (const item of payload.SalesExchangeProductList) {
-            const itemTotal = Number(item.Total ?? item.price ?? 0);
-            if (item.IsOld === true || item.isOld === true) {
-              sumReturn += itemTotal;
-            } else {
-              sumNew += itemTotal;
+            const itemTotal = Number(item.Total ?? item.price ?? item.amount ?? item.netAmount ?? 0);
+            if (isNaN(itemTotal) || itemTotal <= 0) continue;
+
+            const isOld = parseIsOld(item);
+            const empIdentifier = item.SalesMan || item.employeeId || item.employeeCode || payload.employeeId;
+            let resolvedEmpId: number | null = null;
+            if (empIdentifier) {
+              resolvedEmpId = await resolveEmployeeId(String(empIdentifier));
+            }
+            const emp = resolvedEmpId
+              ? await prisma.employee.findUnique({ where: { id: resolvedEmpId }, include: { commissionPolicies: { where: { isActive: true } } } })
+              : defaultEmployee;
+
+            if (!emp) continue;
+
+            const rate = emp.commissionPercentage ?? 1.0;
+            const baseComm = (itemTotal * rate) / 100;
+            const commAmount = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
+            const effectiveSaleAmount = isOld ? -Math.abs(itemTotal) : Math.abs(itemTotal);
+
+            const txn = await prisma.commissionTransaction.create({
+              data: {
+                employeeId: emp.id,
+                storeId: emp.storeId || null,
+                policyId: emp.commissionPolicies?.[0]?.id || null,
+                saleAmount: effectiveSaleAmount,
+                commissionType: 'PERCENTAGE',
+                commissionPercent: rate,
+                commissionAmount: commAmount,
+                billId: resolvedBillId || null,
+                invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-${isOld ? 'RET' : 'NEW'}` : null,
+                status: 'APPROVED',
+                notes: notes || `Sales Exchange ${isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'}: ${item.productName || item.name || 'Product'} (₹${itemTotal})`,
+              }
+            });
+            results.push({ success: true, transactionId: txn.id, endpoint });
+            syncedCount++;
+          }
+        } else {
+          // Direct aggregate amounts
+          const retAmt = Number(payload.returnAmount || 0);
+          const newAmt = Number(payload.newSaleAmount || 0);
+
+          if (retAmt > 0 || newAmt > 0) {
+            const whereClause: any = {};
+            if (resolvedBillId) whereClause.billId = resolvedBillId;
+            if (resolvedInvoiceNumber) whereClause.invoiceNumber = resolvedInvoiceNumber;
+
+            const originalTransaction = await prisma.commissionTransaction.findFirst({
+              where: payload.SalesID
+                ? { OR: [whereClause, { billId: payload.SalesID }] }
+                : whereClause,
+              include: { employee: { include: { commissionPolicies: { where: { isActive: true } } } }, policy: true }
+            });
+
+            const emp = originalTransaction?.employee || defaultEmployee;
+            if (emp) {
+              const rate = originalTransaction?.commissionPercent ?? emp.commissionPercentage ?? 1.0;
+
+              if (retAmt > 0) {
+                const oldComm = (retAmt * rate) / 100;
+                const oldTxn = await prisma.commissionTransaction.create({
+                  data: {
+                    employeeId: emp.id,
+                    storeId: emp.storeId || originalTransaction?.storeId || null,
+                    policyId: originalTransaction?.policyId || emp.commissionPolicies?.[0]?.id || null,
+                    saleAmount: -Math.abs(retAmt),
+                    commissionType: 'PERCENTAGE',
+                    commissionPercent: rate,
+                    commissionAmount: -Math.abs(oldComm),
+                    billId: resolvedBillId || null,
+                    invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-RET` : null,
+                    status: 'APPROVED',
+                    notes: notes || `Sales Exchange Return: Old Item ₹${retAmt} (IsOld: 1)`,
+                  }
+                });
+                results.push({ success: true, transactionId: oldTxn.id, endpoint });
+                syncedCount++;
+              }
+
+              if (newAmt > 0) {
+                const newComm = (newAmt * rate) / 100;
+                const newTxn = await prisma.commissionTransaction.create({
+                  data: {
+                    employeeId: emp.id,
+                    storeId: emp.storeId || originalTransaction?.storeId || null,
+                    policyId: originalTransaction?.policyId || emp.commissionPolicies?.[0]?.id || null,
+                    saleAmount: Math.abs(newAmt),
+                    commissionType: 'PERCENTAGE',
+                    commissionPercent: rate,
+                    commissionAmount: Math.abs(newComm),
+                    billId: resolvedBillId || null,
+                    invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-NEW` : null,
+                    status: 'APPROVED',
+                    notes: notes || `Sales Exchange New Sale: ₹${newAmt} (IsOld: 0)`,
+                  }
+                });
+                results.push({ success: true, transactionId: newTxn.id, endpoint });
+                syncedCount++;
+              }
             }
           }
-          resolvedReturnAmount = sumReturn;
-          resolvedNewSaleAmount = sumNew;
         }
-
-        if (resolvedReturnAmount === undefined || isNaN(Number(resolvedReturnAmount)) || resolvedReturnAmount < 0) continue;
-        if (resolvedNewSaleAmount === undefined || isNaN(Number(resolvedNewSaleAmount)) || resolvedNewSaleAmount < 0) continue;
-
-        const whereClause: any = {};
-        if (resolvedBillId) whereClause.billId = resolvedBillId;
-        if (resolvedInvoiceNumber) whereClause.invoiceNumber = resolvedInvoiceNumber;
-
-        // Fallback: search for original transaction using SalesID (new DTO has SalesID)
-        const originalTransaction = await prisma.commissionTransaction.findFirst({
-          where: payload.SalesID
-            ? { OR: [whereClause, { billId: payload.SalesID }] }
-            : whereClause,
-        });
-
-        if (!originalTransaction) continue;
-
-        const netDifference = Number(resolvedNewSaleAmount) - Number(resolvedReturnAmount);
-        let adjustedCommission = 0;
-
-        if (originalTransaction.commissionPercent) {
-          adjustedCommission = (netDifference * originalTransaction.commissionPercent) / 100;
-        } else if (originalTransaction.commissionType === 'FIXED') {
-          adjustedCommission = (netDifference / originalTransaction.saleAmount) * originalTransaction.commissionAmount;
-        }
-
-        const exchangeTransaction = await prisma.commissionTransaction.create({
-          data: {
-            employeeId: originalTransaction.employeeId,
-            storeId: originalTransaction.storeId,
-            policyId: originalTransaction.policyId,
-            saleAmount: netDifference,
-            commissionType: originalTransaction.commissionType,
-            commissionPercent: originalTransaction.commissionPercent,
-            commissionAmount: adjustedCommission,
-            billId: resolvedBillId || null,
-            invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-EX` : null,
-            status: 'PENDING',
-            notes: notes || `Sales Exchange: returned ₹${resolvedReturnAmount}, purchased ₹${resolvedNewSaleAmount}`,
-          }
-        });
-
-        results.push({ success: true, transactionId: exchangeTransaction.id, endpoint });
-        syncedCount++;
       }
     }
 

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
-import { createWebhookLog } from '../utils/commissionHelper';
+import { createWebhookLog, parseIsOld } from '../utils/commissionHelper';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 const router = Router();
@@ -237,9 +237,13 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
     // STEP 3: CREATE NEW SALES RECORDS PER LINE ITEM
     // ═════════════════════════════════════════════════════════════════════════
 
-    console.log('[Process] Step 3: Create new sales records');
+    console.log('[Process] Step 3: Create sales & commission records per line item');
 
     let totalNewSales = 0;
+    let totalOldSales = 0;
+    let totalNewCommission = 0;
+    let totalOldCommission = 0;
+
     const newSaleIds: string[] = [];
     const affectedEmployeeIds = new Set<number>();
     let primaryNewEmployeeId: number | null = null;
@@ -257,24 +261,56 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
         if (!primaryNewEmployeeId) primaryNewEmployeeId = employee.id;
         affectedEmployeeIds.add(employee.id);
 
-        const productNetAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || lineItem.Total || lineItem.price || 0);
-        const uniqueBillId = `${newInvoiceNo}-${lineItem.productID || lineItem.productId || i + 1}`;
+        const isOld = parseIsOld(lineItem);
+        const rawAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || lineItem.Total || lineItem.price || 0);
+        if (isNaN(rawAmount) || rawAmount <= 0) continue;
 
-        const newSale = await prisma.sales.create({
+        const rate = employee.commissionPercentage ?? 1.0;
+        const baseComm = (rawAmount * rate) / 100;
+
+        const effectiveSaleAmount = isOld ? -Math.abs(rawAmount) : Math.abs(rawAmount);
+        const effectiveCommission = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
+
+        if (isOld) {
+          totalOldSales += Math.abs(rawAmount);
+          totalOldCommission += Math.abs(baseComm);
+        } else {
+          totalNewSales += Math.abs(rawAmount);
+          totalNewCommission += Math.abs(baseComm);
+        }
+
+        const uniqueBillId = `${newInvoiceNo}-${lineItem.productID || lineItem.productId || i + 1}-${isOld ? 'RET' : 'NEW'}`;
+
+        const saleRecord = await prisma.sales.create({
           data: {
             employeeId: employee.id,
-            netAmount: productNetAmount,
+            netAmount: effectiveSaleAmount,
             billId: uniqueBillId,
             saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
-            description: `Exchange New Item: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
+            description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
             source: 'HOPKID',
             status: 'ACTIVE'
           }
         });
 
-        totalNewSales += productNetAmount;
-        newSaleIds.push(newSale.id.toString());
-        console.log(`[LineItem ${i + 1}] ✅ Created sale #${newSale.id} for employee #${employee.id} (${employee.firstName} ${employee.lastName || ''}) - ₹${productNetAmount}`);
+        const commTxn = await prisma.commissionTransaction.create({
+          data: {
+            employeeId: employee.id,
+            storeId: employee.storeId || null,
+            saleAmount: effectiveSaleAmount,
+            commissionType: 'PERCENTAGE',
+            commissionPercent: rate,
+            commissionAmount: effectiveCommission,
+            billId: uniqueBillId,
+            invoiceNumber: `${newInvoiceNo}-${isOld ? 'RET' : 'NEW'}`,
+            status: 'APPROVED',
+            createdAt: new Date(exchange.exchangeDate || exchange.date || new Date()),
+            notes: `Sales Exchange ${isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (₹${rawAmount})`
+          }
+        });
+
+        newSaleIds.push(saleRecord.id.toString());
+        console.log(`[LineItem ${i + 1}] ✅ Created sale #${saleRecord.id} & CommTxn #${commTxn.id} for employee #${employee.id} (${isOld ? 'RETURN' : 'NEW SALE'}) - ₹${effectiveSaleAmount}, Comm: ₹${effectiveCommission}`);
 
       } catch (itemError: any) {
         console.error(`[LineItem ${i + 1}] ❌ Error:`, itemError.message);
@@ -292,9 +328,10 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
 
     console.log('[Process] Step 4: Create sales exchange record');
 
-    const origAmountVal = Number(originalSale?.netAmount || 0);
+    const origAmountVal = totalOldSales > 0 ? totalOldSales : Number(originalSale?.netAmount || 0);
     const newAmountVal = Number(totalNewSales || 0);
     const diffAmountVal = newAmountVal - origAmountVal;
+    const diffCommVal = totalNewCommission - totalOldCommission;
 
     const exchangeRecord = await prisma.salesExchange.create({
       data: {
@@ -308,15 +345,21 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
         originalAmount: origAmountVal,
         newAmount: newAmountVal,
         amountDifference: diffAmountVal,
-        originalCommission: 0,
-        newCommission: 0,
-        commissionDifference: 0,
+        originalCommission: totalOldCommission,
+        newCommission: totalNewCommission,
+        commissionDifference: diffCommVal,
         reason: exchange.reason || 'Sales Exchange',
         status: 'ACTIVE'
       }
     });
 
-    console.log('[Process] ✅ Sales exchange created:', exchangeRecord.id);
+    console.log('[Process] ✅ Sales exchange created:', exchangeRecord.id, {
+      newAmount: newAmountVal,
+      originalAmount: origAmountVal,
+      newCommission: totalNewCommission,
+      oldCommissionReversed: totalOldCommission,
+      netCommission: diffCommVal,
+    });
 
     // ═════════════════════════════════════════════════════════════════════════
     // STEP 5: RECALCULATE COMMISSION FOR ALL AFFECTED EMPLOYEES
