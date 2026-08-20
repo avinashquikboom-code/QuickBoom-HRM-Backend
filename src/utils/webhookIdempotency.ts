@@ -10,11 +10,27 @@ export interface IdempotencyResult {
 }
 
 /**
- * Computes a deterministic payload hash for idempotency comparison
+ * Computes a deterministic payload hash for idempotency comparison,
+ * stripping volatile timestamp or request-specific metadata.
  */
 export function computePayloadHash(payload: any): string {
   if (!payload) return 'empty';
-  const str = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  let obj = payload;
+  if (typeof payload === 'string') {
+    try {
+      obj = JSON.parse(payload);
+    } catch (_) {
+      return crypto.createHash('md5').update(payload).digest('hex');
+    }
+  }
+
+  // Strip dynamic timestamp fields if present to ensure static payload matching
+  const clone = { ...obj };
+  delete clone.timestamp;
+  delete clone.requestTime;
+  delete clone._t;
+
+  const str = JSON.stringify(clone);
   return crypto.createHash('md5').update(str).digest('hex');
 }
 
@@ -31,47 +47,44 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
   const dedupKey = eventId
     ? `${eventType}_EVT_${eventId}`
     : billId
-    ? `${eventType}_BILL_${billId}_${hash}`
+    ? `${eventType}_BILL_${billId}_AMT_${meta.amount || 0}`
     : `${eventType}_HASH_${hash}`;
 
-  // 1. If explicit eventId exists, check WebhookLog by eventId or payload match
+  // 1. Check by explicit eventId in WebhookLog
   if (eventId) {
     const existingLog = await prisma.webhookLog.findFirst({
       where: {
         eventType: { equals: eventType, mode: 'insensitive' },
-        OR: [
-          { payload: { contains: String(eventId) } },
-          { billId: billId ? { equals: String(billId) } : undefined },
-        ].filter(Boolean) as any,
+        status: { in: ['SUCCESS', 'PROCESSING'] },
+        payload: { contains: String(eventId) },
       },
     });
 
     if (existingLog) {
-      const logPayloadHash = computePayloadHash(existingLog.payload);
-      if (logPayloadHash === hash || existingLog.payload.includes(String(eventId))) {
-        return {
-          isDuplicate: true,
-          dedupKey,
-          existingLogId: existingLog.id,
-          eventId: String(eventId),
-        };
-      }
+      return {
+        isDuplicate: true,
+        dedupKey,
+        existingLogId: existingLog.id,
+        eventId: String(eventId),
+      };
     }
   }
 
-  // 2. Check by exact billId + eventType + payload hash in recent WebhookLogs
+  // 2. Check by exact billId + eventType in recent WebhookLogs
   if (billId) {
     const matchingLogs = await prisma.webhookLog.findMany({
       where: {
         billId: String(billId),
         eventType: { equals: eventType, mode: 'insensitive' },
+        status: { in: ['SUCCESS', 'PROCESSING'] },
       },
       take: 10,
-      orderBy: { id: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
 
     for (const log of matchingLogs) {
-      if (computePayloadHash(log.payload) === hash) {
+      const logHash = computePayloadHash(log.payload);
+      if (logHash === hash || !eventId || log.payload.includes(String(eventId || billId))) {
         return {
           isDuplicate: true,
           dedupKey,
@@ -85,6 +98,7 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
     const matchingLog = await prisma.webhookLog.findFirst({
       where: {
         eventType: { equals: eventType, mode: 'insensitive' },
+        status: { in: ['SUCCESS', 'PROCESSING'] },
         payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
       },
     });

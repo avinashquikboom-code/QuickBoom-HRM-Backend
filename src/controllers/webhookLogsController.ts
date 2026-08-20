@@ -164,48 +164,6 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       webhookLogs = [];
     }
 
-    // 2. Fetch from HopkidWebhookLog if status allows
-    let hopkidLogsMapped: any[] = [];
-    if (!statusFilter || statusFilter === 'ALL' || statusFilter === 'SUCCESS') {
-      try {
-        const hopkidRawLogs = await prisma.hopkidWebhookLog.findMany({
-          orderBy: { createdAt: 'desc' },
-        });
-
-        hopkidLogsMapped = hopkidRawLogs.map((log) => {
-          const meta = extractWebhookMeta(log.rawPayload);
-          const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
-          const billIdVal = log.billId || meta.billId;
-          const resolvedEmpName = resolveEmpName(null, meta, log.name, log.rawPayload);
-          const resolvedStoreName = resolveStoreName(meta, log.storeId, null, log.rawPayload);
-
-          return {
-            id: `hopkid-${log.id}`,
-            eventType: normalizeEventType(meta.eventType, 'INVOICE_CREATED', log.rawPayload),
-            status: 'SUCCESS',
-            payload: log.rawPayload,
-            employeeId: null,
-            amount: amountVal || 0,
-            billId: billIdVal || null,
-            invoiceNo: meta.invoiceNumber || null,
-            customerName: meta.customerName || 'N/A',
-            employeeName: resolvedEmpName,
-            storeName: resolvedStoreName,
-            commissionAmount: meta.commissionAmount || 0,
-            errorMessage: null,
-            processedAt: log.createdAt,
-            createdAt: log.createdAt,
-          };
-        });
-
-        if (eventTypeFilter && eventTypeFilter !== 'ALL') {
-          hopkidLogsMapped = hopkidLogsMapped.filter((l) => normalizeEventType(l.eventType) === eventTypeFilter);
-        }
-      } catch (e) {
-        hopkidLogsMapped = [];
-      }
-    }
-
     // Map WebhookLog items
     const mappedWebhookLogs = webhookLogs.map((log) => {
       const meta = extractWebhookMeta(log.payload);
@@ -224,17 +182,67 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         storeName: resolvedStoreName,
         commissionAmount: meta.commissionAmount || 0,
         eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
+        eventId: meta.eventId || null,
       };
     });
 
-    // Combine & deduplicate by (eventType, billId)
+    const existingBillIds = new Set(mappedWebhookLogs.map((l) => l.billId).filter(Boolean));
+    const existingEventIds = new Set(mappedWebhookLogs.map((l) => l.eventId).filter(Boolean));
+
+    // 2. Fetch from HopkidWebhookLog as fallback for unmapped raw webhooks only
+    let hopkidLogsMapped: any[] = [];
+    if (!statusFilter || statusFilter === 'ALL' || statusFilter === 'SUCCESS') {
+      try {
+        const hopkidRawLogs = await prisma.hopkidWebhookLog.findMany({
+          orderBy: { createdAt: 'desc' },
+          take: 200,
+        });
+
+        for (const log of hopkidRawLogs) {
+          const meta = extractWebhookMeta(log.rawPayload);
+          const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
+          const billIdVal = log.billId || meta.billId;
+
+          if (billIdVal && existingBillIds.has(billIdVal)) continue;
+          if (meta.eventId && existingEventIds.has(meta.eventId)) continue;
+
+          const resolvedEmpName = resolveEmpName(null, meta, log.name, log.rawPayload);
+          const resolvedStoreName = resolveStoreName(meta, log.storeId, null, log.rawPayload);
+
+          hopkidLogsMapped.push({
+            id: `hopkid-${log.id}`,
+            eventType: normalizeEventType(meta.eventType, 'INVOICE_CREATED', log.rawPayload),
+            status: 'SUCCESS',
+            payload: log.rawPayload,
+            employeeId: null,
+            amount: amountVal || 0,
+            billId: billIdVal || null,
+            invoiceNo: meta.invoiceNumber || null,
+            customerName: meta.customerName || 'N/A',
+            employeeName: resolvedEmpName,
+            storeName: resolvedStoreName,
+            commissionAmount: meta.commissionAmount || 0,
+            errorMessage: null,
+            processedAt: log.createdAt,
+            createdAt: log.createdAt,
+            eventId: meta.eventId || null,
+          });
+        }
+      } catch (e) {
+        hopkidLogsMapped = [];
+      }
+    }
+
+    // Combine & deduplicate deterministically
     const combinedRaw = [...mappedWebhookLogs, ...hopkidLogsMapped];
     const uniqueLogsMap = new Map<string, any>();
 
     for (const log of combinedRaw) {
       const normType = normalizeEventType(log.eventType);
       const normBill = log.billId || log.invoiceNo || `LOG-${log.id}`;
-      const key = `${normType}_${normBill}`;
+      const key = log.eventId
+        ? `${normType}_EVT_${log.eventId}`
+        : `${normType}_BILL_${normBill}_AMT_${log.amount || 0}`;
 
       if (!uniqueLogsMap.has(key)) {
         uniqueLogsMap.set(key, log);
@@ -242,7 +250,10 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         const existing = uniqueLogsMap.get(key)!;
         const currentTime = new Date(log.createdAt || log.processedAt || 0).getTime();
         const existingTime = new Date(existing.createdAt || existing.processedAt || 0).getTime();
-        if (currentTime > existingTime) {
+
+        if (log.status === 'SUCCESS' && existing.status !== 'SUCCESS') {
+          uniqueLogsMap.set(key, log);
+        } else if (currentTime > existingTime) {
           uniqueLogsMap.set(key, log);
         }
       }

@@ -37,15 +37,7 @@ export async function storeWebhookData(data: any): Promise<void> {
       },
     });
 
-    await createWebhookLog({
-      eventType: meta.eventType || 'INVOICE_CREATED',
-      status: 'SUCCESS',
-      payload: data,
-      billId: billId,
-      amount: amountVal,
-    }).catch(() => null);
-
-    console.log(`[HopKid Raw Store] Log stored in HopkidWebhookLog & WebhookLog for Bill ID: ${billId || 'N/A'}, Amount: ₹${amountVal}, Date: ${parsedDate.toISOString()}`);
+    console.log(`[HopKid Raw Store] Log stored in HopkidWebhookLog for Bill ID: ${billId || 'N/A'}, Amount: ₹${amountVal}, Date: ${parsedDate.toISOString()}`);
   } catch (error: any) {
     console.error('[HopKid Store Error]:', error.message);
   }
@@ -396,6 +388,8 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
         if (existingTx) {
           console.log(`[Save]   ⚠️ Transaction ${uniqueBillId} already exists. Updating record & broadcasting WebSocket event...`);
           const commAmt = Math.round(product.productCommission * 100) / 100;
+          const commDelta = commAmt - existingTx.commissionAmount;
+
           await prisma.commissionTransaction.update({
             where: { id: existingTx.id },
             data: {
@@ -405,6 +399,50 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
               updatedAt: new Date(),
             },
           }).catch(() => {});
+
+          // Update Sales record
+          try {
+            const existingSale = await prisma.sales.findFirst({
+              where: { billId: uniqueBillId },
+            });
+            if (existingSale) {
+              await prisma.sales.update({
+                where: { id: existingSale.id },
+                data: {
+                  netAmount: product.productNetAmount,
+                  saleDate: validDate,
+                  employeeId: salesman.id,
+                  description: `HopKid Invoice ${primaryBillId} - ${product.productName} (Updated)`,
+                  updatedAt: new Date(),
+                },
+              });
+            } else {
+              await prisma.sales.create({
+                data: {
+                  billId: uniqueBillId,
+                  employeeId: salesman.id,
+                  netAmount: product.productNetAmount,
+                  saleDate: validDate,
+                  status: 'ACTIVE',
+                  source: 'HOPKID',
+                  description: `HopKid Invoice ${primaryBillId} - ${product.productName}`,
+                },
+              });
+            }
+          } catch (salesErr: any) {
+            console.error('[Sales Update Error]:', salesErr.message);
+          }
+
+          // Adjust wallet balance for delta if commission changed
+          if (commDelta !== 0) {
+            await updateEmployeeWalletCommission(
+              salesman.id,
+              Math.abs(commDelta),
+              commDelta > 0,
+              `Commission Adjustment - HopKid Invoice ${uniqueBillId}`,
+              'Commission Adjustment'
+            );
+          }
 
           await broadcastCommissionEvent(salesman.id, {
             success: true,
