@@ -343,6 +343,12 @@ router.post('/updated', (req: Request, res: Response) => {
 
 export async function processEmployeeUpdated(payload: any): Promise<void> {
   try {
+    const idempotency = await checkWebhookIdempotency(payload, 'EMPLOYEE_UPDATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[Employee Webhook] ℹ️ Duplicate EMPLOYEE_UPDATED event safely ignored (Key: ${idempotency.dedupKey})`);
+      return;
+    }
+
     console.log('[Update] Step 1: Extract employee identifier');
 
     const empCode = extractEmployeeIdentifier(payload);
@@ -521,6 +527,12 @@ router.post('/deleted', (req: Request, res: Response) => {
 
 export async function processEmployeeDeleted(payload: any): Promise<void> {
   try {
+    const idempotency = await checkWebhookIdempotency(payload, 'EMPLOYEE_DELETED');
+    if (idempotency.isDuplicate) {
+      console.log(`[Employee Webhook] ℹ️ Duplicate EMPLOYEE_DELETED event safely ignored (Key: ${idempotency.dedupKey})`);
+      return;
+    }
+
     console.log('[Delete] Step 1: Extract employee identifier from payload');
 
     const identifier = extractEmployeeIdentifier(payload);

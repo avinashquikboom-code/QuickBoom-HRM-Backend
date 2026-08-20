@@ -234,15 +234,21 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     }
 
     // Combine & deduplicate deterministically
+    const { view, latestOnly } = req.query;
+    const isLatestView = view === 'latest' || latestOnly === 'true';
+
     const combinedRaw = [...mappedWebhookLogs, ...hopkidLogsMapped];
     const uniqueLogsMap = new Map<string, any>();
 
     for (const log of combinedRaw) {
       const normType = normalizeEventType(log.eventType);
       const normBill = log.billId || log.invoiceNo || `LOG-${log.id}`;
-      const key = log.eventId
-        ? `${normType}_EVT_${log.eventId}`
-        : `${normType}_BILL_${normBill}_AMT_${log.amount || 0}`;
+      
+      const key = isLatestView
+        ? `ENTITY_${normBill}`
+        : (log.eventId
+            ? `${normType}_EVT_${log.eventId}`
+            : `${normType}_BILL_${normBill}_AMT_${log.amount || 0}`);
 
       if (!uniqueLogsMap.has(key)) {
         uniqueLogsMap.set(key, log);

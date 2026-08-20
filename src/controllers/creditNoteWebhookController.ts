@@ -257,6 +257,12 @@ router.post('/updated', (req: Request, res: Response) => {
 
 export async function processCreditNoteUpdated(payload: any): Promise<void> {
   try {
+    const idempotency = await checkWebhookIdempotency(payload, 'CREDIT_NOTE_UPDATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[CreditNote Webhook] ℹ️ Duplicate CREDIT_NOTE_UPDATED event safely ignored (Key: ${idempotency.dedupKey})`);
+      return;
+    }
+
     console.log('[Update] Step 1: Validate payload');
 
     const data = payload.data || payload;

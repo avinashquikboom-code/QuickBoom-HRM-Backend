@@ -498,6 +498,12 @@ router.post('/updated', (req: Request, res: Response) => {
 
 export async function processSalesExchangeUpdated(payload: any): Promise<void> {
   try {
+    const idempotency = await checkWebhookIdempotency(payload, 'SALES_EXCHANGE_UPDATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[SalesExchange Webhook] ℹ️ Duplicate SALES_EXCHANGE_UPDATED event safely ignored (Key: ${idempotency.dedupKey})`);
+      return;
+    }
+
     console.log('[Update] Step 1: Validate payload');
 
     const data = payload.data || payload;
