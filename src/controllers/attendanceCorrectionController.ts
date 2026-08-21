@@ -433,24 +433,58 @@ export const getHRAttendanceCorrections = async (req: Request, res: Response) =>
     });
 
     // Map with employee details
-    const employeeCodes = [...new Set(requests.map((r) => r.employeeId))];
+    const rawIds = [...new Set(requests.map((r) => r.employeeId).filter(Boolean))];
+    const numericIds = rawIds.map((c) => Number(c)).filter((n) => !isNaN(n) && n > 0);
+
     const employees = await prisma.employee.findMany({
-      where: { employeeCode: { in: employeeCodes } },
-      select: { id: true, employeeCode: true, firstName: true, lastName: true, designation: true, office: { select: { name: true } } },
+      where: {
+        OR: [
+          { employeeCode: { in: rawIds } },
+          ...(numericIds.length > 0
+            ? [{ id: { in: numericIds } }, { userId: { in: numericIds } }]
+            : []),
+        ],
+      },
+      include: {
+        office: { select: { name: true } },
+        department: { select: { name: true } },
+      },
     });
-    const empMap = new Map(employees.map((e) => [e.employeeCode, e]));
 
     const formatted = requests.map((r) => {
-      const emp = empMap.get(r.employeeId);
+      const emp = (employees as any[]).find(
+        (e) =>
+          e.employeeCode === r.employeeId ||
+          String(e.id) === r.employeeId ||
+          (e.userId && String(e.userId) === r.employeeId)
+      );
       const isoDate = r.attendanceDate ? new Date(r.attendanceDate).toISOString() : null;
+      const fullName = emp ? `${emp.firstName || ''} ${emp.lastName || ''}`.trim() : '';
       return {
         ...r,
         date: isoDate,
         dateToCorrect: isoDate,
         attendanceDate: isoDate,
-        employeeName: emp ? `${emp.firstName} ${emp.lastName}`.trim() : r.employeeId,
+        employeeName: fullName || r.employeeId,
         designation: emp?.designation || 'Staff',
         branch: emp?.office?.name || 'Main Office',
+        employee: emp
+          ? {
+              id: emp.id,
+              employeeCode: emp.employeeCode,
+              name: fullName || emp.employeeCode || r.employeeId,
+              designation: emp.designation || 'Staff',
+              officeName: emp.office?.name || 'Main Office',
+              departmentName: emp.department?.name || '',
+            }
+          : {
+              id: r.employeeId,
+              employeeCode: r.employeeId,
+              name: r.employeeId,
+              designation: 'Staff',
+              officeName: '',
+              departmentName: '',
+            },
       };
     });
 
@@ -476,19 +510,45 @@ export const getHRAttendanceCorrectionDetail = async (req: Request, res: Respons
     });
     if (!request) return res.status(404).json({ error: 'Correction request not found' });
 
-    const employee = await prisma.employee.findFirst({
-      where: { employeeCode: request.employeeId },
-      include: { office: true, user: { select: { email: true } } },
-    });
+    const isNum = !isNaN(Number(request.employeeId));
+    const numId = isNum ? Number(request.employeeId) : undefined;
+    const employee = (await prisma.employee.findFirst({
+      where: {
+        OR: [
+          { employeeCode: request.employeeId },
+          ...(numId !== undefined ? [{ id: numId }, { userId: numId }] : []),
+        ],
+      },
+      include: { office: true, department: true, user: { select: { email: true } } },
+    })) as any;
+
+    const fullName = employee ? `${employee.firstName || ''} ${employee.lastName || ''}`.trim() : '';
 
     return res.json({
       success: true,
       request: {
         ...request,
-        employeeName: employee ? `${employee.firstName} ${employee.lastName}`.trim() : request.employeeId,
+        employeeName: fullName || request.employeeId,
         employeeEmail: employee?.user?.email || '',
         designation: employee?.designation || 'Staff',
         branch: employee?.office?.name || 'Main Office',
+        employee: employee
+          ? {
+              id: employee.id,
+              employeeCode: employee.employeeCode,
+              name: fullName || employee.employeeCode || request.employeeId,
+              designation: employee.designation || 'Staff',
+              officeName: employee.office?.name || 'Main Office',
+              departmentName: employee.department?.name || '',
+            }
+          : {
+              id: request.employeeId,
+              employeeCode: request.employeeId,
+              name: request.employeeId,
+              designation: 'Staff',
+              officeName: '',
+              departmentName: '',
+            },
       },
     });
   } catch (error) {
@@ -515,8 +575,15 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
     });
     if (!request) return res.status(404).json({ error: 'Correction request not found' });
 
+    const isNum = !isNaN(Number(request.employeeId));
+    const numId = isNum ? Number(request.employeeId) : undefined;
     const employee = await prisma.employee.findFirst({
-      where: { employeeCode: request.employeeId },
+      where: {
+        OR: [
+          { employeeCode: request.employeeId },
+          ...(numId !== undefined ? [{ id: numId }, { userId: numId }] : []),
+        ],
+      },
     });
 
     const dateFormatted = request.attendanceDate.toISOString().split('T')[0];
