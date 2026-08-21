@@ -404,10 +404,12 @@ async function initRolePermissions() {
 
 import { initFeatureExpiryCron } from './scripts/featureExpiryCron';
 import { initPayrollCron } from './services/payrollCronService';
+import { initAutoPunchOutCron } from './services/autoPunchOutService';
 
 // Initialize cron jobs
 initFeatureExpiryCron();
 initPayrollCron();
+initAutoPunchOutCron();
 
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);

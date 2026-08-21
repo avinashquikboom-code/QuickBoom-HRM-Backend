@@ -4431,18 +4431,40 @@ export const fetchLeaveAvailabilityCheck = async (
       orderBy: { fromDate: 'asc' },
     });
 
-    // 4. Calculate total staff counts for store and department
-    const [totalStoreStaff, totalDeptStaff] = await Promise.all([
-      employee.officeId ? prisma.employee.count({ where: { officeId: employee.officeId } }) : prisma.employee.count(),
-      employee.departmentId ? prisma.employee.count({
-        where: {
-          departmentId: employee.departmentId,
-          ...(employee.officeId ? { officeId: employee.officeId } : {}),
-        },
-      }) : 0,
-    ]);
+    // 4. Fetch store and department active staff lists
+    const storeEmployees = await prisma.employee.findMany({
+      where: {
+        status: 'active',
+        ...(employee.officeId ? { officeId: employee.officeId } : {}),
+      },
+      select: {
+        id: true,
+        employeeCode: true,
+        firstName: true,
+        lastName: true,
+        designation: true,
+        departmentId: true,
+        department: { select: { name: true } },
+        office: { select: { name: true } },
+      },
+      orderBy: { firstName: 'asc' },
+    });
 
-    const overlappingEmployees = overlappingLeaves.map(l => ({
+    const storeStaffList = storeEmployees.map((e) => ({
+      id: e.id,
+      employeeId: e.employeeCode || `EMP${e.id}`,
+      employeeCode: e.employeeCode || `EMP${e.id}`,
+      employeeName: `${e.firstName || ''} ${e.lastName || ''}`.trim() || 'Staff Member',
+      designation: e.designation || 'Staff',
+      department: e.department?.name || 'General',
+      store: e.office?.name || employee.office?.name || 'Main Branch',
+    }));
+
+    const deptStaffList = employee.departmentId
+      ? storeStaffList.filter((_, idx) => storeEmployees[idx].departmentId === employee.departmentId)
+      : storeStaffList;
+
+    const overlappingEmployees = overlappingLeaves.map((l) => ({
       id: l.id,
       employeeId: l.employeeId,
       employeeName: l.employee ? `${l.employee.firstName} ${l.employee.lastName}`.trim() : 'Staff Member',
@@ -4455,16 +4477,53 @@ export const fetchLeaveAvailabilityCheck = async (
       reason: l.reason,
     }));
 
-    // Deduplicate overlapping count
-    const uniqueOverlappingEmployeeIds = new Set(overlappingEmployees.map(e => e.employeeId));
-    const onLeaveCount = uniqueOverlappingEmployeeIds.size;
-    // Available staff = Total staff - (already on leave) - (1 for this requester)
+    // Deduplicate overlapping employees on approved leave
+    const onLeaveEmpMap = new Map<number, {
+      id: number;
+      employeeId: string;
+      employeeCode: string;
+      employeeName: string;
+      department: string;
+      designation: string;
+      leaveType?: string;
+      startDate?: string;
+      endDate?: string;
+    }>();
+
+    for (const l of overlappingLeaves) {
+      if (l.employee && !onLeaveEmpMap.has(l.employee.id)) {
+        onLeaveEmpMap.set(l.employee.id, {
+          id: l.employee.id,
+          employeeId: l.employee.employeeCode || `EMP${l.employee.id}`,
+          employeeCode: l.employee.employeeCode || `EMP${l.employee.id}`,
+          employeeName: `${l.employee.firstName || ''} ${l.employee.lastName || ''}`.trim() || 'Staff Member',
+          department: l.employee.department?.name || 'General',
+          designation: l.employee.designation || 'Staff',
+          leaveType: l.type,
+          startDate: l.fromDate.toISOString().split('T')[0],
+          endDate: l.toDate.toISOString().split('T')[0],
+        });
+      }
+    }
+
+    const onLeaveStaffList = Array.from(onLeaveEmpMap.values());
+    const onLeaveEmployeeIds = new Set(onLeaveStaffList.map((e) => e.id));
+
+    // Available staff: store staff not on approved leave, excluding the current leave applicant (whose request is pending review)
+    const availableStaffList = storeStaffList.filter(
+      (e) => !onLeaveEmployeeIds.has(e.id as number) && e.id !== employee.id
+    );
+
+    const totalStoreStaff = storeStaffList.length;
+    const totalDeptStaff = deptStaffList.length;
+    const onLeaveCount = onLeaveStaffList.length;
+    const availableStaffCount = availableStaffList.length;
+
     const effectiveTotal = totalStoreStaff > 0 ? totalStoreStaff : 1;
-    const availableStaffCount = Math.max(0, effectiveTotal - onLeaveCount - 1);
     const availabilityPercentage = Math.round((availableStaffCount / effectiveTotal) * 100);
 
     const sameDeptOverlappingCount = overlappingEmployees.filter(
-      e => e.department === (employee.department?.name || '')
+      (e) => e.department === (employee.department?.name || '')
     ).length;
 
     let warningLevel: 'OPTIMAL' | 'MODERATE' | 'CRITICAL' = 'OPTIMAL';
@@ -4508,7 +4567,7 @@ export const fetchLeaveAvailabilityCheck = async (
         scheduleContext: {
           weeklyOffDays,
           weeklyOffCount: weeklyOffDays.length,
-          holidays: holidays.map(h => ({
+          holidays: holidays.map((h) => ({
             id: h.id,
             name: h.name,
             date: h.date.toISOString().split('T')[0],
@@ -4517,7 +4576,7 @@ export const fetchLeaveAvailabilityCheck = async (
           holidayCount: holidays.length,
         },
         availability: {
-          totalStoreStaff: effectiveTotal,
+          totalStoreStaff,
           totalDeptStaff,
           otherEmployeesOnLeave: overlappingEmployees,
           onLeaveCount,
@@ -4525,6 +4584,10 @@ export const fetchLeaveAvailabilityCheck = async (
           availabilityPercentage,
           warningLevel,
           warningMessage,
+          storeStaffList,
+          deptStaffList,
+          onLeaveStaffList,
+          availableStaffList,
         },
       },
     });
