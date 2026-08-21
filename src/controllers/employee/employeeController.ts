@@ -1600,6 +1600,15 @@ export const fetchEmployeeWallet = async (
       },
     });
 
+    // Get salary structure
+    const salaryStructure = await prisma.salaryStructure.findUnique({
+      where: { employeeId: employee.id },
+    });
+
+    const defaultLimit = salaryStructure?.salaryAdvanceLimit !== undefined && salaryStructure?.salaryAdvanceLimit !== null
+      ? salaryStructure.salaryAdvanceLimit
+      : 25000;
+
     // If wallet doesn't exist, create one
     if (!wallet) {
       const last4Phone = employee.mobileNumber
@@ -1610,7 +1619,7 @@ export const fetchEmployeeWallet = async (
         data: {
           employeeId: employee.id,
           availableBalance: 0,
-          advanceLimit: 25000,
+          advanceLimit: defaultLimit,
           pendingClaims: 0,
           cardNumber,
         },
@@ -1622,11 +1631,6 @@ export const fetchEmployeeWallet = async (
         },
       });
     }
-
-    // Get salary structure
-    const salaryStructure = await prisma.salaryStructure.findUnique({
-      where: { employeeId: employee.id },
-    });
 
     // Get latest payslip for upcoming salary info
     const latestPayslip = await prisma.payslip.findFirst({
@@ -1665,20 +1669,28 @@ export const fetchEmployeeWallet = async (
       ? Math.round(latestPayslip.netSalary)
       : Math.round(estimatedNetSalary + currentCommission);
 
-    const activeAdvance = await prisma.salaryAdvance.findFirst({
-      where: {
-        walletId: wallet.id,
-        status: { in: ['PENDING', 'APPROVED'] },
-      },
-      orderBy: { requestedOn: 'desc' },
-    });
-
     const allAdvances = await prisma.salaryAdvance.findMany({
       where: {
         walletId: wallet.id,
       },
       orderBy: { requestedOn: 'desc' },
     });
+
+    // Authoritative Advance Limit Calculation
+    const effectiveLimit = salaryStructure?.salaryAdvanceLimit !== undefined && salaryStructure?.salaryAdvanceLimit !== null
+      ? salaryStructure.salaryAdvanceLimit
+      : (wallet.advanceLimit || 0);
+
+    const pendingAdvances = allAdvances.filter(a => a.status === 'PENDING');
+    const approvedAdvances = allAdvances.filter(a => a.status === 'APPROVED');
+
+    const pendingAmount = pendingAdvances.reduce((sum, a) => sum + (a.amount || 0), 0);
+    const approvedAmount = approvedAdvances.reduce((sum, a) => sum + (a.remainingAmount > 0 ? a.remainingAmount : 0), 0);
+    const totalAdvanceUsed = pendingAmount + approvedAmount;
+    const remainingAdvanceLimit = Math.max(0, effectiveLimit - totalAdvanceUsed);
+    const canApply = remainingAdvanceLimit > 0;
+
+    const activeAdvance = allAdvances.find(a => ['PENDING', 'APPROVED'].includes(a.status)) || null;
 
     const pendingExpenses = await prisma.expense.aggregate({
       where: {
@@ -1696,7 +1708,17 @@ export const fetchEmployeeWallet = async (
       wallet: {
         id: wallet.id.toString(),
         availableBalance: wallet.availableBalance,
-        advanceLimit: wallet.advanceLimit,
+        advanceLimit: effectiveLimit,
+        usedAmount: totalAdvanceUsed,
+        usedAdvance: totalAdvanceUsed,
+        pendingAmount,
+        pendingAdvance: pendingAmount,
+        approvedAmount,
+        approvedAdvance: approvedAmount,
+        remainingAmount: remainingAdvanceLimit,
+        remainingAdvance: remainingAdvanceLimit,
+        remainingAdvanceLimit,
+        canApply,
         pendingClaims: calculatedPendingClaims,
         cardNumber: wallet.cardNumber,
         isActive: wallet.isActive,
@@ -1720,6 +1742,8 @@ export const fetchEmployeeWallet = async (
           status: activeAdvance.status,
           requestedOn: activeAdvance.requestedOn.toISOString(),
           approvedAt: activeAdvance.approvedAt ? activeAdvance.approvedAt.toISOString() : null,
+          reviewedBy: activeAdvance.reviewedBy,
+          reviewNote: activeAdvance.reviewNote,
         } : null,
         advances: allAdvances.map(adv => ({
           id: adv.id.toString(),
@@ -1760,6 +1784,7 @@ export const fetchEmployeeWallet = async (
           specialAllowance: salaryStructure.specialAllowance,
           incentive: salaryStructure.incentive,
           bonus: salaryStructure.bonus,
+          salaryAdvanceLimit: effectiveLimit,
         } : null,
       },
     });
@@ -1783,88 +1808,120 @@ export const requestSalaryAdvance = async (
     }
 
     const numAmount = Number(amount);
-    const numMonths = Number(months) || 1;
+    const numMonths = Math.max(1, Number(months) || 1);
     const cleanReason = reason ? String(reason).trim() : 'Salary Advance Request';
 
     if (isNaN(numAmount) || numAmount <= 0) {
-      res.status(400).json({ success: false, message: 'Please enter a valid amount.' });
+      res.status(400).json({ success: false, message: 'Please enter a valid amount greater than 0.' });
       return;
     }
 
-    // Get or create wallet
-    let wallet = await prisma.wallet.findUnique({
-      where: { employeeId: employee.id },
-    });
+    // Atomic validation and creation inside database transaction to prevent race conditions
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Get or create wallet
+      let wallet = await tx.wallet.findUnique({
+        where: { employeeId: employee.id },
+      });
 
-    if (!wallet) {
-      const last4Phone = employee.mobileNumber
-        ? employee.mobileNumber.replace(/\D/g, '').slice(-4)
-        : '0000';
-      wallet = await prisma.wallet.create({
+      const salaryStructure = await tx.salaryStructure.findUnique({
+        where: { employeeId: employee.id },
+      });
+
+      const effectiveLimit = salaryStructure?.salaryAdvanceLimit !== undefined && salaryStructure?.salaryAdvanceLimit !== null
+        ? salaryStructure.salaryAdvanceLimit
+        : (wallet?.advanceLimit || 0);
+
+      if (!wallet) {
+        const last4Phone = employee.mobileNumber
+          ? employee.mobileNumber.replace(/\D/g, '').slice(-4)
+          : '0000';
+        wallet = await tx.wallet.create({
+          data: {
+            employeeId: employee.id,
+            availableBalance: 0,
+            advanceLimit: effectiveLimit,
+            pendingClaims: 0,
+            cardNumber: `HK-${employee.employeeCode}-${last4Phone}`,
+          },
+        });
+      }
+
+      // 2. Fetch active advances (PENDING and APPROVED)
+      const activeAdvances = await tx.salaryAdvance.findMany({
+        where: {
+          walletId: wallet.id,
+          status: { in: ['PENDING', 'APPROVED'] },
+        },
+        orderBy: { requestedOn: 'desc' },
+      });
+
+      // Prevent duplicate submissions caused by double tapping (within 4 seconds)
+      const recentDup = activeAdvances.find(
+        (a) =>
+          a.amount === numAmount &&
+          a.status === 'PENDING' &&
+          Date.now() - new Date(a.requestedOn).getTime() < 4000
+      );
+      if (recentDup) {
+        throw new Error('DUPLICATE_SUBMISSION');
+      }
+
+      // 3. Compute cumulative consumed amount
+      const pendingSum = activeAdvances
+        .filter((a) => a.status === 'PENDING')
+        .reduce((sum, a) => sum + (a.amount || 0), 0);
+
+      const approvedSum = activeAdvances
+        .filter((a) => a.status === 'APPROVED')
+        .reduce((sum, a) => sum + (a.remainingAmount > 0 ? a.remainingAmount : 0), 0);
+
+      const totalActiveUsed = pendingSum + approvedSum;
+      const remainingLimit = Math.max(0, effectiveLimit - totalActiveUsed);
+
+      if (remainingLimit <= 0) {
+        const err: any = new Error('LIMIT_EXHAUSTED');
+        err.remainingLimit = 0;
+        throw err;
+      }
+
+      if (numAmount > remainingLimit) {
+        const err: any = new Error('LIMIT_EXCEEDED');
+        err.remainingLimit = remainingLimit;
+        throw err;
+      }
+
+      const calculatedEmi = Math.round((numAmount / numMonths) * 100) / 100;
+
+      // 4. Create salary advance request
+      const advance = await tx.salaryAdvance.create({
         data: {
-          employeeId: employee.id,
-          availableBalance: 0,
-          advanceLimit: 25000,
-          pendingClaims: 0,
-          cardNumber: `HK-${employee.employeeCode}-${last4Phone}`,
+          walletId: wallet.id,
+          amount: numAmount,
+          months: numMonths,
+          monthlyEmi: calculatedEmi,
+          remainingAmount: numAmount,
+          reason: cleanReason,
+          status: 'PENDING',
         },
       });
-    }
 
-    // Validate advance limit
-    if (numAmount > wallet.advanceLimit) {
-      res.status(400).json({
-        success: false,
-        message: `Amount (₹${numAmount}) exceeds your advance limit (₹${wallet.advanceLimit}).`,
+      // 5. Create transaction record
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          title: 'Salary Advance Request',
+          category: 'Advance',
+          amount: numAmount,
+          date: new Date(),
+          status: 'Processing',
+          isCredit: false,
+          description: `Salary advance requested: ₹${numAmount} (${numMonths} EMIs). Pending HR Approval.`,
+        },
       });
-      return;
-    }
 
-    // Check if employee already has a pending or active advance
-    const existingActive = await prisma.salaryAdvance.findFirst({
-      where: {
-        walletId: wallet.id,
-        status: { in: ['PENDING', 'APPROVED'] },
-      },
-    });
+      const newRemainingLimit = Math.max(0, remainingLimit - numAmount);
 
-    if (existingActive) {
-      res.status(400).json({
-        success: false,
-        message:
-          existingActive.status === 'PENDING'
-            ? 'You already have a salary advance request pending HR approval.'
-            : 'You already have an active running salary advance.',
-      });
-      return;
-    }
-
-    const calculatedEmi = Math.round((numAmount / numMonths) * 100) / 100;
-
-    // Create salary advance request
-    const advance = await prisma.salaryAdvance.create({
-      data: {
-        walletId: wallet.id,
-        amount: numAmount,
-        months: numMonths,
-        monthlyEmi: calculatedEmi,
-        remainingAmount: numAmount,
-        reason: cleanReason,
-        status: 'PENDING',
-      },
-    });
-
-    // Create transaction record
-    await prisma.walletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        title: 'Salary Advance Request',
-        category: 'Advance',
-        amount: numAmount,
-        date: new Date(),
-        status: 'Processing',
-        isCredit: false,
-      },
+      return { advance, remainingLimit: newRemainingLimit };
     });
 
     // Notify HR of new salary advance request (in-app & FCM push outside app)
@@ -1875,27 +1932,52 @@ export const requestSalaryAdvance = async (
       category: 'advance',
       screen: 'salary_advance',
       type: 'salary_advance_request',
-      actionId: advance.id.toString(),
+      actionId: result.advance.id.toString(),
     }).catch(err => console.error('Advance request notification error:', err));
 
     res.json({
       success: true,
       message: 'Salary advance request submitted successfully.',
       advance: {
-        id: advance.id.toString(),
-        amount: advance.amount,
-        months: advance.months,
-        monthlyEmi: advance.monthlyEmi,
-        status: advance.status,
-        requestedOn: advance.requestedOn.toISOString(),
+        id: result.advance.id.toString(),
+        amount: result.advance.amount,
+        months: result.advance.months,
+        monthlyEmi: result.advance.monthlyEmi,
+        status: result.advance.status,
+        requestedOn: result.advance.requestedOn.toISOString(),
       },
+      remainingLimit: result.remainingLimit,
     });
   } catch (error: any) {
+    if (error?.message === 'DUPLICATE_SUBMISSION') {
+      res.status(400).json({
+        success: false,
+        message: 'Duplicate submission detected. Please wait a moment before submitting again.',
+      });
+      return;
+    }
+
+    if (error?.message === 'LIMIT_EXHAUSTED') {
+      res.status(400).json({
+        success: false,
+        message: 'Advance salary limit exhausted. You have no remaining advance salary balance.',
+        remainingLimit: 0,
+      });
+      return;
+    }
+
+    if (error?.message === 'LIMIT_EXCEEDED') {
+      const formattedRem = error.remainingLimit?.toLocaleString('en-IN') || error.remainingLimit;
+      res.status(400).json({
+        success: false,
+        message: `You can apply for a maximum of ₹${formattedRem}. Your remaining advance salary limit is ₹${formattedRem}.`,
+        remainingLimit: error.remainingLimit,
+      });
+      return;
+    }
+
     console.error('Request salary advance error:', error);
-    res.status(500).json({
-      success: false,
-      message: error?.message || 'Failed to submit advance request.',
-    });
+    res.status(500).json({ success: false, message: error?.message || 'Failed to submit salary advance request.' });
   }
 };
 

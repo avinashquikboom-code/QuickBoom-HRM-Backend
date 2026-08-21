@@ -34,6 +34,9 @@ export const getAdminSalaryAdvances = async (
                 department: {
                   select: { name: true },
                 },
+                salaryStructure: {
+                  select: { salaryAdvanceLimit: true },
+                },
               },
             },
           },
@@ -49,6 +52,10 @@ export const getAdminSalaryAdvances = async (
       const calculatedMonthlyEmi = adv.monthlyEmi > 0 
         ? adv.monthlyEmi 
         : Math.round((adv.amount / totalEmis) * 100) / 100;
+
+      const employeeAdvanceLimit = emp?.salaryStructure?.salaryAdvanceLimit !== undefined && emp?.salaryStructure?.salaryAdvanceLimit !== null
+        ? emp.salaryStructure.salaryAdvanceLimit
+        : (adv.wallet?.advanceLimit || 0);
 
       return {
         id: adv.id,
@@ -67,6 +74,7 @@ export const getAdminSalaryAdvances = async (
         pendingEmis,
         reason: adv.reason,
         status: adv.status,
+        advanceLimit: employeeAdvanceLimit,
         requestedOn: adv.requestedOn.toISOString(),
         reviewedBy: adv.reviewedBy,
         reviewNote: adv.reviewNote,
@@ -104,7 +112,15 @@ export const reviewSalaryAdvance = async (
     const advanceId = parseInt(id as string, 10);
     const advance = await prisma.salaryAdvance.findUnique({
       where: { id: advanceId },
-      include: { wallet: { include: { employee: true } } },
+      include: {
+        wallet: {
+          include: {
+            employee: {
+              include: { salaryStructure: true },
+            },
+          },
+        },
+      },
     });
 
     if (!advance) {
@@ -161,46 +177,77 @@ export const reviewSalaryAdvance = async (
     }
 
     if (action === 'APPROVE') {
-      // Determine EMI tenure months (use admin passed value if provided, else keep original requested months)
-      const finalMonths = months && parseInt(months, 10) > 0 ? parseInt(months, 10) : (advance.months || 1);
-      const monthlyEmi = Math.round((advance.amount / finalMonths) * 100) / 100;
+      // Validate cumulative limit inside a transaction to prevent race conditions
+      const result = await prisma.$transaction(async (tx) => {
+        const emp = advance.wallet?.employee;
+        const effectiveLimit = emp?.salaryStructure?.salaryAdvanceLimit !== undefined && emp?.salaryStructure?.salaryAdvanceLimit !== null
+          ? emp.salaryStructure.salaryAdvanceLimit
+          : (advance.wallet?.advanceLimit || 0);
 
-      const updatedAdvance = await prisma.salaryAdvance.update({
-        where: { id: advanceId },
-        data: {
-          status: 'APPROVED',
-          months: finalMonths,
-          monthlyEmi,
-          paidAmount: 0,
-          remainingAmount: advance.amount,
-          paidEmis: 0,
-          reviewedBy: reviewerEmail,
-          reviewNote: reviewNote || `Approved with ${finalMonths} EMI installments`,
-          reviewedAt: new Date(),
-          approvedAt: new Date(),
-        },
-      });
+        // Fetch other active approved advances for this wallet (excluding current request)
+        const otherApprovedAdvances = await tx.salaryAdvance.findMany({
+          where: {
+            walletId: advance.walletId,
+            id: { not: advanceId },
+            status: 'APPROVED',
+          },
+        });
 
-      // Disburse advance to wallet available balance
-      await prisma.wallet.update({
-        where: { id: advance.walletId },
-        data: {
-          availableBalance: { increment: advance.amount },
-        },
-      });
+        const otherApprovedTotal = otherApprovedAdvances.reduce(
+          (sum, a) => sum + (a.remainingAmount > 0 ? a.remainingAmount : 0),
+          0
+        );
 
-      // Log credit transaction in wallet
-      await prisma.walletTransaction.create({
-        data: {
-          walletId: advance.walletId,
-          title: 'Salary Advance Disbursed',
-          category: 'Advance',
-          amount: advance.amount,
-          date: new Date(),
-          status: 'Success',
-          isCredit: true,
-          description: `Disbursed ₹${advance.amount} with ${finalMonths} EMI monthly deductions (₹${monthlyEmi}/month).`,
-        },
+        if (otherApprovedTotal + advance.amount > effectiveLimit) {
+          const maxPossible = Math.max(0, effectiveLimit - otherApprovedTotal);
+          const err: any = new Error('LIMIT_EXCEEDED');
+          err.maxPossible = maxPossible;
+          throw err;
+        }
+
+        // Determine EMI tenure months (use admin passed value if provided, else keep original requested months)
+        const finalMonths = months && parseInt(months, 10) > 0 ? parseInt(months, 10) : (advance.months || 1);
+        const monthlyEmi = Math.round((advance.amount / finalMonths) * 100) / 100;
+
+        const updatedAdvance = await tx.salaryAdvance.update({
+          where: { id: advanceId },
+          data: {
+            status: 'APPROVED',
+            months: finalMonths,
+            monthlyEmi,
+            paidAmount: 0,
+            remainingAmount: advance.amount,
+            paidEmis: 0,
+            reviewedBy: reviewerEmail,
+            reviewNote: reviewNote || `Approved with ${finalMonths} EMI installments`,
+            reviewedAt: new Date(),
+            approvedAt: new Date(),
+          },
+        });
+
+        // Disburse advance to wallet available balance
+        await tx.wallet.update({
+          where: { id: advance.walletId },
+          data: {
+            availableBalance: { increment: advance.amount },
+          },
+        });
+
+        // Log credit transaction in wallet
+        await tx.walletTransaction.create({
+          data: {
+            walletId: advance.walletId,
+            title: 'Salary Advance Disbursed',
+            category: 'Advance',
+            amount: advance.amount,
+            date: new Date(),
+            status: 'Success',
+            isCredit: true,
+            description: `Disbursed ₹${advance.amount} with ${finalMonths} EMI monthly deductions (₹${monthlyEmi}/month).`,
+          },
+        });
+
+        return { updatedAdvance, finalMonths };
       });
 
       // Notify Employee (in-app & FCM push outside app)
@@ -208,7 +255,7 @@ export const reviewSalaryAdvance = async (
         firebaseNotificationService.sendAppNotification({
           userId: advance.wallet.employee.userId,
           title: 'Salary Advance Approved',
-          body: `Your salary advance request of ₹${advance.amount} has been approved by HR with ${finalMonths} EMIs.`,
+          body: `Your salary advance request of ₹${advance.amount} has been approved by HR with ${result.finalMonths} EMIs.`,
           category: 'advance',
           screen: 'salary_advance',
           type: 'salary_advance_approved',
@@ -218,8 +265,8 @@ export const reviewSalaryAdvance = async (
 
       res.json({
         success: true,
-        message: `Salary advance approved successfully with ${finalMonths} EMI months.`,
-        advance: updatedAdvance,
+        message: `Salary advance approved successfully with ${result.finalMonths} EMI months.`,
+        advance: result.updatedAdvance,
       });
       return;
     }

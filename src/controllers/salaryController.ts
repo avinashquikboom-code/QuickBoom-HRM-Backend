@@ -112,16 +112,26 @@ export const getSalarySlip = async (
     const special = ss?.specialAllowance || 0;
     const bonus = ss?.bonus || 0;
     const incentive = ss?.incentive || 0;
-    const salaryAdvanceLimit = ss?.salaryAdvanceLimit || 25000;
+    const salaryAdvanceLimit = ss?.salaryAdvanceLimit !== undefined && ss?.salaryAdvanceLimit !== null
+      ? ss.salaryAdvanceLimit
+      : 25000;
 
-    // Fetch salary advance used
-    const advances = await prisma.salaryAdvance.findMany({
+    // Fetch active salary advances for employee
+    const activeAdvances = await prisma.salaryAdvance.findMany({
       where: {
         wallet: { employeeId: targetEmployeeId },
-        status: 'APPROVED',
+        status: { in: ['PENDING', 'APPROVED'] },
       }
     });
-    const salaryAdvanceUsed = advances.reduce((sum, a) => sum + (a.amount || 0), 0);
+    const pendingAdvance = activeAdvances
+      .filter((a) => a.status === 'PENDING')
+      .reduce((sum, a) => sum + (a.amount || 0), 0);
+    const approvedAdvanceRemaining = activeAdvances
+      .filter((a) => a.status === 'APPROVED')
+      .reduce((sum, a) => sum + (a.remainingAmount > 0 ? a.remainingAmount : 0), 0);
+    const salaryAdvanceUsed = pendingAdvance + approvedAdvanceRemaining;
+    const salaryAdvanceRemaining = Math.max(0, salaryAdvanceLimit - salaryAdvanceUsed);
+    const advanceDeduction = dbPayslip?.advanceDeduction || 0;
 
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
@@ -179,6 +189,7 @@ export const getSalarySlip = async (
 
       deductions: {
         deductions,
+        advanceDeduction,
         totalDeductions: deductions,
       },
 
@@ -198,6 +209,8 @@ export const getSalarySlip = async (
         commissionRate: employee.commissionPercentage || 1.0,
         salaryAdvanceLimit,
         salaryAdvanceUsed,
+        salaryAdvanceRemaining,
+        advanceDeduction,
       }
     };
 
@@ -582,6 +595,16 @@ export const updateSalaryStructureById = async (
         ...dataToUpdate,
       },
     });
+
+    // Synchronize wallet advanceLimit
+    try {
+      await prisma.wallet.updateMany({
+        where: { employeeId: emp.id },
+        data: { advanceLimit: newAdvanceLimit },
+      });
+    } catch (wErr) {
+      console.warn('Wallet advanceLimit sync warning:', wErr);
+    }
 
     console.log(`[SalaryStructure Update] DB values after update:`, updatedStructure);
 
