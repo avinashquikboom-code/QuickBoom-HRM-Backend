@@ -45,8 +45,8 @@ export const getSalarySlip = async (
     // Fetch permissions
     const perms = employee.userId ? await getEffectiveUserPermissions(employee.userId) : DEFAULT_EMPLOYEE_PERMISSIONS;
 
-    // Check canViewSalary for employee requests
-    if (req.user && req.user.role === 'EMPLOYEE' && perms.canViewSalary === false) {
+    // Check canViewSalary for employee requests (allow viewing own wallet/slip)
+    if (req.user && req.user.role === 'EMPLOYEE' && employee.userId !== req.user.id && perms.canViewSalary === false) {
       res.status(403).json({ success: false, message: 'Access denied: Salary slip viewing disabled by HR.' });
       return;
     }
@@ -80,14 +80,22 @@ export const getSalarySlip = async (
     });
 
     let calcResult: any = null;
-    if (!dbPayslip) {
+    if (!dbPayslip || (dbPayslip.baseSalary === 0 && !dbPayslip.netSalary)) {
       calcResult = await payrollService.calculatePayroll(targetEmployeeId, targetMonth, targetYear);
     }
 
-    const baseSalary = dbPayslip?.baseSalary ?? calcResult?.baseSalary ?? (employee.salaryStructure?.basicSalary || 0);
-    const allowance = dbPayslip?.allowance ?? calcResult?.allowance ?? 0;
+    const ss = employee.salaryStructure;
+    const baseSalary = (dbPayslip?.baseSalary && dbPayslip.baseSalary > 0)
+      ? dbPayslip.baseSalary
+      : (calcResult?.baseSalary && calcResult.baseSalary > 0)
+      ? calcResult.baseSalary
+      : (ss?.basicSalary || ss?.monthlySalary || 10000);
+
+    const allowance = dbPayslip?.allowance ?? calcResult?.allowance ?? (
+      (ss?.hra || 0) + (ss?.medicalAllowance || 0) + (ss?.travelAllowance || 0) + (ss?.specialAllowance || 0)
+    );
     const deductions = dbPayslip?.deductions ?? calcResult?.deductions ?? 0;
-    const netSalary = dbPayslip?.netSalary ?? calcResult?.netSalary ?? 0;
+    const netSalary = dbPayslip?.netSalary ?? calcResult?.netSalary ?? (baseSalary + allowance - deductions);
     const commissionEarned = dbPayslip?.commissionEarned ?? calcResult?.commissionEarned ?? 0;
     const presentDays = dbPayslip?.presentDays ?? calcResult?.presentDays ?? 0;
     const absentDays = dbPayslip?.absentDays ?? calcResult?.absentDays ?? 0;
@@ -100,11 +108,18 @@ export const getSalarySlip = async (
     const weeklyOffWorkedCount = dbPayslip?.weeklyOffWorkedCount ?? calcResult?.weeklyOffWorkedCount ?? 0;
     const extraHolidayPayout = dbPayslip?.extraHolidayPayout ?? calcResult?.extraHolidayPayout ?? 0;
     const extraWeeklyOffPayout = dbPayslip?.extraWeeklyOffPayout ?? calcResult?.extraWeeklyOffPayout ?? 0;
-    const dailySalary = dbPayslip?.dailySalary ?? calcResult?.dailySalary ?? 0;
-    const workingDays = dbPayslip?.workingDays ?? calcResult?.workingDays ?? 26;
+    const workingDays = (dbPayslip?.workingDays && dbPayslip.workingDays > 0)
+      ? dbPayslip.workingDays
+      : (calcResult?.workingDays && calcResult.workingDays > 0)
+      ? calcResult.workingDays
+      : 26;
+    const dailySalary = (dbPayslip?.dailySalary && dbPayslip.dailySalary > 0)
+      ? dbPayslip.dailySalary
+      : (calcResult?.dailySalary && calcResult.dailySalary > 0)
+      ? calcResult.dailySalary
+      : Math.round((baseSalary / workingDays) * 100) / 100;
     const totalCalendarDays = dbPayslip?.totalCalendarDays ?? calcResult?.totalCalendarDays ?? new Date(targetYear, targetMonth, 0).getDate();
 
-    const ss = employee.salaryStructure;
     const basicSalary = ss?.basicSalary || baseSalary;
     const hra = ss?.hra || 0;
     const medical = ss?.medicalAllowance || 0;
