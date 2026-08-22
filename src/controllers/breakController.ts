@@ -250,10 +250,29 @@ export const getTodayBreaks = async (req: AuthenticatedRequest, res: Response): 
 
     const activeBreak = breaks.find(b => b.endAt === null) || null;
 
+    const breakSessions = breaks.map(b => {
+      const durationMs = b.endAt ? b.endAt.getTime() - b.startAt.getTime() : null;
+      const durationMinutes = durationMs !== null ? Math.max(0, Math.round(durationMs / (1000 * 60))) : null;
+      return {
+        id: b.id,
+        startTime: b.startAt.toISOString(),
+        endTime: b.endAt ? b.endAt.toISOString() : null,
+        durationMinutes,
+        type: b.type
+      };
+    });
+
+    const totalBreakMinutes = breakSessions
+      .filter(b => b.durationMinutes !== null && b.durationMinutes !== undefined)
+      .reduce((sum, b) => sum + (b.durationMinutes || 0), 0);
+
     res.status(200).json({
       success: true,
       breaks,
-      activeBreak
+      activeBreak,
+      breakSessions,
+      totalBreakMinutes,
+      isCurrentlyOnBreak: activeBreak !== null
     });
   } catch (error) {
     console.error('Get today breaks error:', error);
@@ -264,3 +283,4 @@ export const getTodayBreaks = async (req: AuthenticatedRequest, res: Response): 
     });
   }
 };
+

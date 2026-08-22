@@ -9039,21 +9039,75 @@ export const fetchStoreAttendance = async (
       }
     });
 
-    const activeBreaks = await prisma.break.findMany({
+    const allBreaks = await prisma.break.findMany({
       where: {
         employeeId: { in: empIds },
-        endAt: null
-      }
+        date: { in: [todayStr, utcTodayStr] }
+      },
+      orderBy: { startAt: 'asc' }
     });
 
     const attMap = new Map(attendances.map(a => [a.employeeId, a]));
     const leaveMap = new Map(leaves.map(l => [l.employeeId, l]));
-    const breakMap = new Map(activeBreaks.map(b => [b.employeeId, b]));
 
     const data = employees.map(emp => {
       const att = attMap.get(emp.id);
       const leave = leaveMap.get(emp.id);
-      const activeBreak = breakMap.get(emp.id);
+      const empBreaks = allBreaks.filter(b => b.employeeId === emp.id);
+
+      let breakSessions: Array<{
+        id?: number | string;
+        startTime: string;
+        endTime: string | null;
+        durationMinutes: number | null;
+        type: string;
+      }> = [];
+
+      if (empBreaks.length > 0) {
+        breakSessions = empBreaks.map(b => {
+          const durationMinutes = b.endAt
+            ? Math.max(0, Math.round((new Date(b.endAt).getTime() - new Date(b.startAt).getTime()) / (1000 * 60)))
+            : null;
+          return {
+            id: b.id,
+            startTime: b.startAt.toISOString(),
+            endTime: b.endAt ? b.endAt.toISOString() : null,
+            durationMinutes,
+            type: b.type || 'PERSONAL'
+          };
+        });
+      } else if (att?.breakRecords && att.breakRecords.length > 0) {
+        breakSessions = att.breakRecords.map(br => {
+          const durationMinutes = br.endTime
+            ? Math.max(0, Math.round((new Date(br.endTime).getTime() - new Date(br.startTime).getTime()) / (1000 * 60)))
+            : (br.duration ? Math.round(br.duration / 60) : null);
+          return {
+            id: br.id,
+            startTime: br.startTime.toISOString(),
+            endTime: br.endTime ? br.endTime.toISOString() : null,
+            durationMinutes,
+            type: 'PERSONAL'
+          };
+        });
+      } else if (att?.isOnBreak && att?.breakStartTime) {
+        breakSessions = [{
+          startTime: att.breakStartTime.toISOString(),
+          endTime: null,
+          durationMinutes: null,
+          type: 'PERSONAL'
+        }];
+      }
+
+      const hasActiveBreakSession = breakSessions.some(s => s.endTime === null) || Boolean(att?.isOnBreak);
+      const isCurrentlyOnBreak = Boolean(hasActiveBreakSession && att?.checkIn && !att?.checkOut);
+
+      let totalBreakMinutes = breakSessions
+        .filter(s => s.durationMinutes !== null && s.durationMinutes !== undefined)
+        .reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
+
+      if (totalBreakMinutes === 0 && att && att.totalBreakSeconds > 0) {
+        totalBreakMinutes = Math.round(att.totalBreakSeconds / 60);
+      }
 
       let status = 'ABSENT';
       if (leave) {
@@ -9093,12 +9147,32 @@ export const fetchStoreAttendance = async (
         ? att.checkOut.toISOString()
         : null;
 
+      let startBreak = '-';
+      let endBreak = '-';
+      let totalBreak = '-';
+
+      if (breakSessions.length > 0) {
+        startBreak = breakSessions
+          .map(s => new Date(s.startTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }))
+          .join(', ');
+
+        endBreak = breakSessions
+          .map(s => s.endTime ? new Date(s.endTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '-')
+          .join(', ');
+      }
+
+      if (isCurrentlyOnBreak) {
+        totalBreak = 'Running';
+      } else if (totalBreakMinutes > 0) {
+        totalBreak = `${totalBreakMinutes} min`;
+      }
+
       let breakDetails = '-';
-      if (activeBreak) {
-        breakDetails = `On ${activeBreak.type} break`;
-      } else if (att && att.totalBreakSeconds > 0) {
-        const breakMins = Math.round(att.totalBreakSeconds / 60);
-        breakDetails = `${breakMins} mins taken`;
+      if (isCurrentlyOnBreak) {
+        const activeSession = breakSessions.find(s => s.endTime === null);
+        breakDetails = `On ${activeSession?.type || 'PERSONAL'} break`;
+      } else if (totalBreakMinutes > 0) {
+        breakDetails = `${totalBreakMinutes} mins taken`;
       }
 
       return {
@@ -9112,6 +9186,12 @@ export const fetchStoreAttendance = async (
         punchInTime: checkInIso,
         punchOutTime: checkOutIso,
         workingHours,
+        breakSessions,
+        totalBreakMinutes,
+        isCurrentlyOnBreak,
+        startBreak,
+        endBreak,
+        totalBreak,
         breakDetails,
         notes: att?.notes || leave?.reason || ''
       };
@@ -9128,5 +9208,6 @@ export const fetchStoreAttendance = async (
     res.status(500).json({ success: false, message: error.message || 'Failed to fetch store attendance.' });
   }
 };
+
 
 
