@@ -485,6 +485,7 @@ model Payslip {
   officeName            String
   netInWords            String
   advanceDeduction      Float    @default(0)
+  expenseReimbursement  Float    @default(0)
   presentDays           Int      @default(0)
   absentDays            Int      @default(0)
   halfDays              Int      @default(0)

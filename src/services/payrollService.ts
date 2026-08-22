@@ -33,6 +33,10 @@ export interface PayrollCalculation {
   leaveDeduction: number; // unpaid leave deduction
   absentDeduction: number;
   advanceDeduction: number;
+  expenseReimbursement: number;
+  approvedExpenses: number;
+  expensesByCategory?: Array<{ category: string; amount: number }>;
+  expenseCategories?: Record<string, number>;
   extraHolidayPayout: number;
   extraWeeklyOffPayout: number;
   commissionEarned: number;
@@ -147,8 +151,30 @@ class PayrollService {
         commissionEarned = empCommSum._sum?.commissionAmount || 0;
       }
 
-      // Gross Salary: Regular Monthly Salary + Extra Payouts + Bonus + Overtime + Commission
-      const grossSalary = Math.round((monthlySalary + extraHolidayPayout + extraWeeklyOffPayout + bonus + overtime + commissionEarned) * 100) / 100;
+      // Fetch approved expenses for this month
+      const approvedExpenseRecords = await prisma.expense.findMany({
+        where: {
+          employeeId,
+          status: 'APPROVED',
+          date: { gte: monthStart, lte: monthEnd }
+        }
+      });
+      const expenseCategories: Record<string, number> = {};
+      let totalApprovedExpenses = 0;
+      for (const exp of approvedExpenseRecords) {
+        const cat = exp.category || 'Other';
+        const amt = exp.amount || 0;
+        totalApprovedExpenses += amt;
+        expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + amt) * 100) / 100;
+      }
+      const approvedExpenses = Math.round(totalApprovedExpenses * 100) / 100;
+      const expensesByCategory = Object.entries(expenseCategories).map(([category, amount]) => ({
+        category,
+        amount,
+      }));
+
+      // Gross Salary: Regular Monthly Salary + Extra Payouts + Bonus + Overtime + Commission + Approved Expenses
+      const grossSalary = Math.round((monthlySalary + extraHolidayPayout + extraWeeklyOffPayout + bonus + overtime + commissionEarned + approvedExpenses) * 100) / 100;
 
       // Calculate statutory deductions
       const statutoryDeductions = this.calculateDeductions(grossSalary, salaryStructure);
@@ -218,6 +244,10 @@ class PayrollService {
         leaveDeduction: unpaidLeaveDeduction,
         absentDeduction,
         advanceDeduction,
+        expenseReimbursement: approvedExpenses,
+        approvedExpenses,
+        expensesByCategory,
+        expenseCategories,
         extraHolidayPayout,
         extraWeeklyOffPayout,
         commissionEarned,
@@ -975,6 +1005,7 @@ class PayrollService {
           totalCalendarDays: calculation.totalCalendarDays,
           commissionEarned: calculation.commissionEarned,
           advanceDeduction: calculation.advanceDeduction,
+          expenseReimbursement: calculation.expenseReimbursement,
           status: 'Approved',
           updatedAt: new Date()
         },
@@ -987,6 +1018,7 @@ class PayrollService {
           deductions: calculation.deductions,
           netSalary: calculation.netSalary,
           advanceDeduction: calculation.advanceDeduction,
+          expenseReimbursement: calculation.expenseReimbursement,
           status: 'Approved',
           employeeCode: empCode,
           employeeName: empName,

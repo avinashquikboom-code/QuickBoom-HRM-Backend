@@ -65,6 +65,9 @@ export const getMyPayslips = async (
       return {
         ...ps,
         advanceDeduction: ps.advanceDeduction || 0,
+        expenseReimbursement: ps.expenseReimbursement || 0,
+        approvedExpenses: ps.expenseReimbursement || 0,
+        approvedExpenseAmount: ps.expenseReimbursement || 0,
         commissionEarned: ps.commissionEarned || 0,
         presentDays: ps.presentDays || 0,
         absentDays: ps.absentDays || 0,
@@ -100,6 +103,9 @@ export const getMyPayslips = async (
         return {
           ...ps,
           advanceDeduction: ps.advanceDeduction || 0,
+          expenseReimbursement: ps.expenseReimbursement || 0,
+          approvedExpenses: ps.expenseReimbursement || 0,
+          approvedExpenseAmount: ps.expenseReimbursement || 0,
           commissionEarned: ps.commissionEarned || 0,
           presentDays: ps.presentDays || 0,
           absentDays: ps.absentDays || 0,
@@ -308,6 +314,28 @@ export const downloadPayslip = async (
     ];
     if (commissionEarned > 0) {
       earningsItems.push({ name: 'Commission', amount: commissionEarned });
+    }
+    const expenseReimbursement = payslip.expenseReimbursement || 0;
+    const approvedExpenses = await prisma.expense.findMany({
+      where: {
+        employeeId: payslip.employeeId,
+        status: 'APPROVED',
+        date: { gte: monthStart, lte: monthEnd },
+      },
+      orderBy: { date: 'asc' },
+    });
+    const expenseCategories: Record<string, number> = {};
+    for (const exp of approvedExpenses) {
+      const cat = exp.category || 'Other';
+      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + (exp.amount || 0)) * 100) / 100;
+    }
+    const catEntries = Object.entries(expenseCategories);
+    if (catEntries.length > 0) {
+      for (const [cat, amt] of catEntries) {
+        earningsItems.push({ name: `${cat} Expense`, amount: amt });
+      }
+    } else if (expenseReimbursement > 0) {
+      earningsItems.push({ name: 'Total Approved Expenses', amount: expenseReimbursement });
     }
 
     const deductionsItems: { name: string; amount: number }[] = [];

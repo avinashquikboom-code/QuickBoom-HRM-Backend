@@ -132,9 +132,40 @@ export const getSalarySlip = async (
     const salaryAdvanceUsed = pendingAdvance + approvedAdvanceRemaining;
     const salaryAdvanceRemaining = Math.max(0, salaryAdvanceLimit - salaryAdvanceUsed);
     const advanceDeduction = dbPayslip?.advanceDeduction ?? calcResult?.advanceDeduction ?? 0;
+    const expenseReimbursement = dbPayslip?.expenseReimbursement ?? calcResult?.expenseReimbursement ?? 0;
+    const approvedExpenseAmount = expenseReimbursement;
+
+    const monthStart = new Date(targetYear, targetMonth - 1, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
+    let expensesByCategory = calcResult?.expensesByCategory;
+    let expenseCategories = calcResult?.expenseCategories;
+
+    if (!expensesByCategory || !expenseCategories) {
+      const approvedExpenseRecords = await prisma.expense.findMany({
+        where: {
+          employeeId: targetEmployeeId,
+          status: 'APPROVED',
+          date: { gte: monthStart, lte: monthEnd },
+        },
+      });
+      const catMap: Record<string, number> = {};
+      for (const exp of approvedExpenseRecords) {
+        const cat = exp.category || 'Other';
+        catMap[cat] = Math.round(((catMap[cat] || 0) + (exp.amount || 0)) * 100) / 100;
+      }
+      expenseCategories = catMap;
+      expensesByCategory = Object.entries(catMap).map(([category, amount]) => ({
+        category,
+        amount,
+      }));
+    }
+
     const halfDayDeduction = dbPayslip?.halfDays ? Math.round((dbPayslip.halfDays * 0.5 * dailySalary) * 100) / 100 : (calcResult?.halfDayDeduction ?? 0);
     const leaveDeduction = dbPayslip?.unpaidLeaveDays ? Math.round((dbPayslip.unpaidLeaveDays * dailySalary) * 100) / 100 : (calcResult?.leaveDeduction ?? 0);
     const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? 0);
+    const itemizedDeductions = halfDayDeduction + leaveDeduction + absentDeduction + advanceDeduction;
+    const otherDeductions = Math.max(0, Math.round((deductions - itemizedDeductions) * 100) / 100);
 
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
@@ -143,7 +174,7 @@ export const getSalarySlip = async (
     const monthName = monthNames[targetMonth - 1];
     const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
 
-    const grossTotal = baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout);
+    const grossTotal = baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout) + expenseReimbursement;
 
     const responsePayload = {
       employeeId: employee.id,
@@ -160,6 +191,17 @@ export const getSalarySlip = async (
       allowance,
       grossSalary: grossTotal,
       advanceDeduction,
+      halfDayDeduction,
+      leaveDeduction,
+      absentDeduction,
+      otherDeduction: otherDeductions,
+      otherDeductions,
+      expenseReimbursement,
+      approvedExpenseAmount,
+      approvedExpenses: expenseReimbursement,
+      expenses: expensesByCategory,
+      expensesByCategory,
+      expenseCategories,
       deductionsTotal: deductions,
       netSalary,
 
@@ -186,6 +228,12 @@ export const getSalarySlip = async (
         travel,
         special,
         commission: commissionEarned,
+        expenseReimbursement,
+        approvedExpenses: expenseReimbursement,
+        approvedExpenseAmount: expenseReimbursement,
+        expenses: expensesByCategory,
+        expensesByCategory,
+        expenseCategories,
         extraPayout: extraHolidayPayout + extraWeeklyOffPayout,
         bonus,
         incentive,
@@ -198,6 +246,8 @@ export const getSalarySlip = async (
         leaveDeduction,
         absentDeduction,
         advanceDeduction,
+        otherDeduction: otherDeductions,
+        otherDeductions,
         totalDeductions: deductions,
       },
 

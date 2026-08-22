@@ -375,6 +375,35 @@ export const generatePayslipPDF = async (
       ]);
     }
 
+    const expenseReimbursement = (payslip as any).expenseReimbursement || 0;
+    const approvedExpenses = await prisma.expense.findMany({
+      where: {
+        employeeId: payslip.employeeId,
+        status: 'APPROVED',
+        date: { gte: monthStart, lte: monthEnd },
+      },
+      orderBy: { date: 'asc' },
+    });
+    const expenseCategories: Record<string, number> = {};
+    for (const exp of approvedExpenses) {
+      const cat = exp.category || 'Other';
+      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + (exp.amount || 0)) * 100) / 100;
+    }
+    const catEntries = Object.entries(expenseCategories);
+    if (catEntries.length > 0) {
+      for (const [cat, amt] of catEntries) {
+        earningsTableBody.push([
+          { text: `${cat} Expense`, fontSize: 9, color: '#111827' },
+          { text: fmt(amt), fontSize: 9, alignment: 'right', color: '#111827' }
+        ]);
+      }
+    } else if (expenseReimbursement > 0) {
+      earningsTableBody.push([
+        { text: 'Total Approved Expenses', fontSize: 9, color: '#111827' },
+        { text: fmt(expenseReimbursement), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
+
     const dailySalary = payslip.dailySalary || (payslip.baseSalary / (payslip.workingDays || 26));
     const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
@@ -890,6 +919,9 @@ export const getAdminPayrollSlips = async (
         allowance: slip.allowance || 0,
         deductions: slip.deductions || 0,
         advanceDeduction: slip.advanceDeduction || 0,
+        expenseReimbursement: slip.expenseReimbursement || 0,
+        approvedExpenses: slip.expenseReimbursement || 0,
+        approvedExpenseAmount: slip.expenseReimbursement || 0,
         status: slip.status || 'Approved',
         month: slip.month,
         year: slip.year,
