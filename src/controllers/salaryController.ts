@@ -116,6 +116,9 @@ export const getSalarySlip = async (
       ? ss.salaryAdvanceLimit
       : 25000;
 
+    const monthStart = new Date(targetYear, targetMonth - 1, 1, 0, 0, 0, 0);
+    const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
     // Fetch active salary advances for employee
     const activeAdvances = await prisma.salaryAdvance.findMany({
       where: {
@@ -131,35 +134,49 @@ export const getSalarySlip = async (
       .reduce((sum, a) => sum + (a.remainingAmount > 0 ? a.remainingAmount : 0), 0);
     const salaryAdvanceUsed = pendingAdvance + approvedAdvanceRemaining;
     const salaryAdvanceRemaining = Math.max(0, salaryAdvanceLimit - salaryAdvanceUsed);
-    const advanceDeduction = dbPayslip?.advanceDeduction ?? calcResult?.advanceDeduction ?? 0;
-    const expenseReimbursement = dbPayslip?.expenseReimbursement ?? calcResult?.expenseReimbursement ?? 0;
-    const approvedExpenseAmount = expenseReimbursement;
 
-    const monthStart = new Date(targetYear, targetMonth - 1, 1, 0, 0, 0, 0);
-    const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
-
-    let expensesByCategory = calcResult?.expensesByCategory;
-    let expenseCategories = calcResult?.expenseCategories;
-
-    if (!expensesByCategory || !expenseCategories) {
-      const approvedExpenseRecords = await prisma.expense.findMany({
-        where: {
-          employeeId: targetEmployeeId,
-          status: 'APPROVED',
-          date: { gte: monthStart, lte: monthEnd },
-        },
+    let advanceDeduction = dbPayslip?.advanceDeduction ?? calcResult?.advanceDeduction ?? 0;
+    if (advanceDeduction === 0) {
+      const scheduledAdvances = activeAdvances.filter((a) => {
+        if (a.status !== 'APPROVED' || a.remainingAmount <= 0) return false;
+        const appDate = a.approvedAt || a.requestedOn || a.createdAt;
+        return appDate <= monthEnd;
       });
-      const catMap: Record<string, number> = {};
-      for (const exp of approvedExpenseRecords) {
-        const cat = exp.category || 'Other';
-        catMap[cat] = Math.round(((catMap[cat] || 0) + (exp.amount || 0)) * 100) / 100;
+      for (const adv of scheduledAdvances) {
+        const installment = adv.monthlyEmi > 0 ? Math.min(adv.monthlyEmi, adv.remainingAmount) : adv.remainingAmount;
+        advanceDeduction += installment;
       }
-      expenseCategories = catMap;
-      expensesByCategory = Object.entries(catMap).map(([category, amount]) => ({
-        category,
-        amount,
-      }));
+      advanceDeduction = Math.round(advanceDeduction * 100) / 100;
     }
+
+    const approvedExpenseRecords = await prisma.expense.findMany({
+      where: {
+        employeeId: targetEmployeeId,
+        status: 'APPROVED',
+        date: { gte: monthStart, lte: monthEnd },
+      },
+      orderBy: { date: 'asc' },
+    });
+    const catMap: Record<string, number> = {};
+    let totalApprovedExpenses = 0;
+    for (const exp of approvedExpenseRecords) {
+      const cat = exp.category || 'Other';
+      const amt = exp.amount || 0;
+      totalApprovedExpenses += amt;
+      catMap[cat] = Math.round(((catMap[cat] || 0) + amt) * 100) / 100;
+    }
+    const expenseCategories = catMap;
+    const expensesByCategory = Object.entries(catMap).map(([category, amount]) => ({
+      category,
+      amount,
+    }));
+
+    const expenseReimbursement = (dbPayslip?.expenseReimbursement && dbPayslip.expenseReimbursement > 0)
+      ? dbPayslip.expenseReimbursement
+      : (calcResult?.expenseReimbursement && calcResult.expenseReimbursement > 0)
+      ? calcResult.expenseReimbursement
+      : Math.round(totalApprovedExpenses * 100) / 100;
+    const approvedExpenseAmount = expenseReimbursement;
 
     const halfDayDeduction = dbPayslip?.halfDays ? Math.round((dbPayslip.halfDays * 0.5 * dailySalary) * 100) / 100 : (calcResult?.halfDayDeduction ?? 0);
     const leaveDeduction = dbPayslip?.unpaidLeaveDays ? Math.round((dbPayslip.unpaidLeaveDays * dailySalary) * 100) / 100 : (calcResult?.leaveDeduction ?? 0);
