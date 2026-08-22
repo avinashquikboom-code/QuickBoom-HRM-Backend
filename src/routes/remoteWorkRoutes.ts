@@ -15,8 +15,12 @@ router.post('/mobile/remote-work/apply', authMiddleware, applyRemoteWork);
 router.get('/mobile/remote-work/my-requests', authMiddleware, getMyRemoteWorkRequests);
 router.get('/mobile/remote-work/status', authMiddleware, getRemoteWorkStatus);
 
-// HR routes
+// HR and Admin routes
 router.get('/hr/remote-work/requests', authMiddleware, getHrRemoteWorkRequests);
 router.patch('/hr/remote-work/:id', authMiddleware, reviewRemoteWorkRequest);
+router.get('/admin/remote-work/requests', authMiddleware, getHrRemoteWorkRequests);
+router.patch('/admin/remote-work/:id', authMiddleware, reviewRemoteWorkRequest);
+router.get('/remote-work/requests', authMiddleware, getHrRemoteWorkRequests);
+router.patch('/remote-work/:id', authMiddleware, reviewRemoteWorkRequest);
 
 export default router;

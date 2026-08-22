@@ -7,7 +7,7 @@ import { firebaseNotificationService } from '../services/firebaseNotificationSer
 async function getEmployeeForUser(userId: number) {
   return prisma.employee.findUnique({
     where: { userId },
-    include: { office: true }
+    include: { office: true, store: true, branch: true }
   });
 }
 
@@ -160,7 +160,9 @@ export const getMyRemoteWorkRequests = async (req: AuthenticatedRequest, res: Re
  */
 export const getHrRemoteWorkRequests = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const statusFilter = req.query.status ? String(req.query.status).toUpperCase() : undefined;
+    const rawStatus = req.query.status;
+    const statusParam = Array.isArray(rawStatus) ? rawStatus[0] : rawStatus;
+    const statusFilter = statusParam ? String(statusParam).trim().toUpperCase() : undefined;
 
     const whereClause: any = {};
     if (statusFilter && statusFilter !== 'ALL') {
@@ -173,25 +175,70 @@ export const getHrRemoteWorkRequests = async (req: AuthenticatedRequest, res: Re
     });
 
     // Fetch employee details for each request
-    const employeeIds = Array.from(new Set(requests.map(r => parseInt(r.employeeId, 10)).filter(id => !isNaN(id))));
+    const numericEmployeeIds = Array.from(
+      new Set(
+        requests
+          .map(r => parseInt(String(r.employeeId), 10))
+          .filter(id => !isNaN(id) && id > 0)
+      )
+    );
+    const stringEmployeeIds = Array.from(
+      new Set(
+        requests
+          .map(r => String(r.employeeId).trim())
+          .filter(Boolean)
+      )
+    );
+
     const employees = await prisma.employee.findMany({
-      where: { id: { in: employeeIds } },
+      where: {
+        OR: [
+          { id: { in: numericEmployeeIds.length > 0 ? numericEmployeeIds : [-1] } },
+          { employeeCode: { in: stringEmployeeIds.length > 0 ? stringEmployeeIds : ['__NONE__'] } }
+        ]
+      },
       select: {
         id: true,
         employeeCode: true,
         firstName: true,
         lastName: true,
         designation: true,
-        office: { select: { name: true } }
+        office: { select: { name: true } },
+        store: { select: { name: true } },
+        branch: { select: { name: true } }
       }
     });
 
-    const empMap = new Map(employees.map(e => [String(e.id), e]));
+    const empMapById = new Map(employees.map(e => [String(e.id), e]));
+    const empMapByCode = new Map(employees.map(e => [e.employeeCode, e]));
 
-    const enriched = requests.map(r => ({
-      ...r,
-      employee: empMap.get(r.employeeId) || null
-    }));
+    const enriched = requests.map(r => {
+      const emp = empMapById.get(String(r.employeeId)) || empMapByCode.get(String(r.employeeId)) || null;
+      const officeName = emp?.office?.name || emp?.store?.name || emp?.branch?.name || null;
+
+      return {
+        id: String(r.id),
+        employeeId: String(r.employeeId),
+        fromDate: r.fromDate instanceof Date ? r.fromDate.toISOString() : String(r.fromDate),
+        toDate: r.toDate instanceof Date ? r.toDate.toISOString() : String(r.toDate),
+        reason: r.reason || null,
+        status: r.status,
+        appliedOn: r.appliedOn instanceof Date ? r.appliedOn.toISOString() : String(r.appliedOn || r.createdAt),
+        reviewedBy: r.reviewedBy || null,
+        reviewedAt: r.reviewedAt instanceof Date ? r.reviewedAt.toISOString() : (r.reviewedAt ? String(r.reviewedAt) : null),
+        reviewNote: r.reviewNote || null,
+        createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+        updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : String(r.updatedAt),
+        employee: emp ? {
+          id: emp.id,
+          employeeCode: emp.employeeCode,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          designation: emp.designation || null,
+          office: officeName ? { name: officeName } : null
+        } : null
+      };
+    });
 
     res.json({
       success: true,
@@ -199,7 +246,7 @@ export const getHrRemoteWorkRequests = async (req: AuthenticatedRequest, res: Re
     });
   } catch (error: any) {
     console.error('Error in getHrRemoteWorkRequests:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch HR remote work requests.' });
+    res.status(500).json({ success: false, message: error?.message || 'Failed to fetch HR remote work requests.', data: [] });
   }
 };
 
@@ -209,7 +256,8 @@ export const getHrRemoteWorkRequests = async (req: AuthenticatedRequest, res: Re
  */
 export const reviewRemoteWorkRequest = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const requestId = String(req.params.id);
+    const rawId = req.params.id;
+    const requestId = Array.isArray(rawId) ? rawId[0] : String(rawId);
     const { status, reviewNote } = req.body;
 
     const validStatuses = ['APPROVED', 'REJECTED', 'REVOKED'];
@@ -244,62 +292,66 @@ export const reviewRemoteWorkRequest = async (req: AuthenticatedRequest, res: Re
       }
     });
 
-    // FCM Notification to Employee
+    // FCM Notification to Employee (safely wrapped)
     const empNumericId = parseInt(request.employeeId, 10);
     if (!isNaN(empNumericId)) {
-      const empUser = await prisma.employee.findUnique({
-        where: { id: empNumericId },
-        select: { userId: true, firstName: true }
-      });
+      try {
+        const empUser = await prisma.employee.findUnique({
+          where: { id: empNumericId },
+          select: { userId: true, firstName: true }
+        });
 
-      if (empUser && empUser.userId) {
-        const fromStr = request.fromDate.toISOString().split('T')[0];
-        const toStr = request.toDate.toISOString().split('T')[0];
+        if (empUser && empUser.userId) {
+          const fromStr = request.fromDate.toISOString().split('T')[0];
+          const toStr = request.toDate.toISOString().split('T')[0];
 
-        let msgTitle = 'Remote Work Status Update';
-        let msgBody = `Your remote work request (${fromStr} to ${toStr}) has been ${newStatus.toLowerCase()}.`;
+          let msgTitle = 'Remote Work Status Update';
+          let msgBody = `Your remote work request (${fromStr} to ${toStr}) has been ${newStatus.toLowerCase()}.`;
 
-        if (newStatus === 'APPROVED') {
-          msgTitle = '✅ Remote Work Approved';
-          msgBody = `Your remote work request for ${fromStr} to ${toStr} is approved. You can punch from anywhere!`;
-        } else if (newStatus === 'REJECTED') {
-          msgTitle = '❌ Remote Work Request Rejected';
-          msgBody = `Remote work request rejected. ${reviewNote ? 'Note: ' + reviewNote : ''}`;
-        } else if (newStatus === 'REVOKED') {
-          msgTitle = '⚠️ Remote Work Approval Revoked';
-          msgBody = `Your remote work permission has been revoked by HR. Normal store geofence is now in effect.`;
+          if (newStatus === 'APPROVED') {
+            msgTitle = '✅ Remote Work Approved';
+            msgBody = `Your remote work request for ${fromStr} to ${toStr} is approved. You can punch from anywhere!`;
+          } else if (newStatus === 'REJECTED') {
+            msgTitle = '❌ Remote Work Request Rejected';
+            msgBody = `Remote work request rejected. ${reviewNote ? 'Note: ' + reviewNote : ''}`;
+          } else if (newStatus === 'REVOKED') {
+            msgTitle = '⚠️ Remote Work Approval Revoked';
+            msgBody = `Your remote work permission has been revoked by HR. Normal store geofence is now in effect.`;
+          }
+
+          try {
+            await prisma.notification.create({
+              data: {
+                userId: empUser.userId,
+                title: msgTitle,
+                body: msgBody,
+                category: 'ATTENDANCE',
+                actionId: updated.id,
+                actionType: 'REMOTE_WORK_STATUS',
+                isRead: false,
+              }
+            });
+          } catch (dbNotifErr) {
+            console.warn('Failed to create in-app notification for remote work status update:', dbNotifErr);
+          }
+
+          try {
+            await firebaseNotificationService.sendNotificationToUser(
+              empUser.userId,
+              msgTitle,
+              msgBody,
+              {
+                click_action: 'REMOTE_WORK_STATUS',
+                requestId: updated.id,
+                status: newStatus
+              }
+            );
+          } catch (fcmErr) {
+            console.warn('Failed to send FCM to employee for remote work status update:', fcmErr);
+          }
         }
-
-        try {
-          await prisma.notification.create({
-            data: {
-              userId: empUser.userId,
-              title: msgTitle,
-              body: msgBody,
-              category: 'ATTENDANCE',
-              actionId: updated.id,
-              actionType: 'REMOTE_WORK_STATUS',
-              isRead: false,
-            }
-          });
-        } catch (dbNotifErr) {
-          console.warn('Failed to create in-app notification for remote work status update:', dbNotifErr);
-        }
-
-        try {
-          await firebaseNotificationService.sendNotificationToUser(
-            empUser.userId,
-            msgTitle,
-            msgBody,
-            {
-              click_action: 'REMOTE_WORK_STATUS',
-              requestId: updated.id,
-              status: newStatus
-            }
-          );
-        } catch (fcmErr) {
-          console.warn('Failed to send FCM to employee for remote work status update:', fcmErr);
-        }
+      } catch (empErr) {
+        console.warn('Failed to look up employee user for notification:', empErr);
       }
     }
 
@@ -310,7 +362,7 @@ export const reviewRemoteWorkRequest = async (req: AuthenticatedRequest, res: Re
     });
   } catch (error: any) {
     console.error('Error in reviewRemoteWorkRequest:', error);
-    res.status(500).json({ success: false, message: 'Failed to review remote work request.' });
+    res.status(500).json({ success: false, message: error?.message || 'Failed to review remote work request.' });
   }
 };
 
@@ -368,6 +420,7 @@ export const getRemoteWorkStatus = async (req: AuthenticatedRequest, res: Respon
     }
   } catch (error: any) {
     console.error('Error in getRemoteWorkStatus:', error);
-    res.status(500).json({ success: false, message: 'Failed to check remote work status.' });
+    res.status(500).json({ success: false, message: error?.message || 'Failed to check remote work status.' });
   }
 };
+
