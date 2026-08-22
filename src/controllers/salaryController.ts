@@ -70,6 +70,8 @@ export const getSalarySlip = async (
       }
     }
 
+    const isCurrentMonth = (targetYear === now.getFullYear() && targetMonth === (now.getMonth() + 1));
+
     // Use persistent database Payslip record or calculate via PayrollService
     let dbPayslip = await prisma.payslip.findFirst({
       where: {
@@ -80,45 +82,54 @@ export const getSalarySlip = async (
     });
 
     let calcResult: any = null;
-    if (!dbPayslip || (dbPayslip.baseSalary === 0 && !dbPayslip.netSalary)) {
+    if (!dbPayslip || isCurrentMonth || dbPayslip.baseSalary === 0 || !dbPayslip.netSalary) {
       calcResult = await payrollService.calculatePayroll(targetEmployeeId, targetMonth, targetYear);
     }
 
     const ss = employee.salaryStructure;
-    const baseSalary = (dbPayslip?.baseSalary && dbPayslip.baseSalary > 0)
+    const baseSalary = (!isCurrentMonth && dbPayslip?.baseSalary && dbPayslip.baseSalary > 0)
       ? dbPayslip.baseSalary
       : (calcResult?.baseSalary && calcResult.baseSalary > 0)
       ? calcResult.baseSalary
       : (ss?.basicSalary || ss?.monthlySalary || 10000);
 
-    const allowance = dbPayslip?.allowance ?? calcResult?.allowance ?? (
-      (ss?.hra || 0) + (ss?.medicalAllowance || 0) + (ss?.travelAllowance || 0) + (ss?.specialAllowance || 0)
-    );
-    const deductions = dbPayslip?.deductions ?? calcResult?.deductions ?? 0;
-    const netSalary = dbPayslip?.netSalary ?? calcResult?.netSalary ?? (baseSalary + allowance - deductions);
-    const commissionEarned = dbPayslip?.commissionEarned ?? calcResult?.commissionEarned ?? 0;
-    const presentDays = dbPayslip?.presentDays ?? calcResult?.presentDays ?? 0;
-    const absentDays = dbPayslip?.absentDays ?? calcResult?.absentDays ?? 0;
-    const halfDays = dbPayslip?.halfDays ?? calcResult?.halfDays ?? 0;
-    const paidLeaveDays = dbPayslip?.paidLeaveDays ?? calcResult?.paidLeaveDays ?? 0;
-    const unpaidLeaveDays = dbPayslip?.unpaidLeaveDays ?? calcResult?.unpaidLeaveDays ?? 0;
-    const holidayCount = dbPayslip?.holidayCount ?? calcResult?.holidayCount ?? 0;
-    const weeklyOffCount = dbPayslip?.weeklyOffCount ?? calcResult?.weeklyOffCount ?? 0;
-    const holidayWorkedCount = dbPayslip?.holidayWorkedCount ?? calcResult?.holidayWorkedCount ?? 0;
-    const weeklyOffWorkedCount = dbPayslip?.weeklyOffWorkedCount ?? calcResult?.weeklyOffWorkedCount ?? 0;
-    const extraHolidayPayout = dbPayslip?.extraHolidayPayout ?? calcResult?.extraHolidayPayout ?? 0;
-    const extraWeeklyOffPayout = dbPayslip?.extraWeeklyOffPayout ?? calcResult?.extraWeeklyOffPayout ?? 0;
-    const workingDays = (dbPayslip?.workingDays && dbPayslip.workingDays > 0)
-      ? dbPayslip.workingDays
-      : (calcResult?.workingDays && calcResult.workingDays > 0)
+    const allowance = (!isCurrentMonth && dbPayslip?.allowance !== undefined)
+      ? dbPayslip.allowance
+      : (calcResult?.allowance ?? (
+          (ss?.hra || 0) + (ss?.medicalAllowance || 0) + (ss?.travelAllowance || 0) + (ss?.specialAllowance || 0)
+        ));
+
+    const commissionEarned = (calcResult?.commissionEarned !== undefined)
+      ? calcResult.commissionEarned
+      : (dbPayslip?.commissionEarned ?? 0);
+
+    const presentDays = (calcResult?.presentDays !== undefined) ? calcResult.presentDays : (dbPayslip?.presentDays ?? 0);
+    const absentDays = (calcResult?.absentDays !== undefined) ? calcResult.absentDays : (dbPayslip?.absentDays ?? 0);
+    const halfDays = (calcResult?.halfDays !== undefined) ? calcResult.halfDays : (dbPayslip?.halfDays ?? 0);
+    const paidLeaveDays = (calcResult?.paidLeaveDays !== undefined) ? calcResult.paidLeaveDays : (dbPayslip?.paidLeaveDays ?? 0);
+    const unpaidLeaveDays = (calcResult?.unpaidLeaveDays !== undefined) ? calcResult.unpaidLeaveDays : (dbPayslip?.unpaidLeaveDays ?? 0);
+    const holidayCount = (calcResult?.holidayCount !== undefined) ? calcResult.holidayCount : (dbPayslip?.holidayCount ?? 0);
+    const weeklyOffCount = (calcResult?.weeklyOffCount !== undefined) ? calcResult.weeklyOffCount : (dbPayslip?.weeklyOffCount ?? 0);
+    const holidayWorkedCount = (calcResult?.holidayWorkedCount !== undefined) ? calcResult.holidayWorkedCount : (dbPayslip?.holidayWorkedCount ?? 0);
+    const weeklyOffWorkedCount = (calcResult?.weeklyOffWorkedCount !== undefined) ? calcResult.weeklyOffWorkedCount : (dbPayslip?.weeklyOffWorkedCount ?? 0);
+    const extraHolidayPayout = (calcResult?.extraHolidayPayout !== undefined) ? calcResult.extraHolidayPayout : (dbPayslip?.extraHolidayPayout ?? 0);
+    const extraWeeklyOffPayout = (calcResult?.extraWeeklyOffPayout !== undefined) ? calcResult.extraWeeklyOffPayout : (dbPayslip?.extraWeeklyOffPayout ?? 0);
+
+    const workingDays = (calcResult?.workingDays && calcResult.workingDays > 0)
       ? calcResult.workingDays
+      : (dbPayslip?.workingDays && dbPayslip.workingDays > 0)
+      ? dbPayslip.workingDays
       : 26;
-    const dailySalary = (dbPayslip?.dailySalary && dbPayslip.dailySalary > 0)
-      ? dbPayslip.dailySalary
-      : (calcResult?.dailySalary && calcResult.dailySalary > 0)
+
+    const dailySalary = (calcResult?.dailySalary && calcResult.dailySalary > 0)
       ? calcResult.dailySalary
+      : (dbPayslip?.dailySalary && dbPayslip.dailySalary > 0)
+      ? dbPayslip.dailySalary
       : Math.round((baseSalary / workingDays) * 100) / 100;
-    const totalCalendarDays = dbPayslip?.totalCalendarDays ?? calcResult?.totalCalendarDays ?? new Date(targetYear, targetMonth, 0).getDate();
+
+    const totalCalendarDays = (calcResult?.totalCalendarDays)
+      ? calcResult.totalCalendarDays
+      : (dbPayslip?.totalCalendarDays ?? new Date(targetYear, targetMonth, 0).getDate());
 
     const basicSalary = ss?.basicSalary || baseSalary;
     const hra = ss?.hra || 0;
@@ -193,10 +204,15 @@ export const getSalarySlip = async (
       : Math.round(totalApprovedExpenses * 100) / 100;
     const approvedExpenseAmount = expenseReimbursement;
 
-    const halfDayDeduction = dbPayslip?.halfDays ? Math.round((dbPayslip.halfDays * 0.5 * dailySalary) * 100) / 100 : (calcResult?.halfDayDeduction ?? 0);
-    const leaveDeduction = dbPayslip?.unpaidLeaveDays ? Math.round((dbPayslip.unpaidLeaveDays * dailySalary) * 100) / 100 : (calcResult?.leaveDeduction ?? 0);
-    const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? 0);
+    const halfDayDeduction = dbPayslip?.halfDays ? Math.round((dbPayslip.halfDays * 0.5 * dailySalary) * 100) / 100 : (calcResult?.halfDayDeduction ?? Math.round((halfDays * 0.5 * dailySalary) * 100) / 100);
+    const leaveDeduction = dbPayslip?.unpaidLeaveDays ? Math.round((dbPayslip.unpaidLeaveDays * dailySalary) * 100) / 100 : (calcResult?.leaveDeduction ?? Math.round((unpaidLeaveDays * dailySalary) * 100) / 100);
+    const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? Math.round((absentDays * dailySalary) * 100) / 100);
     const itemizedDeductions = halfDayDeduction + leaveDeduction + absentDeduction + advanceDeduction;
+
+    const deductions = (!isCurrentMonth && dbPayslip?.deductions !== undefined)
+      ? dbPayslip.deductions
+      : (calcResult?.deductions ?? Math.round(itemizedDeductions * 100) / 100);
+
     const otherDeductions = Math.max(0, Math.round((deductions - itemizedDeductions) * 100) / 100);
 
     const monthNames = [
@@ -207,6 +223,10 @@ export const getSalarySlip = async (
     const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
 
     const grossTotal = baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout) + expenseReimbursement;
+
+    const netSalary = (!isCurrentMonth && dbPayslip?.netSalary !== undefined && dbPayslip.netSalary > 0)
+      ? dbPayslip.netSalary
+      : (calcResult?.netSalary ?? Math.max(0, Math.round((grossTotal - deductions) * 100) / 100));
 
     const responsePayload = {
       employeeId: employee.id,
