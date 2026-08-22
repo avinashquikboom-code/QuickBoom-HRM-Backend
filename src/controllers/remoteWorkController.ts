@@ -77,10 +77,13 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
     }
 
     const empIdStr = String(employee.id);
+    const empFilter = employee.employeeCode
+      ? { in: [empIdStr, employee.employeeCode] }
+      : empIdStr;
 
     // Check for overlapping PENDING or APPROVED requests for this employee (excluding the request being edited/resubmitted)
     const whereOverlap: any = {
-      employeeId: empIdStr,
+      employeeId: empFilter,
       status: { in: ['PENDING', 'APPROVED'] },
       fromDate: { lte: end },
       toDate: { gte: start },
@@ -95,37 +98,62 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
     });
 
     if (existingActiveRequest) {
+      if (existingActiveRequest.status === 'APPROVED') {
+        res.status(400).json({
+          success: false,
+          errorCode: 'ALREADY_APPROVED',
+          message: 'You already have an approved remote work request for these dates.'
+        });
+        return;
+      }
       res.status(400).json({
         success: false,
-        message: `You already have an active or pending remote work request (${existingActiveRequest.status}) that overlaps with these dates.`
+        errorCode: 'ALREADY_PENDING',
+        message: 'You already have a pending remote work request for these dates. Please wait for HR approval.'
       });
       return;
     }
 
-    let requestResult;
+    let targetRequestToUpdate = null;
     if (requestId) {
-      const existingReq = await prisma.remoteWorkRequest.findUnique({
+      const found = await prisma.remoteWorkRequest.findUnique({
         where: { id: String(requestId) }
       });
-
-      if (existingReq && (existingReq.employeeId === empIdStr || existingReq.employeeId === employee.employeeCode)) {
-        requestResult = await prisma.remoteWorkRequest.update({
-          where: { id: String(requestId) },
-          data: {
-            fromDate: start,
-            toDate: end,
-            reason: reason ? String(reason).trim() : null,
-            status: 'PENDING',
-            reviewedBy: null,
-            reviewedAt: null,
-            reviewNote: null,
-            updatedAt: new Date()
-          }
-        });
+      if (found && (found.employeeId === empIdStr || found.employeeId === employee.employeeCode)) {
+        targetRequestToUpdate = found;
       }
+    } else {
+      // Find overlapping REJECTED request for this employee to resubmit in-place without duplicate
+      targetRequestToUpdate = await prisma.remoteWorkRequest.findFirst({
+        where: {
+          employeeId: empFilter,
+          status: 'REJECTED',
+          fromDate: { lte: end },
+          toDate: { gte: start },
+        },
+        orderBy: { createdAt: 'desc' }
+      });
     }
 
-    if (!requestResult) {
+    let requestResult;
+    let isResubmission = false;
+
+    if (targetRequestToUpdate) {
+      isResubmission = true;
+      requestResult = await prisma.remoteWorkRequest.update({
+        where: { id: targetRequestToUpdate.id },
+        data: {
+          fromDate: start,
+          toDate: end,
+          reason: reason ? String(reason).trim() : targetRequestToUpdate.reason,
+          status: 'PENDING',
+          reviewedBy: null,
+          reviewedAt: null,
+          reviewNote: null,
+          updatedAt: new Date()
+        }
+      });
+    } else {
       requestResult = await prisma.remoteWorkRequest.create({
         data: {
           employeeId: empIdStr,
@@ -142,7 +170,7 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
     try {
       await firebaseNotificationService.sendNotificationToRole(
         'HR',
-        'New Remote Work Request',
+        isResubmission ? 'Remote Work Request Resubmitted' : 'New Remote Work Request',
         `Remote work request from ${employee.firstName} ${employee.lastName} (${dateStr})`,
         {
           click_action: 'REMOTE_WORK_REQUEST',
@@ -156,7 +184,7 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
 
     res.status(200).json({
       success: true,
-      message: requestId ? 'Remote work request resubmitted successfully.' : 'Remote work request submitted successfully.',
+      message: isResubmission ? 'Remote work request resubmitted successfully.' : 'Remote work request submitted successfully.',
       data: requestResult
     });
   } catch (error: any) {
