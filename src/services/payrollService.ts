@@ -32,6 +32,7 @@ export interface PayrollCalculation {
   halfDayDeduction: number;
   leaveDeduction: number; // unpaid leave deduction
   absentDeduction: number;
+  advanceDeduction: number;
   extraHolidayPayout: number;
   extraWeeklyOffPayout: number;
   commissionEarned: number;
@@ -155,11 +156,36 @@ class PayrollService {
       // Calculate policy-based deductions
       const policyDeductions = await this.applyPolicyDeductions(employeeId, attendanceData, grossSalary);
 
+      // Advance salary deduction calculation
+      const activeAdvances = await prisma.salaryAdvance.findMany({
+        where: {
+          wallet: { employeeId },
+          status: 'APPROVED',
+          remainingAmount: { gt: 0 },
+          OR: [
+            { approvedAt: { lte: monthEnd } },
+            { approvedAt: null, requestedOn: { lte: monthEnd } },
+            { approvedAt: null, createdAt: { lte: monthEnd } }
+          ]
+        },
+        orderBy: { approvedAt: 'asc' }
+      });
+
+      let advanceDeduction = 0;
+      for (const adv of activeAdvances) {
+        const standardEmi = adv.monthlyEmi > 0 
+          ? adv.monthlyEmi 
+          : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
+        const remaining = adv.remainingAmount > 0 ? adv.remainingAmount : Math.max(0, adv.amount - (adv.paidAmount || 0));
+        advanceDeduction += Math.min(standardEmi, remaining);
+      }
+      advanceDeduction = Math.round(advanceDeduction * 100) / 100;
+
       // Total Deductions
-      const totalDeductions = Math.round((statutoryDeductions + policyDeductions + absentDeduction + halfDayDeduction + unpaidLeaveDeduction) * 100) / 100;
+      const totalDeductions = Math.round((statutoryDeductions + policyDeductions + absentDeduction + halfDayDeduction + unpaidLeaveDeduction + advanceDeduction) * 100) / 100;
 
       // Net Salary
-      const netSalary = Math.max(0, Math.round((grossSalary - totalDeductions) * 100) / 100);
+      const netSalary = Math.round((grossSalary - totalDeductions) * 100) / 100;
 
       const calculation: PayrollCalculation = {
         employeeId,
@@ -191,6 +217,7 @@ class PayrollService {
         halfDayDeduction,
         leaveDeduction: unpaidLeaveDeduction,
         absentDeduction,
+        advanceDeduction,
         extraHolidayPayout,
         extraWeeklyOffPayout,
         commissionEarned,
@@ -947,6 +974,7 @@ class PayrollService {
           workingDays: calculation.workingDays,
           totalCalendarDays: calculation.totalCalendarDays,
           commissionEarned: calculation.commissionEarned,
+          advanceDeduction: calculation.advanceDeduction,
           status: 'Approved',
           updatedAt: new Date()
         },
@@ -958,6 +986,7 @@ class PayrollService {
           allowance: calculation.allowance,
           deductions: calculation.deductions,
           netSalary: calculation.netSalary,
+          advanceDeduction: calculation.advanceDeduction,
           status: 'Approved',
           employeeCode: empCode,
           employeeName: empName,

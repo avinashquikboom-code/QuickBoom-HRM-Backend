@@ -131,7 +131,10 @@ export const getSalarySlip = async (
       .reduce((sum, a) => sum + (a.remainingAmount > 0 ? a.remainingAmount : 0), 0);
     const salaryAdvanceUsed = pendingAdvance + approvedAdvanceRemaining;
     const salaryAdvanceRemaining = Math.max(0, salaryAdvanceLimit - salaryAdvanceUsed);
-    const advanceDeduction = dbPayslip?.advanceDeduction || 0;
+    const advanceDeduction = dbPayslip?.advanceDeduction ?? calcResult?.advanceDeduction ?? 0;
+    const halfDayDeduction = dbPayslip?.halfDays ? Math.round((dbPayslip.halfDays * 0.5 * dailySalary) * 100) / 100 : (calcResult?.halfDayDeduction ?? 0);
+    const leaveDeduction = dbPayslip?.unpaidLeaveDays ? Math.round((dbPayslip.unpaidLeaveDays * dailySalary) * 100) / 100 : (calcResult?.leaveDeduction ?? 0);
+    const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? 0);
 
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
@@ -155,6 +158,8 @@ export const getSalarySlip = async (
 
       baseSalary,
       allowance,
+      grossSalary: grossTotal,
+      advanceDeduction,
       deductionsTotal: deductions,
       netSalary,
 
@@ -189,6 +194,9 @@ export const getSalarySlip = async (
 
       deductions: {
         deductions,
+        halfDayDeduction,
+        leaveDeduction,
+        absentDeduction,
         advanceDeduction,
         totalDeductions: deductions,
       },
