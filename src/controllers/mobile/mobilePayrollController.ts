@@ -64,6 +64,7 @@ export const getMyPayslips = async (
       const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
       return {
         ...ps,
+        advanceDeduction: ps.advanceDeduction || 0,
         commissionEarned: ps.commissionEarned || 0,
         presentDays: ps.presentDays || 0,
         absentDays: ps.absentDays || 0,
@@ -98,6 +99,7 @@ export const getMyPayslips = async (
         const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
         return {
           ...ps,
+          advanceDeduction: ps.advanceDeduction || 0,
           commissionEarned: ps.commissionEarned || 0,
           presentDays: ps.presentDays || 0,
           absentDays: ps.absentDays || 0,
@@ -265,13 +267,10 @@ export const downloadPayslip = async (
     const finalSpecial = special + extraAllowance;
 
     const grossEarnings = basic + payslip.allowance;
-
+    const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
     const pf = ss?.pfEnabled ? Math.round(basic * (ss.employeePfRate / 100)) : 0;
     const esic = ss?.esicEnabled ? Math.round(grossEarnings * (ss.employeeEsicRate / 100)) : 0;
-    const otherDeductions = Math.max(0, payslip.deductions - pf - esic);
     const totalDeductions = payslip.deductions;
-
-    const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
 
     const monthStart = new Date(payslip.year, payslip.month - 1, 1, 0, 0, 0, 0);
     const monthEnd = new Date(payslip.year, payslip.month, 0, 23, 59, 59, 999);
@@ -295,6 +294,44 @@ export const downloadPayslip = async (
       commissionEarned = empCommSum._sum?.commissionAmount || 0;
     }
 
+    const advanceDeduction = payslip.advanceDeduction || 0;
+    const dailySalary = payslip.dailySalary || (basic / (payslip.workingDays || 26));
+    const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
+    const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
+    const otherDeductions = Math.max(0, Math.round((totalDeductions - pf - esic - advanceDeduction - halfDayDeduction - leaveDeduction) * 100) / 100);
+
+    const earningsItems: { name: string; amount: number }[] = [
+      { name: 'Basic Salary', amount: basic },
+      { name: 'House Rent Allowance (HRA)', amount: hra },
+      { name: 'Allowances (Travel/Medical)', amount: ta + medical },
+      { name: 'Special Allowance & Bonus', amount: finalSpecial + incentive + bonus },
+    ];
+    if (commissionEarned > 0) {
+      earningsItems.push({ name: 'Commission', amount: commissionEarned });
+    }
+
+    const deductionsItems: { name: string; amount: number }[] = [];
+    if (pf > 0) deductionsItems.push({ name: 'Provident Fund (PF)', amount: pf });
+    if (esic > 0) deductionsItems.push({ name: 'ESIC', amount: esic });
+    if (halfDayDeduction > 0) deductionsItems.push({ name: `Half Day (${payslip.halfDays} half days)`, amount: halfDayDeduction });
+    if (leaveDeduction > 0) deductionsItems.push({ name: `Leave (${payslip.unpaidLeaveDays} unpaid leaves)`, amount: leaveDeduction });
+    if (advanceDeduction > 0) deductionsItems.push({ name: 'Advance Deduction', amount: advanceDeduction });
+    if (otherDeductions > 0) deductionsItems.push({ name: 'Other Deductions', amount: otherDeductions });
+    if (deductionsItems.length === 0) deductionsItems.push({ name: 'No Deductions', amount: 0 });
+
+    const maxRows = Math.max(earningsItems.length, deductionsItems.length);
+    const tableRows: any[] = [];
+    for (let i = 0; i < maxRows; i++) {
+      const earn = earningsItems[i];
+      const ded = deductionsItems[i];
+      tableRows.push([
+        { text: earn ? earn.name : '' },
+        { text: earn ? `Rs. ${earn.amount.toLocaleString('en-IN')}` : '', alignment: 'right' },
+        { text: ded ? ded.name : '' },
+        { text: ded ? `Rs. ${ded.amount.toLocaleString('en-IN')}` : '', alignment: 'right' },
+      ]);
+    }
+
     const earningsTableBody: any[] = [
       // Table Headers
       [
@@ -303,52 +340,15 @@ export const downloadPayslip = async (
         { text: 'Deductions', bold: true, fillColor: '#f3f4f6' },
         { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' }
       ],
-      // Row 1
+      ...tableRows,
+      // Totals
       [
-        { text: 'Basic Salary' },
-        { text: `Rs. ${basic.toLocaleString('en-IN')}`, alignment: 'right' },
-        { text: 'Provident Fund (PF)' },
-        { text: `Rs. ${pf.toLocaleString('en-IN')}`, alignment: 'right' }
-      ],
-      // Row 2
-      [
-        { text: 'House Rent Allowance (HRA)' },
-        { text: `Rs. ${hra.toLocaleString('en-IN')}`, alignment: 'right' },
-        { text: 'ESIC' },
-        { text: `Rs. ${esic.toLocaleString('en-IN')}`, alignment: 'right' }
-      ],
-      // Row 3
-      [
-        { text: 'Allowances (Travel/Medical)' },
-        { text: `Rs. ${(ta + medical).toLocaleString('en-IN')}`, alignment: 'right' },
-        { text: 'Other Deductions' },
-        { text: `Rs. ${otherDeductions.toLocaleString('en-IN')}`, alignment: 'right' }
-      ],
-      // Row 4
-      [
-        { text: 'Special Allowance & Bonus' },
-        { text: `Rs. ${(finalSpecial + incentive + bonus).toLocaleString('en-IN')}`, alignment: 'right' },
-        { text: '' },
-        { text: '' }
+        { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
+        { text: `Rs. ${grossEarnings.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
+        { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
+        { text: `Rs. ${totalDeductions.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
       ]
     ];
-
-    if (commissionEarned > 0) {
-      earningsTableBody.push([
-        { text: 'Commission' },
-        { text: `Rs. ${commissionEarned.toLocaleString('en-IN')}`, alignment: 'right' },
-        { text: '' },
-        { text: '' }
-      ]);
-    }
-
-    // Totals
-    earningsTableBody.push([
-      { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
-      { text: `Rs. ${grossEarnings.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
-      { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
-      { text: `Rs. ${totalDeductions.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
-    ]);
 
     const docDefinition = {
       content: [

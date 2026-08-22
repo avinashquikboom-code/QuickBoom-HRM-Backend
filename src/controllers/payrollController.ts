@@ -375,9 +375,53 @@ export const generatePayslipPDF = async (
       ]);
     }
 
-    earningsTableBody.push([
-      { text: 'Total Earnings',  fontSize: 9, bold: true, color: PRIMARY, fillColor: '#F0FDFA' },
-      { text: fmt(grossSalary), fontSize: 9, bold: true, alignment: 'right', color: PRIMARY, fillColor: '#F0FDFA' }
+    const dailySalary = payslip.dailySalary || (payslip.baseSalary / (payslip.workingDays || 26));
+    const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
+    const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
+    const advanceDeduction = payslip.advanceDeduction || 0;
+
+    const deductionsTableBody: any[] = [
+      [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }]
+    ];
+
+    if (halfDayDeduction > 0) {
+      deductionsTableBody.push([
+        { text: `Half Day Deduction (${payslip.halfDays} half days)`, fontSize: 9, color: '#111827' },
+        { text: fmt(halfDayDeduction), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
+    if (leaveDeduction > 0) {
+      deductionsTableBody.push([
+        { text: `Leave Deduction (${payslip.unpaidLeaveDays} unpaid leaves)`, fontSize: 9, color: '#111827' },
+        { text: fmt(leaveDeduction), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
+    if (advanceDeduction > 0) {
+      deductionsTableBody.push([
+        { text: 'Advance Deduction', fontSize: 9, color: '#111827' },
+        { text: fmt(advanceDeduction), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
+
+    const itemizedTotal = halfDayDeduction + leaveDeduction + advanceDeduction;
+    const otherDeductions = Math.max(0, Math.round((deductions - itemizedTotal) * 100) / 100);
+    if (otherDeductions > 0) {
+      deductionsTableBody.push([
+        { text: 'Other Deductions', fontSize: 9, color: '#111827' },
+        { text: fmt(otherDeductions), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
+
+    if (deductionsTableBody.length === 1) {
+      deductionsTableBody.push([
+        { text: 'No Deductions', fontSize: 9, color: '#6B7280', italics: true },
+        { text: fmt(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
+      ]);
+    }
+
+    deductionsTableBody.push([
+      { text: 'Total Deductions', fontSize: 9, bold: true, color: '#DC2626', fillColor: '#FEF2F2' },
+      { text: fmt(deductions), fontSize: 9, bold: true, alignment: 'right', color: '#DC2626', fillColor: '#FEF2F2' }
     ]);
 
     const docDefinition: any = {
@@ -480,10 +524,7 @@ export const generatePayslipPDF = async (
         // Deductions
         { text: 'Deductions', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
         { table: { headerRows: 1, widths: ['*', 120],
-            body: [
-              [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }],
-              [{ text: 'Total Deductions', fontSize: 9, bold: true, color: '#DC2626', fillColor: '#FEF2F2' }, { text: fmt(deductions), fontSize: 9, bold: true, alignment: 'right', color: '#DC2626', fillColor: '#FEF2F2' }],
-            ],
+            body: deductionsTableBody,
           },
           layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
           margin: [0,0,0,20],
@@ -848,6 +889,7 @@ export const getAdminPayrollSlips = async (
         netSalary: slip.netSalary || 0,
         allowance: slip.allowance || 0,
         deductions: slip.deductions || 0,
+        advanceDeduction: slip.advanceDeduction || 0,
         status: slip.status || 'Approved',
         month: slip.month,
         year: slip.year,
