@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
+import geofenceService from '../../services/geofenceService';
 
 // ==========================================
 // Distance Tracking Controller for Mobile
@@ -129,32 +130,27 @@ export const getCurrentDistance = async (
       return;
     }
 
-    // Get employee's office information
+    // Get employee information with office, store, branch
     const employee = await prisma.employee.findUnique({
       where: { userId: userId },
       include: {
-        office: true
+        office: true,
+        store: true,
+        branch: true
       }
     });
 
-    if (!employee || !employee.office) {
+    if (!employee) {
       res.status(404).json({
         success: false,
-        message: 'Employee office not found',
-        errorCode: 'OFFICE_NOT_FOUND'
+        message: 'Employee record not found',
+        errorCode: 'EMPLOYEE_NOT_FOUND'
       });
       return;
     }
 
-    const office = employee.office;
-    
-    // Calculate distance
-    const distance = calculateDistance(
-      currentLat,
-      currentLon,
-      office.latitude,
-      office.longitude
-    );
+    // Check geofence using unified GeofenceService
+    const geofenceResult = await geofenceService.checkGeofence(currentLat, currentLon, employee.id);
 
     // Fetch enableGeofence from settings
     const systemSettings = await prisma.systemSetting.findUnique({
@@ -164,31 +160,32 @@ export const getCurrentDistance = async (
     const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
     const enablePunchOutGeofence = rawAttendance.enablePunchOutGeofence !== undefined ? rawAttendance.enablePunchOutGeofence : false;
 
-    const isWithinRadius = !enableGeofence || (distance * 1000) <= office.maxPunchRadiusMeters; // Convert km to meters
+    const distanceKm = geofenceResult.distance / 1000;
+    const isWithinRadius = !enableGeofence || geofenceResult.isWithinGeofence;
 
     res.json({
       success: true,
       data: {
-        distance: Math.round(distance * 100) / 100, // Round to 2 decimal places
-        officeName: office.name,
-        officeAddress: office.address,
+        distance: Math.round(distanceKm * 100) / 100, // Round to 2 decimal places in km
+        officeName: geofenceResult.officeName || 'Assigned Location',
+        officeAddress: employee.office?.address || employee.store?.address || employee.branch?.name || '',
         isWithinRadius,
         enableGeofence,
         enablePunchOutGeofence,
-        officeRadius: office.maxPunchRadiusMeters,
+        officeRadius: geofenceResult.maxRadius,
         coordinates: {
           current: {
             latitude: currentLat,
             longitude: currentLon
           },
           office: {
-            latitude: office.latitude,
-            longitude: office.longitude
+            latitude: geofenceResult.coordinates.officeLat,
+            longitude: geofenceResult.coordinates.officeLon
           }
         },
         message: isWithinRadius 
-          ? 'You are within the office radius' 
-          : `You are ${Math.round((distance * 1000 - office.maxPunchRadiusMeters))} meters outside the office radius`
+          ? 'You are within the work location radius' 
+          : `You are ${Math.round(geofenceResult.distance - geofenceResult.maxRadius)} meters outside the allowed radius`
       }
     });
 
@@ -198,6 +195,7 @@ export const getCurrentDistance = async (
       success: false,
       message: 'Failed to calculate distance',
       errorCode: 'DISTANCE_CALCULATION_ERROR'
+
     });
   }
 };
@@ -464,37 +462,70 @@ export const getOfficeInfo = async (
   try {
     const userId = req.user?.id;
 
-    // Get employee's office information
+    // Get employee information
     const employee = await prisma.employee.findUnique({
       where: { userId: userId },
       include: {
-        office: true
+        office: true,
+        store: true,
+        branch: true
       }
     });
 
-    if (!employee || !employee.office) {
+    if (!employee) {
       res.status(404).json({
         success: false,
-        message: 'Employee office not found',
-        errorCode: 'OFFICE_NOT_FOUND'
+        message: 'Employee record not found',
+        errorCode: 'EMPLOYEE_NOT_FOUND'
       });
       return;
     }
 
-    const office = employee.office;
+    const assignedLocation = employee.store
+      ? {
+          id: employee.store.id,
+          name: employee.store.name,
+          address: employee.store.address || '',
+          latitude: employee.store.latitude || 0,
+          longitude: employee.store.longitude || 0,
+          radius: employee.customPunchRadius || employee.store.maxPunchRadiusMeters || 50,
+          idealRadius: employee.customPunchRadius || employee.store.maxPunchRadiusMeters || 50,
+        }
+      : employee.branch
+      ? {
+          id: employee.branch.id,
+          name: employee.branch.name,
+          address: employee.branch.name,
+          latitude: employee.branch.latitude,
+          longitude: employee.branch.longitude,
+          radius: employee.customPunchRadius || employee.branch.radiusMeters || 50,
+          idealRadius: employee.customPunchRadius || employee.branch.radiusMeters || 50,
+        }
+      : employee.office
+      ? {
+          id: employee.office.id,
+          name: employee.office.name,
+          address: employee.office.address,
+          latitude: employee.office.latitude,
+          longitude: employee.office.longitude,
+          radius: employee.customPunchRadius || employee.office.maxPunchRadiusMeters || 50,
+          idealRadius: employee.office.idealRadiusMeters || 25,
+        }
+      : null;
+
+    if (!assignedLocation) {
+      res.status(404).json({
+        success: false,
+        message: 'No assigned work location found for employee',
+        errorCode: 'LOCATION_NOT_FOUND'
+      });
+      return;
+    }
 
     res.json({
       success: true,
       data: {
-        office: {
-          id: office.id,
-          name: office.name,
-          address: office.address,
-          latitude: office.latitude,
-          longitude: office.longitude,
-          radius: office.maxPunchRadiusMeters,
-          idealRadius: office.idealRadiusMeters
-        }
+        office: assignedLocation
       }
     });
 
@@ -507,3 +538,4 @@ export const getOfficeInfo = async (
     });
   }
 };
+

@@ -55,25 +55,32 @@ class GeofenceService {
         where: { id: employeeId },
         include: {
           office: true,
-          store: true
+          store: true,
+          branch: true
         }
       }) : null;
 
       // Check if employee has an active APPROVED Remote Work Request for today
-      if (employeeId) {
+      if (employee) {
         const now = new Date();
-        const empIdStr = String(employeeId);
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+        const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+        const empIdStr = String(employee.id);
+        const empCode = employee.employeeCode || '';
         const activeRemote = await prisma.remoteWorkRequest.findFirst({
           where: {
-            employeeId: empIdStr,
+            OR: [
+              { employeeId: empIdStr },
+              ...(empCode ? [{ employeeId: empCode }] : [])
+            ],
             status: 'APPROVED',
-            fromDate: { lte: now },
-            toDate: { gte: now }
+            fromDate: { lte: endOfDay },
+            toDate: { gte: startOfDay }
           }
         });
 
         if (activeRemote) {
-          console.log(`✅ [GeofenceService] Active remote work approved for employeeId=${employeeId}. Bypassing geofence.`);
+          console.log(`✅ [GeofenceService] Active remote work approved for employeeId=${employee.id}. Bypassing geofence.`);
           return {
             isWithinGeofence: true,
             distance: 0,
@@ -117,18 +124,20 @@ class GeofenceService {
 
       if (employee) {
         if (!officeId && employee.office && employee.office.isActive) {
-          geofences.push({
-            type: 'office',
-            id: employee.office.id,
-            name: employee.office.name,
-            latitude: employee.office.latitude,
-            longitude: employee.office.longitude,
-            maxRadius: employee.customPunchRadius || employee.office.maxPunchRadiusMeters || 50.0
-          });
+          if (employee.office.latitude && employee.office.longitude) {
+            geofences.push({
+              type: 'office',
+              id: employee.office.id,
+              name: employee.office.name,
+              latitude: employee.office.latitude,
+              longitude: employee.office.longitude,
+              maxRadius: employee.customPunchRadius || employee.office.maxPunchRadiusMeters || 50.0
+            });
+          }
         }
         
         if (employee.store && employee.store.isActive) {
-          if (employee.store.latitude !== null && employee.store.longitude !== null) {
+          if (employee.store.latitude !== null && employee.store.longitude !== null && employee.store.latitude !== 0 && employee.store.longitude !== 0) {
             geofences.push({
               type: 'store',
               id: employee.store.id,
@@ -139,7 +148,21 @@ class GeofenceService {
             });
           }
         }
+
+        if (employee.branch) {
+          if (employee.branch.latitude !== null && employee.branch.longitude !== null && employee.branch.latitude !== 0 && employee.branch.longitude !== 0) {
+            geofences.push({
+              type: 'branch',
+              id: employee.branch.id,
+              name: `Branch: ${employee.branch.name}`,
+              latitude: employee.branch.latitude,
+              longitude: employee.branch.longitude,
+              maxRadius: employee.customPunchRadius || employee.branch.radiusMeters || 50.0
+            });
+          }
+        }
       }
+
 
       // If no specific employee/office geofences found, fall back to checking all active offices
       if (geofences.length === 0) {

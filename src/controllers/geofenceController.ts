@@ -31,7 +31,7 @@ export const checkGeofence = async (
     if (req.user?.id) {
       employee = await prisma.employee.findFirst({
         where: { userId: req.user.id },
-        include: { office: true }
+        include: { office: true, store: true, branch: true }
       });
     }
 
@@ -127,7 +127,7 @@ export const getGeofenceStatus = async (
     // Get employee information
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
-      include: { office: true }
+      include: { office: true, store: true, branch: true }
     });
 
     if (!employee) {

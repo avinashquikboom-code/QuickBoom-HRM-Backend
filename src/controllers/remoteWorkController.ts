@@ -11,9 +11,32 @@ async function getEmployeeForUser(userId: number) {
   });
 }
 
+function parseDayBoundaries(fromDate: string, toDate: string): { start: Date; end: Date } {
+  let start: Date;
+  let end: Date;
+
+  if (typeof fromDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fromDate.trim())) {
+    const [y1, m1, d1] = fromDate.trim().split('-').map(Number);
+    start = new Date(Date.UTC(y1, m1 - 1, d1, 0, 0, 0, 0));
+  } else {
+    const dt = new Date(fromDate);
+    start = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate(), 0, 0, 0, 0));
+  }
+
+  if (typeof toDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(toDate.trim())) {
+    const [y2, m2, d2] = toDate.trim().split('-').map(Number);
+    end = new Date(Date.UTC(y2, m2 - 1, d2, 23, 59, 59, 999));
+  } else {
+    const dt = new Date(toDate);
+    end = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate(), 23, 59, 59, 999));
+  }
+
+  return { start, end };
+}
+
 /**
  * 1. POST /api/mobile/remote-work/apply
- * Employee applies for Remote Work
+ * Employee applies for Remote Work or resubmits existing request
  */
 export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -29,18 +52,13 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
       return;
     }
 
-    const { fromDate, toDate, reason } = req.body;
+    const { fromDate, toDate, reason, requestId } = req.body;
     if (!fromDate || !toDate) {
       res.status(400).json({ success: false, message: 'fromDate and toDate are required' });
       return;
     }
 
-    const start = new Date(fromDate);
-    const end = new Date(toDate);
-
-    // Set start to beginning of day, end to end of day
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
+    const { start, end } = parseDayBoundaries(fromDate, toDate);
 
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       res.status(400).json({ success: false, message: 'Invalid date format' });
@@ -60,18 +78,20 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
 
     const empIdStr = String(employee.id);
 
-    // Check for overlapping PENDING or APPROVED requests for this employee
+    // Check for overlapping PENDING or APPROVED requests for this employee (excluding the request being edited/resubmitted)
+    const whereOverlap: any = {
+      employeeId: empIdStr,
+      status: { in: ['PENDING', 'APPROVED'] },
+      fromDate: { lte: end },
+      toDate: { gte: start },
+    };
+
+    if (requestId) {
+      whereOverlap.id = { not: String(requestId) };
+    }
+
     const existingActiveRequest = await prisma.remoteWorkRequest.findFirst({
-      where: {
-        employeeId: empIdStr,
-        status: { in: ['PENDING', 'APPROVED'] },
-        OR: [
-          {
-            fromDate: { lte: end },
-            toDate: { gte: start },
-          }
-        ]
-      }
+      where: whereOverlap
     });
 
     if (existingActiveRequest) {
@@ -82,15 +102,40 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
       return;
     }
 
-    const newRequest = await prisma.remoteWorkRequest.create({
-      data: {
-        employeeId: empIdStr,
-        fromDate: start,
-        toDate: end,
-        reason: reason ? String(reason).trim() : null,
-        status: 'PENDING',
+    let requestResult;
+    if (requestId) {
+      const existingReq = await prisma.remoteWorkRequest.findUnique({
+        where: { id: String(requestId) }
+      });
+
+      if (existingReq && (existingReq.employeeId === empIdStr || existingReq.employeeId === employee.employeeCode)) {
+        requestResult = await prisma.remoteWorkRequest.update({
+          where: { id: String(requestId) },
+          data: {
+            fromDate: start,
+            toDate: end,
+            reason: reason ? String(reason).trim() : null,
+            status: 'PENDING',
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNote: null,
+            updatedAt: new Date()
+          }
+        });
       }
-    });
+    }
+
+    if (!requestResult) {
+      requestResult = await prisma.remoteWorkRequest.create({
+        data: {
+          employeeId: empIdStr,
+          fromDate: start,
+          toDate: end,
+          reason: reason ? String(reason).trim() : null,
+          status: 'PENDING',
+        }
+      });
+    }
 
     // FCM Notification to HR role
     const dateStr = `${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`;
@@ -101,7 +146,7 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
         `Remote work request from ${employee.firstName} ${employee.lastName} (${dateStr})`,
         {
           click_action: 'REMOTE_WORK_REQUEST',
-          requestId: newRequest.id,
+          requestId: requestResult.id,
           employeeId: empIdStr
         }
       );
@@ -109,10 +154,10 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
       console.warn('Failed to send FCM notification to HR for remote work apply:', fcmErr);
     }
 
-    res.status(201).json({
+    res.status(200).json({
       success: true,
-      message: 'Remote work request submitted successfully.',
-      data: newRequest
+      message: requestId ? 'Remote work request resubmitted successfully.' : 'Remote work request submitted successfully.',
+      data: requestResult
     });
   } catch (error: any) {
     console.error('Error in applyRemoteWork:', error);
@@ -140,19 +185,40 @@ export const getMyRemoteWorkRequests = async (req: AuthenticatedRequest, res: Re
 
     const empIdStr = String(employee.id);
     const requests = await prisma.remoteWorkRequest.findMany({
-      where: { employeeId: empIdStr },
+      where: {
+        OR: [
+          { employeeId: empIdStr },
+          { employeeId: employee.employeeCode }
+        ]
+      },
       orderBy: { createdAt: 'desc' }
     });
 
+    const serialized = requests.map(r => ({
+      id: String(r.id),
+      employeeId: String(r.employeeId),
+      fromDate: r.fromDate instanceof Date ? r.fromDate.toISOString() : String(r.fromDate),
+      toDate: r.toDate instanceof Date ? r.toDate.toISOString() : String(r.toDate),
+      reason: r.reason || null,
+      status: r.status,
+      appliedOn: r.appliedOn instanceof Date ? r.appliedOn.toISOString() : String(r.appliedOn || r.createdAt),
+      reviewedBy: r.reviewedBy || null,
+      reviewedAt: r.reviewedAt instanceof Date ? r.reviewedAt.toISOString() : (r.reviewedAt ? String(r.reviewedAt) : null),
+      reviewNote: r.reviewNote || null,
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+      updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : String(r.updatedAt),
+    }));
+
     res.json({
       success: true,
-      data: requests
+      data: serialized
     });
   } catch (error: any) {
     console.error('Error in getMyRemoteWorkRequests:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch remote work requests.' });
   }
 };
+
 
 /**
  * 3. GET /api/hr/remote-work/requests

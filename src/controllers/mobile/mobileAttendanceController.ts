@@ -158,11 +158,13 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Get employee information with shift assignment
+    // Get employee information with shift assignment, store, branch, and office
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
       include: {
         office: true,
+        store: true,
+        branch: true,
         user: {
           include: { profile: true }
         },
@@ -190,21 +192,6 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         errorCode: 'EMPLOYEE_NOT_FOUND'
       });
       return;
-    }
-
-    if (!employee.office) {
-      res.status(400).json({
-        success: false,
-        message: 'No office assigned to employee. Please contact HR.',
-        errorCode: 'NO_OFFICE_ASSIGNED'
-      });
-      return;
-    }
-
-    // Check if office has valid coordinates
-    if (!employee.office.latitude || !employee.office.longitude) {
-      console.log('⚠️ Office coordinates are missing. Bypassing geofence check.');
-      // Allow punch in without geofence if office coordinates are not set
     }
 
     // Use server timestamp for punch-in
@@ -269,7 +256,10 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
           } : (employee.office ? {
             name: employee.office.name,
             address: employee.office.address
-          } : null),
+          } : (employee.store ? {
+            name: employee.store.name,
+            address: employee.store.address || ''
+          } : null)),
           status: existingAttendance.status,
           notes: existingAttendance.notes,
           clientTimestamp: clientTimestamp || punchInTime.toISOString(),
@@ -280,9 +270,11 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Check geofence (allow 0.0 for simulator testing in non-production environments)
+    // Check geofence
     let punchLat = latitude;
     let punchLon = longitude;
+    const defaultLat = employee.office?.latitude || employee.store?.latitude || employee.branch?.latitude || 0;
+    const defaultLon = employee.office?.longitude || employee.store?.longitude || employee.branch?.longitude || 0;
     
     // Enhanced debugging for geofence
     console.log('📍 Geofence Debug Info:', {
@@ -292,13 +284,13 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     
     if (enableGeofence) {
       if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
-        console.log('⚠️ Location coordinates are null/undefined. Using office location as fallback.');
-        punchLat = employee.office.latitude || 0;
-        punchLon = employee.office.longitude || 0;
+        console.log('⚠️ Location coordinates are null/undefined. Using work location as fallback.');
+        punchLat = defaultLat;
+        punchLon = defaultLon;
       } else if (latitude === 0 && longitude === 0) {
         console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check.');
-        punchLat = employee.office.latitude || 0;
-        punchLon = employee.office.longitude || 0;
+        punchLat = defaultLat;
+        punchLon = defaultLon;
       } else {
         const geofenceResult = await geofenceService.checkGeofence(latitude, longitude, employee.id);
         
@@ -331,6 +323,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
         punchLon = longitude;
       }
     }
+
     
     // Calculate late arrival based on shift assignment
     let attendanceStatus = 'PRESENT';
@@ -385,7 +378,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       attendance = await prisma.attendance.update({
         where: { id: existingAttendance.id },
         data: {
-          officeId: employee.office.id,
+          officeId: employee.office?.id || employee.officeId || null,
           checkIn: punchInTime,
           status: attendanceStatus,
           notes: notes || (isRemote ? 'Punch in recorded via Remote Work' : 'Punch in recorded via mobile app'),
@@ -409,7 +402,7 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       attendance = await prisma.attendance.create({
         data: {
           employeeId: employee.id,
-          officeId: employee.office.id,
+          officeId: employee.office?.id || employee.officeId || null,
           date: today,
           checkIn: punchInTime,
           status: attendanceStatus,
@@ -547,6 +540,8 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
           include: { profile: true }
         },
         office: true,
+        store: true,
+        branch: true,
         department: true
       }
     });
@@ -620,14 +615,16 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
     });
     
     if (enableGeofence && enablePunchOutGeofence) {
+      const defaultLat = attendance.latitude || employee.office?.latitude || employee.store?.latitude || employee.branch?.latitude || 0;
+      const defaultLon = attendance.longitude || employee.office?.longitude || employee.store?.longitude || employee.branch?.longitude || 0;
       if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
         console.log('⚠️ Location coordinates are null/undefined for punch out. Using punch-in location as fallback.');
-        punchLat = attendance.latitude || (employee.office ? employee.office.latitude : 0);
-        punchLon = attendance.longitude || (employee.office ? employee.office.longitude : 0);
+        punchLat = defaultLat;
+        punchLon = defaultLon;
       } else if (latitude === 0 && longitude === 0) {
         console.log('⚠️ Simulator location (0.0) detected for punch out. Bypassing geofence check.');
-        punchLat = attendance.latitude || (employee.office ? employee.office.latitude : 0);
-        punchLon = attendance.longitude || (employee.office ? employee.office.longitude : 0);
+        punchLat = defaultLat;
+        punchLon = defaultLon;
       } else {
         const geofenceResult = await geofenceService.checkGeofence(latitude, longitude, employee.id);
         
@@ -915,6 +912,8 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
       where: { userId: req.user?.id },
       include: {
         office: true,
+        store: true,
+        branch: true,
         user: {
           include: { profile: true }
         }
@@ -930,15 +929,6 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
-    if (!employee.office) {
-      res.status(400).json({
-        success: false,
-        message: 'No office assigned to employee.',
-        errorCode: 'NO_OFFICE_ASSIGNED'
-      });
-      return;
-    }
-
     const { latitude, longitude, clientTimestamp, timezone } = req.body;
 
     if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
@@ -950,30 +940,29 @@ export const startBreak = async (req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
-    // Check geofence (allow 0.0 for simulator testing in non-production environments)
-    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
-      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing.');
-    } else {
-      const isWithinRadius = isWithinGeofence(
-        latitude, 
-        longitude, 
-        employee.office.latitude, 
-        employee.office.longitude, 
-        employee.office.maxPunchRadiusMeters
-      );
+    // Fetch enableGeofence from settings
+    const systemSettings = await prisma.systemSetting.findUnique({
+      where: { id: 1 }
+    });
+    const rawAttendance = (systemSettings?.attendance as any) || {};
+    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+
+    // Check geofence
+    if (enableGeofence && !(latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production')) {
+      const geofenceResult = await geofenceService.checkGeofence(latitude, longitude, employee.id);
+      const isWithinRadius = process.env.NODE_ENV === 'production' 
+        ? geofenceResult.isWithinGeofence 
+        : geofenceResult.distance <= (geofenceResult.maxRadius * 50);
 
       if (!isWithinRadius) {
         res.status(400).json({
           success: false,
-          message: 'Location is outside the allowed geofence.',
+          message: `Location is outside the allowed geofence. Distance: ${Math.round(geofenceResult.distance)}m, Max allowed: ${geofenceResult.maxRadius}m`,
           errorCode: 'OUTSIDE_GEOFENCE',
           data: {
-            distance: calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude),
-            maxRadius: employee.office.maxPunchRadiusMeters,
-            officeLocation: {
-              latitude: employee.office.latitude,
-              longitude: employee.office.longitude
-            }
+            distance: Math.round(geofenceResult.distance),
+            maxRadius: geofenceResult.maxRadius,
+            userLocation: { latitude, longitude }
           }
         });
         return;
@@ -1063,6 +1052,8 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
       where: { userId: req.user?.id },
       include: {
         office: true,
+        store: true,
+        branch: true,
         user: {
           include: { profile: true }
         }
@@ -1078,15 +1069,6 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
       return;
     }
 
-    if (!employee.office) {
-      res.status(400).json({
-        success: false,
-        message: 'No office assigned to employee.',
-        errorCode: 'NO_OFFICE_ASSIGNED'
-      });
-      return;
-    }
-
     const { latitude, longitude, clientTimestamp, timezone } = req.body;
 
     if (latitude === undefined || longitude === undefined || latitude === null || longitude === null) {
@@ -1098,30 +1080,29 @@ export const endBreak = async (req: AuthenticatedRequest, res: Response): Promis
       return;
     }
 
-    // Check geofence (allow 0.0 for simulator testing in non-production environments)
-    if (latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production') {
-      console.log('⚠️ Simulator location (0.0) detected. Bypassing geofence check for testing.');
-    } else {
-      const isWithinRadius = isWithinGeofence(
-        latitude, 
-        longitude, 
-        employee.office.latitude, 
-        employee.office.longitude, 
-        employee.office.maxPunchRadiusMeters
-      );
+    // Fetch enableGeofence from settings
+    const systemSettings = await prisma.systemSetting.findUnique({
+      where: { id: 1 }
+    });
+    const rawAttendance = (systemSettings?.attendance as any) || {};
+    const enableGeofence = rawAttendance.enableGeofence !== undefined ? rawAttendance.enableGeofence : true;
+
+    // Check geofence
+    if (enableGeofence && !(latitude === 0 && longitude === 0 && process.env.NODE_ENV !== 'production')) {
+      const geofenceResult = await geofenceService.checkGeofence(latitude, longitude, employee.id);
+      const isWithinRadius = process.env.NODE_ENV === 'production' 
+        ? geofenceResult.isWithinGeofence 
+        : geofenceResult.distance <= (geofenceResult.maxRadius * 50);
 
       if (!isWithinRadius) {
         res.status(400).json({
           success: false,
-          message: 'Location is outside the allowed geofence.',
+          message: `Location is outside the allowed geofence. Distance: ${Math.round(geofenceResult.distance)}m, Max allowed: ${geofenceResult.maxRadius}m`,
           errorCode: 'OUTSIDE_GEOFENCE',
           data: {
-            distance: calculateDistance(latitude, longitude, employee.office.latitude, employee.office.longitude),
-            maxRadius: employee.office.maxPunchRadiusMeters,
-            officeLocation: {
-              latitude: employee.office.latitude,
-              longitude: employee.office.longitude
-            }
+            distance: Math.round(geofenceResult.distance),
+            maxRadius: geofenceResult.maxRadius,
+            userLocation: { latitude, longitude }
           }
         });
         return;

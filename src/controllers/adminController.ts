@@ -9059,33 +9059,36 @@ export const fetchStoreAttendance = async (
         id?: number | string;
         startTime: string;
         endTime: string | null;
+        durationSeconds?: number | null;
         durationMinutes: number | null;
         type: string;
       }> = [];
 
       if (empBreaks.length > 0) {
         breakSessions = empBreaks.map(b => {
-          const durationMinutes = b.endAt
-            ? Math.max(0, Math.round((new Date(b.endAt).getTime() - new Date(b.startAt).getTime()) / (1000 * 60)))
+          const durationSeconds = b.endAt
+            ? Math.max(0, Math.floor((new Date(b.endAt).getTime() - new Date(b.startAt).getTime()) / 1000))
             : null;
           return {
             id: b.id,
             startTime: b.startAt.toISOString(),
             endTime: b.endAt ? b.endAt.toISOString() : null,
-            durationMinutes,
+            durationSeconds,
+            durationMinutes: durationSeconds !== null ? Math.floor(durationSeconds / 60) : null,
             type: b.type || 'PERSONAL'
           };
         });
       } else if (att?.breakRecords && att.breakRecords.length > 0) {
         breakSessions = att.breakRecords.map(br => {
-          const durationMinutes = br.endTime
-            ? Math.max(0, Math.round((new Date(br.endTime).getTime() - new Date(br.startTime).getTime()) / (1000 * 60)))
-            : (br.duration ? Math.round(br.duration / 60) : null);
+          const durationSeconds = br.endTime
+            ? Math.max(0, Math.floor((new Date(br.endTime).getTime() - new Date(br.startTime).getTime()) / 1000))
+            : (br.duration ? br.duration : null);
           return {
             id: br.id,
             startTime: br.startTime.toISOString(),
             endTime: br.endTime ? br.endTime.toISOString() : null,
-            durationMinutes,
+            durationSeconds,
+            durationMinutes: durationSeconds !== null ? Math.floor(durationSeconds / 60) : null,
             type: 'PERSONAL'
           };
         });
@@ -9093,6 +9096,7 @@ export const fetchStoreAttendance = async (
         breakSessions = [{
           startTime: att.breakStartTime.toISOString(),
           endTime: null,
+          durationSeconds: null,
           durationMinutes: null,
           type: 'PERSONAL'
         }];
@@ -9101,13 +9105,14 @@ export const fetchStoreAttendance = async (
       const hasActiveBreakSession = breakSessions.some(s => s.endTime === null) || Boolean(att?.isOnBreak);
       const isCurrentlyOnBreak = Boolean(hasActiveBreakSession && att?.checkIn && !att?.checkOut);
 
-      let totalBreakMinutes = breakSessions
-        .filter(s => s.durationMinutes !== null && s.durationMinutes !== undefined)
-        .reduce((sum, s) => sum + (s.durationMinutes || 0), 0);
+      let totalBreakSeconds = breakSessions
+        .filter(s => s.durationSeconds !== null && s.durationSeconds !== undefined)
+        .reduce((sum, s) => sum + (s.durationSeconds || 0), 0);
 
-      if (totalBreakMinutes === 0 && att && att.totalBreakSeconds > 0) {
-        totalBreakMinutes = Math.round(att.totalBreakSeconds / 60);
+      if (totalBreakSeconds === 0 && att && att.totalBreakSeconds > 0) {
+        totalBreakSeconds = att.totalBreakSeconds;
       }
+      const totalBreakMinutes = Math.floor(totalBreakSeconds / 60);
 
       let status = 'ABSENT';
       if (leave) {
@@ -9163,16 +9168,31 @@ export const fetchStoreAttendance = async (
 
       if (isCurrentlyOnBreak) {
         totalBreak = 'Running';
-      } else if (totalBreakMinutes > 0) {
-        totalBreak = `${totalBreakMinutes} min`;
+      } else if (totalBreakSeconds > 0) {
+        if (totalBreakSeconds < 60) {
+          totalBreak = `${totalBreakSeconds} sec`;
+        } else if (totalBreakSeconds < 3600) {
+          const mins = Math.floor(totalBreakSeconds / 60);
+          const secs = totalBreakSeconds % 60;
+          totalBreak = `${mins}m ${secs}s`;
+        } else {
+          const hrs = Math.floor(totalBreakSeconds / 3600);
+          const mins = Math.floor((totalBreakSeconds % 3600) / 60);
+          const secs = totalBreakSeconds % 60;
+          totalBreak = `${hrs}h ${mins}m ${secs}s`;
+        }
       }
 
       let breakDetails = '-';
       if (isCurrentlyOnBreak) {
         const activeSession = breakSessions.find(s => s.endTime === null);
         breakDetails = `On ${activeSession?.type || 'PERSONAL'} break`;
-      } else if (totalBreakMinutes > 0) {
-        breakDetails = `${totalBreakMinutes} mins taken`;
+      } else if (totalBreakSeconds > 0) {
+        if (totalBreakSeconds < 60) {
+          breakDetails = `${totalBreakSeconds} sec taken`;
+        } else {
+          breakDetails = `${totalBreakMinutes} mins taken`;
+        }
       }
 
       return {
@@ -9187,6 +9207,7 @@ export const fetchStoreAttendance = async (
         punchOutTime: checkOutIso,
         workingHours,
         breakSessions,
+        totalBreakSeconds,
         totalBreakMinutes,
         isCurrentlyOnBreak,
         startBreak,
