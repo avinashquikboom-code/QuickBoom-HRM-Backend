@@ -168,16 +168,7 @@ async function buildTableWhere(table: WhitelistedTable, filters: any) {
     }
     case 'Tasks': {
       if (targetEmployeeIds !== null) {
-        const empObjs = await prisma.employee.findMany({
-          where: { id: { in: targetEmployeeIds } },
-          select: { employeeCode: true, employeeID: true, id: true },
-        });
-        const codeStrings = empObjs.flatMap(e => [
-          e.employeeCode,
-          e.employeeID,
-          String(e.id),
-        ]).filter(Boolean);
-        where.assignedTo = { in: codeStrings };
+        where.assignedToId = { in: targetEmployeeIds };
       }
       if (startDate || endDate) {
         where.createdAt = {};
@@ -227,10 +218,8 @@ async function getDryRunCount(table: WhitelistedTable, filters: any): Promise<nu
       return await prisma.break.count({ where });
     case 'ShiftRequests':
       return await prisma.shiftRequest.count({ where });
-    case 'Tasks': {
-      const hrTaskCount = await (prisma as any).hrTask.count({ where });
-      return hrTaskCount;
-    }
+    case 'Tasks':
+      return await prisma.task.count({ where });
     case 'Notifications':
       return await prisma.notification.count({ where });
     default:
@@ -276,8 +265,7 @@ async function deleteTableRecords(table: WhitelistedTable, filters: any): Promis
       return res.count;
     }
     case 'Tasks': {
-      await prisma.task.deleteMany({});
-      const res = await (prisma as any).hrTask.deleteMany({ where });
+      const res = await prisma.task.deleteMany({ where });
       return res.count;
     }
     case 'Notifications': {
@@ -290,7 +278,7 @@ async function deleteTableRecords(table: WhitelistedTable, filters: any): Promis
 }
 
 // ==============================================================================
-// 1. SuperAdmin Dry-Run (POST /api/superadmin/reset/dry-run)
+// 1. SuperAdmin Dry-Run (GET/POST /api/superadmin/reset/dry-run)
 // ==============================================================================
 export const superAdminResetDryRun = async (
   req: AuthenticatedRequest,
@@ -316,7 +304,17 @@ export const superAdminResetDryRun = async (
       return;
     }
 
-    const { tables, filters = {} } = req.body;
+    const rawTables = req.body?.tables || req.query?.tables;
+    let tables: any[] = [];
+    if (Array.isArray(rawTables)) {
+      tables = rawTables;
+    } else if (typeof rawTables === 'string') {
+      tables = rawTables.split(',').map(s => s.trim()).filter(Boolean);
+    } else {
+      tables = [...WHITELISTED_TABLES];
+    }
+
+    const filters = req.body?.filters || req.query || {};
 
     if (!Array.isArray(tables) || tables.length === 0) {
       res.status(400).json({ success: false, message: 'Select at least one table to reset.' });

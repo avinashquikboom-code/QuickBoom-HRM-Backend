@@ -384,8 +384,9 @@ export const fetchEmployees = async (
     // Ensure Super Admin user has an active linked Employee record
     await ensureSuperAdminEmployee();
 
-    const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
-    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const rawLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const limit = rawLimit !== undefined && !isNaN(rawLimit) ? Math.min(Math.max(1, rawLimit), 2000) : undefined;
+    const page = req.query.page ? parseInt(req.query.page as string, 10) : (limit !== undefined ? 1 : undefined);
     const skip = page && limit ? (page - 1) * limit : undefined;
     const search = (req.query.search as string) || '';
     const status = (req.query.status as string) || '';

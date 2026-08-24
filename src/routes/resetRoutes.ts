@@ -16,10 +16,13 @@ const router = Router();
 router.use(authMiddleware);
 
 // SuperAdmin Endpoints
+router.get('/superadmin/reset/dry-run', superAdminResetDryRun);
 router.post('/superadmin/reset/dry-run', superAdminResetDryRun);
 router.post('/superadmin/reset/execute', superAdminResetExecute);
 router.get('/superadmin/reset/logs', fetchResetLogs);
 router.get('/superadmin/backup-status', fetchBackupStatus);
+router.get('/superadmin/reset/backup-status', fetchBackupStatus);
+router.get('/backup-status', fetchBackupStatus);
 
 // HR Endpoints
 router.post('/hr/reset/dry-run', hrResetDryRun);
