@@ -107,29 +107,71 @@ export const addSales = async (
 
     console.log(`[COMMISSION-DIAG] Final stored values → saleAmount=${parsedSaleAmount}, commissionAmount=${commissionAmount}, commissionPercent=${commissionPercent}`);
 
-    // Create the transaction
-    const transaction = await prisma.commissionTransaction.create({
-      data: {
-        employeeId: employee.id,
-        storeId: targetStoreId,
-        policyId: policy ? policy.id : null,
-        saleAmount: parsedSaleAmount,
-        commissionType,
-        commissionPercent: commissionPercent || null,
-        commissionAmount,
-        billId: billId || null,
-        invoiceNumber: invoiceNumber || null,
-        status: 'PENDING',
-        notes: notes || null,
-      },
-      include: {
-        employee: true,
-        store: true,
-        policy: true,
-      },
-    });
+    // Create or update the transaction
+    let transaction;
+    if (billId) {
+      transaction = await prisma.commissionTransaction.upsert({
+        where: {
+          billId_employeeId: {
+            billId: String(billId),
+            employeeId: employee.id,
+          }
+        },
+        update: {
+          storeId: targetStoreId,
+          policyId: policy ? policy.id : null,
+          saleAmount: parsedSaleAmount,
+          commissionType,
+          commissionPercent: commissionPercent || null,
+          commissionAmount,
+          invoiceNumber: invoiceNumber || null,
+          status: 'PENDING',
+          notes: notes || null,
+          updatedAt: new Date(),
+        },
+        create: {
+          employeeId: employee.id,
+          storeId: targetStoreId,
+          policyId: policy ? policy.id : null,
+          saleAmount: parsedSaleAmount,
+          commissionType,
+          commissionPercent: commissionPercent || null,
+          commissionAmount,
+          billId: String(billId),
+          invoiceNumber: invoiceNumber || null,
+          status: 'PENDING',
+          notes: notes || null,
+        },
+        include: {
+          employee: true,
+          store: true,
+          policy: true,
+        },
+      });
+    } else {
+      transaction = await prisma.commissionTransaction.create({
+        data: {
+          employeeId: employee.id,
+          storeId: targetStoreId,
+          policyId: policy ? policy.id : null,
+          saleAmount: parsedSaleAmount,
+          commissionType,
+          commissionPercent: commissionPercent || null,
+          commissionAmount,
+          billId: null,
+          invoiceNumber: invoiceNumber || null,
+          status: 'PENDING',
+          notes: notes || null,
+        },
+        include: {
+          employee: true,
+          store: true,
+          policy: true,
+        },
+      });
+    }
 
-    console.log(`[COMMISSION-DIAG] DB row created → id=${transaction.id}, saleAmount=${transaction.saleAmount}, commissionAmount=${transaction.commissionAmount}`);
+    console.log(`[COMMISSION-DIAG] DB row saved → id=${transaction.id}, saleAmount=${transaction.saleAmount}, commissionAmount=${transaction.commissionAmount}`);
 
     res.status(201).json({
       success: true,

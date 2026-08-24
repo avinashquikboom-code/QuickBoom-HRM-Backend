@@ -397,7 +397,15 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
         const productNamesSummary = commissionData.products.map(p => p.productName).filter(Boolean).join(', ');
         const noteText = `HopKid Invoice ${billIdKey}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''}`;
 
-        const existingTx = existingTransactions.find(t => t.employeeId === salesman.id);
+        const existingTx = existingTransactions.find(t => t.employeeId === salesman.id) ||
+          await tx.commissionTransaction.findUnique({
+            where: {
+              billId_employeeId: {
+                billId: billIdKey,
+                employeeId: salesman.id,
+              }
+            }
+          });
 
         if (existingTx) {
           console.log(`[Save] 🔄 Transaction already exists for ${billIdKey} + Salesman ${salesman.id}. Updating existing record...`);
@@ -416,15 +424,34 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
             operation: 'UPDATED',
           });
 
-          await tx.commissionTransaction.update({
-            where: { id: existingTx.id },
-            data: {
+          await tx.commissionTransaction.upsert({
+            where: {
+              billId_employeeId: {
+                billId: billIdKey,
+                employeeId: salesman.id,
+              }
+            },
+            update: {
               saleAmount: isCancelledOrReturned ? 0 : saleAmount,
               commissionAmount: isCancelledOrReturned ? 0 : commAmt,
               commissionPercent: salesman.commissionPercentage || 1.0,
               status: targetCommStatus,
               notes: `${noteText} (Updated)`,
               updatedAt: new Date(),
+            },
+            create: {
+              employeeId: salesman.id,
+              storeId: targetStoreId,
+              policyId: targetPolicyId,
+              saleAmount: isCancelledOrReturned ? 0 : saleAmount,
+              commissionType: 'PERCENTAGE',
+              commissionPercent: salesman.commissionPercentage || 1.0,
+              commissionAmount: isCancelledOrReturned ? 0 : commAmt,
+              billId: billIdKey,
+              invoiceNumber: billIdKey,
+              status: targetCommStatus,
+              notes: `${noteText} (Updated)`,
+              createdAt: validDate,
             },
           });
 
@@ -479,8 +506,22 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
             operation: 'CREATED',
           });
 
-          await tx.commissionTransaction.create({
-            data: {
+          await tx.commissionTransaction.upsert({
+            where: {
+              billId_employeeId: {
+                billId: billIdKey,
+                employeeId: salesman.id,
+              }
+            },
+            update: {
+              saleAmount: isCancelledOrReturned ? 0 : saleAmount,
+              commissionAmount: isCancelledOrReturned ? 0 : commAmt,
+              commissionPercent: salesman.commissionPercentage || 1.0,
+              status: targetCommStatus,
+              notes: noteText,
+              updatedAt: new Date(),
+            },
+            create: {
               employeeId: salesman.id,
               storeId: targetStoreId,
               policyId: targetPolicyId,
@@ -493,16 +534,6 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
               status: targetCommStatus,
               notes: noteText,
               createdAt: validDate,
-              history: {
-                create: {
-                  employeeId: salesman.id,
-                  action: 'CREATED',
-                  newStatus: targetCommStatus,
-                  newAmount: isCancelledOrReturned ? 0 : commAmt,
-                  reason: noteText,
-                  performedAt: new Date(),
-                },
-              },
             },
           });
 

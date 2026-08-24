@@ -189,18 +189,45 @@ export const createCommissionTransaction = async (
 ): Promise<void> => {
   try {
     const transactionData = req.body;
-    const transaction = await prisma.commissionTransaction.create({
-      data: transactionData,
-      include: {
-        employee: true,
-        store: true,
-        policy: true,
-      },
-    });
+    let transaction;
+    if (transactionData.billId && transactionData.employeeId) {
+      transaction = await prisma.commissionTransaction.upsert({
+        where: {
+          billId_employeeId: {
+            billId: String(transactionData.billId),
+            employeeId: parseInt(transactionData.employeeId, 10),
+          }
+        },
+        update: {
+          ...transactionData,
+          employeeId: parseInt(transactionData.employeeId, 10),
+          billId: String(transactionData.billId),
+        },
+        create: {
+          ...transactionData,
+          employeeId: parseInt(transactionData.employeeId, 10),
+          billId: String(transactionData.billId),
+        },
+        include: {
+          employee: true,
+          store: true,
+          policy: true,
+        },
+      });
+    } else {
+      transaction = await prisma.commissionTransaction.create({
+        data: transactionData,
+        include: {
+          employee: true,
+          store: true,
+          policy: true,
+        },
+      });
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Commission transaction created successfully.',
+      message: 'Commission transaction processed successfully.',
       transaction,
     });
   } catch (error) {
