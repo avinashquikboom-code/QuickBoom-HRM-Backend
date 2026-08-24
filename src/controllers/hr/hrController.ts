@@ -12,7 +12,8 @@ import leaveBalanceService from '../../services/leaveBalanceService';
 import {
   isProtectedEmail,
   isProtectedUser,
-  PROTECTED_SYSTEM_ACCOUNT_MESSAGES
+  PROTECTED_SYSTEM_ACCOUNT_MESSAGES,
+  ensureSuperAdminEmployee
 } from '../../utils/protectedAccounts';
 
 // ==========================================
@@ -336,6 +337,9 @@ export const fetchHREmployees = async (
 ): Promise<void> => {
   console.log('👥 [HR EMPLOYEES] Fetch employee list started');
   
+  // Ensure Super Admin user has an active linked Employee record
+  await ensureSuperAdminEmployee();
+
   // Employee data is synchronized via real-time webhooks (EMPLOYEE_CREATED, EMPLOYEE_UPDATED, EMPLOYEE_DELETED)
   console.log('👥 [HR EMPLOYEES] User:', req.user?.email, 'Role:', req.user?.role);
   
@@ -361,6 +365,8 @@ export const fetchHREmployees = async (
       { lastName: { contains: search as string, mode: 'insensitive' } },
       { employeeCode: { contains: search as string, mode: 'insensitive' } },
       { designation: { contains: search as string, mode: 'insensitive' } },
+      { user: { email: { contains: search as string, mode: 'insensitive' } } },
+      { user: { profile: { fullName: { contains: search as string, mode: 'insensitive' } } } },
     ];
   }
 
@@ -421,13 +427,19 @@ export const fetchHREmployees = async (
     console.log('👥 [HR EMPLOYEES] Query results:', { employeesFound: employees.length, totalEmployees: total });
 
     const mapped = employees.map((emp) => {
+      const isSuperAdmin = emp.user?.role === 'SUPER_ADMIN' || emp.user?.email === 'admin@hrm.com';
+      const fName = isSuperAdmin ? 'Super Admin' : emp.firstName;
+      const lName = isSuperAdmin ? '' : emp.lastName;
+      const fullName = isSuperAdmin ? 'Super Admin' : `${emp.firstName} ${emp.lastName || ''}`.trim();
+      const desig = isSuperAdmin ? (emp.designation || 'Super Admin') : (emp.designation || 'Employee');
+
       const result = {
         id: emp.id,
         employeeCode: emp.employeeCode,
-        firstName: emp.firstName,
-        lastName: emp.lastName,
-        fullName: `${emp.firstName} ${emp.lastName || ''}`.trim(),
-        designation: emp.designation || 'Employee',
+        firstName: fName,
+        lastName: lName,
+        fullName: fullName,
+        designation: desig,
         status: emp.status,
         workMode: emp.workModeId,
         shiftType: emp.shiftTypeId,

@@ -87,3 +87,61 @@ export async function isProtectedEmployeeId(employeeId: number | string): Promis
   }
   return false;
 }
+
+/**
+ * Ensures all SUPER_ADMIN accounts in the database have an active linked Employee record
+ * with proper naming and designation, so they are always visible across all employee queries.
+ */
+export async function ensureSuperAdminEmployee(): Promise<void> {
+  try {
+    const superAdminUsers = await prisma.user.findMany({
+      where: {
+        OR: [
+          { role: 'SUPER_ADMIN' },
+          { email: 'admin@hrm.com' }
+        ]
+      },
+      include: { employee: true, profile: true }
+    });
+
+    for (const user of superAdminUsers) {
+      const targetName = user.profile?.fullName || 'Super Admin';
+      const nameParts = targetName.split(' ');
+      const firstName = nameParts[0] || 'Super Admin';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
+      if (!user.employee) {
+        await prisma.employee.create({
+          data: {
+            userId: user.id,
+            employeeCode: 'ADMIN001',
+            firstName: firstName,
+            lastName: lastName,
+            designation: 'Super Admin',
+            status: 'active',
+            source: 'MANUAL',
+          }
+        });
+        console.log(`[AccountProtection] ✅ Created linked Employee record for Super Admin user ${user.email}`);
+      } else {
+        const needsNameUpdate = !user.employee.firstName || user.employee.firstName === 'Admin';
+        const needsDesignationUpdate = !user.employee.designation || user.employee.designation === 'HR Administrator';
+        
+        if (needsNameUpdate || needsDesignationUpdate || user.employee.status !== 'active') {
+          await prisma.employee.update({
+            where: { id: user.employee.id },
+            data: {
+              firstName: needsNameUpdate ? 'Super Admin' : user.employee.firstName,
+              designation: needsDesignationUpdate ? 'Super Admin' : user.employee.designation,
+              status: 'active',
+            }
+          });
+          console.log(`[AccountProtection] ✅ Synchronized Employee record for Super Admin user ${user.email}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[AccountProtection] Error ensuring Super Admin employee record:', error);
+  }
+}
+

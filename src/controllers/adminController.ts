@@ -14,7 +14,8 @@ import { logActivity } from '../utils/activityLogger';
 import {
   isProtectedEmail,
   isProtectedUser,
-  PROTECTED_SYSTEM_ACCOUNT_MESSAGES
+  PROTECTED_SYSTEM_ACCOUNT_MESSAGES,
+  ensureSuperAdminEmployee
 } from '../utils/protectedAccounts';
 const PdfPrinter = require('pdfmake');
 
@@ -380,10 +381,18 @@ export const fetchEmployees = async (
   res: Response
 ): Promise<void> => {
   try {
+    // Ensure Super Admin user has an active linked Employee record
+    await ensureSuperAdminEmployee();
+
     const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
     const skip = page && limit ? (page - 1) * limit : undefined;
     const search = (req.query.search as string) || '';
+    const status = (req.query.status as string) || '';
+    const role = (req.query.role as string) || '';
+    const departmentId = req.query.departmentId ? parseInt(req.query.departmentId as string, 10) : undefined;
+    const officeId = req.query.officeId ? parseInt(req.query.officeId as string, 10) : undefined;
+    const storeId = req.query.storeId ? parseInt(req.query.storeId as string, 10) : undefined;
 
     let whereClause: Prisma.EmployeeWhereInput = {};
     if (req.user?.role === 'STORE_MANAGER') {
@@ -407,6 +416,28 @@ export const fetchEmployees = async (
       whereClause.officeId = storeManager.officeId;
     }
 
+    if (status && status !== 'ALL' && status !== 'All') {
+      whereClause.status = { equals: status, mode: 'insensitive' };
+    }
+
+    if (role && role !== 'ALL' && role !== 'All') {
+      whereClause.user = {
+        role: role.toUpperCase() as any
+      };
+    }
+
+    if (departmentId) {
+      whereClause.departmentId = departmentId;
+    }
+
+    if (officeId) {
+      whereClause.officeId = officeId;
+    }
+
+    if (storeId) {
+      whereClause.storeId = storeId;
+    }
+
     if (search) {
       whereClause.OR = [
         { firstName: { contains: search, mode: 'insensitive' } },
@@ -415,6 +446,7 @@ export const fetchEmployees = async (
         { mobileNumber: { contains: search, mode: 'insensitive' } },
         { designation: { contains: search, mode: 'insensitive' } },
         { user: { email: { contains: search, mode: 'insensitive' } } },
+        { user: { profile: { fullName: { contains: search, mode: 'insensitive' } } } },
         { office: { name: { contains: search, mode: 'insensitive' } } },
         { store: { name: { contains: search, mode: 'insensitive' } } },
       ];
@@ -463,6 +495,11 @@ export const fetchEmployees = async (
               email: true,
               role: true,
               isActive: true,
+              profile: {
+                select: {
+                  fullName: true,
+                },
+              },
             },
           },
           department: {
@@ -499,103 +536,110 @@ export const fetchEmployees = async (
       prisma.employee.count({ where: whereClause }),
     ]);
 
-    const mappedEmployees = employees.map((emp) => ({
-      // Use the integer DB id as the canonical identifier for edit/delete routes.
-      // The employeeID (GUID) is exposed separately for reference.
-      id: emp.id,
-      employeeID: emp.employeeID,
-      employeeCode: emp.employeeCode,
-      firstName: emp.firstName,
-      lastName: emp.lastName,
-      mobileNumber: emp.mobileNumber || '',
-      phone: emp.mobileNumber || '',
-      designation: emp.designation,
-      designationId: emp.designationId,
-      designationRelation: emp.designationRelation ?? null,
-      status: emp.status,
-      source: emp.source ?? 'MANUAL',
-      workMode: emp.workModeId,
-      shiftType: emp.shiftTypeId,
-      workModeId: emp.workModeId,
-      shiftTypeId: emp.shiftTypeId,
-      basicSalary: emp.salaryStructure?.basicSalary || 0,
-      grossSalary: emp.salaryStructure?.grossSalary || 0,
-      hra: emp.salaryStructure?.hra || 0,
-      medicalAllowance: emp.salaryStructure?.medicalAllowance || 0,
-      travelAllowance: emp.salaryStructure?.travelAllowance || 0,
-      specialAllowance: emp.salaryStructure?.specialAllowance || 0,
-      incentive: emp.salaryStructure?.incentive || 0,
-      bonus: emp.salaryStructure?.bonus || 0,
-      salaryStructure: emp.salaryStructure ? {
-        id: emp.salaryStructure.id,
-        basicSalary: emp.salaryStructure.basicSalary,
-        grossSalary: emp.salaryStructure.grossSalary,
-        monthlySalary: emp.salaryStructure.monthlySalary,
-        hra: emp.salaryStructure.hra,
-        medicalAllowance: emp.salaryStructure.medicalAllowance,
-        travelAllowance: emp.salaryStructure.travelAllowance,
-        specialAllowance: emp.salaryStructure.specialAllowance,
-        incentive: emp.salaryStructure.incentive,
-        bonus: emp.salaryStructure.bonus,
-        salaryAdvanceLimit: emp.salaryStructure.salaryAdvanceLimit,
-        pfEnabled: emp.salaryStructure.pfEnabled,
-        esicEnabled: emp.salaryStructure.esicEnabled,
-      } : null,
-      shift: emp.shiftAssignments?.[0]?.shift
-        ? {
-            id: emp.shiftAssignments[0].shift.id.toString(),
-            name: emp.shiftAssignments[0].shift.name,
-            startTime: emp.shiftAssignments[0].shift.startTime,
-            endTime: emp.shiftAssignments[0].shift.endTime,
-            color: emp.shiftAssignments[0].shift.color,
-          }
-        : null,
-      officeId: emp.officeId?.toString() || null,
-      office: emp.office
-        ? {
-            id: emp.office.id.toString(),
-            name: emp.office.name,
-            latitude: emp.office.latitude,
-            longitude: emp.office.longitude,
-            idealRadiusMeters: emp.office.idealRadiusMeters,
-            maxPunchRadiusMeters: emp.office.maxPunchRadiusMeters,
-          }
-        : null,
-      storeId: emp.storeId?.toString() || null,
-      store: emp.store
-        ? {
-            id: emp.store.id.toString(),
-            name: emp.store.name,
-            branchId: null,
-            branch: null,
-          }
-        : null,
-      branchId: null,
-      branch: null,
-      departmentId: emp.departmentId?.toString() || null,
-      commissionPercentage: emp.commissionPercentage || 0,
-      user: emp.user
-        ? {
-            id: emp.user.id,
-            email: emp.user.email,
-            role: emp.user.role,
-            isActive: emp.user.isActive,
-          }
-        : null,
-      department: emp.department
-        ? {
-            id: emp.department.id,
-            name: emp.department.name,
-            code: emp.department.code,
-          }
-        : null,
-      wallet: (emp as any).wallet
-        ? {
-            advanceLimit: (emp as any).wallet.advanceLimit,
-            availableBalance: (emp as any).wallet.availableBalance,
-          }
-        : null,
-    }));
+    const mappedEmployees = employees.map((emp) => {
+      const isSuperAdmin = emp.user?.role === 'SUPER_ADMIN' || emp.user?.email === 'admin@hrm.com';
+      const fName = isSuperAdmin ? 'Super Admin' : emp.firstName;
+      const lName = isSuperAdmin ? '' : emp.lastName;
+      const desig = isSuperAdmin ? (emp.designation || 'Super Admin') : emp.designation;
+
+      return {
+        // Use the integer DB id as the canonical identifier for edit/delete routes.
+        // The employeeID (GUID) is exposed separately for reference.
+        id: emp.id,
+        employeeID: emp.employeeID,
+        employeeCode: emp.employeeCode,
+        firstName: fName,
+        lastName: lName,
+        mobileNumber: emp.mobileNumber || '',
+        phone: emp.mobileNumber || '',
+        designation: desig,
+        designationId: emp.designationId,
+        designationRelation: emp.designationRelation ?? null,
+        status: emp.status,
+        source: emp.source ?? 'MANUAL',
+        workMode: emp.workModeId,
+        shiftType: emp.shiftTypeId,
+        workModeId: emp.workModeId,
+        shiftTypeId: emp.shiftTypeId,
+        basicSalary: emp.salaryStructure?.basicSalary || 0,
+        grossSalary: emp.salaryStructure?.grossSalary || 0,
+        hra: emp.salaryStructure?.hra || 0,
+        medicalAllowance: emp.salaryStructure?.medicalAllowance || 0,
+        travelAllowance: emp.salaryStructure?.travelAllowance || 0,
+        specialAllowance: emp.salaryStructure?.specialAllowance || 0,
+        incentive: emp.salaryStructure?.incentive || 0,
+        bonus: emp.salaryStructure?.bonus || 0,
+        salaryStructure: emp.salaryStructure ? {
+          id: emp.salaryStructure.id,
+          basicSalary: emp.salaryStructure.basicSalary,
+          grossSalary: emp.salaryStructure.grossSalary,
+          monthlySalary: emp.salaryStructure.monthlySalary,
+          hra: emp.salaryStructure.hra,
+          medicalAllowance: emp.salaryStructure.medicalAllowance,
+          travelAllowance: emp.salaryStructure.travelAllowance,
+          specialAllowance: emp.salaryStructure.specialAllowance,
+          incentive: emp.salaryStructure.incentive,
+          bonus: emp.salaryStructure.bonus,
+          salaryAdvanceLimit: emp.salaryStructure.salaryAdvanceLimit,
+          pfEnabled: emp.salaryStructure.pfEnabled,
+          esicEnabled: emp.salaryStructure.esicEnabled,
+        } : null,
+        shift: emp.shiftAssignments?.[0]?.shift
+          ? {
+              id: emp.shiftAssignments[0].shift.id.toString(),
+              name: emp.shiftAssignments[0].shift.name,
+              startTime: emp.shiftAssignments[0].shift.startTime,
+              endTime: emp.shiftAssignments[0].shift.endTime,
+              color: emp.shiftAssignments[0].shift.color,
+            }
+          : null,
+        officeId: emp.officeId?.toString() || null,
+        office: emp.office
+          ? {
+              id: emp.office.id.toString(),
+              name: emp.office.name,
+              latitude: emp.office.latitude,
+              longitude: emp.office.longitude,
+              idealRadiusMeters: emp.office.idealRadiusMeters,
+              maxPunchRadiusMeters: emp.office.maxPunchRadiusMeters,
+            }
+          : null,
+        storeId: emp.storeId?.toString() || null,
+        store: emp.store
+          ? {
+              id: emp.store.id.toString(),
+              name: emp.store.name,
+              branchId: null,
+              branch: null,
+            }
+          : null,
+        branchId: null,
+        branch: null,
+        departmentId: emp.departmentId?.toString() || null,
+        commissionPercentage: emp.commissionPercentage || 0,
+        user: emp.user
+          ? {
+              id: emp.user.id,
+              email: emp.user.email,
+              role: emp.user.role,
+              isActive: emp.user.isActive,
+            }
+          : null,
+        department: emp.department
+          ? {
+              id: emp.department.id.toString(),
+              name: emp.department.name,
+              code: emp.department.code,
+            }
+          : null,
+        wallet: emp.wallet
+          ? {
+              advanceLimit: emp.wallet.advanceLimit,
+              availableBalance: emp.wallet.availableBalance,
+            }
+          : null,
+      };
+    });
 
     const count = total;
     const registeredCount = await prisma.employee.count({
