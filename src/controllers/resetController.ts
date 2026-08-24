@@ -15,6 +15,7 @@ export const WHITELISTED_TABLES = [
   'ShiftRequests',
   'Tasks',
   'Notifications',
+  'WebhookLogs',
 ] as const;
 
 export type WhitelistedTable = typeof WHITELISTED_TABLES[number];
@@ -193,6 +194,14 @@ async function buildTableWhere(table: WhitelistedTable, filters: any) {
       }
       break;
     }
+    case 'WebhookLogs': {
+      if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = startDate;
+        if (endDate) where.createdAt.lte = endDate;
+      }
+      break;
+    }
   }
 
   return where;
@@ -212,8 +221,11 @@ async function getDryRunCount(table: WhitelistedTable, filters: any): Promise<nu
       const advances = await prisma.salaryAdvance.count({ where });
       return payslips + advances;
     }
-    case 'Sales':
-      return await prisma.commissionTransaction.count({ where });
+    case 'Sales': {
+      const comm = await prisma.commissionTransaction.count({ where });
+      const sales = await prisma.sales.count({ where });
+      return comm + sales;
+    }
     case 'Breaks':
       return await prisma.break.count({ where });
     case 'ShiftRequests':
@@ -222,6 +234,13 @@ async function getDryRunCount(table: WhitelistedTable, filters: any): Promise<nu
       return await prisma.task.count({ where });
     case 'Notifications':
       return await prisma.notification.count({ where });
+    case 'WebhookLogs': {
+      const [w, h] = await Promise.all([
+        prisma.webhookLog.count({ where }),
+        prisma.hopkidWebhookLog.count({ where }),
+      ]);
+      return w + h;
+    }
     default:
       return 0;
   }
@@ -253,8 +272,11 @@ async function deleteTableRecords(table: WhitelistedTable, filters: any): Promis
       return payslipsRes.count + advancesRes.count;
     }
     case 'Sales': {
-      const res = await prisma.commissionTransaction.deleteMany({ where });
-      return res.count;
+      const commRes = await prisma.commissionTransaction.deleteMany({ where });
+      await prisma.sales.deleteMany({ where });
+      await prisma.webhookLog.deleteMany({ where });
+      await prisma.hopkidWebhookLog.deleteMany({ where });
+      return commRes.count;
     }
     case 'Breaks': {
       const res = await prisma.break.deleteMany({ where });
@@ -271,6 +293,13 @@ async function deleteTableRecords(table: WhitelistedTable, filters: any): Promis
     case 'Notifications': {
       const res = await prisma.notification.deleteMany({ where });
       return res.count;
+    }
+    case 'WebhookLogs': {
+      const [w, h] = await Promise.all([
+        prisma.webhookLog.deleteMany({ where }),
+        prisma.hopkidWebhookLog.deleteMany({ where }),
+      ]);
+      return w.count + h.count;
     }
     default:
       return 0;
