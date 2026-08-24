@@ -17,21 +17,41 @@ console.log('[Sales Exchange Webhook Controller] ✅ Loaded');
  * POST /api/webhook/salesExchange/created
  * HopKid sends: salesExchange.created event
  */
-router.post('/created', (req: Request, res: Response) => {
+router.post('/created', async (req: Request, res: Response) => {
   const rawPayload = req.body;
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║ [SALES EXCHANGE CREATED] Webhook received                  ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  res.status(200).json({
-    success: true,
-    message: 'Sales exchange received'
-  });
+  try {
+    const idempotency = await checkWebhookIdempotency(rawPayload, 'SALES_EXCHANGE_CREATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[SalesExchange Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
 
-  processSalesExchangeCreated(rawPayload).catch(err => {
-    console.error('[Exchange] ❌ Error:', err.message);
-  });
+    await processSalesExchangeCreated(rawPayload, 'SALES_EXCHANGE_CREATED');
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed successfully',
+      duplicate: false,
+    });
+  } catch (err: any) {
+    console.error('[SalesExchange] ❌ Error:', err.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 });
 
 async function resolveEmployeeForLineItem(lineItem: any, fallbackEmployeeId: number | null): Promise<any> {
@@ -156,12 +176,6 @@ async function resolveEmployeeForLineItem(lineItem: any, fallbackEmployeeId: num
 
 export async function processSalesExchangeCreated(payload: any, eventType: string = 'SALES_EXCHANGE_CREATED'): Promise<void> {
   try {
-    const idempotency = await checkWebhookIdempotency(payload, eventType);
-    if (idempotency.isDuplicate) {
-      console.log(`[SalesExchange Webhook] ℹ️ Duplicate ${eventType} event safely ignored (Key: ${idempotency.dedupKey})`);
-      return;
-    }
-
     console.log('[Process] Step 1: Validate payload');
 
     const data = payload.data || payload;
@@ -203,22 +217,6 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
       newInvoice: newInvoiceNo,
       lineItemsCount: lineItems.length
     });
-
-    const existingExchange = await prisma.salesExchange.findUnique({
-      where: { exchangeNo: exchangeNo }
-    });
-
-    if (existingExchange) {
-      console.log(`[Process] ℹ️ Sales exchange record already exists: ${existingExchange.id}`);
-      await createWebhookLog({
-        eventType: 'SALES_EXCHANGE_CREATED',
-        status: 'SUCCESS',
-        payload: payload,
-        billId: exchangeNo,
-        amount: totalAmount
-      });
-      return;
-    }
 
     // ═════════════════════════════════════════════════════════════════════════
     // STEP 2: FIND ORIGINAL SALE
@@ -289,8 +287,20 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
 
         const uniqueBillId = `${newInvoiceNo}-${lineItem.productID || lineItem.productId || i + 1}-${isOld ? 'RET' : 'NEW'}`;
 
-        const saleRecord = await prisma.sales.create({
-          data: {
+        const saleRecord = await prisma.sales.upsert({
+          where: {
+            billId_employeeId: {
+              billId: uniqueBillId,
+              employeeId: employee.id,
+            }
+          },
+          update: {
+            netAmount: effectiveSaleAmount,
+            saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+            description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
+            updatedAt: new Date(),
+          },
+          create: {
             employeeId: employee.id,
             netAmount: effectiveSaleAmount,
             billId: uniqueBillId,
@@ -331,42 +341,35 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
       const roundedAmount = Number(group.totalSaleAmount.toFixed(2));
       const roundedCommission = Number(group.totalCommissionAmount.toFixed(2));
 
-      const existingCommTxn = await prisma.commissionTransaction.findFirst({
+      await prisma.commissionTransaction.upsert({
         where: {
+          billId_employeeId: {
+            billId: exchangeBillId,
+            employeeId: group.employee.id,
+          }
+        },
+        update: {
+          saleAmount: roundedAmount,
+          commissionAmount: roundedCommission,
+          commissionPercent: group.rate,
+          createdAt: txnExDate,
+          updatedAt: new Date(),
+        },
+        create: {
           employeeId: group.employee.id,
-          billId: exchangeBillId
+          storeId: group.employee.storeId || null,
+          saleAmount: roundedAmount,
+          commissionType: 'PERCENTAGE',
+          commissionPercent: group.rate,
+          commissionAmount: roundedCommission,
+          billId: exchangeBillId,
+          invoiceNumber: exchangeBillId,
+          status: 'APPROVED',
+          createdAt: txnExDate,
+          notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})`
         }
       });
-
-      if (existingCommTxn) {
-        await prisma.commissionTransaction.update({
-          where: { id: existingCommTxn.id },
-          data: {
-            saleAmount: roundedAmount,
-            commissionAmount: roundedCommission,
-            commissionPercent: group.rate,
-            createdAt: txnExDate,
-          }
-        });
-        console.log(`[ExchangeTxn] 🔄 Updated aggregated txn #${existingCommTxn.id} for ${exchangeBillId}, Emp #${group.employee.id}`);
-      } else {
-        const commTxn = await prisma.commissionTransaction.create({
-          data: {
-            employeeId: group.employee.id,
-            storeId: group.employee.storeId || null,
-            saleAmount: roundedAmount,
-            commissionType: 'PERCENTAGE',
-            commissionPercent: group.rate,
-            commissionAmount: roundedCommission,
-            billId: exchangeBillId,
-            invoiceNumber: `${newInvoiceNo}-${group.isOld ? 'RET' : 'NEW'}`,
-            status: 'APPROVED',
-            createdAt: txnExDate,
-            notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})`
-          }
-        });
-        console.log(`[ExchangeTxn] ✅ Created aggregated txn #${commTxn.id} for ${exchangeBillId}, Emp #${group.employee.id}`);
-      }
+      console.log(`[ExchangeTxn] ✅ Upserted aggregated txn for ${exchangeBillId}, Emp #${group.employee.id}`);
     }
 
     if (!primaryNewEmployeeId) {
@@ -384,8 +387,26 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
     const diffAmountVal = newAmountVal - origAmountVal;
     const diffCommVal = totalNewCommission - totalOldCommission;
 
-    const exchangeRecord = await prisma.salesExchange.create({
-      data: {
+    const exchangeRecord = await prisma.salesExchange.upsert({
+      where: { exchangeNo: exchangeNo },
+      update: {
+        originalInvoiceNo: originalInvoiceNo,
+        newInvoiceNo: newInvoiceNo,
+        exchangeDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+        originalSaleId: originalSale?.id || null,
+        newSaleId: newSaleIds.join(','),
+        employeeId: primaryNewEmployeeId,
+        originalAmount: origAmountVal,
+        newAmount: newAmountVal,
+        amountDifference: diffAmountVal,
+        originalCommission: totalOldCommission,
+        newCommission: totalNewCommission,
+        commissionDifference: diffCommVal,
+        reason: exchange.reason || 'Sales Exchange',
+        status: 'ACTIVE',
+        updatedAt: new Date(),
+      },
+      create: {
         exchangeNo: exchangeNo,
         originalInvoiceNo: originalInvoiceNo,
         newInvoiceNo: newInvoiceNo,
@@ -404,7 +425,7 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
       }
     });
 
-    console.log('[Process] ✅ Sales exchange created:', exchangeRecord.id, {
+    console.log('[Process] ✅ Sales exchange upserted:', exchangeRecord.id, {
       newAmount: newAmountVal,
       originalAmount: origAmountVal,
       newCommission: totalNewCommission,
@@ -479,31 +500,45 @@ export async function processSalesExchangeCreated(payload: any, eventType: strin
 // 6️⃣ SALES EXCHANGE UPDATED - Status changed or void
 // ═══════════════════════════════════════════════════════════════════════════
 
-router.post('/updated', (req: Request, res: Response) => {
+router.post('/updated', async (req: Request, res: Response) => {
   const rawPayload = req.body;
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║ [SALES EXCHANGE UPDATED] Webhook received                  ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  res.status(200).json({
-    success: true,
-    message: 'Sales exchange update received'
-  });
+  try {
+    const idempotency = await checkWebhookIdempotency(rawPayload, 'SALES_EXCHANGE_UPDATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[SalesExchange Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
 
-  processSalesExchangeUpdated(rawPayload).catch(err => {
+    await processSalesExchangeUpdated(rawPayload);
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed successfully',
+      duplicate: false,
+    });
+  } catch (err: any) {
     console.error('[Exchange Update] ❌ Error:', err.message);
-  });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 });
 
 export async function processSalesExchangeUpdated(payload: any): Promise<void> {
   try {
-    const idempotency = await checkWebhookIdempotency(payload, 'SALES_EXCHANGE_UPDATED');
-    if (idempotency.isDuplicate) {
-      console.log(`[SalesExchange Webhook] ℹ️ Duplicate SALES_EXCHANGE_UPDATED event safely ignored (Key: ${idempotency.dedupKey})`);
-      return;
-    }
-
     console.log('[Update] Step 1: Validate payload');
 
     const data = payload.data || payload;

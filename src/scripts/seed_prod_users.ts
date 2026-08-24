@@ -101,11 +101,11 @@ async function seedSafe() {
     // 3. Create Users, Profiles, Employees if not existing
     
     // A. Super Admin User
-    const existingAdmin = await prisma.user.findUnique({ where: { email: 'admin@hr.com' } });
+    const existingAdmin = await prisma.user.findUnique({ where: { email: 'admin@hrm.com' } });
     if (!existingAdmin) {
       await prisma.user.create({
         data: {
-          email: 'admin@hr.com',
+          email: 'admin@hrm.com',
           password: adminPasswordHash,
           role: Role.SUPER_ADMIN,
           isActive: true,
@@ -126,7 +126,7 @@ async function seedSafe() {
           },
         },
       });
-      console.log('Created user: admin@hr.com');
+      console.log('Created user: admin@hrm.com');
     }
 
     // B. HR Admin User

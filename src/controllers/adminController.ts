@@ -11,6 +11,11 @@ import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 import { clearIntegrationCache } from '../utils/configService';
 import leaveBalanceService from '../services/leaveBalanceService';
 import { logActivity } from '../utils/activityLogger';
+import {
+  isProtectedEmail,
+  isProtectedUser,
+  PROTECTED_SYSTEM_ACCOUNT_MESSAGES
+} from '../utils/protectedAccounts';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -187,6 +192,24 @@ export const updateUserStatus = async (
   try {
     if (userId < 0) {
       const empId = Math.abs(userId);
+      const targetEmp = await prisma.employee.findUnique({
+        where: { id: empId },
+        include: { user: true },
+      });
+
+      if (!targetEmp) {
+        res.status(404).json({ success: false, message: 'Employee not found' });
+        return;
+      }
+
+      if (!isActive && (isProtectedEmail(targetEmp.user?.email) || isProtectedEmail((targetEmp as any).email))) {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DEACTIVATE,
+        });
+        return;
+      }
+
       const updatedEmp = await prisma.employee.update({
         where: { id: empId },
         data: { status: isActive ? 'active' : 'inactive' },
@@ -195,6 +218,24 @@ export const updateUserStatus = async (
         success: true,
         message: `Employee status updated to ${isActive ? 'Active' : 'Inactive'}.`,
         user: updatedEmp,
+      });
+      return;
+    }
+
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true },
+    });
+
+    if (!targetUser) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    if (!isActive && isProtectedEmail(targetUser.email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DEACTIVATE,
       });
       return;
     }
@@ -245,6 +286,14 @@ export const deletePlatformUser = async (
     }
 
     if (user) {
+      if (isProtectedEmail(user.email) || isProtectedEmail(user.employee?.employeeCode)) {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DELETE,
+        });
+        return;
+      }
+
       if (user.employee) {
         await prisma.employee.delete({
           where: { id: user.employee.id },
@@ -287,6 +336,14 @@ export const deletePlatformUser = async (
 
     if (!emp) {
       res.status(404).json({ success: false, message: 'User or employee not found' });
+      return;
+    }
+
+    if (isProtectedEmail(emp.user?.email) || isProtectedEmail((emp as any).email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DELETE,
+      });
       return;
     }
 
@@ -642,6 +699,16 @@ export const updateEmployee = async (
     if (!employee) {
       res.status(404).json({ success: false, message: 'Employee not found.' });
       return;
+    }
+
+    if (isProtectedEmail(employee.user?.email) || isProtectedEmail((employee as any).email)) {
+      if (status && status.toLowerCase() !== 'active') {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DEACTIVATE,
+        });
+        return;
+      }
     }
 
     // Update employee data
@@ -1077,6 +1144,14 @@ export const deleteEmployee = async (
 
     if (!employee) {
       res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
+    }
+
+    if (isProtectedEmail(employee.user?.email) || isProtectedEmail((employee as any).email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DELETE,
+      });
       return;
     }
 
@@ -3427,16 +3502,29 @@ export const updateAdminProfile = async (
       return;
     }
 
+    let newEmail = email ? email.trim() : undefined;
+    if (newEmail) {
+      if (isProtectedEmail(existingUser.email) && newEmail.toLowerCase() !== existingUser.email?.toLowerCase()) {
+        newEmail = existingUser.email || undefined;
+      } else if (!isProtectedEmail(existingUser.email) && isProtectedEmail(newEmail)) {
+        res.status(403).json({
+          success: false,
+          message: 'Cannot assign a protected system email address.',
+        });
+        return;
+      }
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id: req.user!.id },
       data: {
-        email: email ? email.trim() : undefined,
+        email: newEmail,
         profile: {
           update: {
             fullName: fullName.trim(),
             phone: phone !== undefined ? phone.trim() : existingUser.profile.phone,
             bio: bio !== undefined ? bio.trim() : existingUser.profile.bio,
-            email: email ? email.trim() : existingUser.profile.email,
+            email: newEmail || existingUser.profile.email,
           },
         },
       },
@@ -7119,6 +7207,29 @@ export const resetEmployeePassword = async (
       return;
     }
 
+    // Enforce protected account rules
+    if (isProtectedEmail(user.email)) {
+      // 1. Self-change check: cannot change own password
+      if (req.user?.id === user.id || (req.user?.email && user.email && req.user.email.toLowerCase() === user.email.toLowerCase())) {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_CHANGE_OWN_PASSWORD,
+        });
+        return;
+      }
+
+      // 2. Caller must be authorized HR
+      const callerRole = String(req.user?.role || '').toUpperCase();
+      const isAuthorizedHR = callerRole === 'HR' || callerRole === 'PLATFORM_ADMIN' || callerRole === 'SUPER_ADMIN';
+      if (!isAuthorizedHR) {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.HR_ONLY_PASSWORD_MANAGEMENT,
+        });
+        return;
+      }
+    }
+
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
@@ -7207,6 +7318,29 @@ export const resetEmployeePasswordByGUID = async (
       return;
     }
 
+    // Enforce protected account rules
+    if (isProtectedEmail(user.email)) {
+      // 1. Self-change check: cannot change own password
+      if (req.user?.id === user.id || (req.user?.email && user.email && req.user.email.toLowerCase() === user.email.toLowerCase())) {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_CHANGE_OWN_PASSWORD,
+        });
+        return;
+      }
+
+      // 2. Caller must be authorized HR
+      const callerRole = String(req.user?.role || '').toUpperCase();
+      const isAuthorizedHR = callerRole === 'HR' || callerRole === 'PLATFORM_ADMIN' || callerRole === 'SUPER_ADMIN';
+      if (!isAuthorizedHR) {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.HR_ONLY_PASSWORD_MANAGEMENT,
+        });
+        return;
+      }
+    }
+
     // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
@@ -7265,6 +7399,15 @@ export const changeOwnPassword = async (
   }
 
   try {
+    // Check if current authenticated user is protected
+    if (isProtectedEmail(req.user?.email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_CHANGE_OWN_PASSWORD,
+      });
+      return;
+    }
+
     // Get current user
     const user = await prisma.user.findUnique({
       where: { id: req.user?.id }
@@ -7272,6 +7415,14 @@ export const changeOwnPassword = async (
 
     if (!user) {
       res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    if (isProtectedEmail(user.email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_CHANGE_OWN_PASSWORD,
+      });
       return;
     }
 

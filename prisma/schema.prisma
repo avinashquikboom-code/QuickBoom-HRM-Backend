@@ -799,6 +799,7 @@ model CommissionTransaction {
   history           CommissionHistory[]
   adjustments       CommissionAdjustment[]
   
+  @@unique([billId, employeeId])
   @@index([employeeId])
   @@index([storeId])
   @@index([status])
@@ -1244,6 +1245,7 @@ model HopkidWebhookLog {
 
 model WebhookLog {
   id            String   @id @default(uuid())
+  eventId       String?  @unique
   eventType     String   @default("COMMISSION")
   status        String   @default("RECEIVED") // RECEIVED, PROCESSING, SUCCESS, FAILED
   payload       String   @db.Text
@@ -1256,6 +1258,8 @@ model WebhookLog {
 
   @@index([status])
   @@index([eventType])
+  @@index([billId])
+  @@index([billId, eventType])
   @@index([createdAt])
 }
 
@@ -1304,6 +1308,7 @@ model Sales {
   replacedBySale        Sales?   @relation("SalesExchange", fields: [replacedBySaleId], references: [id])
   originalSales         Sales?   @relation("SalesExchange")
   
+  @@unique([billId, employeeId])
   @@index([employeeId])
   @@index([billId])
   @@index([status])

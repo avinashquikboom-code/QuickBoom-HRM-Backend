@@ -40,23 +40,28 @@ export function computePayloadHash(payload: any): string {
 export async function checkWebhookIdempotency(payload: any, rawEventType?: string): Promise<IdempotencyResult> {
   const meta = extractWebhookMeta(payload);
   const eventType = normalizeEventType(rawEventType || meta.eventType || 'INVOICE_CREATED', 'INVOICE_CREATED', payload);
-  const eventId = meta.eventId || payload?.eventId || payload?.id || payload?.data?.eventId || payload?.data?.id || null;
+  const eventId = meta.eventId || payload?.eventId || payload?.event_id || payload?.id || payload?.data?.eventId || payload?.data?.event_id || payload?.data?.id || null;
   const billId = meta.billId || meta.invoiceNumber || null;
   const hash = computePayloadHash(payload);
 
   const dedupKey = eventId
     ? `${eventType}_EVT_${eventId}`
     : billId
-    ? `${eventType}_BILL_${billId}_AMT_${meta.amount || 0}`
+    ? `${eventType}_BILL_${billId}_HASH_${hash.slice(0, 8)}`
     : `${eventType}_HASH_${hash}`;
 
   // 1. Check by explicit eventId in WebhookLog
   if (eventId) {
     const existingLog = await prisma.webhookLog.findFirst({
       where: {
-        eventType: { equals: eventType, mode: 'insensitive' },
-        status: { in: ['SUCCESS', 'PROCESSING'] },
-        payload: { contains: String(eventId) },
+        OR: [
+          { eventId: String(eventId) },
+          {
+            eventType: { equals: eventType, mode: 'insensitive' },
+            status: { in: ['SUCCESS', 'PROCESSING'] },
+            payload: { contains: String(eventId) },
+          }
+        ]
       },
     });
 
@@ -70,7 +75,7 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
     }
   }
 
-  // 2. Check by exact billId + eventType in recent WebhookLogs
+  // 2. Check by exact billId + eventType in recent WebhookLogs with identical payload hash
   if (billId) {
     const matchingLogs = await prisma.webhookLog.findMany({
       where: {
@@ -84,7 +89,7 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
 
     for (const log of matchingLogs) {
       const logHash = computePayloadHash(log.payload);
-      if (logHash === hash || !eventId || log.payload.includes(String(eventId || billId))) {
+      if (logHash === hash) {
         return {
           isDuplicate: true,
           dedupKey,
@@ -95,21 +100,24 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
     }
   } else {
     // 3. Fallback: check recent logs with exact payload hash
-    const matchingLog = await prisma.webhookLog.findFirst({
+    const matchingLogs = await prisma.webhookLog.findMany({
       where: {
         eventType: { equals: eventType, mode: 'insensitive' },
         status: { in: ['SUCCESS', 'PROCESSING'] },
-        payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
       },
+      take: 10,
+      orderBy: { createdAt: 'desc' },
     });
 
-    if (matchingLog) {
-      return {
-        isDuplicate: true,
-        dedupKey,
-        existingLogId: matchingLog.id,
-        eventId: eventId ? String(eventId) : null,
-      };
+    for (const log of matchingLogs) {
+      if (computePayloadHash(log.payload) === hash) {
+        return {
+          isDuplicate: true,
+          dedupKey,
+          existingLogId: log.id,
+          eventId: eventId ? String(eventId) : null,
+        };
+      }
     }
   }
 

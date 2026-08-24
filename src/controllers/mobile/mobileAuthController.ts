@@ -9,6 +9,10 @@ import auditLogService from '../../services/auditLogService';
 import { syncHopkidEmployees } from '../../utils/employeeSync';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { logActivity } from '../../utils/activityLogger';
+import {
+  isProtectedEmail,
+  PROTECTED_SYSTEM_ACCOUNT_MESSAGES
+} from '../../utils/protectedAccounts';
 
 // Mobile-specific login - supports email, mobile number, or employee code + password
 export const mobileLogin = async (req: Request, res: Response): Promise<void> => {
@@ -647,12 +651,30 @@ export const changeMobilePassword = async (
       return;
     }
 
+    if (isProtectedEmail(req.user?.email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_CHANGE_OWN_PASSWORD,
+        errorCode: 'PROTECTED_ACCOUNT'
+      });
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.user?.id }
     });
 
     if (!user) {
       res.status(404).json({ success: false, message: 'User not found.' });
+      return;
+    }
+
+    if (isProtectedEmail(user.email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_CHANGE_OWN_PASSWORD,
+        errorCode: 'PROTECTED_ACCOUNT'
+      });
       return;
     }
 
@@ -1398,6 +1420,15 @@ export const verifyResetIdentifier = async (req: Request, res: Response): Promis
       return;
     }
 
+    if (isProtectedEmail(input) || isProtectedEmail(result.user?.email) || isProtectedEmail((result.employee as any)?.email)) {
+      res.status(403).json({
+        success: false,
+        message: 'Password reset is not allowed for protected system accounts. Password can only be changed by authorized HR administrators.',
+        errorCode: 'PROTECTED_ACCOUNT'
+      });
+      return;
+    }
+
     const { employee } = result;
     const fullName = `${employee.firstName} ${employee.lastName || ''}`.trim();
 
@@ -1456,6 +1487,15 @@ export const mobileResetPassword = async (req: Request, res: Response): Promise<
     }
 
     const { employee, user } = result;
+
+    if (isProtectedEmail(input) || isProtectedEmail(user?.email) || isProtectedEmail((employee as any)?.email)) {
+      res.status(403).json({
+        success: false,
+        message: 'Password reset is not allowed for protected system accounts. Password can only be changed by authorized HR administrators.',
+        errorCode: 'PROTECTED_ACCOUNT'
+      });
+      return;
+    }
     const hashedPassword = await bcrypt.hash(finalPassword, 10);
 
     if (user || employee.userId) {

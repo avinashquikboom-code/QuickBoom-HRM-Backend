@@ -17,31 +17,45 @@ console.log('[Credit Note Webhook Controller] ✅ Loaded');
  * POST /api/webhook/creditNote/created
  * HopKid sends: creditNote.created event
  */
-router.post('/created', (req: Request, res: Response) => {
+router.post('/created', async (req: Request, res: Response) => {
   const rawPayload = req.body;
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║ [CREDIT NOTE CREATED] Webhook received                     ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  res.status(200).json({
-    success: true,
-    message: 'Credit note received'
-  });
+  try {
+    const idempotency = await checkWebhookIdempotency(rawPayload, 'CREDIT_NOTE_CREATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[CreditNote Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
 
-  processCreditNoteCreated(rawPayload).catch(err => {
+    await processCreditNoteCreated(rawPayload, 'CREDIT_NOTE_CREATED');
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed successfully',
+      duplicate: false,
+    });
+  } catch (err: any) {
     console.error('[Credit Note] ❌ Error:', err.message);
-  });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 });
 
 export async function processCreditNoteCreated(payload: any, eventType: string = 'CREDIT_NOTE_CREATED'): Promise<void> {
   try {
-    const idempotency = await checkWebhookIdempotency(payload, eventType);
-    if (idempotency.isDuplicate) {
-      console.log(`[CreditNote Webhook] ℹ️ Duplicate ${eventType} event safely ignored (Key: ${idempotency.dedupKey})`);
-      return;
-    }
-
     console.log('[Process] Step 1: Validate payload');
 
     const data = payload.data || payload;
@@ -74,25 +88,25 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
       lineItemCount: lineItems.length
     });
 
-    let creditNoteRecord = await prisma.creditNote.findUnique({
-      where: { creditNoteNo: creditNoteNo }
+    let creditNoteRecord = await prisma.creditNote.upsert({
+      where: { creditNoteNo: creditNoteNo },
+      update: {
+        invoiceNo: invoiceNo,
+        creditDate: new Date(creditNote.creditDate || creditNote.date || new Date()),
+        creditAmount: totalAmount,
+        creditReason: creditNote.reason || creditNote.creditReason || 'Not specified',
+        status: 'ACTIVE',
+        updatedAt: new Date(),
+      },
+      create: {
+        creditNoteNo: creditNoteNo,
+        invoiceNo: invoiceNo,
+        creditDate: new Date(creditNote.creditDate || creditNote.date || new Date()),
+        creditAmount: totalAmount,
+        creditReason: creditNote.reason || creditNote.creditReason || 'Not specified',
+        status: 'ACTIVE',
+      }
     });
-
-    if (!creditNoteRecord) {
-      creditNoteRecord = await prisma.creditNote.create({
-        data: {
-          creditNoteNo: creditNoteNo,
-          invoiceNo: invoiceNo,
-          creditDate: new Date(creditNote.creditDate || creditNote.date || new Date()),
-          creditAmount: totalAmount,
-          creditReason: creditNote.reason || creditNote.creditReason || 'Not specified',
-          status: 'ACTIVE'
-        }
-      });
-      console.log('[Process] ✅ Credit note created:', creditNoteRecord.id);
-    } else {
-      console.log('[Process] ℹ️ Credit note already exists:', creditNoteRecord.id);
-    }
 
     // ═════════════════════════════════════════════════════════════════════════
     // STEP 2: PROCESS LINE ITEMS
@@ -238,31 +252,45 @@ export async function processCreditNoteCreated(payload: any, eventType: string =
 // 4️⃣ CREDIT NOTE UPDATED - Void, cancel, or amount change
 // ═══════════════════════════════════════════════════════════════════════════
 
-router.post('/updated', (req: Request, res: Response) => {
+router.post('/updated', async (req: Request, res: Response) => {
   const rawPayload = req.body;
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║ [CREDIT NOTE UPDATED] Webhook received                     ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  res.status(200).json({
-    success: true,
-    message: 'Credit note update received'
-  });
+  try {
+    const idempotency = await checkWebhookIdempotency(rawPayload, 'CREDIT_NOTE_UPDATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[CreditNote Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
 
-  processCreditNoteUpdated(rawPayload).catch(err => {
+    await processCreditNoteUpdated(rawPayload);
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed successfully',
+      duplicate: false,
+    });
+  } catch (err: any) {
     console.error('[Credit Note Update] ❌ Error:', err.message);
-  });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 });
 
 export async function processCreditNoteUpdated(payload: any): Promise<void> {
   try {
-    const idempotency = await checkWebhookIdempotency(payload, 'CREDIT_NOTE_UPDATED');
-    if (idempotency.isDuplicate) {
-      console.log(`[CreditNote Webhook] ℹ️ Duplicate CREDIT_NOTE_UPDATED event safely ignored (Key: ${idempotency.dedupKey})`);
-      return;
-    }
-
     console.log('[Update] Step 1: Validate payload');
 
     const data = payload.data || payload;

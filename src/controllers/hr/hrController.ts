@@ -9,6 +9,11 @@ import { pushNotificationService } from '../../services/pushNotificationService'
 import securityService from '../../services/securityService';
 import { expenseReceiptService } from '../../services/expenseReceiptService';
 import leaveBalanceService from '../../services/leaveBalanceService';
+import {
+  isProtectedEmail,
+  isProtectedUser,
+  PROTECTED_SYSTEM_ACCOUNT_MESSAGES
+} from '../../utils/protectedAccounts';
 
 // ==========================================
 // HR Dashboard Stats
@@ -1985,6 +1990,18 @@ export const updateHREmployee = async (
       },
     });
 
+    // Check protected account deactivation attempt
+    const targetEmpEmail = updatedEmployee.user?.email || (updatedEmployee as any).email;
+    if (isProtectedEmail(targetEmpEmail)) {
+      if (status && status.toLowerCase() !== 'active') {
+        res.status(403).json({
+          success: false,
+          message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DEACTIVATE,
+        });
+        return;
+      }
+    }
+
     // Upsert Salary Structure if salary values are provided
     if (basicSalary !== undefined || grossSalary !== undefined || hra !== undefined) {
       const parsedBasic = basicSalary ? parseFloat(basicSalary) : 0;
@@ -2060,11 +2077,36 @@ export const updateHREmployee = async (
       if (role !== undefined && role !== null && String(role).trim() !== '') {
         const validRoles = ['SUPER_ADMIN', 'HR', 'STORE_MANAGER', 'SALESMAN', 'HELPER', 'EMPLOYEE'];
         if (validRoles.includes(String(role).toUpperCase())) {
-          userUpdateData.role = String(role).toUpperCase() as Role;
+          // Do not allow changing role of protected system accounts
+          if (!isProtectedEmail(targetEmpEmail)) {
+            userUpdateData.role = String(role).toUpperCase() as Role;
+          }
         }
       }
 
       if (password !== undefined && password !== null && String(password).trim() !== '') {
+        if (isProtectedEmail(targetEmpEmail)) {
+          // 1. Cannot change own password
+          if (req.user?.id === updatedEmployee.userId || (req.user?.email && req.user.email.toLowerCase() === targetEmpEmail.toLowerCase())) {
+            res.status(403).json({
+              success: false,
+              message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_CHANGE_OWN_PASSWORD,
+            });
+            return;
+          }
+
+          // 2. Must be authorized HR
+          const callerRole = String(req.user?.role || '').toUpperCase();
+          const isAuthorizedHR = callerRole === 'HR' || callerRole === 'PLATFORM_ADMIN' || callerRole === 'SUPER_ADMIN';
+          if (!isAuthorizedHR) {
+            res.status(403).json({
+              success: false,
+              message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.HR_ONLY_PASSWORD_MANAGEMENT,
+            });
+            return;
+          }
+        }
+
         userUpdateData.password = await securityService.hashPassword(password.trim());
       }
 
@@ -2135,16 +2177,18 @@ export const deleteHREmployee = async (
       return;
     }
 
+    if (isProtectedEmail(employee.user?.email) || isProtectedEmail((employee as any).email)) {
+      res.status(403).json({
+        success: false,
+        message: PROTECTED_SYSTEM_ACCOUNT_MESSAGES.CANNOT_DELETE,
+      });
+      return;
+    }
+
     // Delete employee (this will cascade delete related records)
     await prisma.employee.delete({
       where: { id: employeeId },
     });
-
-    // Optionally, you might want to deactivate the user instead of deleting
-    // await prisma.user.update({
-    //   where: { id: employee.userId },
-    //   data: { isActive: false },
-    // });
 
     res.json({
       success: true,

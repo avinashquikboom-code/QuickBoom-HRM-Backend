@@ -143,21 +143,41 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
 // 7️⃣ EMPLOYEE CREATED - New employee from HopKid
 // ═══════════════════════════════════════════════════════════════════════════
 
-router.post('/created', (req: Request, res: Response) => {
+router.post('/created', async (req: Request, res: Response) => {
   const rawPayload = req.body;
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║ [EMPLOYEE CREATED] Webhook received                        ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  res.status(200).json({
-    success: true,
-    message: 'Employee received'
-  });
+  try {
+    const idempotency = await checkWebhookIdempotency(rawPayload, 'EMPLOYEE_CREATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[Employee Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
 
-  processEmployeeCreated(rawPayload).catch(err => {
+    await processEmployeeCreated(rawPayload);
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed successfully',
+      duplicate: false,
+    });
+  } catch (err: any) {
     console.error('[Employee Created] ❌ Error:', err.message);
-  });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 });
 
 export async function processEmployeeCreated(payload: any): Promise<void> {
@@ -324,31 +344,45 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 // 8️⃣ EMPLOYEE UPDATED - Salary, commission rate, mobile, or store changes
 // ═══════════════════════════════════════════════════════════════════════════
 
-router.post('/updated', (req: Request, res: Response) => {
+router.post('/updated', async (req: Request, res: Response) => {
   const rawPayload = req.body;
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║ [EMPLOYEE UPDATED] Webhook received                        ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  res.status(200).json({
-    success: true,
-    message: 'Employee update received'
-  });
+  try {
+    const idempotency = await checkWebhookIdempotency(rawPayload, 'EMPLOYEE_UPDATED');
+    if (idempotency.isDuplicate) {
+      console.log(`[Employee Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
 
-  processEmployeeUpdated(rawPayload).catch(err => {
+    await processEmployeeUpdated(rawPayload);
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed successfully',
+      duplicate: false,
+    });
+  } catch (err: any) {
     console.error('[Employee Update] ❌ Error:', err.message);
-  });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 });
 
 export async function processEmployeeUpdated(payload: any): Promise<void> {
   try {
-    const idempotency = await checkWebhookIdempotency(payload, 'EMPLOYEE_UPDATED');
-    if (idempotency.isDuplicate) {
-      console.log(`[Employee Webhook] ℹ️ Duplicate EMPLOYEE_UPDATED event safely ignored (Key: ${idempotency.dedupKey})`);
-      return;
-    }
-
     console.log('[Update] Step 1: Extract employee identifier');
 
     const empCode = extractEmployeeIdentifier(payload);
@@ -508,31 +542,45 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
 // 9️⃣ EMPLOYEE DELETED - Soft delete/deactivate
 // ═══════════════════════════════════════════════════════════════════════════
 
-router.post('/deleted', (req: Request, res: Response) => {
+router.post('/deleted', async (req: Request, res: Response) => {
   const rawPayload = req.body;
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║ [EMPLOYEE DELETED] Webhook received                        ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
 
-  res.status(200).json({
-    success: true,
-    message: 'Employee delete received'
-  });
+  try {
+    const idempotency = await checkWebhookIdempotency(rawPayload, 'EMPLOYEE_DELETED');
+    if (idempotency.isDuplicate) {
+      console.log(`[Employee Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
 
-  processEmployeeDeleted(rawPayload).catch(err => {
+    await processEmployeeDeleted(rawPayload);
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed successfully',
+      duplicate: false,
+    });
+  } catch (err: any) {
     console.error('[Employee Delete] ❌ Error:', err.message);
-  });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process webhook.',
+      error: err.message,
+    });
+  }
 });
 
 export async function processEmployeeDeleted(payload: any): Promise<void> {
   try {
-    const idempotency = await checkWebhookIdempotency(payload, 'EMPLOYEE_DELETED');
-    if (idempotency.isDuplicate) {
-      console.log(`[Employee Webhook] ℹ️ Duplicate EMPLOYEE_DELETED event safely ignored (Key: ${idempotency.dedupKey})`);
-      return;
-    }
-
     console.log('[Delete] Step 1: Extract employee identifier from payload');
 
     const identifier = extractEmployeeIdentifier(payload);

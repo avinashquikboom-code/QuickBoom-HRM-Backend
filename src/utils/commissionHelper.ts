@@ -280,7 +280,16 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     : [];
 
   const firstItem = lineItems[0] || {};
-  const eventId = payload?.eventId || payload?.id || payload?.data?.eventId || null;
+  const eventId =
+    payload?.eventId ||
+    payload?.event_id ||
+    payload?.webhookEventId ||
+    payload?.webhook_event_id ||
+    payload?.id ||
+    payload?.data?.eventId ||
+    payload?.data?.event_id ||
+    payload?.data?.id ||
+    null;
 
   const billId =
     creditNote.CNNo ||
@@ -295,20 +304,38 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     creditNote.exchangeNo ||
     payload?.exchangeNo ||
     payload?.data?.exchangeNo ||
-    invoice.invoiceNo ||
+    invoice.invoiceId ||
+    invoice.invoice_id ||
     invoice.billId ||
+    invoice.bill_id ||
+    invoice.externalId ||
+    invoice.external_id ||
+    invoice.invoiceNo ||
     invoice.billNo ||
     invoice.invoiceNumber ||
+    payload?.data?.invoiceId ||
+    payload?.data?.invoice_id ||
+    payload?.data?.externalId ||
+    payload?.data?.external_id ||
     payload?.data?.invoiceNo ||
+    payload?.invoiceId ||
+    payload?.invoice_id ||
+    payload?.externalId ||
+    payload?.external_id ||
     payload?.invoiceNo ||
     payload?.data?.billId ||
+    payload?.data?.bill_id ||
     payload?.billId ||
+    payload?.bill_id ||
     payload?.data?.billNo ||
     payload?.billNo ||
     payload?.data?.invoiceNumber ||
     payload?.invoiceNumber ||
+    firstItem?.invoiceId ||
+    firstItem?.invoice_id ||
     firstItem?.invoiceNo ||
     firstItem?.billId ||
+    firstItem?.bill_id ||
     firstItem?.billNo ||
     eventId ||
     null;
@@ -324,6 +351,8 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.data?.SalesID ||
     invoice.invoiceNumber ||
     invoice.invoiceNo ||
+    invoice.invoiceId ||
+    invoice.invoice_id ||
     billId ||
     null;
 
@@ -971,6 +1000,7 @@ export async function createWebhookLog(data: {
   status: string;
   payload: any;
   billId?: string | null;
+  eventId?: string | null;
   amount?: number | null;
   employeeId?: number | null;
   errorMessage?: string | null;
@@ -978,19 +1008,23 @@ export async function createWebhookLog(data: {
   try {
     const normalizedType = normalizeEventType(data.eventType, 'INVOICE_CREATED', data.payload);
     const payloadStr = typeof data.payload === 'string' ? data.payload : JSON.stringify(data.payload);
+    const meta = extractWebhookMeta(data.payload);
+    const resolvedEventId = data.eventId || meta.eventId || null;
+
     const log = await prisma.webhookLog.create({
       data: {
         eventType: normalizedType,
         status: data.status || 'SUCCESS',
         payload: payloadStr,
-        billId: data.billId || null,
-        amount: data.amount !== undefined && data.amount !== null ? Number(data.amount) : null,
+        billId: data.billId || meta.billId || null,
+        eventId: resolvedEventId ? String(resolvedEventId) : null,
+        amount: data.amount !== undefined && data.amount !== null ? Number(data.amount) : (meta.amount || null),
         employeeId: data.employeeId || null,
         errorMessage: data.errorMessage || null,
         processedAt: new Date(),
       },
     });
-    console.log(`[WEBHOOK LOG] ✅ Recorded Log ID ${log.id} | EventType: ${normalizedType} | Status: ${log.status}`);
+    console.log(`[WEBHOOK LOG] ✅ Recorded Log ID ${log.id} | EventType: ${normalizedType} | Status: ${log.status} | EventId: ${log.eventId || 'N/A'}`);
     return log;
   } catch (err: any) {
     console.error('[WEBHOOK LOG] ❌ Failed to record log:', err.message);
