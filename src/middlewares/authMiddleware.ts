@@ -63,6 +63,10 @@ export const authMiddleware = async (
     (req.headers as any)['x-access-token'] ||
     (req.headers as any)['x-auth-token'];
 
+  if (fullPath.includes('/commission/transactions')) {
+    console.log(`[AUTH] Request ${req.method} ${fullPath} | Authorization header present: ${Boolean(authHeader)}`);
+  }
+
   let token = '';
 
   if (authHeader && typeof authHeader === 'string') {

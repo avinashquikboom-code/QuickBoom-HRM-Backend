@@ -321,6 +321,13 @@ export const getCommissionTransactions = async (
     if (employeeId) {
       const resolvedId = await resolveEmployeeId(employeeId as string);
       whereClause.employeeId = resolvedId !== null ? resolvedId : -1;
+    } else if (req.user?.role === 'EMPLOYEE' && req.user?.id) {
+      const currentEmp = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (currentEmp) {
+        whereClause.employeeId = currentEmp.id;
+      }
     }
     
     if (storeId) {

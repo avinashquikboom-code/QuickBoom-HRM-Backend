@@ -3,36 +3,33 @@ import { extractWebhookMeta, normalizeEventType } from '../utils/commissionHelpe
 import { computePayloadHash } from '../utils/webhookIdempotency';
 
 async function cleanupDuplicates() {
-  console.log('🧹 [Cleanup] Starting Webhook Audit Log & Sales Deduplication...');
+  console.log('🧹 [Cleanup] Starting Webhook Logs & Sales Data Reset/Cleanup...');
 
-  // 1. Deduplicate WebhookLogs by eventId
-  const allWebhookLogs = await prisma.webhookLog.findMany({
-    orderBy: { createdAt: 'desc' },
-  });
-
-  const seenEventIds = new Set<string>();
-  const toDeleteWebhookLogIds: string[] = [];
-
-  for (const log of allWebhookLogs) {
-    if (log.eventId) {
-      if (seenEventIds.has(log.eventId)) {
-        toDeleteWebhookLogIds.push(log.id);
-      } else {
-        seenEventIds.add(log.eventId);
-      }
-    }
+  // 1. Clear WebhookAuditLog (HopkidWebhookLog in Prisma / WebhookAuditLog in DB)
+  try {
+    const deletedHopkidLogs = await prisma.hopkidWebhookLog.deleteMany({});
+    console.log(`✅ [Cleanup] Cleared ${deletedHopkidLogs.count} records from HopkidWebhookLog (WebhookAuditLog).`);
+  } catch (err: any) {
+    console.warn(`⚠️ [Cleanup] HopkidWebhookLog delete notice: ${err.message}`);
   }
 
-  if (toDeleteWebhookLogIds.length > 0) {
-    const deleted = await prisma.webhookLog.deleteMany({
-      where: { id: { in: toDeleteWebhookLogIds } },
-    });
-    console.log(`✅ [Cleanup] Deleted ${deleted.count} duplicate WebhookLog records.`);
-  } else {
-    console.log('✅ [Cleanup] No duplicate WebhookLog records found.');
+  // Safe fallback for raw "WebhookAuditLog" table if present in DB schema
+  try {
+    await prisma.$executeRawUnsafe('DELETE FROM "WebhookAuditLog";');
+    console.log('✅ [Cleanup] Cleared records from WebhookAuditLog (raw table).');
+  } catch {
+    // Table may not exist separately from HopkidWebhookLog; ignore gracefully
   }
 
-  // 2. Deduplicate CommissionTransaction by (billId, employeeId)
+  // 2. Clear WebhookLog
+  try {
+    const deletedWebhookLogs = await prisma.webhookLog.deleteMany({});
+    console.log(`✅ [Cleanup] Cleared ${deletedWebhookLogs.count} records from WebhookLog.`);
+  } catch (err: any) {
+    console.warn(`⚠️ [Cleanup] WebhookLog delete notice: ${err.message}`);
+  }
+
+  // 3. Deduplicate CommissionTransaction by (billId, employeeId)
   const allCommissionTx = await prisma.commissionTransaction.findMany({
     where: { billId: { not: null } },
     orderBy: { updatedAt: 'desc' },
@@ -61,7 +58,7 @@ async function cleanupDuplicates() {
     console.log('✅ [Cleanup] No duplicate CommissionTransaction records found.');
   }
 
-  // 3. Deduplicate Sales records by (billId, employeeId)
+  // 4. Deduplicate Sales records by (billId, employeeId)
   const allSales = await prisma.sales.findMany({
     orderBy: { updatedAt: 'desc' },
   });
@@ -89,7 +86,7 @@ async function cleanupDuplicates() {
     console.log('✅ [Cleanup] No duplicate Sales records found.');
   }
 
-  console.log('🎉 [Cleanup] Completed successfully!');
+  console.log('🎉 [Cleanup] Webhook reset and deduplication completed successfully!');
   await prisma.$disconnect();
 }
 
