@@ -252,13 +252,13 @@ export const removeEmployeeAvatar = async (
 
     await prisma.profile.update({
       where: { id: employee.user.profile.id },
-      data: { avatarUrl: '/favicon.svg' },
+      data: { avatarUrl: null },
     });
 
     res.json({
       success: true,
       message: 'Avatar removed successfully!',
-      avatarUrl: '/favicon.svg',
+      avatarUrl: null,
     });
   } catch (error) {
     console.error('Remove avatar error:', error);

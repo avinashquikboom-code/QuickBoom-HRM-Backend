@@ -3696,7 +3696,7 @@ export const removeAdminAvatar = async (
 
     const updatedProfile = await prisma.profile.update({
       where: { id: user.profile.id },
-      data: { avatarUrl: '/favicon.svg' },
+      data: { avatarUrl: null },
     });
 
     res.json({
@@ -3708,7 +3708,7 @@ export const removeAdminAvatar = async (
         email: updatedProfile.email,
         fullName: updatedProfile.fullName,
         phone: updatedProfile.phone,
-        avatarUrl: updatedProfile.avatarUrl,
+        avatarUrl: null,
         timezone: updatedProfile.timezone,
         timezoneLabel: updatedProfile.timezoneLabel,
         bio: updatedProfile.bio,

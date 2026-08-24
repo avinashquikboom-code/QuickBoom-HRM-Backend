@@ -905,7 +905,7 @@ export const removeMobileAvatar = async (
 
     const updatedProfile = await prisma.profile.update({
       where: { id: user.profile.id },
-      data: { avatarUrl: '/favicon.svg' },
+      data: { avatarUrl: null },
     });
 
     res.json({
@@ -913,7 +913,7 @@ export const removeMobileAvatar = async (
       message: 'Avatar removed successfully!',
       profile: {
         id: updatedProfile.id,
-        avatarUrl: updatedProfile.avatarUrl,
+        avatarUrl: null,
       },
     });
   } catch (error) {
