@@ -24,11 +24,20 @@ export function computePayloadHash(payload: any): string {
     }
   }
 
-  // Strip dynamic timestamp fields if present to ensure static payload matching
+  // Strip dynamic/volatile fields to ensure deterministic payload matching
   const clone = { ...obj };
   delete clone.timestamp;
   delete clone.requestTime;
   delete clone._t;
+  delete clone.updatedAt;
+  delete clone.modifiedAt;
+  delete clone.modifiedTime;
+  delete clone.receivedAt;
+  delete clone.sentAt;
+  delete clone.webhookTimestamp;
+  delete clone.deliveryId;
+  delete clone.retryCount;
+  delete clone.attempt;
 
   const str = JSON.stringify(clone);
   return crypto.createHash('md5').update(str).digest('hex');
@@ -66,6 +75,7 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
     });
 
     if (existingLog) {
+      console.log(`[Webhook Idempotency] Duplicate detected by eventId: ${eventId}`);
       return {
         isDuplicate: true,
         dedupKey,
@@ -90,6 +100,7 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
     for (const log of matchingLogs) {
       const logHash = computePayloadHash(log.payload);
       if (logHash === hash) {
+        console.log(`[Webhook Idempotency] Duplicate detected by payload hash for billId: ${billId}`);
         return {
           isDuplicate: true,
           dedupKey,
@@ -97,6 +108,30 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
           eventId: eventId ? String(eventId) : null,
         };
       }
+    }
+
+    // 2b. Time-window guard: If the same billId + eventType was SUCCESSFULLY processed
+    // within the last 30 seconds, treat as duplicate even if payload hash differs slightly.
+    // This catches rapid re-deliveries with minor payload variations (e.g., different retry metadata).
+    const recentCutoff = new Date(Date.now() - 30_000);
+    const recentSameEvent = await prisma.webhookLog.findFirst({
+      where: {
+        billId: String(billId),
+        eventType: { equals: eventType, mode: 'insensitive' },
+        status: 'SUCCESS',
+        createdAt: { gte: recentCutoff },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (recentSameEvent) {
+      console.log(`[Webhook Idempotency] Duplicate detected by time-window guard for billId: ${billId} (processed ${Math.round((Date.now() - recentSameEvent.createdAt.getTime()) / 1000)}s ago)`);
+      return {
+        isDuplicate: true,
+        dedupKey: `${dedupKey}_TIMEWINDOW`,
+        existingLogId: recentSameEvent.id,
+        eventId: eventId ? String(eventId) : null,
+      };
     }
   } else {
     // 3. Fallback: check recent logs with exact payload hash
@@ -111,6 +146,7 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
 
     for (const log of matchingLogs) {
       if (computePayloadHash(log.payload) === hash) {
+        console.log(`[Webhook Idempotency] Duplicate detected by fallback payload hash`);
         return {
           isDuplicate: true,
           dedupKey,
@@ -127,3 +163,4 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
     eventId: eventId ? String(eventId) : null,
   };
 }
+

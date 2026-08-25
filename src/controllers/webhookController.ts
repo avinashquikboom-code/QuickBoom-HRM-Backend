@@ -1,26 +1,43 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
-import { extractWebhookMeta, resolveEmployeeId, safeParseAmount, safeParseDate, parseSaleDateCorrectly, fetchHopkidInvoiceDetails, updateEmployeeWalletCommission, broadcastCommissionEvent, createWebhookLog, parseIsOld } from '../utils/commissionHelper';
-import { processCreditNoteCreated } from './creditNoteWebhookController';
-import { processSalesExchangeCreated } from './salesExchangeWebhookController';
-import { processEmployeeCreated, processEmployeeUpdated, processEmployeeDeleted } from './employeeWebhookController';
+import {
+  extractWebhookMeta,
+  resolveEmployeeId,
+  safeParseAmount,
+  safeParseDate,
+  parseSaleDateCorrectly,
+  fetchHopkidInvoiceDetails,
+  updateEmployeeWalletCommission,
+  broadcastCommissionEvent,
+  parseIsOld,
+  normalizeEventType,
+} from '../utils/commissionHelper';
 import { checkWebhookIdempotency } from '../utils/webhookIdempotency';
+import { getWebSocketInstance } from '../utils/websocketSingleton';
+import {
+  processEmployeeCreated as execEmployeeCreated,
+  processEmployeeUpdated as execEmployeeUpdated,
+  processEmployeeDeleted as execEmployeeDeleted,
+} from './employeeWebhookController';
 
-/**
- * Stores raw HopKid webhook payload into HopkidWebhookLog table
- */
+console.log('[Webhook Controller] ✅ Centralized Webhook Controller Loaded');
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER: Store Raw Ingress Webhook Payload
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export async function storeWebhookData(data: any): Promise<void> {
   try {
     const meta = extractWebhookMeta(data);
     const dateVal = meta.invoice?.invoiceDate || meta.invoice?.date || data.invoiceDate || data.date || data.createdAt || data.transactionDate;
     const parsedDate = safeParseDate(dateVal);
 
-    const mobileNo = meta.firstItem.employeePhoneNo || meta.firstItem.employeeContactNo || data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null;
-    const employeeCode = meta.firstItem.employeeCode || data.employeeCode || data.code || data.empCode || data.hopkidCode || null;
+    const mobileNo = meta.firstItem?.employeePhoneNo || meta.firstItem?.employeeContactNo || data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null;
+    const employeeCode = meta.firstItem?.employeeCode || data.employeeCode || data.code || data.empCode || data.hopkidCode || null;
     const billId = meta.billId;
     const amountVal = safeParseAmount(meta.amount || data.amount || data.saleAmount);
-    const name = meta.customerName || meta.firstItem.employeeName || data.employeeName || data.name || data.customerName || null;
+    const name = meta.customerName || meta.firstItem?.employeeName || data.employeeName || data.name || data.customerName || null;
     const description = meta.branchName || data.description || data.notes || (data.paymentMode ? `Payment: ${data.paymentMode}` : null);
     const storeId = meta.storeId;
 
@@ -37,36 +54,23 @@ export async function storeWebhookData(data: any): Promise<void> {
         rawPayload: typeof data === 'string' ? data : JSON.stringify(data),
       },
     });
-
-    console.log(`[HopKid Raw Store] Log stored in HopkidWebhookLog for Bill ID: ${billId || 'N/A'}, Amount: ₹${amountVal}, Date: ${parsedDate.toISOString()}`);
   } catch (error: any) {
-    console.error('[HopKid Store Error]:', error.message);
+    console.error('[HopKid Raw Store Error]:', error.message);
   }
 }
 
-/**
- * HELPER: Group and calculate commission per salesman for multi-product invoices
- */
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER: Group & Calculate Commission By Salesman for Invoices
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export async function groupAndCalculateCommissionBySalesman(
   lineItems: any[],
   invoiceData: { invoiceNo: string; invoiceDate: string | Date; netAmount: number; metaStoreId?: number | null; defaultIdentifier?: string | null }
 ): Promise<Map<number, { salesman: any; totalAmount: number; totalCommission: number; products: any[] }>> {
-  console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║ [COMMISSION GROUPING] Multi-Product Commission Calculator  ║');
-  console.log('╚════════════════════════════════════════════════════════════╝');
-
   const commissionMap = new Map<number, { salesman: any; totalAmount: number; totalCommission: number; products: any[] }>();
-
-  console.log(`\n[Grouping] Processing ${lineItems.length} products from invoice ${invoiceData.invoiceNo}`);
-  console.log(`[Grouping] Invoice Date: ${invoiceData.invoiceDate}`);
-  console.log(`[Grouping] Invoice Total: ₹${invoiceData.netAmount}`);
 
   for (let i = 0; i < lineItems.length; i++) {
     const lineItem = lineItems[i];
-
-    console.log(`\n───────────────────────────────────────────────────────────`);
-    console.log(`[Product ${i + 1}] Processing...`);
-    console.log(`───────────────────────────────────────────────────────────`);
 
     try {
       const productName = lineItem.productName || lineItem.name || 'Unknown Product';
@@ -80,17 +84,7 @@ export async function groupAndCalculateCommissionBySalesman(
         (lineItems.length === 1 ? invoiceData.netAmount : 0);
 
       const productNetAmount = safeParseAmount(rawProdAmount) || (lineItems.length === 1 ? invoiceData.netAmount : 0);
-
-      console.log(`[Product ${i + 1}] Details:`, {
-        productID: productId,
-        productName: productName,
-        netAmount: productNetAmount,
-      });
-
-      if (productNetAmount <= 0) {
-        console.error(`[Product ${i + 1}] ❌ Invalid amount: ${productNetAmount}`);
-        continue;
-      }
+      if (productNetAmount <= 0) continue;
 
       const employeeIdentifier =
         lineItem.employeeCode ||
@@ -110,10 +104,7 @@ export async function groupAndCalculateCommissionBySalesman(
         lineItem.employeeID ||
         lineItem.SalesMan;
 
-      if (!employeeIdentifier) {
-        console.error(`[Product ${i + 1}] ❌ Missing employee identifier`);
-        continue;
-      }
+      if (!employeeIdentifier) continue;
 
       let resolvedId = await resolveEmployeeId(employeeIdentifier);
       if (resolvedId === null && lineItem.employeePhoneNo) {
@@ -137,7 +128,6 @@ export async function groupAndCalculateCommissionBySalesman(
       }
 
       if (!salesman) {
-        console.log(`[Product ${i + 1}] Auto-creating Employee for identifier: ${employeeIdentifier}`);
         const rawName = lineItem.employeeName || lineItem.name || 'HopKid Employee';
         const nameParts = String(rawName).trim().split(' ');
         const firstName = nameParts[0] || 'HopKid';
@@ -163,7 +153,6 @@ export async function groupAndCalculateCommissionBySalesman(
             },
           },
         });
-        console.log(`[Product ${i + 1}] ✅ Auto-created salesman: ${salesman.firstName} ${salesman.lastName} (ID: ${salesman.id})`);
       }
 
       let policy = salesman.commissionPolicies?.[0];
@@ -204,13 +193,6 @@ export async function groupAndCalculateCommissionBySalesman(
       const effectiveProdAmount = isOld ? -Math.abs(productNetAmount) : Math.abs(productNetAmount);
       const effectiveProdComm = isOld ? -Math.abs(productCommission) : Math.abs(productCommission);
 
-      console.log(`[Product ${i + 1}] Commission Calculation:`, {
-        netAmount: effectiveProdAmount,
-        commissionRate,
-        commission: effectiveProdComm,
-        isOld,
-      });
-
       if (commissionMap.has(salesman.id)) {
         const existing = commissionMap.get(salesman.id)!;
         existing.totalAmount += effectiveProdAmount;
@@ -223,12 +205,6 @@ export async function groupAndCalculateCommissionBySalesman(
           policyId: policy ? policy.id : null,
           storeId: targetStoreId,
           isOld,
-        });
-
-        console.log(`[Product ${i + 1}] 📊 Merged with existing commission for ${salesman.firstName} ${salesman.lastName}:`, {
-          totalAmount: existing.totalAmount,
-          totalCommission: existing.totalCommission,
-          productCount: existing.products.length,
         });
       } else {
         commissionMap.set(salesman.id, {
@@ -247,11 +223,6 @@ export async function groupAndCalculateCommissionBySalesman(
             },
           ],
         });
-
-        console.log(`[Product ${i + 1}] ✅ New commission entry for ${salesman.firstName} ${salesman.lastName}:`, {
-          totalAmount: productNetAmount,
-          totalCommission: productCommission,
-        });
       }
     } catch (productError: any) {
       console.error(`[Product ${i + 1}] ❌ Error processing product:`, productError.message);
@@ -262,53 +233,153 @@ export async function groupAndCalculateCommissionBySalesman(
   return commissionMap;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER: Resolve Employee For Exchange Line Item
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function resolveEmployeeForExchangeItem(lineItem: any, fallbackEmployeeId: number | null): Promise<any> {
+  const rawCode = lineItem.employeeCode || lineItem.salesmanCode || lineItem.empCode || lineItem.staffCode || lineItem.SalesManCode || lineItem.SalesmanCode || lineItem.EmployeeCode || lineItem.salesman?.code;
+  const rawId = lineItem.employeeId || lineItem.salesmanId || lineItem.empId || lineItem.employeeID || lineItem.SalesManID || lineItem.salesman?.id;
+  const rawName = lineItem.employeeName || lineItem.salesmanName || lineItem.empName || lineItem.SalesManName || lineItem.SalesmanName || lineItem.salesman?.name || lineItem.name;
+  const rawPhone = lineItem.employeePhoneNo || lineItem.phone || lineItem.mobileNo || lineItem.mobileNumber || lineItem.salesman?.phone;
+
+  if (rawCode) {
+    const codeStr = String(rawCode).trim();
+    const emp = await prisma.employee.findFirst({
+      where: {
+        OR: [
+          { employeeCode: codeStr },
+          { employeeCode: codeStr.toUpperCase() },
+          { employeeID: codeStr },
+        ]
+      }
+    }).catch(() => null);
+    if (emp) return emp;
+  }
+
+  if (rawId) {
+    const numId = Number(rawId);
+    if (!isNaN(numId) && numId > 0) {
+      const emp = await prisma.employee.findUnique({ where: { id: numId } }).catch(() => null);
+      if (emp) return emp;
+    }
+    const strId = String(rawId).trim();
+    const emp = await prisma.employee.findFirst({
+      where: {
+        OR: [
+          { employeeID: strId },
+          { employeeCode: strId }
+        ]
+      }
+    }).catch(() => null);
+    if (emp) return emp;
+  }
+
+  if (rawPhone) {
+    const cleanPhone = String(rawPhone).replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length >= 10) {
+      const emp = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { mobileNumber: cleanPhone },
+            { mobileNumber: `+91${cleanPhone}` },
+            { mobileNumber: { contains: cleanPhone } }
+          ]
+        }
+      }).catch(() => null);
+      if (emp) return emp;
+    }
+  }
+
+  if (rawName && typeof rawName === 'string' && rawName.trim().length > 0) {
+    const trimmedName = rawName.trim();
+    const parts = trimmedName.split(/\s+/);
+    const firstName = parts[0] || '';
+    const lastName = parts.slice(1).join(' ') || '';
+
+    const emp = await prisma.employee.findFirst({
+      where: {
+        OR: [
+          { firstName: { contains: trimmedName, mode: 'insensitive' as const } },
+          { lastName: { contains: trimmedName, mode: 'insensitive' as const } },
+          ...(firstName && lastName ? [
+            {
+              AND: [
+                { firstName: { contains: firstName, mode: 'insensitive' as const } },
+                { lastName: { contains: lastName, mode: 'insensitive' as const } }
+              ]
+            }
+          ] : [])
+        ]
+      }
+    }).catch(() => null);
+    if (emp) return emp;
+  }
+
+  if (rawCode || rawName) {
+    try {
+      const codeToUse = String(rawCode || `EMP-${Date.now()}`).trim().toUpperCase();
+      const nameStr = String(rawName || codeToUse).trim();
+      const parts = nameStr.split(/\s+/);
+      const fName = parts[0] || 'Salesman';
+      const lName = parts.slice(1).join(' ') || '';
+
+      const createdEmp = await prisma.employee.create({
+        data: {
+          employeeCode: codeToUse,
+          firstName: fName,
+          lastName: lName,
+          designation: 'Salesman',
+          status: 'active',
+          source: 'HOPKID_EXCHANGE'
+        }
+      });
+      return createdEmp;
+    } catch (createErr: any) {
+      console.warn('[SalesExchange] ⚠️ Could not auto-create employee for lineItem:', createErr.message);
+    }
+  }
+
+  if (fallbackEmployeeId) {
+    return prisma.employee.findUnique({ where: { id: fallbackEmployeeId } }).catch(() => null);
+  }
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1️⃣ INVOICE CREATED & 2️⃣ INVOICE UPDATED PROCESSORS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function processInvoiceCreated(payload: any, eventId?: string | null): Promise<void> {
+  await processInvoiceInternal(payload, 'INVOICE_CREATED', eventId);
+}
+
+export async function processInvoiceUpdated(payload: any, eventId?: string | null): Promise<void> {
+  await processInvoiceInternal(payload, 'INVOICE_UPDATED', eventId);
+}
+
 /**
- * Robust async background processor for HopKid sales webhook.
+ * Shared core for Invoice processing (Created / Updated)
+ *
+ * COMMISSION DUPLICATION FIX:
+ * - INVOICE_CREATED: Uses a pre-upsert timestamp sentinel to detect whether the
+ *   commissionTransaction.upsert was a true CREATE or a race-condition UPDATE.
+ *   Wallet credits are ONLY issued on true creates, preventing double-crediting.
+ * - INVOICE_UPDATED: Computes delta (newCommission - oldCommission) and only
+ *   adjusts the wallet by the incremental difference.
+ * - Both paths are fully idempotent: re-processing the same webhook produces
+ *   zero net wallet change.
  */
-export async function processHopkidSales(rawSalesData: any): Promise<void> {
-  console.log(`\n======================================================`);
-  console.log(`📥 [HopKid Webhook Received] Timestamp: ${new Date().toISOString()}`);
-  console.log(`Payload snippet:`, typeof rawSalesData === 'string' ? rawSalesData.slice(0, 300) : JSON.stringify(rawSalesData).slice(0, 300));
-  console.log(`======================================================\n`);
-
-  await storeWebhookData(rawSalesData);
-
+async function processInvoiceInternal(rawSalesData: any, targetEventType: string, eventIdParam?: string | null): Promise<void> {
   let effectiveData = rawSalesData;
   let meta = extractWebhookMeta(effectiveData);
-
-  // ✅ Delegate Credit Note and Sales Exchange events if received on main webhook endpoint
-  if (meta.eventType === 'CREDIT_NOTE_CREATED' || meta.eventType === 'CREDIT_NOTE_UPDATED') {
-    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to CreditNote processor...`);
-    await processCreditNoteCreated(effectiveData, meta.eventType);
-    return;
-  }
-  if (meta.eventType === 'SALES_EXCHANGE_CREATED' || meta.eventType === 'SALES_EXCHANGE_UPDATED') {
-    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to SalesExchange processor...`);
-    await processSalesExchangeCreated(effectiveData, meta.eventType);
-    return;
-  }
-  if (meta.eventType === 'EMPLOYEE_CREATED') {
-    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to Employee processor...`);
-    await processEmployeeCreated(effectiveData);
-    return;
-  }
-  if (meta.eventType === 'EMPLOYEE_UPDATED') {
-    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to Employee processor...`);
-    await processEmployeeUpdated(effectiveData);
-    return;
-  }
-  if (meta.eventType === 'EMPLOYEE_DELETED') {
-    console.log(`🔀 [Webhook Delegate] Delegating ${meta.eventType} to Employee processor...`);
-    await processEmployeeDeleted(effectiveData);
-    return;
-  }
 
   const invoice = meta.invoice || {};
   const lineItems = meta.lineItems || [];
 
   if ((meta.amount === 0 || meta.lineItems.length === 0 || !meta.employeeIdentifier) && (meta.billId || meta.eventId)) {
     const searchId = meta.billId || meta.eventId;
-    console.log(`ℹ️ [HopKid Webhook] Sparse payload detected for ID "${searchId}". Auto-fetching full invoice details...`);
     const fetchedInvoice = await fetchHopkidInvoiceDetails(searchId as string);
 
     if (fetchedInvoice) {
@@ -324,34 +395,10 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   const primaryBillId = meta.billId || invoice.invoiceNo || invoice.invoiceId || `BILL-${Date.now()}`;
   const primaryAmount = meta.amount || invoice.netAmount || 0;
   const itemsToProcess = meta.lineItems.length > 0 ? meta.lineItems : [effectiveData];
-  const eventId = meta.eventId;
-
-  let logEntry: any = null;
-  try {
-    logEntry = await prisma.webhookLog.create({
-      data: {
-        eventId: eventId ? String(eventId) : null,
-        eventType: meta.eventType,
-        status: 'PROCESSING',
-        payload: typeof effectiveData === 'string' ? effectiveData : JSON.stringify(effectiveData),
-        billId: String(primaryBillId),
-        amount: primaryAmount,
-      },
-    });
-  } catch (e) {
-    console.error('[WebhookLog] Failed to create log entry (may be duplicate eventId):', e);
-  }
+  const resolvedEventId = eventIdParam || meta.eventId || null;
 
   const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || effectiveData.createdAt || effectiveData.transactionDate;
   const validDate = await parseSaleDateCorrectly(dateStr || '');
-  console.log('[Webhook] Parsed invoice date:', {
-    input: dateStr,
-    parsed: validDate.toISOString(),
-    localDate: validDate.toLocaleDateString('en-IN'),
-    day: validDate.getDate(),
-    month: validDate.getMonth() + 1,
-    year: validDate.getFullYear()
-  });
 
   const commissionMap = await groupAndCalculateCommissionBySalesman(itemsToProcess, {
     invoiceNo: String(primaryBillId),
@@ -361,10 +408,6 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
     defaultIdentifier: meta.employeeIdentifier,
   });
 
-  console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║ [WEBHOOK] Saving Sales & Commission Records (Transactional) ║');
-  console.log('╚════════════════════════════════════════════════════════════╝\n');
-
   const invoiceStatus = (invoice.status || effectiveData.status || 'ACTIVE').toUpperCase();
   const isCancelledOrReturned = invoiceStatus === 'CANCELLED' || invoiceStatus === 'CANCEL' || invoiceStatus === 'RETURNED' || invoiceStatus === 'RETURN' || invoiceStatus === 'INACTIVE';
   const targetSalesStatus = isCancelledOrReturned ? (invoiceStatus.includes('RETURN') ? 'RETURNED' : 'CANCELLED') : 'ACTIVE';
@@ -373,279 +416,276 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
   const billIdKey = String(primaryBillId);
   const affectedEmployeeIds: number[] = [];
   let processedSalesCount = 0;
-  let lastError: string | null = null;
 
-  try {
-    await prisma.$transaction(async (tx) => {
-      // 1. Fetch all existing commission transactions for this billIdKey
-      const existingTransactions = await tx.commissionTransaction.findMany({
-        where: { billId: billIdKey }
-      });
+  console.log(`\n[Commission Audit] ═══════════════════════════════════════════════════`);
+  console.log(`[Commission Audit] Event: ${targetEventType} | BillId: ${billIdKey} | EventId: ${resolvedEventId || 'N/A'}`);
+  console.log(`[Commission Audit] Incoming Amount: ₹${primaryAmount} | Status: ${invoiceStatus}`);
+  console.log(`[Commission Audit] ═══════════════════════════════════════════════════`);
 
-      const activeSalesmanIds = new Set<number>();
+  await prisma.$transaction(async (tx) => {
+    const existingTransactions = await tx.commissionTransaction.findMany({
+      where: { billId: billIdKey }
+    });
 
-      // 2. Process all salesmen in the current/updated commissionMap
-      for (const [salesmanId, commissionData] of commissionMap.entries()) {
-        activeSalesmanIds.add(salesmanId);
-        const salesman = commissionData.salesman;
-        console.log(`\n[Save] Processing Salesman: ${salesman.firstName} ${salesman.lastName} (${salesman.employeeCode})`);
+    const activeSalesmanIds = new Set<number>();
 
-        const saleAmount = Math.round(commissionData.totalAmount * 100) / 100;
-        const commAmt = Math.round(commissionData.totalCommission * 100) / 100;
-        const targetStoreId = commissionData.products[0]?.storeId || meta.storeId || salesman.storeId;
-        const targetPolicyId = commissionData.products[0]?.policyId ?? null;
-        const productNamesSummary = commissionData.products.map(p => p.productName).filter(Boolean).join(', ');
-        const noteText = `HopKid Invoice ${billIdKey}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''}`;
+    for (const [salesmanId, commissionData] of commissionMap.entries()) {
+      activeSalesmanIds.add(salesmanId);
+      const salesman = commissionData.salesman;
 
-        const existingTx = existingTransactions.find(t => t.employeeId === salesman.id) ||
-          await tx.commissionTransaction.findUnique({
-            where: {
-              billId_employeeId: {
-                billId: billIdKey,
-                employeeId: salesman.id,
-              }
+      const saleAmount = Math.round(commissionData.totalAmount * 100) / 100;
+      const commAmt = Math.round(commissionData.totalCommission * 100) / 100;
+      const targetStoreId = commissionData.products[0]?.storeId || meta.storeId || salesman.storeId;
+      const targetPolicyId = commissionData.products[0]?.policyId ?? null;
+      const productNamesSummary = commissionData.products.map(p => p.productName).filter(Boolean).join(', ');
+      const isUpdate = targetEventType === 'INVOICE_UPDATED' || existingTransactions.some(t => t.employeeId === salesman.id);
+      const noteText = `HopKid Invoice ${billIdKey}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''}${isUpdate ? ' (Updated)' : ''}`;
+
+      const existingTx = existingTransactions.find(t => t.employeeId === salesman.id);
+
+      if (existingTx) {
+        // ═══════════════════════════════════════════════════════════════
+        // INVOICE UPDATED / EXISTING RECORD PATH
+        // Replace old amount with new amount; wallet gets ONLY the delta
+        // ═══════════════════════════════════════════════════════════════
+        const oldSaleAmount = existingTx.saleAmount;
+        const oldCommission = existingTx.commissionAmount;
+        const newSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
+        const newCommissionAmount = isCancelledOrReturned ? 0 : commAmt;
+        const commDelta = newCommissionAmount - oldCommission;
+        const saleDelta = newSaleAmount - oldSaleAmount;
+
+        console.log(`[Commission Audit] UPDATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
+        console.log(`[Commission Audit]   oldAmount: ₹${oldSaleAmount}`);
+        console.log(`[Commission Audit]   newAmount: ₹${newSaleAmount}`);
+        console.log(`[Commission Audit]   differenceAmount: ₹${saleDelta}`);
+        console.log(`[Commission Audit]   oldCommission: ₹${oldCommission}`);
+        console.log(`[Commission Audit]   incrementalCommission: ₹${commDelta}`);
+        console.log(`[Commission Audit]   finalCommission: ₹${newCommissionAmount}`);
+        console.log(`[Commission Audit]   eventId: ${resolvedEventId || 'N/A'}`);
+
+        await tx.commissionTransaction.update({
+          where: { id: existingTx.id },
+          data: {
+            saleAmount: newSaleAmount,
+            commissionAmount: newCommissionAmount,
+            commissionPercent: salesman.commissionPercentage || 1.0,
+            status: targetCommStatus,
+            notes: noteText,
+            updatedAt: new Date(),
+          },
+        });
+
+        await tx.sales.upsert({
+          where: {
+            billId_employeeId: {
+              billId: billIdKey,
+              employeeId: salesman.id,
             }
-          });
+          },
+          update: {
+            netAmount: newSaleAmount,
+            saleDate: validDate,
+            status: targetSalesStatus,
+            description: noteText,
+            updatedAt: new Date(),
+          },
+          create: {
+            billId: billIdKey,
+            employeeId: salesman.id,
+            netAmount: newSaleAmount,
+            saleDate: validDate,
+            status: targetSalesStatus,
+            source: 'HOPKID',
+            description: noteText,
+          },
+        });
 
-        if (existingTx) {
-          console.log(`[Save] 🔄 Transaction already exists for ${billIdKey} + Salesman ${salesman.id}. Updating existing record...`);
-          const commDelta = isCancelledOrReturned ? -existingTx.commissionAmount : (commAmt - existingTx.commissionAmount);
-
-          console.log(`[INVOICE_AUDIT_LOG]`, {
-            invoiceId: billIdKey,
-            oldAmount: existingTx.saleAmount,
-            newAmount: isCancelledOrReturned ? 0 : saleAmount,
-            oldCommission: existingTx.commissionAmount,
-            newCommission: isCancelledOrReturned ? 0 : commAmt,
-            salesmanId: salesman.id,
-            oldNetSale: existingTx.saleAmount,
-            newNetSale: isCancelledOrReturned ? 0 : saleAmount,
-            webhookEventId: eventId || 'N/A',
-            operation: 'UPDATED',
-          });
-
-          await tx.commissionTransaction.upsert({
-            where: {
-              billId_employeeId: {
-                billId: billIdKey,
-                employeeId: salesman.id,
-              }
-            },
-            update: {
-              saleAmount: isCancelledOrReturned ? 0 : saleAmount,
-              commissionAmount: isCancelledOrReturned ? 0 : commAmt,
-              commissionPercent: salesman.commissionPercentage || 1.0,
-              status: targetCommStatus,
-              notes: `${noteText} (Updated)`,
-              updatedAt: new Date(),
-            },
-            create: {
-              employeeId: salesman.id,
-              storeId: targetStoreId,
-              policyId: targetPolicyId,
-              saleAmount: isCancelledOrReturned ? 0 : saleAmount,
-              commissionType: 'PERCENTAGE',
-              commissionPercent: salesman.commissionPercentage || 1.0,
-              commissionAmount: isCancelledOrReturned ? 0 : commAmt,
-              billId: billIdKey,
-              invoiceNumber: billIdKey,
-              status: targetCommStatus,
-              notes: `${noteText} (Updated)`,
-              createdAt: validDate,
-            },
-          });
-
-          await tx.sales.upsert({
-            where: {
-              billId_employeeId: {
-                billId: billIdKey,
-                employeeId: salesman.id,
-              }
-            },
-            update: {
-              netAmount: isCancelledOrReturned ? 0 : saleAmount,
-              saleDate: validDate,
-              status: targetSalesStatus,
-              description: `${noteText} (Updated)`,
-              updatedAt: new Date(),
-            },
-            create: {
-              billId: billIdKey,
-              employeeId: salesman.id,
-              netAmount: isCancelledOrReturned ? 0 : saleAmount,
-              saleDate: validDate,
-              status: targetSalesStatus,
-              source: 'HOPKID',
-              description: noteText,
-            },
-          });
-
-          // Adjust wallet balance for delta if commission changed
-          if (commDelta !== 0) {
-            await updateEmployeeWalletCommission(
-              salesman.id,
-              Math.abs(commDelta),
-              commDelta > 0,
-              `Commission Adjustment - HopKid Invoice ${billIdKey}`,
-              commDelta > 0 ? 'Commission Earned' : 'Commission Reversed'
-            );
-          }
+        // Wallet adjustment for commission delta ONLY
+        if (commDelta !== 0) {
+          console.log(`[Commission Audit]   Wallet adjustment: ${commDelta > 0 ? '+' : ''}₹${commDelta}`);
+          await updateEmployeeWalletCommission(
+            salesman.id,
+            Math.abs(commDelta),
+            commDelta > 0,
+            `Commission Adjustment - HopKid Invoice ${billIdKey} (₹${oldSaleAmount} → ₹${newSaleAmount}, diff: ₹${saleDelta})`,
+            commDelta > 0 ? 'Commission Earned' : 'Commission Reversed'
+          );
         } else {
-          console.log(`[Save] ➕ Creating new CommissionTransaction for ${billIdKey} + Salesman ${salesman.id}...`);
+          console.log(`[Commission Audit]   Wallet adjustment: NONE (delta=0, idempotent re-processing)`);
+        }
+      } else {
+        // ═══════════════════════════════════════════════════════════════
+        // INVOICE CREATED / NEW RECORD PATH
+        // Uses timestamp sentinel to detect upsert-create vs upsert-update
+        // to prevent double wallet credit during race conditions
+        // ═══════════════════════════════════════════════════════════════
+        const finalSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
+        const finalCommAmount = isCancelledOrReturned ? 0 : commAmt;
 
-          console.log(`[INVOICE_AUDIT_LOG]`, {
-            invoiceId: billIdKey,
-            oldAmount: 0,
-            newAmount: isCancelledOrReturned ? 0 : saleAmount,
-            oldCommission: 0,
-            newCommission: isCancelledOrReturned ? 0 : commAmt,
-            salesmanId: salesman.id,
-            oldNetSale: 0,
-            newNetSale: isCancelledOrReturned ? 0 : saleAmount,
-            webhookEventId: eventId || 'N/A',
-            operation: 'CREATED',
-          });
+        // Sentinel: record the time just before the upsert
+        const preUpsertTimestamp = new Date();
 
-          await tx.commissionTransaction.upsert({
-            where: {
-              billId_employeeId: {
-                billId: billIdKey,
-                employeeId: salesman.id,
-              }
-            },
-            update: {
-              saleAmount: isCancelledOrReturned ? 0 : saleAmount,
-              commissionAmount: isCancelledOrReturned ? 0 : commAmt,
-              commissionPercent: salesman.commissionPercentage || 1.0,
-              status: targetCommStatus,
-              notes: noteText,
-              updatedAt: new Date(),
-            },
-            create: {
-              employeeId: salesman.id,
-              storeId: targetStoreId,
-              policyId: targetPolicyId,
-              saleAmount: isCancelledOrReturned ? 0 : saleAmount,
-              commissionType: 'PERCENTAGE',
-              commissionPercent: salesman.commissionPercentage || 1.0,
-              commissionAmount: isCancelledOrReturned ? 0 : commAmt,
-              billId: billIdKey,
-              invoiceNumber: billIdKey,
-              status: targetCommStatus,
-              notes: noteText,
-              createdAt: validDate,
-            },
-          });
-
-          await tx.sales.upsert({
-            where: {
-              billId_employeeId: {
-                billId: billIdKey,
-                employeeId: salesman.id,
-              }
-            },
-            update: {
-              netAmount: isCancelledOrReturned ? 0 : saleAmount,
-              saleDate: validDate,
-              status: targetSalesStatus,
-              description: noteText,
-              updatedAt: new Date(),
-            },
-            create: {
+        const upsertedTx = await tx.commissionTransaction.upsert({
+          where: {
+            billId_employeeId: {
               billId: billIdKey,
               employeeId: salesman.id,
-              netAmount: isCancelledOrReturned ? 0 : saleAmount,
-              saleDate: validDate,
-              status: targetSalesStatus,
-              source: 'HOPKID',
-              description: noteText,
-            },
-          });
+            }
+          },
+          update: {
+            saleAmount: finalSaleAmount,
+            commissionAmount: finalCommAmount,
+            commissionPercent: salesman.commissionPercentage || 1.0,
+            status: targetCommStatus,
+            notes: noteText,
+            updatedAt: new Date(),
+          },
+          create: {
+            employeeId: salesman.id,
+            storeId: targetStoreId,
+            policyId: targetPolicyId,
+            saleAmount: finalSaleAmount,
+            commissionType: 'PERCENTAGE',
+            commissionPercent: salesman.commissionPercentage || 1.0,
+            commissionAmount: finalCommAmount,
+            billId: billIdKey,
+            invoiceNumber: billIdKey,
+            status: targetCommStatus,
+            notes: noteText,
+            createdAt: validDate,
+          },
+        });
 
-          if (!isCancelledOrReturned && commAmt > 0) {
+        // Detect if the upsert was a CREATE (new record) or UPDATE (race condition duplicate).
+        // If createdAt is BEFORE our sentinel, this record already existed — another concurrent
+        // request created it first. In that case, skip wallet credit to prevent double-crediting.
+        const wasCreated = upsertedTx.createdAt >= preUpsertTimestamp || upsertedTx.createdAt.getTime() === validDate.getTime();
+
+        await tx.sales.upsert({
+          where: {
+            billId_employeeId: {
+              billId: billIdKey,
+              employeeId: salesman.id,
+            }
+          },
+          update: {
+            netAmount: finalSaleAmount,
+            saleDate: validDate,
+            status: targetSalesStatus,
+            description: noteText,
+            updatedAt: new Date(),
+          },
+          create: {
+            billId: billIdKey,
+            employeeId: salesman.id,
+            netAmount: finalSaleAmount,
+            saleDate: validDate,
+            status: targetSalesStatus,
+            source: 'HOPKID',
+            description: noteText,
+          },
+        });
+
+        console.log(`[Commission Audit] CREATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
+        console.log(`[Commission Audit]   oldAmount: ₹0`);
+        console.log(`[Commission Audit]   newAmount: ₹${finalSaleAmount}`);
+        console.log(`[Commission Audit]   differenceAmount: ₹${finalSaleAmount}`);
+        console.log(`[Commission Audit]   oldCommission: ₹0`);
+        console.log(`[Commission Audit]   incrementalCommission: ₹${finalCommAmount}`);
+        console.log(`[Commission Audit]   finalCommission: ₹${finalCommAmount}`);
+        console.log(`[Commission Audit]   eventId: ${resolvedEventId || 'N/A'}`);
+        console.log(`[Commission Audit]   upsertWasCreate: ${wasCreated}`);
+
+        if (!isCancelledOrReturned && finalCommAmount > 0) {
+          if (wasCreated) {
+            console.log(`[Commission Audit]   Wallet credit: +₹${finalCommAmount} (new commission)`);
             await updateEmployeeWalletCommission(
               salesman.id,
-              commAmt,
+              finalCommAmount,
               true,
               `Commission Earned - HopKid Invoice ${billIdKey}`,
               'Commission Earned'
             );
+          } else {
+            // Race condition: another concurrent request already created this record
+            // and should have already credited the wallet. Skip to prevent double-credit.
+            console.log(`[Commission Audit]   Wallet credit: SKIPPED (race condition — record already existed, concurrent request should have credited)`);
           }
         }
-
-        processedSalesCount++;
-        affectedEmployeeIds.push(salesman.id);
-
-        await broadcastCommissionEvent(salesman.id, {
-          success: true,
-          eventType: meta.eventType || 'INVOICE_CREATED',
-          billId: billIdKey,
-          amount: saleAmount,
-          commission: isCancelledOrReturned ? 0 : commAmt,
-          employeeId: salesman.id,
-          createdAt: validDate.toISOString(),
-        });
       }
 
-      // 3. Handle removed salesmen who were in existingTransactions but no longer in commissionMap
-      for (const oldTx of existingTransactions) {
-        if (!activeSalesmanIds.has(oldTx.employeeId) && (oldTx.commissionAmount > 0 || oldTx.saleAmount > 0)) {
-          console.log(`[Save] 🔄 Salesman ${oldTx.employeeId} removed from invoice ${billIdKey}. Reversing previous commission of ₹${oldTx.commissionAmount}...`);
-          const reversedCommission = oldTx.commissionAmount;
+      processedSalesCount++;
+      affectedEmployeeIds.push(salesman.id);
 
-          await tx.commissionTransaction.update({
-            where: { id: oldTx.id },
-            data: {
-              saleAmount: 0,
-              commissionAmount: 0,
-              status: 'REJECTED',
-              notes: `HopKid Invoice ${billIdKey} (Removed on Update)`,
-              updatedAt: new Date(),
-            },
-          });
+      await broadcastCommissionEvent(salesman.id, {
+        success: true,
+        eventType: targetEventType,
+        billId: billIdKey,
+        amount: isCancelledOrReturned ? 0 : saleAmount,
+        commission: isCancelledOrReturned ? 0 : commAmt,
+        employeeId: salesman.id,
+        createdAt: validDate.toISOString(),
+      });
+    }
 
-          await tx.sales.upsert({
-            where: {
-              billId_employeeId: {
-                billId: billIdKey,
-                employeeId: oldTx.employeeId,
-              }
-            },
-            update: {
-              netAmount: 0,
-              status: 'CANCELLED',
-              description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
-              updatedAt: new Date(),
-            },
-            create: {
+    // Handle salesmen removed during an Invoice Updated event
+    for (const oldTx of existingTransactions) {
+      if (!activeSalesmanIds.has(oldTx.employeeId) && (oldTx.commissionAmount > 0 || oldTx.saleAmount > 0)) {
+        const reversedCommission = oldTx.commissionAmount;
+
+        console.log(`[Commission Audit] REMOVAL path | BillId: ${billIdKey} | EmployeeId: ${oldTx.employeeId}`);
+        console.log(`[Commission Audit]   Reversing commission: ₹${reversedCommission}`);
+
+        await tx.commissionTransaction.update({
+          where: { id: oldTx.id },
+          data: {
+            saleAmount: 0,
+            commissionAmount: 0,
+            status: 'REJECTED',
+            notes: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+            updatedAt: new Date(),
+          },
+        });
+
+        await tx.sales.upsert({
+          where: {
+            billId_employeeId: {
               billId: billIdKey,
               employeeId: oldTx.employeeId,
-              netAmount: 0,
-              saleDate: validDate,
-              status: 'CANCELLED',
-              source: 'HOPKID',
-              description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
-            },
-          });
+            }
+          },
+          update: {
+            netAmount: 0,
+            status: 'CANCELLED',
+            description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+            updatedAt: new Date(),
+          },
+          create: {
+            billId: billIdKey,
+            employeeId: oldTx.employeeId,
+            netAmount: 0,
+            saleDate: validDate,
+            status: 'CANCELLED',
+            source: 'HOPKID',
+            description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+          },
+        });
 
-          if (reversedCommission > 0) {
-            await updateEmployeeWalletCommission(
-              oldTx.employeeId,
-              reversedCommission,
-              false,
-              `Commission Reversed - Removed from HopKid Invoice ${billIdKey}`,
-              'Commission Reversed'
-            );
-          }
-
-          affectedEmployeeIds.push(oldTx.employeeId);
+        if (reversedCommission > 0) {
+          await updateEmployeeWalletCommission(
+            oldTx.employeeId,
+            reversedCommission,
+            false,
+            `Commission Reversed - Removed from HopKid Invoice ${billIdKey}`,
+            'Commission Reversed'
+          );
         }
+
+        affectedEmployeeIds.push(oldTx.employeeId);
       }
-    });
-  } catch (txErr: any) {
-    console.error(`[Save] ❌ Transactional save error for invoice ${billIdKey}:`, txErr.message);
-    lastError = txErr.message;
-  }
+    }
+  });
 
   // Recalculate monthly commission for all affected employees
   const monthKey = `${validDate.getFullYear()}-${String(validDate.getMonth() + 1).padStart(2, '0')}`;
@@ -653,44 +693,495 @@ export async function processHopkidSales(rawSalesData: any): Promise<void> {
     try {
       const calculation = await CommissionService.calculateMonthlyCommission(empId, monthKey);
       await CommissionService.upsertMonthlyCommission(empId, monthKey, calculation);
-      console.log(`[Commission Service] ✅ Recalculated monthly commission for Employee ${empId} (${monthKey}): ₹${calculation.totalCommissionAmount}`);
     } catch (recalcErr: any) {
       console.warn(`[Commission Recalc Warning] Failed for Employee ${empId}:`, recalcErr.message);
     }
   }
 
-  console.log(`\n╔════════════════════════════════════════════════════════════╗`);
-  console.log(`║ [WEBHOOK] ✅ COMPLETE                                      ║`);
-  console.log(`║ Salespersons processed: ${processedSalesCount}                                ║`);
-  console.log(`╚════════════════════════════════════════════════════════════╝\n`);
+  console.log(`[Commission Audit] ✅ Completed ${targetEventType} for ${billIdKey} | ${processedSalesCount} salesman(s) processed`);
+}
 
-  if (logEntry) {
-    const firstSalesmanId = affectedEmployeeIds[0] || Array.from(commissionMap.keys())[0];
-    await prisma.webhookLog.update({
-      where: { id: logEntry.id },
-      data: {
-        employeeId: firstSalesmanId || undefined,
-        status: processedSalesCount > 0 ? 'SUCCESS' : (commissionMap.size === 0 ? 'SUCCESS' : 'FAILED'),
-        errorMessage: lastError ?? undefined,
-        processedAt: new Date(),
-      },
-    }).catch(() => {});
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3️⃣ CREDIT NOTE CREATED PROCESSOR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function processCreditNoteCreated(payload: any, eventId?: string | null): Promise<void> {
+  const data = payload.data || payload;
+  const creditNote = data.creditNote || payload.creditNote || data;
+  const lineItems = data.lineItems || creditNote.lineItems || payload.lineItems || data.CreditNoteProducts || creditNote.CreditNoteProducts || [];
+
+  if (!creditNote) {
+    throw new Error('Invalid payload: missing creditNote data');
+  }
+
+  const creditNoteNo = String(creditNote.creditNoteNo || creditNote.CNNo || creditNote.number || `CN-${Date.now()}`);
+  const invoiceNo = String(creditNote.invoiceNo || creditNote.invoiceNumber || creditNote.billId || '');
+  const totalAmount = Number(creditNote.totalAmount || creditNote.creditAmount || creditNote.amount || 0);
+
+  const creditNoteRecord = await prisma.creditNote.upsert({
+    where: { creditNoteNo: creditNoteNo },
+    update: {
+      invoiceNo: invoiceNo,
+      creditDate: new Date(creditNote.creditDate || creditNote.date || new Date()),
+      creditAmount: totalAmount,
+      creditReason: creditNote.reason || creditNote.creditReason || 'Not specified',
+      status: 'ACTIVE',
+      updatedAt: new Date(),
+    },
+    create: {
+      creditNoteNo: creditNoteNo,
+      invoiceNo: invoiceNo,
+      creditDate: new Date(creditNote.creditDate || creditNote.date || new Date()),
+      creditAmount: totalAmount,
+      creditReason: creditNote.reason || creditNote.creditReason || 'Not specified',
+      status: 'ACTIVE',
+    }
+  });
+
+  const employeeCommissionMap = new Map<number, { employee: any; totalReturnAmount: number }>();
+  let firstEmpId: number | null = null;
+
+  for (const lineItem of lineItems) {
+    try {
+      let employee: any = null;
+
+      if (lineItem.employeeCode) {
+        employee = await prisma.employee.findUnique({
+          where: { employeeCode: String(lineItem.employeeCode) }
+        }).catch(() => null);
+      }
+
+      if (!employee && lineItem.employeePhoneNo) {
+        const cleanPhone = String(lineItem.employeePhoneNo).replace(/[^0-9]/g, '').slice(-10);
+        employee = await prisma.employee.findFirst({
+          where: { mobileNumber: { contains: cleanPhone } }
+        }).catch(() => null);
+      }
+
+      if (!employee && invoiceNo) {
+        const originalSale = await prisma.sales.findFirst({
+          where: { billId: { contains: invoiceNo } },
+          include: { employee: true }
+        });
+        if (originalSale) employee = originalSale.employee;
+      }
+
+      if (!employee) continue;
+      if (!firstEmpId) firstEmpId = employee.id;
+
+      const returnedAmount = Number(lineItem.creditAmount || lineItem.amount || lineItem.productNetAmount || 0);
+      const prodId = String(lineItem.productID || lineItem.productId || lineItem.name || 'ITEM');
+
+      const existingItem = await prisma.creditNoteLine.findFirst({
+        where: {
+          creditNoteId: creditNoteRecord.id,
+          productId: prodId
+        }
+      });
+
+      if (!existingItem) {
+        await prisma.creditNoteLine.create({
+          data: {
+            creditNoteId: creditNoteRecord.id,
+            productId: prodId,
+            productDescription: String(lineItem.productName || lineItem.name || 'Product'),
+            creditAmount: returnedAmount,
+            commissionAdjustment: (returnedAmount * (employee.commissionPercentage || 0)) / 100,
+            employeeId: employee.id,
+            reason: creditNote.reason || 'Return'
+          }
+        });
+      }
+
+      if (!employeeCommissionMap.has(employee.id)) {
+        employeeCommissionMap.set(employee.id, {
+          employee: employee,
+          totalReturnAmount: 0
+        });
+      }
+
+      const empData = employeeCommissionMap.get(employee.id)!;
+      empData.totalReturnAmount += returnedAmount;
+    } catch (itemError: any) {
+      console.error('[CreditNote LineItem] ❌ Error:', itemError.message);
+      continue;
+    }
+  }
+
+  // Recalculate monthly commission for affected employees
+  const cnDate = new Date(creditNote.creditDate || creditNote.date || new Date());
+  const month = `${cnDate.getFullYear()}-${String(cnDate.getMonth() + 1).padStart(2, '0')}`;
+
+  for (const [empId] of employeeCommissionMap.entries()) {
+    const calculation = await CommissionService.calculateMonthlyCommission(empId, month);
+    await CommissionService.upsertMonthlyCommission(empId, month, calculation);
+  }
+
+  await broadcastCommissionEvent(firstEmpId || 0, {
+    eventType: 'CREDIT_NOTE_CREATED',
+    creditNoteNo,
+    amount: totalAmount
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4️⃣ CREDIT NOTE UPDATED PROCESSOR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function processCreditNoteUpdated(payload: any, eventId?: string | null): Promise<void> {
+  const data = payload.data || payload;
+  const creditNote = data.creditNote || payload.creditNote || data;
+  const creditNoteNo = String(creditNote?.creditNoteNo || creditNote?.CNNo || creditNote?.number || '');
+
+  if (!creditNote || !creditNoteNo) {
+    throw new Error('Invalid payload: missing creditNoteNo');
+  }
+
+  const creditNoteRecord = await prisma.creditNote.findUnique({
+    where: { creditNoteNo: creditNoteNo },
+    include: { lineItems: true }
+  });
+
+  if (!creditNoteRecord) {
+    console.warn('[CreditNote Update] ⚠️ Credit note not found, processing as created...');
+    await processCreditNoteCreated(payload, eventId);
+    return;
+  }
+
+  const newStatus = creditNote.status?.toUpperCase() || 'ACTIVE';
+  let ourStatus = 'ACTIVE';
+  if (newStatus === 'CANCELLED' || newStatus === 'VOID' || newStatus === 'INACTIVE') {
+    ourStatus = 'CANCELLED';
+  }
+
+  await prisma.creditNote.update({
+    where: { id: creditNoteRecord.id },
+    data: {
+      status: ourStatus,
+      updatedAt: new Date()
+    }
+  });
+
+  const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const empIds = new Set<number>();
+  for (const item of creditNoteRecord.lineItems) {
+    if (item.employeeId) empIds.add(item.employeeId);
+  }
+
+  for (const empId of empIds) {
+    const calculation = await CommissionService.calculateMonthlyCommission(empId, month);
+    await CommissionService.upsertMonthlyCommission(empId, month, calculation);
   }
 }
 
-/**
- * Synchronous HopKid sales webhook handler.
- */
-export async function handleHopkidWebhook(req: Request, res: Response): Promise<void> {
-  const salesData = req.body;
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5️⃣ SALES EXCHANGE CREATED PROCESSOR
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  // ✅ Log immediately
-  console.log(`📥 [HopKid Webhook Ingress] Incoming payload at ${new Date().toISOString()}`);
+export async function processSalesExchangeCreated(payload: any, eventId?: string | null): Promise<void> {
+  const data = payload.data || payload;
+  const exchange = data.salesExchange || payload.salesExchange || data;
+  const rawLineItems =
+    data.lineItems ||
+    exchange.lineItems ||
+    payload.lineItems ||
+    data.SalesExchangeProductList ||
+    exchange.SalesExchangeProductList ||
+    payload.SalesExchangeProductList ||
+    data.products ||
+    exchange.products ||
+    payload.products ||
+    data.items ||
+    payload.items ||
+    [];
+  const lineItems = Array.isArray(rawLineItems) ? rawLineItems : [];
+
+  if (!exchange) {
+    throw new Error('Invalid payload: missing salesExchange data');
+  }
+
+  const exchangeNo = String(exchange.exchangeNo || exchange.number || `EX-${Date.now()}`);
+  const originalInvoiceNo = String(exchange.originalInvoiceNo || exchange.originalInvoiceNumber || exchange.billId || '');
+  const newInvoiceNo = String(exchange.newInvoiceNo || exchange.newInvoiceNumber || `INV-EX-${Date.now()}`);
+
+  const originalSale = await prisma.sales.findFirst({
+    where: { billId: { contains: originalInvoiceNo } }
+  });
+
+  let totalNewSales = 0;
+  let totalOldSales = 0;
+  let totalNewCommission = 0;
+  let totalOldCommission = 0;
+
+  const newSaleIds: string[] = [];
+  const affectedEmployeeIds = new Set<number>();
+  let primaryNewEmployeeId: number | null = null;
+  const exchangeEmployeeMap = new Map<string, any>();
+
+  for (let i = 0; i < lineItems.length; i++) {
+    const lineItem = lineItems[i];
+    try {
+      const employee = await resolveEmployeeForExchangeItem(lineItem, originalSale?.employeeId || null);
+      if (!employee) continue;
+
+      if (!primaryNewEmployeeId) primaryNewEmployeeId = employee.id;
+      affectedEmployeeIds.add(employee.id);
+
+      const isOld = parseIsOld(lineItem);
+      const rawAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || lineItem.Total || lineItem.price || 0);
+      if (isNaN(rawAmount) || rawAmount <= 0) continue;
+
+      const rate = employee.commissionPercentage ?? 1.0;
+      const baseComm = (rawAmount * rate) / 100;
+
+      // Existing Sales Exchange Rule:
+      // IsOld = 1 (Returned item) -> SUBTRACT (-)
+      // IsOld = 0 (Sold item) -> ADD (+)
+      const effectiveSaleAmount = isOld ? -Math.abs(rawAmount) : Math.abs(rawAmount);
+      const effectiveCommission = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
+
+      if (isOld) {
+        totalOldSales += Math.abs(rawAmount);
+        totalOldCommission += Math.abs(baseComm);
+      } else {
+        totalNewSales += Math.abs(rawAmount);
+        totalNewCommission += Math.abs(baseComm);
+      }
+
+      const uniqueBillId = `${newInvoiceNo}-${lineItem.productID || lineItem.productId || i + 1}-${isOld ? 'RET' : 'NEW'}`;
+
+      const saleRecord = await prisma.sales.upsert({
+        where: {
+          billId_employeeId: {
+            billId: uniqueBillId,
+            employeeId: employee.id,
+          }
+        },
+        update: {
+          netAmount: effectiveSaleAmount,
+          saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+          description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
+          updatedAt: new Date(),
+        },
+        create: {
+          employeeId: employee.id,
+          netAmount: effectiveSaleAmount,
+          billId: uniqueBillId,
+          saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+          description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
+          source: 'HOPKID',
+          status: 'ACTIVE'
+        }
+      });
+
+      const key = `${employee.id}_${isOld ? 'RET' : 'NEW'}`;
+      if (!exchangeEmployeeMap.has(key)) {
+        exchangeEmployeeMap.set(key, {
+          employee: employee,
+          isOld: isOld,
+          totalSaleAmount: 0,
+          totalCommissionAmount: 0,
+          rate: rate,
+        });
+      }
+      const group = exchangeEmployeeMap.get(key);
+      group.totalSaleAmount += effectiveSaleAmount;
+      group.totalCommissionAmount += effectiveCommission;
+
+      newSaleIds.push(saleRecord.id.toString());
+    } catch (itemError: any) {
+      console.error(`[Exchange LineItem ${i + 1}] ❌ Error:`, itemError.message);
+      continue;
+    }
+  }
+
+  // Upsert aggregated CommissionTransactions per (Employee + isOld)
+  const txnExDate = new Date(exchange.exchangeDate || exchange.date || new Date());
+  for (const group of exchangeEmployeeMap.values()) {
+    const exchangeBillId = `${newInvoiceNo}-${group.isOld ? 'RET' : 'NEW'}`;
+    const roundedAmount = Number(group.totalSaleAmount.toFixed(2));
+    const roundedCommission = Number(group.totalCommissionAmount.toFixed(2));
+
+    await prisma.commissionTransaction.upsert({
+      where: {
+        billId_employeeId: {
+          billId: exchangeBillId,
+          employeeId: group.employee.id,
+        }
+      },
+      update: {
+        saleAmount: roundedAmount,
+        commissionAmount: roundedCommission,
+        commissionPercent: group.rate,
+        createdAt: txnExDate,
+        updatedAt: new Date(),
+      },
+      create: {
+        employeeId: group.employee.id,
+        storeId: group.employee.storeId || null,
+        saleAmount: roundedAmount,
+        commissionType: 'PERCENTAGE',
+        commissionPercent: group.rate,
+        commissionAmount: roundedCommission,
+        billId: exchangeBillId,
+        invoiceNumber: exchangeBillId,
+        status: 'APPROVED',
+        createdAt: txnExDate,
+        notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})`
+      }
+    });
+  }
+
+  if (!primaryNewEmployeeId) {
+    primaryNewEmployeeId = originalSale?.employeeId || 1;
+  }
+
+  const origAmountVal = totalOldSales > 0 ? totalOldSales : Number(originalSale?.netAmount || 0);
+  const newAmountVal = Number(totalNewSales || 0);
+  const diffAmountVal = newAmountVal - origAmountVal;
+  const diffCommVal = totalNewCommission - totalOldCommission;
+
+  await prisma.salesExchange.upsert({
+    where: { exchangeNo: exchangeNo },
+    update: {
+      originalInvoiceNo: originalInvoiceNo,
+      newInvoiceNo: newInvoiceNo,
+      exchangeDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+      originalSaleId: originalSale?.id || null,
+      newSaleId: newSaleIds.join(','),
+      employeeId: primaryNewEmployeeId,
+      originalAmount: origAmountVal,
+      newAmount: newAmountVal,
+      amountDifference: diffAmountVal,
+      originalCommission: totalOldCommission,
+      newCommission: totalNewCommission,
+      commissionDifference: diffCommVal,
+      reason: exchange.reason || 'Sales Exchange',
+      status: 'ACTIVE',
+      updatedAt: new Date(),
+    },
+    create: {
+      exchangeNo: exchangeNo,
+      originalInvoiceNo: originalInvoiceNo,
+      newInvoiceNo: newInvoiceNo,
+      exchangeDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+      originalSaleId: originalSale?.id || null,
+      newSaleId: newSaleIds.join(','),
+      employeeId: primaryNewEmployeeId,
+      originalAmount: origAmountVal,
+      newAmount: newAmountVal,
+      amountDifference: diffAmountVal,
+      originalCommission: totalOldCommission,
+      newCommission: totalNewCommission,
+      commissionDifference: diffCommVal,
+      reason: exchange.reason || 'Sales Exchange',
+      status: 'ACTIVE'
+    }
+  });
+
+  const exDate = new Date(exchange.exchangeDate || exchange.date || new Date());
+  const month = `${exDate.getFullYear()}-${String(exDate.getMonth() + 1).padStart(2, '0')}`;
+
+  if (originalSale?.employeeId) {
+    affectedEmployeeIds.add(originalSale.employeeId);
+  }
+
+  for (const empId of affectedEmployeeIds) {
+    try {
+      const calculation = await CommissionService.calculateMonthlyCommission(empId, month);
+      await CommissionService.upsertMonthlyCommission(empId, month, calculation);
+    } catch (commErr: any) {
+      console.error(`[Commission] ⚠️ Failed recalculating commission for employee #${empId}:`, commErr.message);
+    }
+  }
+
+  for (const empId of affectedEmployeeIds) {
+    await broadcastCommissionEvent(empId, {
+      eventType: 'SALES_EXCHANGE_CREATED',
+      exchangeNo,
+      amount: Number(exchange.totalAmount || totalNewSales)
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6️⃣ SALES EXCHANGE UPDATED PROCESSOR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function processSalesExchangeUpdated(payload: any, eventId?: string | null): Promise<void> {
+  const data = payload.data || payload;
+  const exchange = data.salesExchange || payload.salesExchange || data;
+  const exchangeNo = String(exchange?.exchangeNo || exchange?.number || '');
+
+  if (!exchange || !exchangeNo) {
+    throw new Error('Invalid payload: missing exchangeNo');
+  }
+
+  const existingExchange = await prisma.salesExchange.findUnique({
+    where: { exchangeNo: exchangeNo }
+  });
+
+  if (!existingExchange) {
+    console.warn('[Exchange Update] ⚠️ Exchange not found, processing as created...');
+    await processSalesExchangeCreated(payload, eventId);
+    return;
+  }
+
+  const newStatus = exchange.status?.toUpperCase() || 'COMPLETED';
+  let ourStatus = 'COMPLETED';
+  if (newStatus === 'CANCELLED' || newStatus === 'VOID' || newStatus === 'INACTIVE') {
+    ourStatus = 'CANCELLED';
+  }
+
+  await prisma.salesExchange.update({
+    where: { id: existingExchange.id },
+    data: {
+      status: ourStatus,
+      updatedAt: new Date()
+    }
+  });
+
+  const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+
+  if (existingExchange.originalSaleId) {
+    const origSale = await prisma.sales.findUnique({ where: { id: existingExchange.originalSaleId } });
+    if (origSale?.employeeId) {
+      const calculation = await CommissionService.calculateMonthlyCommission(origSale.employeeId, month);
+      await CommissionService.upsertMonthlyCommission(origSale.employeeId, month, calculation);
+    }
+  }
+}
+
+// Backward compatibility alias for legacy callers
+export const processHopkidSales = processInvoiceCreated;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UNIFIED WEBHOOK EXECUTION PIPELINE (Idempotency + Single Log + Execution)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function executeWebhookPipeline(
+  req: Request,
+  res: Response,
+  canonicalEventType: string,
+  processor: (payload: any, eventId?: string | null) => Promise<void>
+): Promise<void> {
+  const payload = req.body;
+  const meta = extractWebhookMeta(payload);
+  const normalizedType = normalizeEventType(canonicalEventType, 'INVOICE_CREATED', payload);
+  const billId = meta.billId || meta.invoiceNumber || null;
+  const amount = meta.amount || null;
+
+  console.log(`\n╔════════════════════════════════════════════════════════════╗`);
+  console.log(`║ [WEBHOOK INGRESS] Event: ${normalizedType.padEnd(33)} ║`);
+  console.log(`╚════════════════════════════════════════════════════════════╝`);
+
+  await storeWebhookData(payload);
 
   try {
-    const idempotency = await checkWebhookIdempotency(salesData);
+    // STEP 1: IDEMPOTENCY CHECK
+    const idempotency = await checkWebhookIdempotency(payload, normalizedType);
     if (idempotency.isDuplicate) {
-      console.log(`[HopKid Webhook] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
+      console.log(`[Webhook Idempotency] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
       res.status(200).json({
         success: true,
         message: 'Webhook already processed',
@@ -700,8 +1191,45 @@ export async function handleHopkidWebhook(req: Request, res: Response): Promise<
       return;
     }
 
-    // ✅ Process and await database persistence before responding
-    await processHopkidSales(salesData);
+    // STEP 2: CREATE SINGLE PROCESSING LOG ENTRY
+    const resolvedEventId = idempotency.eventId || (meta.eventId ? String(meta.eventId) : null);
+    let logEntry: any = null;
+
+    try {
+      logEntry = await prisma.webhookLog.create({
+        data: {
+          eventId: resolvedEventId,
+          eventType: normalizedType,
+          status: 'PROCESSING',
+          payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+          billId: billId ? String(billId) : null,
+          amount: amount !== null ? Number(amount) : null,
+        },
+      });
+    } catch (logErr) {
+      console.warn('[WebhookLog] Concurrent duplicate detected during insert:', logErr);
+      res.status(200).json({
+        success: true,
+        message: 'Webhook already processed',
+        duplicate: true,
+        dedupKey: idempotency.dedupKey,
+      });
+      return;
+    }
+
+    // STEP 3: EXECUTE PROCESSOR
+    await processor(payload, resolvedEventId);
+
+    // STEP 4: UPDATE WEBHOOK LOG TO SUCCESS
+    if (logEntry) {
+      await prisma.webhookLog.update({
+        where: { id: logEntry.id },
+        data: {
+          status: 'SUCCESS',
+          processedAt: new Date(),
+        },
+      }).catch(() => {});
+    }
 
     res.status(200).json({
       success: true,
@@ -709,7 +1237,20 @@ export async function handleHopkidWebhook(req: Request, res: Response): Promise<
       duplicate: false,
     });
   } catch (err: any) {
-    console.error('❌ [HopKid Webhook] Fatal processing error:', err);
+    console.error(`[Webhook Handler] ❌ Error processing ${normalizedType}:`, err.message);
+
+    const resolvedEventId = meta.eventId ? String(meta.eventId) : null;
+    if (resolvedEventId) {
+      await prisma.webhookLog.updateMany({
+        where: { eventId: resolvedEventId },
+        data: {
+          status: 'FAILED',
+          errorMessage: err.message,
+          processedAt: new Date(),
+        }
+      }).catch(() => {});
+    }
+
     res.status(500).json({
       success: false,
       message: 'Failed to process webhook.',
@@ -717,6 +1258,80 @@ export async function handleHopkidWebhook(req: Request, res: Response): Promise<
     });
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROUTE CONTROLLER HANDLERS (EXACTLY ONE HANDLER PER EVENT)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function handleInvoiceCreated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'INVOICE_CREATED', processInvoiceCreated);
+}
+
+export async function handleInvoiceUpdated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'INVOICE_UPDATED', processInvoiceUpdated);
+}
+
+export async function handleCreditNoteCreated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'CREDIT_NOTE_CREATED', processCreditNoteCreated);
+}
+
+export async function handleCreditNoteUpdated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'CREDIT_NOTE_UPDATED', processCreditNoteUpdated);
+}
+
+export async function handleSalesExchangeCreated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'SALES_EXCHANGE_CREATED', processSalesExchangeCreated);
+}
+
+export async function handleSalesExchangeUpdated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'SALES_EXCHANGE_UPDATED', processSalesExchangeUpdated);
+}
+
+export async function handleEmployeeCreated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'EMPLOYEE_CREATED', execEmployeeCreated);
+}
+
+export async function handleEmployeeUpdated(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'EMPLOYEE_UPDATED', execEmployeeUpdated);
+}
+
+export async function handleEmployeeDeleted(req: Request, res: Response): Promise<void> {
+  await executeWebhookPipeline(req, res, 'EMPLOYEE_DELETED', execEmployeeDeleted);
+}
+
+/**
+ * Unified / Ingress Router for single-webhook setups
+ */
+export async function handleUnifiedWebhook(req: Request, res: Response): Promise<void> {
+  const payload = req.body;
+  const meta = extractWebhookMeta(payload);
+  const normalizedType = normalizeEventType(meta.eventType, 'INVOICE_CREATED', payload);
+
+  switch (normalizedType) {
+    case 'CREDIT_NOTE_CREATED':
+      return handleCreditNoteCreated(req, res);
+    case 'CREDIT_NOTE_UPDATED':
+      return handleCreditNoteUpdated(req, res);
+    case 'SALES_EXCHANGE_CREATED':
+      return handleSalesExchangeCreated(req, res);
+    case 'SALES_EXCHANGE_UPDATED':
+      return handleSalesExchangeUpdated(req, res);
+    case 'EMPLOYEE_CREATED':
+      return handleEmployeeCreated(req, res);
+    case 'EMPLOYEE_UPDATED':
+      return handleEmployeeUpdated(req, res);
+    case 'EMPLOYEE_DELETED':
+      return handleEmployeeDeleted(req, res);
+    case 'INVOICE_UPDATED':
+      return handleInvoiceUpdated(req, res);
+    case 'INVOICE_CREATED':
+    default:
+      return handleInvoiceCreated(req, res);
+  }
+}
+
+// Backward compatibility alias
+export const handleHopkidWebhook = handleUnifiedWebhook;
 
 /**
  * GET Endpoint to view raw stored webhook logs
@@ -733,4 +1348,3 @@ export async function getHopkidLogs(req: Request, res: Response): Promise<void> 
     res.status(500).json({ success: false, message: 'Failed to fetch webhook logs', error: error.message });
   }
 }
-
