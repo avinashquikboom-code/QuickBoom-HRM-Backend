@@ -781,6 +781,12 @@ model CommissionTransaction {
   commissionType    String   // PERCENTAGE, FIXED
   commissionPercent Float?
   commissionAmount  Float
+  oldAmount         Float?   @default(0)
+  newAmount         Float?   @default(0)
+  oldCommission     Float?   @default(0)
+  newCommission     Float?   @default(0)
+  commissionDifference Float? @default(0)
+  eventType         String?  @default("INVOICE_CREATED")
   status            String   @default("PENDING") // PENDING, APPROVED, REJECTED, PAID
   approvedBy        Int?
   approvedAt        DateTime?
