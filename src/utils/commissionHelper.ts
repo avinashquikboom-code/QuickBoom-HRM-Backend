@@ -809,61 +809,37 @@ export async function getCommissionStats(params?: {
   const lifetimeComm = allTransactions.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
   const lifetimeSales = allTransactions.reduce((sum, t) => sum + (t.saleAmount || 0), 0);
 
-  // Group top performers — seed all active HopKid employees
+  // Group top performers from the active transaction set
   const performerMap = new Map<number, { employee: any; totalCommission: number; totalSales: number }>();
-  
-  const rawActiveEmps = await prisma.employee.findMany({
-    where: {
-      status: 'active',
-      ...(params?.storeId && !isNaN(params.storeId) && params.storeId > 0 ? { storeId: params.storeId } : {}),
-    },
-    select: {
-      id: true,
-      employeeID: true,
-      employeeCode: true,
-      firstName: true,
-      lastName: true,
-      designation: true,
-      source: true,
-      commissionPercentage: true,
-      status: true,
-      store: { select: { id: true, name: true } },
-      user: { select: { role: true } },
-    },
-  });
-
-  const activeEmps = rawActiveEmps.filter(isEligibleCommissionEmployee);
-
-  activeEmps.forEach((emp) => {
-    performerMap.set(emp.id, {
-      employee: emp,
-      totalCommission: 0,
-      totalSales: 0,
-    });
-  });
 
   monthTxns.forEach((t) => {
     if (!t.employee) return;
     const empId = t.employeeId;
     const existing = performerMap.get(empId);
     if (existing) {
-      existing.totalCommission += t.commissionAmount || 0;
-      existing.totalSales += t.saleAmount || 0;
+      existing.totalCommission += Number(t.commissionAmount || 0);
+      existing.totalSales += Number(t.saleAmount || 0);
     } else {
       performerMap.set(empId, {
         employee: t.employee,
-        totalCommission: t.commissionAmount || 0,
-        totalSales: t.saleAmount || 0,
+        totalCommission: Number(t.commissionAmount || 0),
+        totalSales: Number(t.saleAmount || 0),
       });
     }
   });
 
   const topPerformers = Array.from(performerMap.values())
+    .map(p => ({
+      ...p,
+      totalCommission: Math.round(p.totalCommission * 100) / 100,
+      totalSales: Math.round(p.totalSales * 100) / 100,
+    }))
+    .filter((p) => p.totalSales > 0 || p.totalCommission > 0)
     .sort((a, b) => (b.totalCommission - a.totalCommission) || (b.totalSales - a.totalSales))
     .slice(0, 10);
 
-  console.log(`[Commission API]\nTop performers: ${topPerformers.length}`);
-  console.log(`[Commission API]\nSummary:\nnetSales: ${Math.round(monthSales * 100) / 100}\ncommission: ${Math.round(monthComm * 100) / 100}\nbillCount: ${monthTxns.length}`);
+  console.log(`[Commission Dashboard]\nFilters:\nstartDate: ${params?.startDate || 'none'}\nendDate: ${params?.endDate || 'none'}\nstoreId: ${params?.storeId || 'all'}\nemployeeId: ${params?.employeeId || 'all'}`);
+  console.log(`[Commission Dashboard]\nTransactions found: ${monthTxns.length}\nTop performers found: ${topPerformers.length}\nTotal sales: ₹${Math.round(monthSales * 100) / 100}\nTotal commission: ₹${Math.round(monthComm * 100) / 100}`);
 
   return {
     today: {

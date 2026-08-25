@@ -63,7 +63,7 @@ import { authenticateToken } from './middlewares/authMiddleware';
 import { initializeFirebase, initializeFirebaseFromDb } from './config/firebase';
 import WebSocketService from './services/websocketService';
 import { setWebSocketInstance } from './utils/websocketSingleton';
-import { prisma } from './utils/db';
+import { prisma, ensureDatabaseConstraints } from './utils/db';
 import { Role } from '@prisma/client';
 import { syncHopkidEmployees } from './utils/employeeSync';
 import { syncHopkidSales } from './utils/salesSync';
@@ -434,6 +434,10 @@ server.listen(port, host, () => {
   .catch(err => {
     console.error('❌ [Startup Patch] Failed to update office geofence radius on startup:', err);
   });
+
+  // Initialize Database Constraints startup patch
+  ensureDatabaseConstraints()
+    .catch(err => console.error('❌ [Startup Patch] Database constraints initialization failed:', err));
 
   // Initialize Role Permissions startup patch
   initRolePermissions()
