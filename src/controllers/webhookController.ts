@@ -464,6 +464,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         console.log(`[Commission Audit]   finalCommission: ₹${newCommissionAmount}`);
         console.log(`[Commission Audit]   eventId: ${resolvedEventId || 'N/A'}`);
 
+        const updateNoteText = `HopKid Invoice ${billIdKey}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''} (Updated: Old Amount: ₹${oldSaleAmount}, New Amount: ₹${newSaleAmount}, Diff: ${saleDelta >= 0 ? '+' : ''}₹${saleDelta})`;
+
         await tx.commissionTransaction.update({
           where: { id: existingTx.id },
           data: {
@@ -471,7 +473,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             commissionAmount: newCommissionAmount,
             commissionPercent: salesman.commissionPercentage || 1.0,
             status: targetCommStatus,
-            notes: noteText,
+            notes: updateNoteText,
             updatedAt: new Date(),
           },
         });
@@ -487,7 +489,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               netAmount: newSaleAmount,
               saleDate: validDate,
               status: targetSalesStatus,
-              description: noteText,
+              description: updateNoteText,
               updatedAt: new Date(),
             },
           });
@@ -500,7 +502,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               saleDate: validDate,
               status: targetSalesStatus,
               source: 'HOPKID',
-              description: noteText,
+              description: updateNoteText,
             },
           });
         }
