@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails } from '../../utils/commissionHelper';
+import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails, getTransactionNetContribution } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { CommissionService } from '../../services/commissionService';
 import { deduplicateCommissionTransactions } from '../../utils/commissionDeduplicator';
@@ -155,12 +155,12 @@ export const getMobileCommissionTransactions = async (
       id: t.id,
       billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
       invoiceNumber: t.invoiceNumber,
-      amount: t.saleAmount,
-      saleAmount: t.saleAmount,
-      commission: t.commissionAmount,
+      amount: t.newAmount || t.saleAmount,
+      saleAmount: t.newAmount || t.saleAmount,
+      commission: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
       commissionType: t.commissionType,
       commissionPercent: t.commissionPercent,
-      commissionAmount: t.commissionAmount,
+      commissionAmount: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
       status: t.status,
       date: t.createdAt,
       createdAt: t.createdAt,
@@ -171,8 +171,8 @@ export const getMobileCommissionTransactions = async (
     }));
 
     const summary = {
-      totalSales: transactions.reduce((sum, t) => sum + t.saleAmount, 0),
-      totalCommission: transactions.reduce((sum, t) => sum + t.commissionAmount, 0),
+      totalSales: transactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0),
+      totalCommission: transactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0),
       transactionCount: transactions.length,
     };
 
