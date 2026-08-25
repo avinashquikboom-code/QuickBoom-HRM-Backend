@@ -56,6 +56,17 @@ let isDbConstraintsEnsured = false;
 export async function ensureDatabaseConstraints(): Promise<void> {
   if (isDbConstraintsEnsured) return;
   try {
+    // 1. Ensure required audit columns exist on CommissionTransaction
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "oldAmount" DOUBLE PRECISION DEFAULT 0;
+      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "newAmount" DOUBLE PRECISION DEFAULT 0;
+      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "oldCommission" DOUBLE PRECISION DEFAULT 0;
+      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "newCommission" DOUBLE PRECISION DEFAULT 0;
+      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "commissionDifference" DOUBLE PRECISION DEFAULT 0;
+      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "eventType" TEXT DEFAULT 'INVOICE_CREATED';
+    `);
+
+    // 2. Ensure unique constraints exist for idempotency and relations
     await prisma.$executeRawUnsafe(`
       DO $$
       BEGIN
@@ -111,7 +122,7 @@ export async function ensureDatabaseConstraints(): Promise<void> {
       END $$;
     `);
     isDbConstraintsEnsured = true;
-    console.log('✅ [ensureDatabaseConstraints] Verified required UNIQUE constraints exist.');
+    console.log('✅ [ensureDatabaseConstraints] Verified columns & UNIQUE constraints exist.');
   } catch (error) {
     console.warn('⚠️ [ensureDatabaseConstraints] Exception ignored:', error);
   }
