@@ -476,30 +476,34 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
           },
         });
 
-        await tx.sales.upsert({
-          where: {
-            billId_employeeId: {
+        const existingSale = await tx.sales.findFirst({
+          where: { billId: billIdKey, employeeId: salesman.id }
+        });
+
+        if (existingSale) {
+          await tx.sales.update({
+            where: { id: existingSale.id },
+            data: {
+              netAmount: newSaleAmount,
+              saleDate: validDate,
+              status: targetSalesStatus,
+              description: noteText,
+              updatedAt: new Date(),
+            },
+          });
+        } else {
+          await tx.sales.create({
+            data: {
               billId: billIdKey,
               employeeId: salesman.id,
-            }
-          },
-          update: {
-            netAmount: newSaleAmount,
-            saleDate: validDate,
-            status: targetSalesStatus,
-            description: noteText,
-            updatedAt: new Date(),
-          },
-          create: {
-            billId: billIdKey,
-            employeeId: salesman.id,
-            netAmount: newSaleAmount,
-            saleDate: validDate,
-            status: targetSalesStatus,
-            source: 'HOPKID',
-            description: noteText,
-          },
-        });
+              netAmount: newSaleAmount,
+              saleDate: validDate,
+              status: targetSalesStatus,
+              source: 'HOPKID',
+              description: noteText,
+            },
+          });
+        }
 
         // Wallet adjustment for commission delta ONLY
         if (commDelta !== 0) {
@@ -517,75 +521,77 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       } else {
         // ═══════════════════════════════════════════════════════════════
         // INVOICE CREATED / NEW RECORD PATH
-        // Uses timestamp sentinel to detect upsert-create vs upsert-update
-        // to prevent double wallet credit during race conditions
         // ═══════════════════════════════════════════════════════════════
         const finalSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
         const finalCommAmount = isCancelledOrReturned ? 0 : commAmt;
 
-        // Sentinel: record the time just before the upsert
-        const preUpsertTimestamp = new Date();
-
-        const upsertedTx = await tx.commissionTransaction.upsert({
-          where: {
-            billId_employeeId: {
-              billId: billIdKey,
-              employeeId: salesman.id,
-            }
-          },
-          update: {
-            saleAmount: finalSaleAmount,
-            commissionAmount: finalCommAmount,
-            commissionPercent: salesman.commissionPercentage || 1.0,
-            status: targetCommStatus,
-            notes: noteText,
-            updatedAt: new Date(),
-          },
-          create: {
-            employeeId: salesman.id,
-            storeId: targetStoreId,
-            policyId: targetPolicyId,
-            saleAmount: finalSaleAmount,
-            commissionType: 'PERCENTAGE',
-            commissionPercent: salesman.commissionPercentage || 1.0,
-            commissionAmount: finalCommAmount,
-            billId: billIdKey,
-            invoiceNumber: billIdKey,
-            status: targetCommStatus,
-            notes: noteText,
-            createdAt: validDate,
-          },
+        const existingTxInDb = await tx.commissionTransaction.findFirst({
+          where: { billId: billIdKey, employeeId: salesman.id }
         });
 
-        // Detect if the upsert was a CREATE (new record) or UPDATE (race condition duplicate).
-        // If createdAt is BEFORE our sentinel, this record already existed — another concurrent
-        // request created it first. In that case, skip wallet credit to prevent double-crediting.
-        const wasCreated = upsertedTx.createdAt >= preUpsertTimestamp || upsertedTx.createdAt.getTime() === validDate.getTime();
+        let upsertedTx: any;
+        let wasCreated = false;
 
-        await tx.sales.upsert({
-          where: {
-            billId_employeeId: {
+        if (existingTxInDb) {
+          upsertedTx = await tx.commissionTransaction.update({
+            where: { id: existingTxInDb.id },
+            data: {
+              saleAmount: finalSaleAmount,
+              commissionAmount: finalCommAmount,
+              commissionPercent: salesman.commissionPercentage || 1.0,
+              status: targetCommStatus,
+              notes: noteText,
+              updatedAt: new Date(),
+            },
+          });
+        } else {
+          upsertedTx = await tx.commissionTransaction.create({
+            data: {
+              employeeId: salesman.id,
+              storeId: targetStoreId,
+              policyId: targetPolicyId,
+              saleAmount: finalSaleAmount,
+              commissionType: 'PERCENTAGE',
+              commissionPercent: salesman.commissionPercentage || 1.0,
+              commissionAmount: finalCommAmount,
+              billId: billIdKey,
+              invoiceNumber: billIdKey,
+              status: targetCommStatus,
+              notes: noteText,
+              createdAt: validDate,
+            },
+          });
+          wasCreated = true;
+        }
+
+        const existingSaleInDb = await tx.sales.findFirst({
+          where: { billId: billIdKey, employeeId: salesman.id }
+        });
+
+        if (existingSaleInDb) {
+          await tx.sales.update({
+            where: { id: existingSaleInDb.id },
+            data: {
+              netAmount: finalSaleAmount,
+              saleDate: validDate,
+              status: targetSalesStatus,
+              description: noteText,
+              updatedAt: new Date(),
+            },
+          });
+        } else {
+          await tx.sales.create({
+            data: {
               billId: billIdKey,
               employeeId: salesman.id,
-            }
-          },
-          update: {
-            netAmount: finalSaleAmount,
-            saleDate: validDate,
-            status: targetSalesStatus,
-            description: noteText,
-            updatedAt: new Date(),
-          },
-          create: {
-            billId: billIdKey,
-            employeeId: salesman.id,
-            netAmount: finalSaleAmount,
-            saleDate: validDate,
-            status: targetSalesStatus,
-            source: 'HOPKID',
-            description: noteText,
-          },
-        });
+              netAmount: finalSaleAmount,
+              saleDate: validDate,
+              status: targetSalesStatus,
+              source: 'HOPKID',
+              description: noteText,
+            },
+          });
+        }
 
         console.log(`[Commission Audit] CREATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
         console.log(`[Commission Audit]   oldAmount: ₹0`);
@@ -608,8 +614,6 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               'Commission Earned'
             );
           } else {
-            // Race condition: another concurrent request already created this record
-            // and should have already credited the wallet. Skip to prevent double-credit.
             console.log(`[Commission Audit]   Wallet credit: SKIPPED (race condition — record already existed, concurrent request should have credited)`);
           }
         }
@@ -638,29 +642,33 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
           },
         });
 
-        await tx.sales.upsert({
-          where: {
-            billId_employeeId: {
+        const existingSaleToRemove = await tx.sales.findFirst({
+          where: { billId: billIdKey, employeeId: oldTx.employeeId }
+        });
+
+        if (existingSaleToRemove) {
+          await tx.sales.update({
+            where: { id: existingSaleToRemove.id },
+            data: {
+              netAmount: 0,
+              status: 'CANCELLED',
+              description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+              updatedAt: new Date(),
+            },
+          });
+        } else {
+          await tx.sales.create({
+            data: {
               billId: billIdKey,
               employeeId: oldTx.employeeId,
-            }
-          },
-          update: {
-            netAmount: 0,
-            status: 'CANCELLED',
-            description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
-            updatedAt: new Date(),
-          },
-          create: {
-            billId: billIdKey,
-            employeeId: oldTx.employeeId,
-            netAmount: 0,
-            saleDate: validDate,
-            status: 'CANCELLED',
-            source: 'HOPKID',
-            description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
-          },
-        });
+              netAmount: 0,
+              saleDate: validDate,
+              status: 'CANCELLED',
+              source: 'HOPKID',
+              description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+            },
+          });
+        }
 
         if (reversedCommission > 0) {
           await updateEmployeeWalletCommission(
@@ -959,29 +967,34 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
 
       const uniqueBillId = `${newInvoiceNo}-${lineItem.productID || lineItem.productId || i + 1}-${isOld ? 'RET' : 'NEW'}`;
 
-      const saleRecord = await prisma.sales.upsert({
-        where: {
-          billId_employeeId: {
-            billId: uniqueBillId,
-            employeeId: employee.id,
-          }
-        },
-        update: {
-          netAmount: effectiveSaleAmount,
-          saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
-          description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
-          updatedAt: new Date(),
-        },
-        create: {
-          employeeId: employee.id,
-          netAmount: effectiveSaleAmount,
-          billId: uniqueBillId,
-          saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
-          description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
-          source: 'HOPKID',
-          status: 'ACTIVE'
-        }
+      const existingExSale = await prisma.sales.findFirst({
+        where: { billId: uniqueBillId, employeeId: employee.id }
       });
+
+      let saleRecord: any;
+      if (existingExSale) {
+        saleRecord = await prisma.sales.update({
+          where: { id: existingExSale.id },
+          data: {
+            netAmount: effectiveSaleAmount,
+            saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+            description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        saleRecord = await prisma.sales.create({
+          data: {
+            employeeId: employee.id,
+            netAmount: effectiveSaleAmount,
+            billId: uniqueBillId,
+            saleDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
+            description: `Exchange ${isOld ? 'Return Item (IsOld: 1)' : 'New Item (IsOld: 0)'}: ${lineItem.productName || lineItem.name || 'Product'} (EX: ${exchangeNo})`,
+            source: 'HOPKID',
+            status: 'ACTIVE',
+          },
+        });
+      }
 
       const key = `${employee.id}_${isOld ? 'RET' : 'NEW'}`;
       if (!exchangeEmployeeMap.has(key)) {
@@ -1004,41 +1017,45 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
     }
   }
 
-  // Upsert aggregated CommissionTransactions per (Employee + isOld)
+  // Update/create aggregated CommissionTransactions per (Employee + isOld)
   const txnExDate = new Date(exchange.exchangeDate || exchange.date || new Date());
   for (const group of exchangeEmployeeMap.values()) {
     const exchangeBillId = `${newInvoiceNo}-${group.isOld ? 'RET' : 'NEW'}`;
     const roundedAmount = Number(group.totalSaleAmount.toFixed(2));
     const roundedCommission = Number(group.totalCommissionAmount.toFixed(2));
 
-    await prisma.commissionTransaction.upsert({
-      where: {
-        billId_employeeId: {
-          billId: exchangeBillId,
-          employeeId: group.employee.id,
-        }
-      },
-      update: {
-        saleAmount: roundedAmount,
-        commissionAmount: roundedCommission,
-        commissionPercent: group.rate,
-        createdAt: txnExDate,
-        updatedAt: new Date(),
-      },
-      create: {
-        employeeId: group.employee.id,
-        storeId: group.employee.storeId || null,
-        saleAmount: roundedAmount,
-        commissionType: 'PERCENTAGE',
-        commissionPercent: group.rate,
-        commissionAmount: roundedCommission,
-        billId: exchangeBillId,
-        invoiceNumber: exchangeBillId,
-        status: 'APPROVED',
-        createdAt: txnExDate,
-        notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})`
-      }
+    const existingExTx = await prisma.commissionTransaction.findFirst({
+      where: { billId: exchangeBillId, employeeId: group.employee.id }
     });
+
+    if (existingExTx) {
+      await prisma.commissionTransaction.update({
+        where: { id: existingExTx.id },
+        data: {
+          saleAmount: roundedAmount,
+          commissionAmount: roundedCommission,
+          commissionPercent: group.rate,
+          createdAt: txnExDate,
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      await prisma.commissionTransaction.create({
+        data: {
+          employeeId: group.employee.id,
+          storeId: group.employee.storeId || null,
+          saleAmount: roundedAmount,
+          commissionType: 'PERCENTAGE',
+          commissionPercent: group.rate,
+          commissionAmount: roundedCommission,
+          billId: exchangeBillId,
+          invoiceNumber: exchangeBillId,
+          status: 'APPROVED',
+          createdAt: txnExDate,
+          notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})`,
+        },
+      });
+    }
   }
 
   if (!primaryNewEmployeeId) {
