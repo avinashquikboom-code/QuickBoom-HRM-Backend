@@ -27,6 +27,43 @@ export function parseIsOld(item: any): boolean {
 }
 
 /**
+ * Calculates the total contribution of a commission transaction according to business rules:
+ * 1. For an INVOICE_UPDATED transaction: BOTH old commission and new commission are counted (Total = oldCommission + newCommission).
+ * 2. For a CREATED / regular invoice: only the current/new commission is counted.
+ */
+export function getTransactionNetContribution(t: {
+  eventType?: string | null;
+  saleAmount: number | string;
+  commissionAmount: number | string;
+  oldAmount?: number | string | null;
+  newAmount?: number | string | null;
+  oldCommission?: number | string | null;
+  newCommission?: number | string | null;
+  commissionDifference?: number | string | null;
+}): { netSales: number; netCommission: number } {
+  const isUpdated = t.eventType === 'INVOICE_UPDATED' ||
+    (t.oldCommission !== null && t.oldCommission !== undefined && Number(t.oldCommission) > 0) ||
+    (t.oldAmount !== null && t.oldAmount !== undefined && Number(t.oldAmount) > 0 && Number(t.oldAmount) !== Number(t.newAmount || t.saleAmount));
+
+  if (isUpdated) {
+    const oldAmt = Number(t.oldAmount || 0);
+    const newAmt = Number(t.newAmount !== null && t.newAmount !== undefined && Number(t.newAmount) !== 0 ? t.newAmount : t.saleAmount);
+    const oldComm = Number(t.oldCommission || 0);
+    const newComm = Number(t.newCommission !== null && t.newCommission !== undefined && Number(t.newCommission) !== 0 ? t.newCommission : t.commissionAmount);
+
+    return {
+      netSales: (oldAmt > 0 ? oldAmt : 0) + newAmt,
+      netCommission: (oldComm > 0 ? oldComm : 0) + newComm,
+    };
+  }
+
+  return {
+    netSales: Number(t.saleAmount || 0),
+    netCommission: Number(t.commissionAmount || 0),
+  };
+}
+
+/**
  * Safely parses any date value (ISO strings, YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, or timestamps).
  * Resolves Indian date format (DD/MM/YYYY or DD-MM-YYYY) correctly without treating day as month,
  * and ensures date-only strings land on the correct day without shifting to the previous day in UTC.
@@ -797,33 +834,34 @@ export async function getCommissionStats(params?: {
   );
   const paidTxns = allTransactions.filter((t) => t.status === 'PAID');
 
-  const todayComm = todayTxns.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
-  const todaySales = todayTxns.reduce((sum, t) => sum + (t.saleAmount || 0), 0);
+  const todayComm = todayTxns.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0);
+  const todaySales = todayTxns.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0);
 
-  const monthComm = monthTxns.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
-  const monthSales = monthTxns.reduce((sum, t) => sum + (t.saleAmount || 0), 0);
+  const monthComm = monthTxns.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0);
+  const monthSales = monthTxns.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0);
 
-  const pendingComm = pendingTxns.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
-  const paidComm = paidTxns.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
+  const pendingComm = pendingTxns.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0);
+  const paidComm = paidTxns.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0);
 
-  const lifetimeComm = allTransactions.reduce((sum, t) => sum + (t.commissionAmount || 0), 0);
-  const lifetimeSales = allTransactions.reduce((sum, t) => sum + (t.saleAmount || 0), 0);
+  const lifetimeComm = allTransactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0);
+  const lifetimeSales = allTransactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0);
 
-  // Group top performers from the active transaction set
+  // Group top performers from the active transaction set using net contribution (accounting for deltas)
   const performerMap = new Map<number, { employee: any; totalCommission: number; totalSales: number }>();
 
   monthTxns.forEach((t) => {
     if (!t.employee) return;
     const empId = t.employeeId;
+    const { netSales, netCommission } = getTransactionNetContribution(t);
     const existing = performerMap.get(empId);
     if (existing) {
-      existing.totalCommission += Number(t.commissionAmount || 0);
-      existing.totalSales += Number(t.saleAmount || 0);
+      existing.totalCommission += netCommission;
+      existing.totalSales += netSales;
     } else {
       performerMap.set(empId, {
         employee: t.employee,
-        totalCommission: Number(t.commissionAmount || 0),
-        totalSales: Number(t.saleAmount || 0),
+        totalCommission: netCommission,
+        totalSales: netSales,
       });
     }
   });

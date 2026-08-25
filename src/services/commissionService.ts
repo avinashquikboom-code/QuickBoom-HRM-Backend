@@ -1,4 +1,5 @@
 import { prisma } from '../utils/db';
+import { getTransactionNetContribution } from '../utils/commissionHelper';
 
 export class CommissionService {
   /**
@@ -47,8 +48,8 @@ export class CommissionService {
       });
     } catch (_) {}
 
-    const rawNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
-    const rawCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
+    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
 
     const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
     const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
@@ -102,8 +103,8 @@ export class CommissionService {
       }
     });
 
-    const totalNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
-    const totalCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+    const totalNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
+    const totalCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
 
     console.log(`[Monthly Metrics] ✅ Results:`, {
       month: targetMonth,
@@ -165,8 +166,8 @@ export class CommissionService {
       });
     } catch (_) {}
 
-    const rawNetSales = sales.reduce((sum, s) => sum + s.saleAmount, 0);
-    const rawCommission = sales.reduce((sum, s) => sum + s.commissionAmount, 0);
+    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
+    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
 
     const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
     const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
