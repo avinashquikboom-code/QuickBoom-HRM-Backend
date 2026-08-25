@@ -455,6 +455,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         const commDelta = newCommissionAmount - oldCommission;
         const saleDelta = newSaleAmount - oldSaleAmount;
 
+        console.log(`[Invoice Updated]\nBillId: ${billIdKey}\nOld Amount: ₹${oldSaleAmount}\nNew Amount: ₹${newSaleAmount}\nFinal Amount: ₹${newSaleAmount}`);
+        console.log(`[Commission]\nEmployee: ${salesman.employeeCode || salesman.id}\nOld Commission: ₹${oldCommission}\nNew Commission: ₹${newCommissionAmount}\nFinal Commission: ₹${newCommissionAmount}`);
         console.log(`[Commission Audit] UPDATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
         console.log(`[Commission Audit]   oldAmount: ₹${oldSaleAmount}`);
         console.log(`[Commission Audit]   newAmount: ₹${newSaleAmount}`);
@@ -595,6 +597,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
           });
         }
 
+        console.log(`[Invoice Created]\nBillId: ${billIdKey}\nAmount: ₹${finalSaleAmount}\nEmployee(s): ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
+        console.log(`[Commission]\nEmployee: ${salesman.employeeCode || salesman.id}\nOld Commission: ₹0\nNew Commission: ₹${finalCommAmount}\nFinal Commission: ₹${finalCommAmount}`);
         console.log(`[Commission Audit] CREATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
         console.log(`[Commission Audit]   oldAmount: ₹0`);
         console.log(`[Commission Audit]   newAmount: ₹${finalSaleAmount}`);
@@ -959,6 +963,8 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
       const effectiveSaleAmount = isOld ? -Math.abs(rawAmount) : Math.abs(rawAmount);
       const effectiveCommission = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
 
+      console.log(`[Sales Exchange]\nIsOld: ${isOld ? '1' : '0'}\nCommission: ₹${Math.abs(baseComm)}\nDirection: ${isOld ? 'MINUS' : 'ADD'}`);
+
       if (isOld) {
         totalOldSales += Math.abs(rawAmount);
         totalOldCommission += Math.abs(baseComm);
@@ -1223,6 +1229,9 @@ async function executeWebhookPipeline(
   try {
     // STEP 1: IDEMPOTENCY CHECK
     const idempotency = await checkWebhookIdempotency(payload, normalizedType);
+    const resolvedEventId = idempotency.eventId || (meta.eventId ? String(meta.eventId) : null);
+    console.log(`[Webhook Idempotency]\nEventId: ${resolvedEventId || 'N/A'}\nDuplicate: ${idempotency.isDuplicate ? 'YES' : 'NO'}`);
+
     if (idempotency.isDuplicate) {
       console.log(`[Webhook Idempotency] ℹ️ Duplicate event safely ignored (Key: ${idempotency.dedupKey})`);
       res.status(200).json({
@@ -1235,8 +1244,6 @@ async function executeWebhookPipeline(
     }
 
     // STEP 2: CREATE SINGLE PROCESSING LOG ENTRY
-    const resolvedEventId = idempotency.eventId || (meta.eventId ? String(meta.eventId) : null);
-
     try {
       logEntry = await prisma.webhookLog.create({
         data: {
