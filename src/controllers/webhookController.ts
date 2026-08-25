@@ -1143,47 +1143,8 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function processSalesExchangeUpdated(payload: any, eventId?: string | null): Promise<void> {
-  const data = payload.data || payload;
-  const exchange = data.salesExchange || payload.salesExchange || data;
-  const exchangeNo = String(exchange?.exchangeNo || exchange?.number || '');
-
-  if (!exchange || !exchangeNo) {
-    throw new Error('Invalid payload: missing exchangeNo');
-  }
-
-  const existingExchange = await prisma.salesExchange.findUnique({
-    where: { exchangeNo: exchangeNo }
-  });
-
-  if (!existingExchange) {
-    console.warn('[Exchange Update] ⚠️ Exchange not found, processing as created...');
-    await processSalesExchangeCreated(payload, eventId);
-    return;
-  }
-
-  const newStatus = exchange.status?.toUpperCase() || 'COMPLETED';
-  let ourStatus = 'COMPLETED';
-  if (newStatus === 'CANCELLED' || newStatus === 'VOID' || newStatus === 'INACTIVE') {
-    ourStatus = 'CANCELLED';
-  }
-
-  await prisma.salesExchange.update({
-    where: { id: existingExchange.id },
-    data: {
-      status: ourStatus,
-      updatedAt: new Date()
-    }
-  });
-
-  const month = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-
-  if (existingExchange.originalSaleId) {
-    const origSale = await prisma.sales.findUnique({ where: { id: existingExchange.originalSaleId } });
-    if (origSale?.employeeId) {
-      const calculation = await CommissionService.calculateMonthlyCommission(origSale.employeeId, month);
-      await CommissionService.upsertMonthlyCommission(origSale.employeeId, month, calculation);
-    }
-  }
+  console.log(`[Sales Exchange Updated] Processing Sales Exchange update for eventId: ${eventId || 'N/A'}`);
+  await processSalesExchangeCreated(payload, eventId);
 }
 
 // Backward compatibility alias for legacy callers
