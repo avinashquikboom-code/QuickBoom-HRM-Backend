@@ -431,18 +431,18 @@ server.listen(port, host, () => {
       console.log(`ℹ️ [Startup Patch] All offices already have geofence radius >= 25m.`);
     }
   })
-  .catch(err => {
+  .catch((err: unknown) => {
     console.error('❌ [Startup Patch] Failed to update office geofence radius on startup:', err);
   });
 
   // Initialize Database Constraints startup patch
   ensureDatabaseConstraints()
-    .catch(err => console.error('❌ [Startup Patch] Database constraints initialization failed:', err));
+    .catch((err: unknown) => console.error('❌ [Startup Patch] Database constraints initialization failed:', err));
 
   // Initialize Role Permissions startup patch
   initRolePermissions()
     .then(() => console.log('✅ [Startup Patch] Role permissions verified/initialized.'))
-    .catch(err => console.error('❌ [Startup Patch] Role permissions initialization failed:', err));
+    .catch((err: unknown) => console.error('❌ [Startup Patch] Role permissions initialization failed:', err));
 
   // HopKid employees are now synchronized via Webhook events (EMPLOYEE_CREATED, EMPLOYEE_UPDATED, EMPLOYEE_DELETED)
   // Background API polling disabled to prevent rate limits and latency
