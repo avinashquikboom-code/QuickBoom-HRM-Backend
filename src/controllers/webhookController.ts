@@ -197,7 +197,7 @@ export async function groupAndCalculateCommissionBySalesman(
           commissionRate = 0;
         }
       } else {
-        commissionRate = salesman.commissionPercentage ?? 1.0;
+        commissionRate = salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0;
         productCommission = (productNetAmount * commissionRate) / 100;
       }
 
@@ -522,7 +522,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
           data: {
             saleAmount: newSaleAmount,
             commissionAmount: newCommissionAmount,
-            commissionPercent: salesman.commissionPercentage || 1.0,
+            commissionPercent: salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : (existingTx.commissionPercent ?? 0),
             oldAmount: oldSaleAmount,
             newAmount: newSaleAmount,
             oldCommission: oldCommission,
@@ -565,7 +565,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         }
 
         console.log(`[Invoice Updated]\nBillId: ${billIdKey}\nAmount: ₹${newSaleAmount}\nEmployee(s): ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
-        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: ${oldSaleAmount}\nnewAmount: ${newSaleAmount}\ncommissionRate: ${salesman.commissionPercentage || 1}%\noldCommission: ${oldCommission}\nnewCommission: ${newCommissionAmount}\ncommissionAdjustment: ${commDelta >= 0 ? '+' : ''}${commDelta}\nfinalCommission: ${newCommissionAmount}`);
+        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: ${oldSaleAmount}\nnewAmount: ${newSaleAmount}\ncommissionRate: ${salesman.commissionPercentage || 0}%\noldCommission: ${oldCommission}\nnewCommission: ${newCommissionAmount}\ncommissionAdjustment: ${commDelta >= 0 ? '+' : ''}${commDelta}\nfinalCommission: ${newCommissionAmount}`);
 
         // Wallet adjustment for commission delta ONLY
         if (commDelta !== 0) {
@@ -600,7 +600,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             data: {
               saleAmount: finalSaleAmount,
               commissionAmount: finalCommAmount,
-              commissionPercent: salesman.commissionPercentage || 1.0,
+              commissionPercent: salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0,
               oldAmount: existingTxInDb.saleAmount || 0,
               newAmount: finalSaleAmount,
               oldCommission: existingTxInDb.commissionAmount || 0,
@@ -620,7 +620,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               policyId: targetPolicyId,
               saleAmount: finalSaleAmount,
               commissionType: 'PERCENTAGE',
-              commissionPercent: salesman.commissionPercentage || 1.0,
+              commissionPercent: salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0,
               commissionAmount: finalCommAmount,
               oldAmount: 0,
               newAmount: finalSaleAmount,
