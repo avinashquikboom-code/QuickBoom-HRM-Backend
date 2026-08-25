@@ -617,16 +617,6 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
 
       processedSalesCount++;
       affectedEmployeeIds.push(salesman.id);
-
-      await broadcastCommissionEvent(salesman.id, {
-        success: true,
-        eventType: targetEventType,
-        billId: billIdKey,
-        amount: isCancelledOrReturned ? 0 : saleAmount,
-        commission: isCancelledOrReturned ? 0 : commAmt,
-        employeeId: salesman.id,
-        createdAt: validDate.toISOString(),
-      });
     }
 
     // Handle salesmen removed during an Invoice Updated event
@@ -686,6 +676,25 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       }
     }
   });
+
+  // Post-transaction: Broadcast real-time updates and recalculate monthly totals
+  for (const [salesmanId, commissionData] of commissionMap.entries()) {
+    try {
+      const saleAmount = Math.round(commissionData.totalAmount * 100) / 100;
+      const commAmt = Math.round(commissionData.totalCommission * 100) / 100;
+      await broadcastCommissionEvent(salesmanId, {
+        success: true,
+        eventType: targetEventType,
+        billId: billIdKey,
+        amount: isCancelledOrReturned ? 0 : saleAmount,
+        commission: isCancelledOrReturned ? 0 : commAmt,
+        employeeId: salesmanId,
+        createdAt: validDate.toISOString(),
+      });
+    } catch (bcErr: any) {
+      console.warn(`[Broadcast Warning] Failed for salesman ${salesmanId}:`, bcErr.message);
+    }
+  }
 
   // Recalculate monthly commission for all affected employees
   const monthKey = `${validDate.getFullYear()}-${String(validDate.getMonth() + 1).padStart(2, '0')}`;
@@ -1190,6 +1199,8 @@ async function executeWebhookPipeline(
 
   await storeWebhookData(payload);
 
+  let logEntry: any = null;
+
   try {
     // STEP 1: IDEMPOTENCY CHECK
     const idempotency = await checkWebhookIdempotency(payload, normalizedType);
@@ -1206,7 +1217,6 @@ async function executeWebhookPipeline(
 
     // STEP 2: CREATE SINGLE PROCESSING LOG ENTRY
     const resolvedEventId = idempotency.eventId || (meta.eventId ? String(meta.eventId) : null);
-    let logEntry: any = null;
 
     try {
       logEntry = await prisma.webhookLog.create({
@@ -1250,15 +1260,25 @@ async function executeWebhookPipeline(
       duplicate: false,
     });
   } catch (err: any) {
-    console.error(`[Webhook Handler] ❌ Error processing ${normalizedType}:`, err.message);
+    const errorDetails = `[${err.name || 'Error'}] ${err.message}${err.code ? ` (Code: ${err.code})` : ''}${err.stack ? `\nStack:\n${err.stack}` : ''}`;
+    console.error(`[Webhook Handler] ❌ Error processing ${normalizedType}:\n${errorDetails}`);
 
     const resolvedEventId = meta.eventId ? String(meta.eventId) : null;
-    if (resolvedEventId) {
+    if (logEntry?.id) {
+      await prisma.webhookLog.update({
+        where: { id: logEntry.id },
+        data: {
+          status: 'FAILED',
+          errorMessage: errorDetails,
+          processedAt: new Date(),
+        },
+      }).catch(() => {});
+    } else if (resolvedEventId) {
       await prisma.webhookLog.updateMany({
         where: { eventId: resolvedEventId },
         data: {
           status: 'FAILED',
-          errorMessage: err.message,
+          errorMessage: errorDetails,
           processedAt: new Date(),
         }
       }).catch(() => {});
@@ -1268,6 +1288,7 @@ async function executeWebhookPipeline(
       success: false,
       message: 'Failed to process webhook.',
       error: err.message,
+      code: err.code || undefined,
     });
   }
 }
