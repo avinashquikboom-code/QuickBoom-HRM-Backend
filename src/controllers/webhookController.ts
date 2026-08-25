@@ -104,7 +104,10 @@ export async function groupAndCalculateCommissionBySalesman(
         lineItem.employeeID ||
         lineItem.SalesMan;
 
-      if (!employeeIdentifier) continue;
+      if (!employeeIdentifier) {
+        console.warn(`[Commission] Employee mapping failed\nBillId: ${invoiceData.invoiceNo}\nEmployee identifier received: None\nReason: No employee identifier found in product or invoice data`);
+        continue;
+      }
 
       let resolvedId = await resolveEmployeeId(employeeIdentifier);
       if (resolvedId === null && lineItem.employeePhoneNo) {
@@ -128,31 +131,40 @@ export async function groupAndCalculateCommissionBySalesman(
       }
 
       if (!salesman) {
-        const rawName = lineItem.employeeName || lineItem.name || 'HopKid Employee';
-        const nameParts = String(rawName).trim().split(' ');
-        const firstName = nameParts[0] || 'HopKid';
-        const lastName = nameParts.slice(1).join(' ') || 'Employee';
-        const mobileNumber = lineItem.employeePhoneNo || lineItem.employeeContactNo || lineItem.mobileNo || null;
-        const empCode = lineItem.employeeCode || lineItem.code || `HK_${String(employeeIdentifier).replace(/[^a-zA-Z0-9]/g, '')}`;
+        try {
+          const rawName = lineItem.employeeName || lineItem.name || 'HopKid Employee';
+          const nameParts = String(rawName).trim().split(' ');
+          const firstName = nameParts[0] || 'HopKid';
+          const lastName = nameParts.slice(1).join(' ') || 'Employee';
+          const mobileNumber = lineItem.employeePhoneNo || lineItem.employeeContactNo || lineItem.mobileNo || null;
+          const empCode = lineItem.employeeCode || lineItem.code || `HK_${String(employeeIdentifier).replace(/[^a-zA-Z0-9]/g, '')}`;
 
-        salesman = await prisma.employee.create({
-          data: {
-            employeeCode: String(empCode),
-            firstName,
-            lastName,
-            mobileNumber: mobileNumber ? String(mobileNumber) : null,
-            status: 'active',
-            source: 'HOPKID',
-            commissionPercentage: 1.00,
-            storeId: invoiceData.metaStoreId,
-          },
-          include: {
-            commissionPolicies: {
-              where: { isActive: true },
-              orderBy: { priority: 'asc' },
+          salesman = await prisma.employee.create({
+            data: {
+              employeeCode: String(empCode),
+              firstName,
+              lastName,
+              mobileNumber: mobileNumber ? String(mobileNumber) : null,
+              status: 'active',
+              source: 'HOPKID',
+              commissionPercentage: 1.00,
+              storeId: invoiceData.metaStoreId,
             },
-          },
-        });
+            include: {
+              commissionPolicies: {
+                where: { isActive: true },
+                orderBy: { priority: 'asc' },
+              },
+            },
+          });
+        } catch (createErr: any) {
+          console.error(`[Commission] Employee mapping failed\nBillId: ${invoiceData.invoiceNo}\nEmployee identifier received: ${employeeIdentifier}\nReason: ${createErr.message}`);
+        }
+      }
+
+      if (!salesman) {
+        console.error(`[Commission] Employee mapping failed\nBillId: ${invoiceData.invoiceNo}\nEmployee identifier received: ${employeeIdentifier}\nReason: Salesman could not be found or created`);
+        continue;
       }
 
       let policy = salesman.commissionPolicies?.[0];

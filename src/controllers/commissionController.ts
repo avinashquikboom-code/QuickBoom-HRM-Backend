@@ -18,9 +18,15 @@ export const getCommissionDashboard = async (
       if (targetEmpId === null) targetEmpId = -1;
     }
 
-    const parsedStoreId = storeId ? parseInt(storeId as string, 10) : null;
-    const start = startDate ? new Date(startDate as string) : undefined;
-    const end = endDate ? new Date(endDate as string) : undefined;
+    let parsedStoreId: number | null = null;
+    if (storeId && storeId !== 'all' && storeId !== '' && !isNaN(parseInt(storeId as string, 10))) {
+      parsedStoreId = parseInt(storeId as string, 10);
+    }
+
+    const start = startDate ? String(startDate) : undefined;
+    const end = endDate ? String(endDate) : undefined;
+
+    console.log(`[Commission API]\nFilter:\nmonth: ${startDate ? String(startDate).slice(0, 7) : 'all'}\nstoreId: ${parsedStoreId || 'all'}\nemployeeId: ${targetEmpId || 'all'}\nstartDate: ${start || 'none'}\nendDate: ${end || 'none'}`);
 
     const stats = await getCommissionStats({
       employeeId: targetEmpId,
@@ -330,10 +336,12 @@ export const getCommissionTransactions = async (
       }
     }
     
-    if (storeId) {
+    if (storeId && storeId !== 'all' && storeId !== '' && !isNaN(parseInt(storeId as string, 10))) {
       whereClause.storeId = parseInt(storeId as string, 10);
     }
-    if (status) whereClause.status = status as string;
+    if (status && status !== 'all' && status !== '') {
+      whereClause.status = status as string;
+    }
 
     if (billId) {
       const bId = Array.isArray(billId) ? String(billId[0]) : String(billId);
@@ -355,12 +363,12 @@ export const getCommissionTransactions = async (
     if (startDate || endDate) {
       whereClause.createdAt = {};
       if (startDate) {
-        const startOf = new Date(startDate as string);
+        const startOf = safeParseDate(startDate as string);
         startOf.setHours(0, 0, 0, 0);
         whereClause.createdAt.gte = startOf;
       }
       if (endDate) {
-        const endOf = new Date(endDate as string);
+        const endOf = safeParseDate(endDate as string);
         endOf.setHours(23, 59, 59, 999);
         whereClause.createdAt.lte = endOf;
       }
@@ -383,6 +391,10 @@ export const getCommissionTransactions = async (
 
     const eligible = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
     const transactions = deduplicateCommissionTransactions(eligible);
+
+    console.log(`[Commission API]\nFilter:\nmonth: ${startDate ? String(startDate).slice(0, 7) : 'all'}\nstoreId: ${whereClause.storeId || 'all'}\nemployeeId: ${whereClause.employeeId || 'all'}\nstartDate: ${startDate || 'none'}\nendDate: ${endDate || 'none'}`);
+    console.log(`[Commission API]\nTransactions found: ${transactions.length}`);
+    console.log(`[Commission API]\nEmployees mapped: ${new Set(transactions.map(t => t.employeeId)).size}`);
 
     res.json({ success: true, transactions });
   } catch (error) {

@@ -681,7 +681,7 @@ export async function fetchHopkidInvoiceDetails(identifier: string): Promise<any
 }
 
 export function isEligibleCommissionEmployee(emp: any): boolean {
-  if (!emp) return false;
+  if (!emp) return true;
 
   // Must not be MANUAL source
   const source = String(emp.source || 'HOPKID').toUpperCase();
@@ -724,36 +724,33 @@ export interface CommissionSummaryStats {
 export async function getCommissionStats(params?: {
   employeeId?: number | null;
   storeId?: number | null;
-  startDate?: Date;
-  endDate?: Date;
+  startDate?: Date | string;
+  endDate?: Date | string;
 }): Promise<CommissionSummaryStats> {
   const whereClause: any = {};
-  if (params?.employeeId) {
+  if (params?.employeeId && params.employeeId !== -1) {
     whereClause.employeeId = params.employeeId;
   }
-  if (params?.storeId) {
+  if (params?.storeId && !isNaN(params.storeId) && params.storeId > 0) {
     whereClause.storeId = params.storeId;
   }
 
   if (params?.startDate || params?.endDate) {
     whereClause.createdAt = {};
     if (params.startDate) {
-      const startOf = new Date(params.startDate);
+      const startOf = safeParseDate(params.startDate);
       startOf.setHours(0, 0, 0, 0);
       whereClause.createdAt.gte = startOf;
     }
     if (params.endDate) {
-      const endOf = new Date(params.endDate);
+      const endOf = safeParseDate(params.endDate);
       endOf.setHours(23, 59, 59, 999);
       whereClause.createdAt.lte = endOf;
     }
   }
 
-  // Filter out rejected or cancelled transactions
+  // Filter for valid active/approved/paid/pending commission transactions
   whereClause.status = { in: ['PENDING', 'APPROVED', 'PAID'] };
-  whereClause.employee = {
-    source: { not: 'MANUAL' },
-  };
 
   const rawTransactions = await prisma.commissionTransaction.findMany({
     where: whereClause,
@@ -766,7 +763,7 @@ export async function getCommissionStats(params?: {
       },
       store: true,
     },
-    orderBy: { id: 'desc' },
+    orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
   });
 
   const allTransactions = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
@@ -790,7 +787,11 @@ export async function getCommissionStats(params?: {
   const todayTxns = allTransactions.filter(
     (t) => new Date(t.createdAt) >= todayStart && new Date(t.createdAt) <= todayEnd
   );
-  const monthTxns = allTransactions.filter((t) => new Date(t.createdAt) >= monthStart);
+  // If dateRange filter was explicitly provided, allTransactions is the filtered set; otherwise filter by current month
+  const monthTxns = (params?.startDate || params?.endDate)
+    ? allTransactions
+    : allTransactions.filter((t) => new Date(t.createdAt) >= monthStart);
+
   const pendingTxns = allTransactions.filter(
     (t) => t.status === 'PENDING' || t.status === 'APPROVED'
   );
@@ -814,8 +815,7 @@ export async function getCommissionStats(params?: {
   const rawActiveEmps = await prisma.employee.findMany({
     where: {
       status: 'active',
-      source: { not: 'MANUAL' },
-      ...(params?.storeId ? { storeId: params.storeId } : {}),
+      ...(params?.storeId && !isNaN(params.storeId) && params.storeId > 0 ? { storeId: params.storeId } : {}),
     },
     select: {
       id: true,
@@ -842,7 +842,7 @@ export async function getCommissionStats(params?: {
     });
   });
 
-  allTransactions.forEach((t) => {
+  monthTxns.forEach((t) => {
     if (!t.employee) return;
     const empId = t.employeeId;
     const existing = performerMap.get(empId);
@@ -861,6 +861,9 @@ export async function getCommissionStats(params?: {
   const topPerformers = Array.from(performerMap.values())
     .sort((a, b) => (b.totalCommission - a.totalCommission) || (b.totalSales - a.totalSales))
     .slice(0, 10);
+
+  console.log(`[Commission API]\nTop performers: ${topPerformers.length}`);
+  console.log(`[Commission API]\nSummary:\nnetSales: ${Math.round(monthSales * 100) / 100}\ncommission: ${Math.round(monthComm * 100) / 100}\nbillCount: ${monthTxns.length}`);
 
   return {
     today: {
