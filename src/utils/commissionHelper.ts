@@ -27,9 +27,9 @@ export function parseIsOld(item: any): boolean {
 }
 
 /**
- * Calculates the total contribution of a commission transaction according to business rules:
- * 1. For an INVOICE_UPDATED transaction: BOTH old commission and new commission are counted (Total = oldCommission + newCommission).
- * 2. For a CREATED / regular invoice: only the current/new commission is counted.
+ * Calculates the current/effective contribution of a commission transaction:
+ * - Returns the current/effective sale amount and commission amount.
+ * - Historical old values are preserved in the record for audit/history, but are never added to current earnings.
  */
 export function getTransactionNetContribution(t: {
   eventType?: string | null;
@@ -41,25 +41,17 @@ export function getTransactionNetContribution(t: {
   newCommission?: number | string | null;
   commissionDifference?: number | string | null;
 }): { netSales: number; netCommission: number } {
-  const isUpdated = t.eventType === 'INVOICE_UPDATED' ||
-    (t.oldCommission !== null && t.oldCommission !== undefined && Number(t.oldCommission) > 0) ||
-    (t.oldAmount !== null && t.oldAmount !== undefined && Number(t.oldAmount) > 0 && Number(t.oldAmount) !== Number(t.newAmount || t.saleAmount));
+  const currentSales = t.newAmount !== null && t.newAmount !== undefined && Number(t.newAmount) > 0
+    ? Number(t.newAmount)
+    : Number(t.saleAmount || 0);
 
-  if (isUpdated) {
-    const oldAmt = Number(t.oldAmount || 0);
-    const newAmt = Number(t.newAmount !== null && t.newAmount !== undefined && Number(t.newAmount) !== 0 ? t.newAmount : t.saleAmount);
-    const oldComm = Number(t.oldCommission || 0);
-    const newComm = Number(t.newCommission !== null && t.newCommission !== undefined && Number(t.newCommission) !== 0 ? t.newCommission : t.commissionAmount);
-
-    return {
-      netSales: (oldAmt > 0 ? oldAmt : 0) + newAmt,
-      netCommission: (oldComm > 0 ? oldComm : 0) + newComm,
-    };
-  }
+  const currentCommission = t.newCommission !== null && t.newCommission !== undefined && Number(t.newCommission) > 0
+    ? Number(t.newCommission)
+    : Number(t.commissionAmount || 0);
 
   return {
-    netSales: Number(t.saleAmount || 0),
-    netCommission: Number(t.commissionAmount || 0),
+    netSales: currentSales,
+    netCommission: currentCommission,
   };
 }
 
