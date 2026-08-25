@@ -394,7 +394,24 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
 
   const primaryBillId = meta.billId || invoice.invoiceNo || invoice.invoiceId || `BILL-${Date.now()}`;
   const primaryAmount = meta.amount || invoice.netAmount || 0;
-  const itemsToProcess = meta.lineItems.length > 0 ? meta.lineItems : [effectiveData];
+
+  let itemsToProcess: any[] = [];
+  if (meta.salesmen && meta.salesmen.length > 0) {
+    itemsToProcess = meta.salesmen.map((s, idx) => ({
+      productID: s.productId || s.productID || `SALESMAN-${idx + 1}`,
+      productName: s.productName || s.name || `Salesman Allocation`,
+      productNetAmount: safeParseAmount(s.amount ?? s.saleAmount ?? s.applicableAmount ?? (primaryAmount * (s.percentage || s.sharePercent || 0) / 100)),
+      employeeCode: s.employeeCode || s.code || s.empCode || s.employeeId || s.salesmanCode || s.id,
+      employeeName: s.employeeName || s.name || s.salesmanName,
+      employeePhoneNo: s.employeePhoneNo || s.mobileNo || s.phone,
+      isOld: s.isOld ?? s.IsOld,
+    }));
+  } else if (meta.lineItems.length > 0) {
+    itemsToProcess = meta.lineItems;
+  } else {
+    itemsToProcess = [effectiveData];
+  }
+
   const resolvedEventId = eventIdParam || meta.eventId || null;
 
   const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || effectiveData.createdAt || effectiveData.transactionDate;
@@ -422,6 +439,14 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
   console.log(`[Commission Audit] Incoming Amount: ₹${primaryAmount} | Status: ${invoiceStatus}`);
   console.log(`[Commission Audit] ═══════════════════════════════════════════════════`);
 
+  console.log(`\n[COMMISSION DEBUG]`);
+  console.log(`Bill ID: ${billIdKey}`);
+  console.log(`Invoice: ${invoice.invoiceNumber || invoice.invoiceNo || billIdKey}`);
+  console.log(`Salesmen Count: ${commissionMap.size}`);
+  console.log(`Salesmen: ${Array.from(commissionMap.values()).map(c => `${c.salesman.firstName} ${c.salesman.lastName} (${c.salesman.employeeCode || c.salesman.id})`).join(', ')}`);
+  console.log(`Employee IDs: ${Array.from(commissionMap.keys()).join(', ')}`);
+  console.log(`Applicable Amounts: ${Array.from(commissionMap.values()).map(c => `₹${c.totalAmount}`).join(', ')}`);
+
   await prisma.$transaction(async (tx) => {
     const existingTransactions = await tx.commissionTransaction.findMany({
       where: { billId: billIdKey }
@@ -443,15 +468,27 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
 
       const existingTx = existingTransactions.find(t => t.employeeId === salesman.id);
 
+      const oldSaleAmount = existingTx ? existingTx.saleAmount : 0;
+      const oldCommission = existingTx ? existingTx.commissionAmount : 0;
+      const newSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
+      const newCommissionAmount = isCancelledOrReturned ? 0 : commAmt;
+
+      console.log(`\n[COMMISSION CALCULATION]`);
+      console.log(`Bill: ${billIdKey}`);
+      console.log(`Employee: ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
+      console.log(`Old Amount: ₹${oldSaleAmount}`);
+      console.log(`New Amount: ₹${newSaleAmount}`);
+      console.log(`Applicable Amount: ₹${newSaleAmount}`);
+      console.log(`Rate: ${salesman.commissionPercentage ?? 1}%`);
+      console.log(`Commission: ₹${newCommissionAmount}`);
+      console.log(`IsOld: ${commissionData.products.some(p => p.isOld) ? 1 : 0}`);
+      console.log(`Event Type: ${targetEventType}`);
+
       if (existingTx) {
         // ═══════════════════════════════════════════════════════════════
         // INVOICE UPDATED / EXISTING RECORD PATH
         // Replace old amount with new amount; wallet gets ONLY the delta
         // ═══════════════════════════════════════════════════════════════
-        const oldSaleAmount = existingTx.saleAmount;
-        const oldCommission = existingTx.commissionAmount;
-        const newSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
-        const newCommissionAmount = isCancelledOrReturned ? 0 : commAmt;
         const commDelta = newCommissionAmount - oldCommission;
         const saleDelta = newSaleAmount - oldSaleAmount;
 

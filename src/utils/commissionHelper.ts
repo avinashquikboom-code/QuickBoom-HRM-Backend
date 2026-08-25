@@ -204,6 +204,7 @@ export interface ExtractedWebhookMeta {
   employeeName: string | null;
   commissionAmount: number | null;
   eventId: string | null;
+  salesmen: any[];
 }
 
 export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
@@ -226,6 +227,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
       employeeName: null,
       commissionAmount: null,
       eventId: null,
+      salesmen: [],
     };
   }
 
@@ -252,12 +254,31 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
         employeeName: null,
         commissionAmount: null,
         eventId: null,
+        salesmen: [],
       };
     }
   }
 
   const creditNote = payload?.data?.creditNote || payload?.creditNote || payload?.data?.salesExchange || payload?.salesExchange || payload?.data || payload || {};
   const invoice = payload?.data?.invoice || payload?.invoice || {};
+
+  const rawSalesmen =
+    payload?.data?.salesmen ||
+    payload?.salesmen ||
+    payload?.data?.salesPersons ||
+    payload?.salesPersons ||
+    payload?.data?.salesmanList ||
+    payload?.salesmanList ||
+    payload?.data?.employees ||
+    payload?.employees ||
+    invoice?.salesmen ||
+    invoice?.salesPersons ||
+    invoice?.salesmanList ||
+    invoice?.employees ||
+    creditNote?.salesmen ||
+    creditNote?.salesPersons ||
+    [];
+  const salesmen = Array.isArray(rawSalesmen) ? rawSalesmen : [];
 
   const lineItems = Array.isArray(payload?.data?.lineItems)
     ? payload.data.lineItems
@@ -603,6 +624,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     employeeName: employeeName ? String(employeeName) : null,
     commissionAmount: commissionAmount && !isNaN(commissionAmount) ? commissionAmount : null,
     eventId: eventId ? String(eventId) : null,
+    salesmen,
   };
 }
 
