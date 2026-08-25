@@ -13,9 +13,10 @@ export const roleMiddleware = (allowedRoles: string[]) => {
 
     const { role } = req.user;
 
-    // Check if the user's role is in the allowed list (case-insensitive for robustness)
+    // Check if the user's role is in the allowed list (case-insensitive and handles SUPER_ADMIN / SUPERADMIN variants)
+    const normUserRole = String(role || '').toUpperCase().replace(/_/g, '');
     const hasRole = allowedRoles.some(
-      (r) => r.toUpperCase() === role.toUpperCase()
+      (r) => String(r || '').toUpperCase().replace(/_/g, '') === normUserRole
     );
 
     if (!hasRole) {

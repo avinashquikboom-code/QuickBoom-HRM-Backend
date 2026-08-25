@@ -564,6 +564,9 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
           });
         }
 
+        console.log(`[Invoice Updated]\nBillId: ${billIdKey}\nAmount: ₹${newSaleAmount}\nEmployee(s): ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
+        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: ${oldSaleAmount}\nnewAmount: ${newSaleAmount}\ncommissionRate: ${salesman.commissionPercentage || 1}%\noldCommission: ${oldCommission}\nnewCommission: ${newCommissionAmount}\ncommissionAdjustment: ${commDelta >= 0 ? '+' : ''}${commDelta}\nfinalCommission: ${newCommissionAmount}`);
+
         // Wallet adjustment for commission delta ONLY
         if (commDelta !== 0) {
           console.log(`[Commission Audit]   Wallet adjustment: ${commDelta > 0 ? '+' : ''}₹${commDelta}`);
@@ -665,7 +668,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         }
 
         console.log(`[Invoice Created]\nBillId: ${billIdKey}\nAmount: ₹${finalSaleAmount}\nEmployee(s): ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
-        console.log(`[Commission]\nEmployee: ${salesman.employeeCode || salesman.id}\nOld Commission: ₹0\nNew Commission: ₹${finalCommAmount}\nFinal Commission: ₹${finalCommAmount}`);
+        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: 0\nnewAmount: ${finalSaleAmount}\ncommissionRate: ${salesman.commissionPercentage || 1}%\noldCommission: 0\nnewCommission: ${finalCommAmount}\ncommissionAdjustment: +${finalCommAmount}\nfinalCommission: ${finalCommAmount}`);
         console.log(`[Commission Audit] CREATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
         console.log(`[Commission Audit]   oldAmount: ₹0`);
         console.log(`[Commission Audit]   newAmount: ₹${finalSaleAmount}`);
