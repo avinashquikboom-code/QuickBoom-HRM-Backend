@@ -1175,6 +1175,19 @@ async function executeWebhookPipeline(
   console.log(`║ [WEBHOOK INGRESS] Event: ${normalizedType.padEnd(33)} ║`);
   console.log(`╚════════════════════════════════════════════════════════════╝`);
 
+  // Handle empty or test verification payload from HopKid test delivery button
+  if (!payload || (typeof payload === 'object' && Object.keys(payload).length === 0) || payload.test === true || payload.isTest === true || payload.ping === true) {
+    console.log(`[Webhook Ingress] ℹ️ Test delivery / verification ping received for ${normalizedType}. Responding HTTP 200 OK.`);
+    res.status(200).json({
+      success: true,
+      status: 'ACTIVE',
+      message: `HopKid ${canonicalEventType} test delivery received successfully.`,
+      eventType: canonicalEventType,
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
   await storeWebhookData(payload);
 
   try {

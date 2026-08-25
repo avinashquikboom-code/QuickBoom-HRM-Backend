@@ -22,40 +22,33 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
   const map = new Map<string, T>();
 
   for (const t of transactions) {
-    let invoiceKey = t.invoiceNumber || t.billId || `TXN-${t.id}`;
-    
-    // Normalize invoiceKey: strip line-item suffix e.g. "INV-1001-ProductA-NEW" -> "INV-1001-NEW" or "INV-1001"
-    if (invoiceKey.includes('-') && (invoiceKey.includes('-RET') || invoiceKey.includes('-NEW'))) {
-      const parts = invoiceKey.split('-');
-      const flag = invoiceKey.includes('-RET') ? 'RET' : 'NEW';
-      const baseNo = parts[0];
-      invoiceKey = `${baseNo}-${flag}`;
-    } else if (invoiceKey.includes('-') && !invoiceKey.startsWith('TXN-')) {
-      const parts = invoiceKey.split('-');
-      if (parts.length > 2) {
-        invoiceKey = parts[0];
-      }
-    }
-
+    const rawBill = String(t.billId || t.invoiceNumber || '').trim();
+    const invoiceKey = rawBill || `TXN-${t.id}`;
     const key = `${t.employeeId}_${invoiceKey}`;
 
     if (!map.has(key)) {
       map.set(key, {
         ...t,
-        invoiceNumber: t.invoiceNumber || invoiceKey,
-        billId: invoiceKey,
+        invoiceNumber: t.invoiceNumber || rawBill || `TXN-${t.id}`,
+        billId: t.billId || rawBill || `TXN-${t.id}`,
         saleAmount: Number(t.saleAmount || 0),
         commissionAmount: Number(t.commissionAmount || 0),
       });
     } else {
+      // If true duplicate records exist in the query result for exact same employeeId and billId, keep the newest one
       const existing = map.get(key)!;
-      existing.saleAmount = Number((Number(existing.saleAmount) + Number(t.saleAmount || 0)).toFixed(2));
-      existing.commissionAmount = Number((Number(existing.commissionAmount) + Number(t.commissionAmount || 0)).toFixed(2));
       if (t.createdAt && existing.createdAt && new Date(t.createdAt) > new Date(existing.createdAt)) {
-        existing.createdAt = t.createdAt;
+        map.set(key, {
+          ...t,
+          invoiceNumber: t.invoiceNumber || rawBill || `TXN-${t.id}`,
+          billId: t.billId || rawBill || `TXN-${t.id}`,
+          saleAmount: Number(t.saleAmount || 0),
+          commissionAmount: Number(t.commissionAmount || 0),
+        });
       }
     }
   }
 
   return Array.from(map.values());
 }
+
