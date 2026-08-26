@@ -21,30 +21,44 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
     const invoiceKey = rawBill || `TXN-${t.id}`;
     const key = `${t.employeeId}_${invoiceKey}`;
     const numInv = getNumericInvoiceNumber(t);
+    const rate = Number(t.commissionPercent ?? t.employee?.commissionPercentage ?? 1);
+    let comm = Number(t.commissionAmount || 0);
+    if (!comm || comm === 0) {
+      if (t.eventType === 'INVOICE_UPDATED' && Number(t.oldAmount || 0) > 0) {
+        const oldC = Math.round(((Number(t.oldAmount || 0) * rate) / 100) * 100) / 100;
+        const newC = Math.round(((Number(t.saleAmount || 0) * rate) / 100) * 100) / 100;
+        comm = Math.round((oldC + newC) * 100) / 100;
+      } else {
+        comm = Math.round(((Number(t.saleAmount || 0) * rate) / 100) * 100) / 100;
+      }
+    }
+    const invStr = (t.invoiceNumber && typeof t.invoiceNumber === 'string' && !/^[0-9a-fA-F-]{36}$/.test(t.invoiceNumber))
+      ? t.invoiceNumber
+      : `HWM-${numInv}`;
+
+    const formattedTxn = {
+      ...t,
+      billId: numInv,
+      billNumber: numInv,
+      invoiceNumber: invStr,
+      invoiceNo: invStr,
+      saleAmount: Number(t.saleAmount || 0),
+      commissionAmount: comm,
+      commissionPercent: rate,
+      totalCommission: comm,
+      oldAmount: Number(t.oldAmount || 0),
+      newAmount: Number(t.newAmount || t.saleAmount || 0),
+      oldCommission: Number(t.oldCommission || 0),
+      newCommission: Number(t.newCommission || comm),
+    };
 
     if (!map.has(key)) {
-      map.set(key, {
-        ...t,
-        invoiceNumber: numInv,
-        billNumber: numInv,
-        invoiceNo: numInv,
-        billId: t.billId || rawBill || `TXN-${t.id}`,
-        saleAmount: Number(t.saleAmount || 0),
-        commissionAmount: Number(t.commissionAmount || 0),
-      });
+      map.set(key, formattedTxn);
     } else {
       // If true duplicate records exist in the query result for exact same employeeId and billId, keep the newest one
       const existing = map.get(key)!;
       if (t.createdAt && existing.createdAt && new Date(t.createdAt) > new Date(existing.createdAt)) {
-        map.set(key, {
-          ...t,
-          invoiceNumber: numInv,
-          billNumber: numInv,
-          invoiceNo: numInv,
-          billId: t.billId || rawBill || `TXN-${t.id}`,
-          saleAmount: Number(t.saleAmount || 0),
-          commissionAmount: Number(t.commissionAmount || 0),
-        });
+        map.set(key, formattedTxn);
       }
     }
   }

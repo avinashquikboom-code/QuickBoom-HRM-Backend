@@ -153,18 +153,34 @@ export const getMobileCommissionTransactions = async (
 
     const mappedTransactions = transactions.map(t => {
       const numInv = getNumericInvoiceNumber(t);
+      const rate = t.commissionPercent ?? employee.commissionPercentage ?? 1;
+      let comm = t.commissionAmount;
+      if (!comm || comm === 0) {
+        if (t.eventType === 'INVOICE_UPDATED' && (t.oldAmount || 0) > 0) {
+          const oldC = Math.round((((t.oldAmount || 0) * rate) / 100) * 100) / 100;
+          const newC = Math.round((((t.saleAmount || 0) * rate) / 100) * 100) / 100;
+          comm = Math.round((oldC + newC) * 100) / 100;
+        } else {
+          comm = Math.round(((t.saleAmount * rate) / 100) * 100) / 100;
+        }
+      }
       return {
         id: t.id,
-        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-        invoiceNumber: numInv,
+        billId: numInv,
         billNumber: numInv,
-        invoiceNo: numInv,
+        invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
+        invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
         amount: t.newAmount || t.saleAmount,
         saleAmount: t.newAmount || t.saleAmount,
-        commission: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
+        commission: comm,
         commissionType: t.commissionType,
-        commissionPercent: t.commissionPercent,
-        commissionAmount: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
+        commissionPercent: rate,
+        commissionAmount: comm,
+        totalCommission: comm,
+        oldAmount: t.oldAmount || 0,
+        newAmount: t.newAmount || t.saleAmount,
+        oldCommission: t.oldCommission || 0,
+        newCommission: t.newCommission || comm,
         status: t.status,
         date: t.createdAt,
         createdAt: t.createdAt,
@@ -732,17 +748,36 @@ export const getMobileCommissionBills = async (
 
     const bills: any[] = txs.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
+      const rate = t.commissionPercent ?? employee.commissionPercentage ?? 1;
+      let comm = t.commissionAmount;
+      if (!comm || comm === 0) {
+        if (t.eventType === 'INVOICE_UPDATED' && (t.oldAmount || 0) > 0) {
+          const oldC = Math.round((((t.oldAmount || 0) * rate) / 100) * 100) / 100;
+          const newC = Math.round((((t.saleAmount || 0) * rate) / 100) * 100) / 100;
+          comm = Math.round((oldC + newC) * 100) / 100;
+        } else {
+          comm = Math.round(((t.saleAmount * rate) / 100) * 100) / 100;
+        }
+      }
       return {
         id: String(t.id),
-        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-        invoiceNumber: numInv,
+        billId: numInv,
         billNumber: numInv,
-        invoiceNo: numInv,
+        invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
+        invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
         saleAmount: t.saleAmount,
-        commission: t.commissionAmount,
+        commission: comm,
+        commissionAmount: comm,
+        commissionRate: rate,
+        oldAmount: t.oldAmount || 0,
+        newAmount: t.newAmount || t.saleAmount,
+        oldCommission: t.oldCommission || 0,
+        newCommission: t.newCommission || comm,
+        totalCommission: comm,
         date: t.createdAt,
         status: t.status,
         description: t.notes,
+        eventType: t.eventType,
       };
     });
 
@@ -858,7 +893,9 @@ export const getMobileCommissionBillDetail = async (
         OR: [
           { billId: billIdStr },
           { invoiceNumber: billIdStr },
-          ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ id })) : [])
+          ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ id })) : []),
+          ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ billId: String(id) })) : []),
+          ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ invoiceNumber: `HWM-${id}` })) : []),
         ],
       },
       include: { store: true }
@@ -871,7 +908,9 @@ export const getMobileCommissionBillDetail = async (
           OR: [
             { billId: billIdStr },
             { invoiceNumber: billIdStr },
-            ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ id })) : [])
+            ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ id })) : []),
+            ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ billId: String(id) })) : []),
+            ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ invoiceNumber: `HWM-${id}` })) : []),
           ],
         },
         include: { store: true }
@@ -884,6 +923,7 @@ export const getMobileCommissionBillDetail = async (
         OR: [
           { id: billIdStr },
           { billId: billIdStr },
+          ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ billId: String(id) })) : []),
         ],
       },
     });
@@ -908,8 +948,10 @@ export const getMobileCommissionBillDetail = async (
       const grossSale = safeParseAmount(webhookLog.amount || invoiceData.grandTotal || invoiceData.grossAmount || 0);
       const discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
       const tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || 0);
-      const commAmount = safeParseAmount(meta.commissionAmount || 0);
       const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: webhookLog.billId || billIdStr, id: webhookLog.id });
+      const rate = employee.commissionPercentage ?? 1;
+      const commAmount = safeParseAmount(meta.commissionAmount || 0) || Math.round(((grossSale * rate) / 100) * 100) / 100;
+      const invString = meta.invoiceNumber || `HWM-${numInv}`;
 
       let products: any[] = [];
       if (meta.lineItems && meta.lineItems.length > 0) {
@@ -929,13 +971,19 @@ export const getMobileCommissionBillDetail = async (
       res.json({
         success: true,
         data: {
-          billId: meta.invoiceNumber || webhookLog.billId || billIdStr,
-          invoiceNumber: numInv,
+          billId: numInv,
+          invoiceNumber: invString,
           billNumber: numInv,
+          invoiceNo: invString,
           saleAmount: grossSale,
           netAmount: grossSale,
-          commissionRate: employee.commissionPercentage ?? 0,
+          commissionRate: rate,
           commissionAmount: commAmount,
+          totalCommission: commAmount,
+          oldAmount: 0,
+          newAmount: grossSale,
+          oldCommission: 0,
+          newCommission: commAmount,
           date: webhookLog.createdAt,
           status: 'APPROVED',
           description: `Live POS Webhook Event (${meta.eventType || 'INVOICE_CREATED'})`,
@@ -948,6 +996,7 @@ export const getMobileCommissionBillDetail = async (
           grossSale,
           discount,
           tax,
+          externalEventId: meta.eventId || webhookLog.id,
           employee: {
             name: `${employee.firstName} ${employee.lastName}`.trim(),
             code: employee.employeeCode,
@@ -967,6 +1016,9 @@ export const getMobileCommissionBillDetail = async (
           const invoiceData = meta.invoice || fetchedInvoice.data || fetchedInvoice;
           const grossSale = safeParseAmount(meta.amount || invoiceData.netAmount || invoiceData.grandTotal || 0);
           const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: meta.billId || billIdStr });
+          const rate = employee.commissionPercentage ?? 1;
+          const commAmount = Math.round(((grossSale * rate) / 100) * 100) / 100;
+          const invString = meta.invoiceNumber || `HWM-${numInv}`;
 
           let products: any[] = [];
           if (meta.lineItems && meta.lineItems.length > 0) {
@@ -986,13 +1038,19 @@ export const getMobileCommissionBillDetail = async (
           res.json({
             success: true,
             data: {
-              billId: meta.invoiceNumber || meta.billId || billIdStr,
-              invoiceNumber: numInv,
+              billId: numInv,
+              invoiceNumber: invString,
               billNumber: numInv,
+              invoiceNo: invString,
               saleAmount: grossSale,
               netAmount: grossSale,
-              commissionRate: employee.commissionPercentage ?? 0,
-              commissionAmount: Math.round((grossSale * (employee.commissionPercentage ?? 0)) / 100 * 100) / 100,
+              commissionRate: rate,
+              commissionAmount: commAmount,
+              totalCommission: commAmount,
+              oldAmount: 0,
+              newAmount: grossSale,
+              oldCommission: 0,
+              newCommission: commAmount,
               date: meta.invoice?.invoiceDate || meta.invoice?.date || new Date().toISOString(),
               status: 'APPROVED',
               description: `Live HopKid POS Invoice (${billIdStr})`,
@@ -1005,6 +1063,7 @@ export const getMobileCommissionBillDetail = async (
               grossSale,
               discount: 0,
               tax: 0,
+              externalEventId: meta.eventId || null,
               employee: {
                 name: `${employee.firstName} ${employee.lastName}`.trim(),
                 code: employee.employeeCode,
@@ -1020,21 +1079,28 @@ export const getMobileCommissionBillDetail = async (
 
     // 5. Fallback detail summary for non-empty bill IDs (ensures UI opens bill card cleanly)
     if (!sale) {
-      const cleanBillId = billIdStr.length > 30 ? `INV-${billIdStr.slice(-8).toUpperCase()}` : billIdStr;
       const numInv = getNumericInvoiceNumber({ billId: billIdStr });
+      const cleanBillId = numInv;
+      const invString = `HWM-${numInv}`;
       res.json({
         success: true,
         data: {
           billId: cleanBillId,
-          invoiceNumber: numInv,
+          invoiceNumber: invString,
           billNumber: numInv,
+          invoiceNo: invString,
           saleAmount: 0,
           netAmount: 0,
           commissionRate: employee.commissionPercentage ?? 0,
           commissionAmount: 0,
+          totalCommission: 0,
+          oldAmount: 0,
+          newAmount: 0,
+          oldCommission: 0,
+          newCommission: 0,
           date: new Date().toISOString(),
           status: 'APPROVED',
-          description: `Invoice ${cleanBillId}`,
+          description: `Invoice ${invString}`,
           createdAt: new Date().toISOString(),
           customerName: 'Retail Customer',
           customerPhone: '-',
@@ -1128,23 +1194,51 @@ export const getMobileCommissionBillDetail = async (
       }
     }
 
-    const rate = sale.commissionPercent ?? employee.commissionPercentage ?? 0;
+    const rate = sale.commissionPercent !== null && sale.commissionPercent !== undefined && sale.commissionPercent > 0
+      ? Number(sale.commissionPercent)
+      : (employee.commissionPercentage ?? 1);
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const numInv = getNumericInvoiceNumber(sale);
+    const invString = sale.invoiceNumber || `HWM-${numInv}`;
 
-    console.log(`[MOBILE-BILL-DETAIL] Returning detail for billId=${billIdStr} (invoiceNumber=${numInv}) | products=${products.length} | saleAmount=₹${sale.saleAmount} | date=${sale.createdAt.toISOString()}`);
+    // Robust Commission Calculation:
+    const isUpdate = sale.eventType === 'INVOICE_UPDATED' || (sale.oldAmount !== null && sale.oldAmount !== undefined && sale.oldAmount > 0);
+    const oldAmt = Number(sale.oldAmount || 0);
+    const newAmt = Number(sale.newAmount || sale.saleAmount || 0);
+    const oldComm = sale.oldCommission !== null && sale.oldCommission !== undefined && sale.oldCommission > 0
+      ? Number(sale.oldCommission)
+      : (oldAmt > 0 ? Math.round(((oldAmt * rate) / 100) * 100) / 100 : 0);
+    const newComm = sale.newCommission !== null && sale.newCommission !== undefined && sale.newCommission > 0
+      ? Number(sale.newCommission)
+      : Math.round(((newAmt * rate) / 100) * 100) / 100;
+
+    let finalCommAmount = sale.commissionAmount;
+    if (!finalCommAmount || finalCommAmount === 0) {
+      if (isUpdate && oldAmt > 0) {
+        finalCommAmount = Math.round((oldComm + newComm) * 100) / 100;
+      } else {
+        finalCommAmount = Math.round(((sale.saleAmount * rate) / 100) * 100) / 100;
+      }
+    }
+
+    console.log(`[MOBILE-BILL-DETAIL] Returning detail for billId=${numInv} (invoiceNumber=${invString}) | saleAmount=₹${sale.saleAmount} | rate=${rate}% | comm=₹${finalCommAmount}`);
 
     res.json({
       success: true,
       data: {
-        billId: sale.billId || sale.invoiceNumber,
-        invoiceNumber: numInv,
+        billId: numInv,
+        invoiceNumber: invString,
         billNumber: numInv,
-        invoiceNo: numInv,
+        invoiceNo: invString,
         saleAmount: sale.saleAmount,
         netAmount: sale.saleAmount,
         commissionRate: rate,
-        commissionAmount: sale.commissionAmount,
+        commissionAmount: finalCommAmount,
+        totalCommission: finalCommAmount,
+        oldAmount: oldAmt,
+        newAmount: newAmt,
+        oldCommission: oldComm,
+        newCommission: newComm,
         date: sale.createdAt,
         status: sale.status,
         description: sale.notes,
@@ -1157,6 +1251,7 @@ export const getMobileCommissionBillDetail = async (
         grossSale,
         discount,
         tax,
+        externalEventId: webhookLog?.id || null,
         employee: {
           name: empName,
           code: employee.employeeCode,

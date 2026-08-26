@@ -3,7 +3,7 @@ import { prisma } from '../utils/db';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 import { Role } from '@prisma/client';
-import { extractWebhookMeta, normalizeEventType } from '../utils/commissionHelper';
+import { extractWebhookMeta, getNumericInvoiceNumber, normalizeEventType } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -168,21 +168,25 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     const mappedWebhookLogs = webhookLogs.map((log) => {
       const meta = extractWebhookMeta(log.payload);
       const amountVal = log.amount !== null && log.amount !== undefined && log.amount !== 0 ? log.amount : meta.amount;
-      const billIdVal = log.billId || meta.billId;
+      const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
+      const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber)) ? meta.invoiceNumber : `HWM-${numInv}`;
       const resolvedEmpName = resolveEmpName(log.employeeId, meta, null, log.payload);
       const resolvedStoreName = resolveStoreName(meta, null, log.employeeId, log.payload);
+      const resolvedEventId = log.eventId || meta.eventId || log.id;
 
       return {
         ...log,
         amount: amountVal || 0,
-        billId: billIdVal || null,
-        invoiceNo: meta.invoiceNumber || null,
+        billId: numInv,
+        invoiceNo: cleanInvoiceNo,
+        invoiceNumber: cleanInvoiceNo,
         customerName: meta.customerName || 'N/A',
         employeeName: resolvedEmpName,
         storeName: resolvedStoreName,
         commissionAmount: meta.commissionAmount || 0,
         eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
-        eventId: meta.eventId || null,
+        eventId: resolvedEventId,
+        externalEventId: resolvedEventId,
       };
     });
 
@@ -201,10 +205,12 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         for (const log of hopkidRawLogs) {
           const meta = extractWebhookMeta(log.rawPayload);
           const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
-          const billIdVal = log.billId || meta.billId;
+          const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
+          const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber)) ? meta.invoiceNumber : `HWM-${numInv}`;
+          const resolvedEventId = meta.eventId || log.id;
 
-          if (billIdVal && existingBillIds.has(billIdVal)) continue;
-          if (meta.eventId && existingEventIds.has(meta.eventId)) continue;
+          if (numInv && existingBillIds.has(numInv)) continue;
+          if (resolvedEventId && existingEventIds.has(resolvedEventId)) continue;
 
           const resolvedEmpName = resolveEmpName(null, meta, log.name, log.rawPayload);
           const resolvedStoreName = resolveStoreName(meta, log.storeId, null, log.rawPayload);
@@ -216,8 +222,9 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
             payload: log.rawPayload,
             employeeId: null,
             amount: amountVal || 0,
-            billId: billIdVal || null,
-            invoiceNo: meta.invoiceNumber || null,
+            billId: numInv,
+            invoiceNo: cleanInvoiceNo,
+            invoiceNumber: cleanInvoiceNo,
             customerName: meta.customerName || 'N/A',
             employeeName: resolvedEmpName,
             storeName: resolvedStoreName,
@@ -225,7 +232,8 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
             errorMessage: null,
             processedAt: log.createdAt,
             createdAt: log.createdAt,
-            eventId: meta.eventId || null,
+            eventId: resolvedEventId,
+            externalEventId: resolvedEventId,
           });
         }
       } catch (e) {

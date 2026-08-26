@@ -499,20 +499,25 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       if (existingTx) {
         // ═══════════════════════════════════════════════════════════════
         // INVOICE UPDATED / EXISTING RECORD PATH
-        // Replace old amount with new amount; wallet gets ONLY the delta
+        // Preserves Old Commission + New Commission = Total Commission Earned
+        // Wallet gets incremental delta (newCommission - oldCommission)
         // ═══════════════════════════════════════════════════════════════
-        const commDelta = newCommissionAmount - oldCommission;
+        const rateVal = salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : (existingTx.commissionPercent ?? 1);
+        const oldComm = oldSaleAmount > 0 ? Math.round(((oldSaleAmount * rateVal) / 100) * 100) / 100 : (existingTx.oldCommission || oldCommission);
+        const newComm = newSaleAmount > 0 ? Math.round(((newSaleAmount * rateVal) / 100) * 100) / 100 : newCommissionAmount;
+        const totalCommissionEarned = isCancelledOrReturned ? 0 : Math.round((oldComm + newComm) * 100) / 100;
+        const commDelta = Math.round((newComm - oldCommission) * 100) / 100;
         const saleDelta = newSaleAmount - oldSaleAmount;
 
         console.log(`[Invoice Updated]\nBillId: ${billIdKey}\nOld Amount: ₹${oldSaleAmount}\nNew Amount: ₹${newSaleAmount}\nFinal Amount: ₹${newSaleAmount}`);
-        console.log(`[Commission]\nEmployee: ${salesman.employeeCode || salesman.id}\nOld Commission: ₹${oldCommission}\nNew Commission: ₹${newCommissionAmount}\nFinal Commission: ₹${newCommissionAmount}`);
+        console.log(`[Commission]\nEmployee: ${salesman.employeeCode || salesman.id}\nOld Commission: ₹${oldComm}\nNew Commission: ₹${newComm}\nTotal Commission Earned: ₹${totalCommissionEarned}`);
         console.log(`[Commission Audit] UPDATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
         console.log(`[Commission Audit]   oldAmount: ₹${oldSaleAmount}`);
         console.log(`[Commission Audit]   newAmount: ₹${newSaleAmount}`);
         console.log(`[Commission Audit]   differenceAmount: ₹${saleDelta}`);
-        console.log(`[Commission Audit]   oldCommission: ₹${oldCommission}`);
+        console.log(`[Commission Audit]   oldCommission: ₹${oldComm}`);
         console.log(`[Commission Audit]   incrementalCommission: ₹${commDelta}`);
-        console.log(`[Commission Audit]   finalCommission: ₹${newCommissionAmount}`);
+        console.log(`[Commission Audit]   totalCommission: ₹${totalCommissionEarned}`);
         console.log(`[Commission Audit]   eventId: ${resolvedEventId || 'N/A'}`);
 
         const updateNoteText = `HopKid Invoice ${billIdKey}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''} (Updated: Old Amount: ₹${oldSaleAmount}, New Amount: ₹${newSaleAmount}, Diff: ${saleDelta >= 0 ? '+' : ''}₹${saleDelta})`;
@@ -521,12 +526,12 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
           where: { id: existingTx.id },
           data: {
             saleAmount: newSaleAmount,
-            commissionAmount: newCommissionAmount,
-            commissionPercent: salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : (existingTx.commissionPercent ?? 0),
+            commissionAmount: totalCommissionEarned,
+            commissionPercent: rateVal,
             oldAmount: oldSaleAmount,
             newAmount: newSaleAmount,
-            oldCommission: oldCommission,
-            newCommission: newCommissionAmount,
+            oldCommission: oldComm,
+            newCommission: newComm,
             commissionDifference: commDelta,
             eventType: targetEventType || 'INVOICE_UPDATED',
             status: targetCommStatus,
@@ -565,7 +570,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         }
 
         console.log(`[Invoice Updated]\nBillId: ${billIdKey}\nAmount: ₹${newSaleAmount}\nEmployee(s): ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
-        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: ${oldSaleAmount}\nnewAmount: ${newSaleAmount}\ncommissionRate: ${salesman.commissionPercentage || 0}%\noldCommission: ${oldCommission}\nnewCommission: ${newCommissionAmount}\ncommissionAdjustment: ${commDelta >= 0 ? '+' : ''}${commDelta}\nfinalCommission: ${newCommissionAmount}`);
+        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: ${oldSaleAmount}\nnewAmount: ${newSaleAmount}\ncommissionRate: ${rateVal}%\noldCommission: ${oldComm}\nnewCommission: ${newComm}\ntotalCommission: ${totalCommissionEarned}\ncommissionAdjustment: ${commDelta >= 0 ? '+' : ''}${commDelta}`);
 
         // Wallet adjustment for commission delta ONLY
         if (commDelta !== 0) {
@@ -585,7 +590,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         // INVOICE CREATED / NEW RECORD PATH
         // ═══════════════════════════════════════════════════════════════
         const finalSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
-        const finalCommAmount = isCancelledOrReturned ? 0 : commAmt;
+        const rateVal = salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 1;
+        const finalCommAmount = isCancelledOrReturned ? 0 : (commAmt > 0 ? commAmt : Math.round(((finalSaleAmount * rateVal) / 100) * 100) / 100);
 
         const existingTxInDb = await tx.commissionTransaction.findFirst({
           where: { billId: billIdKey, employeeId: salesman.id }
@@ -600,7 +606,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             data: {
               saleAmount: finalSaleAmount,
               commissionAmount: finalCommAmount,
-              commissionPercent: salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0,
+              commissionPercent: rateVal,
               oldAmount: existingTxInDb.saleAmount || 0,
               newAmount: finalSaleAmount,
               oldCommission: existingTxInDb.commissionAmount || 0,
@@ -613,6 +619,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             },
           });
         } else {
+          const invNum = String(meta.invoiceNumber || invoice.invoiceNumber || invoice.invoiceNo || (meta.billId ? `HWM-${meta.billId}` : billIdKey));
           upsertedTx = await tx.commissionTransaction.create({
             data: {
               employeeId: salesman.id,
@@ -620,7 +627,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               policyId: targetPolicyId,
               saleAmount: finalSaleAmount,
               commissionType: 'PERCENTAGE',
-              commissionPercent: salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0,
+              commissionPercent: rateVal,
               commissionAmount: finalCommAmount,
               oldAmount: 0,
               newAmount: finalSaleAmount,
@@ -629,7 +636,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               commissionDifference: finalCommAmount,
               eventType: targetEventType || 'INVOICE_CREATED',
               billId: billIdKey,
-              invoiceNumber: String(meta.invoiceNumber || invoice.invoiceNumber || invoice.invoiceNo || billIdKey),
+              invoiceNumber: invNum,
               status: targetCommStatus,
               notes: noteText,
               createdAt: validDate,

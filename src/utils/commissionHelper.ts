@@ -341,60 +341,14 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.data?.id ||
     null;
 
-  const billId =
-    creditNote.CNNo ||
-    creditNote.CNID ||
-    creditNote.creditNoteNo ||
-    creditNote.number ||
-    payload?.CNNo ||
-    payload?.CNID ||
-    payload?.creditNoteNo ||
-    payload?.data?.CNNo ||
-    payload?.data?.CNID ||
-    creditNote.exchangeNo ||
-    payload?.exchangeNo ||
-    payload?.data?.exchangeNo ||
-    invoice.invoiceId ||
-    invoice.invoice_id ||
-    invoice.billId ||
-    invoice.bill_id ||
-    invoice.externalId ||
-    invoice.external_id ||
-    invoice.invoiceNo ||
-    invoice.billNo ||
-    invoice.invoiceNumber ||
-    payload?.data?.invoiceId ||
-    payload?.data?.invoice_id ||
-    payload?.data?.externalId ||
-    payload?.data?.external_id ||
-    payload?.data?.invoiceNo ||
-    payload?.invoiceId ||
-    payload?.invoice_id ||
-    payload?.externalId ||
-    payload?.external_id ||
-    payload?.invoiceNo ||
-    payload?.data?.billId ||
-    payload?.data?.bill_id ||
-    payload?.billId ||
-    payload?.bill_id ||
-    payload?.data?.billNo ||
-    payload?.billNo ||
-    payload?.data?.invoiceNumber ||
-    payload?.invoiceNumber ||
-    firstItem?.invoiceId ||
-    firstItem?.invoice_id ||
-    firstItem?.invoiceNo ||
-    firstItem?.billId ||
-    firstItem?.bill_id ||
-    firstItem?.billNo ||
-    eventId ||
-    null;
-
-  const invoiceNumber =
+  // 1. Resolve raw string invoice number / code (e.g. "HWM-89", "HWM-93", "CN-12", "INV-102")
+  const rawInvoiceNumber =
     creditNote.InvoiceNo ||
     creditNote.invoiceNo ||
     creditNote.invoiceNumber ||
     creditNote.SalesID ||
+    creditNote.CNNo ||
+    creditNote.creditNoteNo ||
     payload?.InvoiceNo ||
     payload?.SalesID ||
     payload?.data?.InvoiceNo ||
@@ -403,8 +357,89 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     invoice.invoiceNo ||
     invoice.invoiceId ||
     invoice.invoice_id ||
-    billId ||
+    payload?.data?.invoiceNumber ||
+    payload?.data?.invoiceNo ||
+    payload?.data?.invoiceId ||
+    payload?.data?.invoice_id ||
+    payload?.invoiceNumber ||
+    payload?.invoiceNo ||
+    payload?.invoiceId ||
+    payload?.invoice_id ||
+    firstItem?.invoiceNumber ||
+    firstItem?.invoiceNo ||
+    firstItem?.invoiceId ||
     null;
+
+  // 2. Resolve numeric Bill ID (strictly numeric, never a UUID)
+  const isUuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i;
+  let resolvedBillId: string | null = null;
+
+  const billCandidates = [
+    creditNote.CNID,
+    creditNote.CNNo,
+    creditNote.creditNoteNo,
+    creditNote.number,
+    creditNote.exchangeNo,
+    invoice.billId,
+    invoice.bill_id,
+    invoice.billNumber,
+    invoice.billNo,
+    invoice.invoiceId,
+    invoice.invoice_id,
+    payload?.data?.billId,
+    payload?.data?.bill_id,
+    payload?.data?.billNumber,
+    payload?.data?.billNo,
+    payload?.data?.invoiceId,
+    payload?.data?.invoice_id,
+    payload?.billId,
+    payload?.bill_id,
+    payload?.billNumber,
+    payload?.billNo,
+    payload?.invoiceId,
+    payload?.invoice_id,
+    firstItem?.billId,
+    firstItem?.bill_id,
+    firstItem?.billNo,
+    firstItem?.invoiceId,
+    rawInvoiceNumber,
+  ];
+
+  for (const cand of billCandidates) {
+    if (cand === null || cand === undefined) continue;
+    if (typeof cand === 'number' && cand > 0 && cand <= 2147483647) {
+      resolvedBillId = String(cand);
+      break;
+    }
+    const candStr = String(cand).trim();
+    if (!candStr || isUuidPattern.test(candStr)) continue;
+    // Extract digits
+    const digits = candStr.replace(/\D/g, '');
+    if (digits.length > 0 && digits.length <= 9) {
+      const parsed = parseInt(digits, 10);
+      if (parsed > 0 && parsed <= 2147483647) {
+        resolvedBillId = String(parsed);
+        break;
+      }
+    }
+  }
+
+  // Fallback: If no digits found but rawInvoiceNumber is a clean string code
+  if (!resolvedBillId && rawInvoiceNumber && !isUuidPattern.test(String(rawInvoiceNumber))) {
+    resolvedBillId = String(rawInvoiceNumber).trim();
+  }
+
+  const billId = resolvedBillId;
+
+  // 3. Resolve formatted invoice number
+  let invoiceNumber: string | null = null;
+  if (rawInvoiceNumber && !isUuidPattern.test(String(rawInvoiceNumber))) {
+    invoiceNumber = String(rawInvoiceNumber).trim();
+  } else if (billId && /^\d+$/.test(billId)) {
+    invoiceNumber = `HWM-${billId}`;
+  } else if (billId) {
+    invoiceNumber = billId;
+  }
 
   let rawAmount =
     creditNote.CNAmount ??
@@ -1065,41 +1100,43 @@ export async function createWebhookLog(data: {
 
 /**
  * Resolves a clean integer invoice / bill number for mobile UI and API responses.
- * Reuses numeric invoiceNumber if present; otherwise derives a sequential integer (1000 + id).
- * Example: 1001, 1002, 1003...
+ * Reuses numeric billId or invoiceNumber if present; otherwise derives a sequential integer (1000 + id).
+ * Example: 89, 93, 1001, 1002...
  */
 export function getNumericInvoiceNumber(item: {
   id?: number | string | null;
   invoiceNumber?: string | number | null;
-  billId?: string | null;
+  billId?: string | number | null;
   billNumber?: number | null;
 }): number {
   if (item.billNumber && typeof item.billNumber === 'number' && item.billNumber > 0) {
     return item.billNumber;
   }
-  if (item.invoiceNumber !== null && item.invoiceNumber !== undefined) {
-    if (typeof item.invoiceNumber === 'number' && item.invoiceNumber > 0) {
-      return item.invoiceNumber;
+  if (item.billId !== null && item.billId !== undefined) {
+    if (typeof item.billId === 'number' && item.billId > 0 && item.billId <= 2147483647) {
+      return item.billId;
     }
-    const str = String(item.invoiceNumber).trim();
-    // Check if it's not a UUID
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-    if (!isUuid) {
-      const digits = str.replace(/\D/g, '');
-      if (digits.length > 0 && digits.length <= 9) {
-        const num = parseInt(digits, 10);
-        if (num > 0) return num;
-      }
-    }
-  }
-  if (item.billId) {
     const str = String(item.billId).trim();
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
     if (!isUuid) {
       const digits = str.replace(/\D/g, '');
       if (digits.length > 0 && digits.length <= 9) {
         const num = parseInt(digits, 10);
-        if (num > 0) return num;
+        if (num > 0 && num <= 2147483647) return num;
+      }
+    }
+  }
+  if (item.invoiceNumber !== null && item.invoiceNumber !== undefined) {
+    if (typeof item.invoiceNumber === 'number' && item.invoiceNumber > 0 && item.invoiceNumber <= 2147483647) {
+      return item.invoiceNumber;
+    }
+    const str = String(item.invoiceNumber).trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    if (!isUuid) {
+      const digits = str.replace(/\D/g, '');
+      if (digits.length > 0 && digits.length <= 9) {
+        const num = parseInt(digits, 10);
+        if (num > 0 && num <= 2147483647) return num;
       }
     }
   }
@@ -1119,5 +1156,43 @@ export function getNumericInvoiceNumber(item: {
     }
   }
   return 1000 + (idNum > 0 ? idNum : 1);
+}
+
+/**
+ * Calculates commission for standard created invoice.
+ * commission = (saleAmount * rate) / 100
+ */
+export function calculateCommissionAmount(saleAmount: number, rate: number): number {
+  if (!saleAmount || !rate || isNaN(saleAmount) || isNaN(rate)) return 0;
+  return Math.round(((Math.abs(saleAmount) * rate) / 100) * 100) / 100;
+}
+
+/**
+ * Calculates commission breakdown for invoice update.
+ * Old commission = (oldAmount * rate) / 100
+ * New commission = (newAmount * rate) / 100
+ * Total commission earned = Old commission + New commission
+ */
+export function calculateInvoiceUpdateCommission(
+  oldAmount: number,
+  newAmount: number,
+  rate: number
+): {
+  oldCommission: number;
+  newCommission: number;
+  totalCommission: number;
+  commissionDifference: number;
+} {
+  const safeRate = isNaN(rate) ? 0 : rate;
+  const oldComm = Math.round(((Math.abs(oldAmount || 0) * safeRate) / 100) * 100) / 100;
+  const newComm = Math.round(((Math.abs(newAmount || 0) * safeRate) / 100) * 100) / 100;
+  const totalCommission = Math.round((oldComm + newComm) * 100) / 100;
+  const commissionDifference = Math.round((newComm - oldComm) * 100) / 100;
+  return {
+    oldCommission: oldComm,
+    newCommission: newComm,
+    totalCommission,
+    commissionDifference,
+  };
 }
 
