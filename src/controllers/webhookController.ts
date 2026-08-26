@@ -12,6 +12,7 @@ import {
   broadcastCommissionEvent,
   parseIsOld,
   normalizeEventType,
+  getNumericInvoiceNumber,
 } from '../utils/commissionHelper';
 import { checkWebhookIdempotency } from '../utils/webhookIdempotency';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
@@ -453,16 +454,18 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
   const targetCommStatus = isCancelledOrReturned ? 'REJECTED' : 'APPROVED';
 
   const billIdKey = String(primaryBillId);
+  const numericBillId = getNumericInvoiceNumber({ billId: billIdKey, invoiceNumber: invoice.invoiceNumber, id: resolvedEventId });
+  const billDisplayTag = numericBillId > 0 ? `#${numericBillId}` : (meta.billId ? `#${meta.billId}` : `#${billIdKey}`);
   const affectedEmployeeIds: number[] = [];
   let processedSalesCount = 0;
 
   console.log(`\n[Commission Audit] ═══════════════════════════════════════════════════`);
-  console.log(`[Commission Audit] Event: ${targetEventType} | BillId: ${billIdKey} | EventId: ${resolvedEventId || 'N/A'}`);
+  console.log(`[Commission Audit] Event: ${targetEventType} | BillId: ${billIdKey} (${billDisplayTag}) | EventId: ${resolvedEventId || 'N/A'}`);
   console.log(`[Commission Audit] Incoming Amount: ₹${primaryAmount} | Status: ${invoiceStatus}`);
   console.log(`[Commission Audit] ═══════════════════════════════════════════════════`);
 
   console.log(`\n[COMMISSION DEBUG]`);
-  console.log(`Bill ID: ${billIdKey}`);
+  console.log(`Bill ID: ${billIdKey} (${billDisplayTag})`);
   console.log(`Invoice: ${invoice.invoiceNumber || invoice.invoiceNo || billIdKey}`);
   console.log(`Salesmen Count: ${commissionMap.size}`);
   console.log(`Salesmen: ${Array.from(commissionMap.values()).map(c => `${c.salesman.firstName} ${c.salesman.lastName} (${c.salesman.employeeCode || c.salesman.id})`).join(', ')}`);
@@ -486,7 +489,14 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       const targetPolicyId = commissionData.products[0]?.policyId ?? null;
       const productNamesSummary = commissionData.products.map(p => p.productName).filter(Boolean).join(', ');
       const isUpdate = targetEventType === 'INVOICE_UPDATED' || existingTransactions.some(t => t.employeeId === salesman.id);
-      const noteText = `HopKid Invoice ${billIdKey}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''}${isUpdate ? ' (Updated)' : ''}`;
+      
+      const noteText = `HopKid Invoice ${billDisplayTag}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''}${isUpdate ? ' (Updated)' : ''}`;
+
+      console.log({
+        invoiceId: invoice.invoiceId || invoice.id || billIdKey,
+        billNumber: numericBillId,
+        hopkidInvoiceNumber: `HopKid Invoice ${billDisplayTag}`
+      });
 
       const existingTx = existingTransactions.find(t => t.employeeId === salesman.id);
 
@@ -496,7 +506,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       const newCommissionAmount = isCancelledOrReturned ? 0 : commAmt;
 
       console.log(`\n[COMMISSION CALCULATION]`);
-      console.log(`Bill: ${billIdKey}`);
+      console.log(`Bill: ${billIdKey} (${billDisplayTag})`);
       console.log(`Employee: ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
       console.log(`Old Amount: ₹${oldSaleAmount}`);
       console.log(`New Amount: ₹${newSaleAmount}`);
@@ -530,7 +540,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         console.log(`[Commission Audit]   totalCommission: ₹${totalCommissionEarned}`);
         console.log(`[Commission Audit]   eventId: ${resolvedEventId || 'N/A'}`);
 
-        const updateNoteText = `HopKid Invoice ${billIdKey}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''} (Updated: Old Amount: ₹${oldSaleAmount}, New Amount: ₹${newSaleAmount}, Diff: ${saleDelta >= 0 ? '+' : ''}₹${saleDelta})`;
+        const updateNoteText = `HopKid Invoice ${billDisplayTag}${productNamesSummary ? ` - Products: ${productNamesSummary}` : ''} (Updated: Old Amount: ₹${oldSaleAmount}, New Amount: ₹${newSaleAmount}, Diff: ${saleDelta >= 0 ? '+' : ''}₹${saleDelta})`;
 
         await tx.commissionTransaction.update({
           where: { id: existingTx.id },
@@ -543,7 +553,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             oldCommission: oldComm,
             newCommission: newComm,
             commissionDifference: commDelta,
-            eventType: targetEventType || 'INVOICE_UPDATED',
+            eventType: targetEventType,
             status: targetCommStatus,
             notes: updateNoteText,
             updatedAt: new Date(),
@@ -589,7 +599,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             salesman.id,
             Math.abs(commDelta),
             commDelta > 0,
-            `Commission Adjustment - HopKid Invoice ${billIdKey} (₹${oldSaleAmount} → ₹${newSaleAmount}, diff: ₹${saleDelta})`,
+            `Commission Adjustment - HopKid Invoice ${billDisplayTag} (₹${oldSaleAmount} → ₹${newSaleAmount}, diff: ₹${saleDelta})`,
             commDelta > 0 ? 'Commission Earned' : 'Commission Reversed'
           );
         } else {
@@ -703,7 +713,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               salesman.id,
               finalCommAmount,
               true,
-              `Commission Earned - HopKid Invoice ${billIdKey}`,
+              `Commission Earned - HopKid Invoice ${billDisplayTag}`,
               'Commission Earned'
             );
           } else {
@@ -736,7 +746,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             commissionDifference: -oldTx.commissionAmount,
             eventType: 'INVOICE_UPDATED',
             status: 'REJECTED',
-            notes: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+            notes: `HopKid Invoice ${billDisplayTag} (Removed on Update)`,
             updatedAt: new Date(),
           },
         });
@@ -751,7 +761,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             data: {
               netAmount: 0,
               status: 'CANCELLED',
-              description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+              description: `HopKid Invoice ${billDisplayTag} (Removed on Update)`,
               updatedAt: new Date(),
             },
           });
@@ -764,7 +774,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               saleDate: validDate,
               status: 'CANCELLED',
               source: 'HOPKID',
-              description: `HopKid Invoice ${billIdKey} (Removed on Update)`,
+              description: `HopKid Invoice ${billDisplayTag} (Removed on Update)`,
             },
           });
         }
@@ -774,7 +784,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             oldTx.employeeId,
             reversedCommission,
             false,
-            `Commission Reversed - Removed from HopKid Invoice ${billIdKey}`,
+            `Commission Reversed - Removed from HopKid Invoice ${billDisplayTag}`,
             'Commission Reversed'
           );
         }

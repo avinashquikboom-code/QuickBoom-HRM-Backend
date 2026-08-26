@@ -5,6 +5,17 @@ import { getCommissionStats, getNumericInvoiceNumber } from '../utils/commission
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 import { CommissionService } from '../services/commissionService';
 
+function sanitizeHopKidNote(note: string | null | undefined, numInv: number): string {
+  if (!note || note === 'Retail Sale' || note === 'Retail product') {
+    return `HopKid Invoice #${numInv}`;
+  }
+  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(note.trim());
+  if (isUuid) {
+    return `HopKid Invoice #${numInv}`;
+  }
+  return note.replace(/HopKid\s+Invoice\s+[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/gi, `HopKid Invoice #${numInv}`);
+}
+
 async function getEmployeeForUser(userId?: number) {
   if (!userId) return null;
 
@@ -93,20 +104,28 @@ export const fetchCommissionWallet = async (
     // Map recent transactions (limit to 50 for complete bill visibility)
     const recentTransactions = allTransactions.slice(0, 50).map(t => {
       const numInv = getNumericInvoiceNumber(t);
+      const noteClean = sanitizeHopKidNote(t.notes, numInv);
+      console.log({
+        invoiceId: t.billId || t.id,
+        billNumber: numInv,
+        hopkidInvoiceNumber: `HopKid Invoice #${numInv}`
+      });
       return {
         id: t.id.toString(),
         billId: numInv,
         billNumber: numInv,
         invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
         invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
-        customerName: t.notes || 'Retail Sale',
+        invoiceId: t.billId || t.id.toString(),
+        hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
+        customerName: noteClean,
         billAmount: t.saleAmount,
         commissionPercentage: t.commissionPercent || 0,
         commissionEarned: t.commissionAmount,
         generatedDate: t.createdAt.toISOString(),
         paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
         status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
-        remarks: t.notes,
+        remarks: noteClean,
       };
     });
 
@@ -307,20 +326,23 @@ export const fetchCommissionHistory = async (
       data: {
         transactions: transactions.map(t => {
           const numInv = getNumericInvoiceNumber(t);
+          const noteClean = sanitizeHopKidNote(t.notes, numInv);
           return {
             id: t.id.toString(),
             billId: numInv,
             billNumber: numInv,
             invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
             invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
-            customerName: t.notes || 'Retail Sale',
+            invoiceId: t.billId || t.id.toString(),
+            hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
+            customerName: noteClean,
             billAmount: t.saleAmount,
             commissionPercentage: t.commissionPercent || 0,
             commissionEarned: t.commissionAmount,
             generatedDate: t.createdAt.toISOString(),
             paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
             status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
-            remarks: t.notes,
+            remarks: noteClean,
           };
         }),
         totalCount,

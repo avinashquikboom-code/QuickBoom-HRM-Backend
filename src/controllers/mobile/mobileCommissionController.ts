@@ -151,7 +151,18 @@ export const getMobileCommissionTransactions = async (
 
     console.log(`[MOBILE-COMMISSION-DIAG] Transactions retrieved for employee id=${employee.id} | found=${transactions.length}, total=${total}`);
 
-    const mappedTransactions = transactions.map(t => {
+function sanitizeHopKidNote(note: string | null | undefined, numInv: number): string {
+  if (!note || note === 'Retail Sale' || note === 'Retail product') {
+    return `HopKid Invoice #${numInv}`;
+  }
+  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(note.trim());
+  if (isUuid) {
+    return `HopKid Invoice #${numInv}`;
+  }
+  return note.replace(/HopKid\s+Invoice\s+[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/gi, `HopKid Invoice #${numInv}`);
+}
+
+    const mappedTransactions = transactions.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
       const rate = t.commissionPercent ?? employee.commissionPercentage ?? 1;
       let comm = t.commissionAmount;
@@ -164,12 +175,23 @@ export const getMobileCommissionTransactions = async (
           comm = Math.round(((t.saleAmount * rate) / 100) * 100) / 100;
         }
       }
+
+      const noteClean = sanitizeHopKidNote(t.notes, numInv);
+      console.log({
+        invoiceId: t.billId || t.id,
+        billNumber: numInv,
+        hopkidInvoiceNumber: `HopKid Invoice #${numInv}`
+      });
+
       return {
         id: t.id,
         billId: numInv,
         billNumber: numInv,
         invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
         invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
+        invoiceId: t.billId || String(t.id),
+        hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
+        customerName: noteClean,
         amount: t.newAmount || t.saleAmount,
         saleAmount: t.newAmount || t.saleAmount,
         commission: comm,
@@ -186,8 +208,8 @@ export const getMobileCommissionTransactions = async (
         createdAt: t.createdAt,
         approvedAt: t.approvedAt,
         paidAt: t.paidAt,
-        description: t.notes,
-        notes: t.notes,
+        description: noteClean,
+        notes: noteClean,
       };
     });
 
