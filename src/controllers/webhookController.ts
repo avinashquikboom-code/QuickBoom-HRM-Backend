@@ -629,7 +629,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               commissionDifference: finalCommAmount,
               eventType: targetEventType || 'INVOICE_CREATED',
               billId: billIdKey,
-              invoiceNumber: billIdKey,
+              invoiceNumber: String(meta.invoiceNumber || invoice.invoiceNumber || invoice.invoiceNo || billIdKey),
               status: targetCommStatus,
               notes: noteText,
               createdAt: validDate,

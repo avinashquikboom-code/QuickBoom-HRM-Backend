@@ -1,5 +1,5 @@
 import { prisma } from '../utils/db';
-import { getTransactionNetContribution } from '../utils/commissionHelper';
+import { getTransactionNetContribution, getNumericInvoiceNumber } from '../utils/commissionHelper';
 
 export class CommissionService {
   /**
@@ -210,8 +210,11 @@ export class CommissionService {
       amount: latestSale.saleAmount
     });
 
+    const numInv = getNumericInvoiceNumber(latestSale);
     return {
       billId: latestSale.billId || latestSale.invoiceNumber || `TXN-${latestSale.id}`,
+      invoiceNumber: numInv,
+      billNumber: numInv,
       date: latestSale.createdAt,
       netAmount: latestSale.saleAmount,
       commission: latestSale.commissionAmount,

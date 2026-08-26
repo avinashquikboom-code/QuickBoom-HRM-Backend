@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails, getTransactionNetContribution } from '../../utils/commissionHelper';
+import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails, getTransactionNetContribution, getNumericInvoiceNumber } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { CommissionService } from '../../services/commissionService';
 import { deduplicateCommissionTransactions } from '../../utils/commissionDeduplicator';
@@ -151,24 +151,29 @@ export const getMobileCommissionTransactions = async (
 
     console.log(`[MOBILE-COMMISSION-DIAG] Transactions retrieved for employee id=${employee.id} | found=${transactions.length}, total=${total}`);
 
-    const mappedTransactions = transactions.map(t => ({
-      id: t.id,
-      billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-      invoiceNumber: t.invoiceNumber,
-      amount: t.newAmount || t.saleAmount,
-      saleAmount: t.newAmount || t.saleAmount,
-      commission: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
-      commissionType: t.commissionType,
-      commissionPercent: t.commissionPercent,
-      commissionAmount: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
-      status: t.status,
-      date: t.createdAt,
-      createdAt: t.createdAt,
-      approvedAt: t.approvedAt,
-      paidAt: t.paidAt,
-      description: t.notes,
-      notes: t.notes,
-    }));
+    const mappedTransactions = transactions.map(t => {
+      const numInv = getNumericInvoiceNumber(t);
+      return {
+        id: t.id,
+        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+        invoiceNumber: numInv,
+        billNumber: numInv,
+        invoiceNo: numInv,
+        amount: t.newAmount || t.saleAmount,
+        saleAmount: t.newAmount || t.saleAmount,
+        commission: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
+        commissionType: t.commissionType,
+        commissionPercent: t.commissionPercent,
+        commissionAmount: t.newCommission !== undefined && t.newCommission !== null && t.newCommission !== 0 ? t.newCommission : t.commissionAmount,
+        status: t.status,
+        date: t.createdAt,
+        createdAt: t.createdAt,
+        approvedAt: t.approvedAt,
+        paidAt: t.paidAt,
+        description: t.notes,
+        notes: t.notes,
+      };
+    });
 
     const summary = {
       totalSales: transactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0),
@@ -234,12 +239,17 @@ export const getMobileCommissionDaily = async (
       orderBy: { id: 'desc' },
     });
 
-    const bills = transactions.map(t => ({
-      billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-      amount: t.saleAmount,
-      commission: t.commissionAmount,
-      time: t.createdAt,
-    }));
+    const bills = transactions.map(t => {
+      const numInv = getNumericInvoiceNumber(t);
+      return {
+        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+        invoiceNumber: numInv,
+        billNumber: numInv,
+        amount: t.saleAmount,
+        commission: t.commissionAmount,
+        time: t.createdAt,
+      };
+    });
 
     const summary = {
       date: queryDate.toISOString().split('T')[0],
@@ -594,6 +604,8 @@ export const getMobileCommissionSummary = async (
           // ═════════════════════════════════════════════════════════════
           latestSale: summary.latestSale ? {
             billId: summary.latestSale.billId,
+            invoiceNumber: summary.latestSale.invoiceNumber || getNumericInvoiceNumber(summary.latestSale),
+            billNumber: summary.latestSale.billNumber || getNumericInvoiceNumber(summary.latestSale),
             date: summary.latestSale.date.toISOString().split('T')[0],
             displayDate: new Date(summary.latestSale.date).toLocaleDateString('en-IN'),
             displayTime: new Date(summary.latestSale.date).toLocaleTimeString('en-IN'),
@@ -718,15 +730,21 @@ export const getMobileCommissionBills = async (
 
     const totalTxs = await prisma.commissionTransaction.count({ where });
 
-    const bills: any[] = txs.map((t) => ({
-      id: String(t.id),
-      billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-      saleAmount: t.saleAmount,
-      commission: t.commissionAmount,
-      date: t.createdAt,
-      status: t.status,
-      description: t.notes,
-    }));
+    const bills: any[] = txs.map((t) => {
+      const numInv = getNumericInvoiceNumber(t);
+      return {
+        id: String(t.id),
+        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+        invoiceNumber: numInv,
+        billNumber: numInv,
+        invoiceNo: numInv,
+        saleAmount: t.saleAmount,
+        commission: t.commissionAmount,
+        date: t.createdAt,
+        status: t.status,
+        description: t.notes,
+      };
+    });
 
     // Pre-fetch employee's Credit Note line item reversals in range
     try {
@@ -745,10 +763,13 @@ export const getMobileCommissionBills = async (
       for (const line of cnLines) {
         const cnNo = line.creditNote.creditNoteNo;
         if (!bills.some((b) => b.billId === cnNo)) {
+          const numCnInv = getNumericInvoiceNumber({ invoiceNumber: line.creditNote.invoiceNo, billId: cnNo, id: line.id });
           bills.push({
             id: `cn-${line.id}`,
             billId: cnNo,
             invoiceNo: line.creditNote.invoiceNo,
+            invoiceNumber: numCnInv,
+            billNumber: numCnInv,
             saleAmount: -Number(line.creditAmount),
             commission: -Number(line.commissionAdjustment),
             date: line.createdAt,
@@ -803,6 +824,14 @@ export const getMobileCommissionBillDetail = async (
 
     const rawBillId = req.params.billId;
     const billIdStr = Array.isArray(rawBillId) ? String(rawBillId[0]) : String(rawBillId);
+    const numericPart = parseInt(billIdStr.replace(/\D/g, ''), 10);
+    const possibleTxnIds: number[] = [];
+    if (!isNaN(numericPart) && numericPart > 0) {
+      possibleTxnIds.push(numericPart);
+      if (numericPart > 1000) {
+        possibleTxnIds.push(numericPart - 1000);
+      }
+    }
 
     // 1. Try finding sale by current employee ID first
     let sale = await prisma.commissionTransaction.findFirst({
@@ -811,7 +840,7 @@ export const getMobileCommissionBillDetail = async (
         OR: [
           { billId: billIdStr },
           { invoiceNumber: billIdStr },
-          ...(isNaN(Number(billIdStr.replace('TXN-', ''))) ? [] : [{ id: Number(billIdStr.replace('TXN-', '')) }])
+          ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ id })) : [])
         ],
       },
       include: { store: true }
@@ -824,7 +853,7 @@ export const getMobileCommissionBillDetail = async (
           OR: [
             { billId: billIdStr },
             { invoiceNumber: billIdStr },
-            ...(isNaN(Number(billIdStr.replace('TXN-', ''))) ? [] : [{ id: Number(billIdStr.replace('TXN-', '')) }])
+            ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ id })) : [])
           ],
         },
         include: { store: true }
@@ -862,6 +891,7 @@ export const getMobileCommissionBillDetail = async (
       const discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
       const tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || 0);
       const commAmount = safeParseAmount(meta.commissionAmount || 0);
+      const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: webhookLog.billId || billIdStr, id: webhookLog.id });
 
       let products: any[] = [];
       if (meta.lineItems && meta.lineItems.length > 0) {
@@ -882,6 +912,8 @@ export const getMobileCommissionBillDetail = async (
         success: true,
         data: {
           billId: meta.invoiceNumber || webhookLog.billId || billIdStr,
+          invoiceNumber: numInv,
+          billNumber: numInv,
           saleAmount: grossSale,
           netAmount: grossSale,
           commissionRate: employee.commissionPercentage ?? 0,
@@ -916,6 +948,7 @@ export const getMobileCommissionBillDetail = async (
           const meta = extractWebhookMeta(fetchedInvoice.data || fetchedInvoice);
           const invoiceData = meta.invoice || fetchedInvoice.data || fetchedInvoice;
           const grossSale = safeParseAmount(meta.amount || invoiceData.netAmount || invoiceData.grandTotal || 0);
+          const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: meta.billId || billIdStr });
 
           let products: any[] = [];
           if (meta.lineItems && meta.lineItems.length > 0) {
@@ -936,6 +969,8 @@ export const getMobileCommissionBillDetail = async (
             success: true,
             data: {
               billId: meta.invoiceNumber || meta.billId || billIdStr,
+              invoiceNumber: numInv,
+              billNumber: numInv,
               saleAmount: grossSale,
               netAmount: grossSale,
               commissionRate: employee.commissionPercentage ?? 0,
@@ -968,10 +1003,13 @@ export const getMobileCommissionBillDetail = async (
     // 5. Fallback detail summary for non-empty bill IDs (ensures UI opens bill card cleanly)
     if (!sale) {
       const cleanBillId = billIdStr.length > 30 ? `INV-${billIdStr.slice(-8).toUpperCase()}` : billIdStr;
+      const numInv = getNumericInvoiceNumber({ billId: billIdStr });
       res.json({
         success: true,
         data: {
           billId: cleanBillId,
+          invoiceNumber: numInv,
+          billNumber: numInv,
           saleAmount: 0,
           netAmount: 0,
           commissionRate: employee.commissionPercentage ?? 0,
@@ -1074,13 +1112,17 @@ export const getMobileCommissionBillDetail = async (
 
     const rate = sale.commissionPercent ?? employee.commissionPercentage ?? 0;
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
+    const numInv = getNumericInvoiceNumber(sale);
 
-    console.log(`[MOBILE-BILL-DETAIL] Returning detail for billId=${billIdStr} | products=${products.length} | saleAmount=₹${sale.saleAmount} | date=${sale.createdAt.toISOString()}`);
+    console.log(`[MOBILE-BILL-DETAIL] Returning detail for billId=${billIdStr} (invoiceNumber=${numInv}) | products=${products.length} | saleAmount=₹${sale.saleAmount} | date=${sale.createdAt.toISOString()}`);
 
     res.json({
       success: true,
       data: {
         billId: sale.billId || sale.invoiceNumber,
+        invoiceNumber: numInv,
+        billNumber: numInv,
+        invoiceNo: numInv,
         saleAmount: sale.saleAmount,
         netAmount: sale.saleAmount,
         commissionRate: rate,

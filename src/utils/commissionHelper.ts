@@ -1063,3 +1063,49 @@ export async function createWebhookLog(data: {
   }
 }
 
+/**
+ * Resolves a clean integer invoice / bill number for mobile UI and API responses.
+ * Reuses numeric invoiceNumber if present; otherwise derives a sequential integer (1000 + id).
+ * Example: 1001, 1002, 1003...
+ */
+export function getNumericInvoiceNumber(item: {
+  id?: number | string | null;
+  invoiceNumber?: string | number | null;
+  billId?: string | null;
+  billNumber?: number | null;
+}): number {
+  if (item.billNumber && typeof item.billNumber === 'number' && item.billNumber > 0) {
+    return item.billNumber;
+  }
+  if (item.invoiceNumber !== null && item.invoiceNumber !== undefined) {
+    if (typeof item.invoiceNumber === 'number' && item.invoiceNumber > 0) {
+      return item.invoiceNumber;
+    }
+    const str = String(item.invoiceNumber).trim();
+    // Check if it's not a UUID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    if (!isUuid) {
+      const digits = str.replace(/\D/g, '');
+      if (digits.length > 0 && digits.length <= 9) {
+        const num = parseInt(digits, 10);
+        if (num > 0) return num;
+      }
+    }
+  }
+  if (item.billId) {
+    const str = String(item.billId).trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    if (!isUuid) {
+      const digits = str.replace(/\D/g, '');
+      if (digits.length > 0 && digits.length <= 9) {
+        const num = parseInt(digits, 10);
+        if (num > 0) return num;
+      }
+    }
+  }
+
+  // Deterministic fallback based on autoincrement ID (starts at 1000 + id)
+  const idNum = typeof item.id === 'number' ? item.id : parseInt(String(item.id || '1').replace(/\D/g, '') || '1', 10);
+  return 1000 + (idNum > 0 ? idNum : 1);
+}
+
