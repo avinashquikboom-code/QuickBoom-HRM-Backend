@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authenticateToken } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 import { prisma } from '../utils/db';
+import { getNumericInvoiceNumber } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -118,8 +119,12 @@ router.get('/', authenticateToken, roleMiddleware(['ADMIN', 'SUPERADMIN', 'STORE
 
     const latestBillsFormatted = latestBills.map((bill) => {
       const empName = bill.employee ? `${bill.employee.firstName} ${bill.employee.lastName}`.trim() : 'N/A';
+      const numInv = getNumericInvoiceNumber(bill);
       return {
         billId: bill.billId || bill.invoiceNumber || `TXN-${bill.id}`,
+        invoiceNumber: numInv,
+        billNumber: numInv,
+        invoiceNo: numInv,
         date: bill.createdAt.toISOString().split('T')[0],
         displayDate: formatDisplayDate(bill.createdAt),
         employeeName: empName,

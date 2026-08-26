@@ -1,15 +1,10 @@
-/**
- * Commission Deduplicator & Aggregator Utility
- *
- * Ensures that Commission Transactions are strictly aggregated 1-to-1 per (Invoice Number + Employee ID).
- * Deduplicates line-item level database records for Admin Panel & Mobile APIs while preserving historical amounts.
- */
+import { getNumericInvoiceNumber } from './commissionHelper';
 
 export interface RawCommissionTxn {
   id: number;
   employeeId: number;
   billId?: string | null;
-  invoiceNumber?: string | null;
+  invoiceNumber?: string | number | null;
   saleAmount: number | string;
   commissionAmount: number | string;
   createdAt: Date | string;
@@ -25,11 +20,14 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
     const rawBill = String(t.billId || t.invoiceNumber || '').trim();
     const invoiceKey = rawBill || `TXN-${t.id}`;
     const key = `${t.employeeId}_${invoiceKey}`;
+    const numInv = getNumericInvoiceNumber(t);
 
     if (!map.has(key)) {
       map.set(key, {
         ...t,
-        invoiceNumber: t.invoiceNumber || rawBill || `TXN-${t.id}`,
+        invoiceNumber: numInv,
+        billNumber: numInv,
+        invoiceNo: numInv,
         billId: t.billId || rawBill || `TXN-${t.id}`,
         saleAmount: Number(t.saleAmount || 0),
         commissionAmount: Number(t.commissionAmount || 0),
@@ -40,7 +38,9 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
       if (t.createdAt && existing.createdAt && new Date(t.createdAt) > new Date(existing.createdAt)) {
         map.set(key, {
           ...t,
-          invoiceNumber: t.invoiceNumber || rawBill || `TXN-${t.id}`,
+          invoiceNumber: numInv,
+          billNumber: numInv,
+          invoiceNo: numInv,
           billId: t.billId || rawBill || `TXN-${t.id}`,
           saleAmount: Number(t.saleAmount || 0),
           commissionAmount: Number(t.commissionAmount || 0),

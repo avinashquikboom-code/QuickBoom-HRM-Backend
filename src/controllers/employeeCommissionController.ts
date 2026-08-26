@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { getCommissionStats } from '../utils/commissionHelper';
+import { getCommissionStats, getNumericInvoiceNumber } from '../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 import { CommissionService } from '../services/commissionService';
 
@@ -91,18 +91,24 @@ export const fetchCommissionWallet = async (
     const currentMonthTxnsCount = monthly.billCount;
 
     // Map recent transactions (limit to 50 for complete bill visibility)
-    const recentTransactions = allTransactions.slice(0, 50).map(t => ({
-      id: t.id.toString(),
-      invoiceNumber: t.invoiceNumber || t.billId || `TXN-${t.id}`,
-      customerName: t.notes || 'Retail Sale',
-      billAmount: t.saleAmount,
-      commissionPercentage: t.commissionPercent || 0,
-      commissionEarned: t.commissionAmount,
-      generatedDate: t.createdAt.toISOString(),
-      paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
-      status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
-      remarks: t.notes,
-    }));
+    const recentTransactions = allTransactions.slice(0, 50).map(t => {
+      const numInv = getNumericInvoiceNumber(t);
+      return {
+        id: t.id.toString(),
+        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+        invoiceNumber: numInv,
+        billNumber: numInv,
+        invoiceNo: numInv,
+        customerName: t.notes || 'Retail Sale',
+        billAmount: t.saleAmount,
+        commissionPercentage: t.commissionPercent || 0,
+        commissionEarned: t.commissionAmount,
+        generatedDate: t.createdAt.toISOString(),
+        paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
+        status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
+        remarks: t.notes,
+      };
+    });
 
     const totalSalesAmount = approvedOrPaid.reduce((sum, t) => sum + t.saleAmount, 0);
 
@@ -260,7 +266,8 @@ export const fetchCommissionHistory = async (
             }
           } catch (e) {}
 
-          const invoiceNo = log.billId || meta.invoiceNumber || meta.billId || `WH-${log.id}`;
+          const rawBill = log.billId || meta.invoiceNumber || meta.billId || `WH-${log.id}`;
+          const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId, id: log.id });
           const amount = log.amount || meta.grossAmount || meta.grandTotal || 0;
           const comm = meta.commissionAmount || 0;
           const pct = amount > 0 ? (comm / amount) * 100 : 0;
@@ -268,7 +275,10 @@ export const fetchCommissionHistory = async (
 
           return {
             id: `WH-${log.id}`,
-            invoiceNumber: invoiceNo,
+            billId: rawBill,
+            invoiceNumber: numInv,
+            billNumber: numInv,
+            invoiceNo: numInv,
             customerName: cust,
             billAmount: amount,
             commissionPercentage: Math.round(pct * 10) / 10,
@@ -296,18 +306,24 @@ export const fetchCommissionHistory = async (
     res.json({
       success: true,
       data: {
-        transactions: transactions.map(t => ({
-          id: t.id.toString(),
-          invoiceNumber: t.invoiceNumber || t.billId || `TXN-${t.id}`,
-          customerName: t.notes || 'Retail Sale',
-          billAmount: t.saleAmount,
-          commissionPercentage: t.commissionPercent || 0,
-          commissionEarned: t.commissionAmount,
-          generatedDate: t.createdAt.toISOString(),
-          paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
-          status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
-          remarks: t.notes,
-        })),
+        transactions: transactions.map(t => {
+          const numInv = getNumericInvoiceNumber(t);
+          return {
+            id: t.id.toString(),
+            billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+            invoiceNumber: numInv,
+            billNumber: numInv,
+            invoiceNo: numInv,
+            customerName: t.notes || 'Retail Sale',
+            billAmount: t.saleAmount,
+            commissionPercentage: t.commissionPercent || 0,
+            commissionEarned: t.commissionAmount,
+            generatedDate: t.createdAt.toISOString(),
+            paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
+            status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
+            remarks: t.notes,
+          };
+        }),
         totalCount,
         currentPage: parseInt(page as string, 10),
         totalPages: Math.ceil(totalCount / parseInt(limit as string, 10)) || 1,
@@ -327,7 +343,7 @@ export const fetchCommissionDetails = async (
     const employee = await getEmployeeForUser(req.user?.id);
 
     if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee record not found.' });
+      res.status(404).json({ success: false, message: 'Employee profile not found.' });
       return;
     }
 
@@ -356,13 +372,17 @@ export const fetchCommissionDetails = async (
             }
           } catch (e) {}
 
-          const invoiceNo = log.billId || meta.invoiceNumber || meta.billId || `WH-${log.id}`;
+          const rawBill = log.billId || meta.invoiceNumber || meta.billId || `WH-${log.id}`;
+          const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId, id: log.id });
           const amount = log.amount || meta.grossAmount || meta.grandTotal || 0;
           const comm = meta.commissionAmount || 0;
           const cust = meta.customerName || meta.customerPhone || 'POS Customer';
 
           return {
-            invoiceNumber: invoiceNo,
+            billId: rawBill,
+            invoiceNumber: numInv,
+            billNumber: numInv,
+            invoiceNo: numInv,
             customerName: cust,
             billAmount: amount,
             commissionEarned: comm,
@@ -441,13 +461,19 @@ export const fetchCommissionDetails = async (
     const topPerformingBills = approvedOrPaid
       .sort((a, b) => b.commissionAmount - a.commissionAmount)
       .slice(0, 10)
-      .map(t => ({
-        invoiceNumber: t.invoiceNumber || t.billId || `TXN-${t.id}`,
-        customerName: t.notes || 'Retail Sale',
-        billAmount: t.saleAmount,
-        commissionEarned: t.commissionAmount,
-        date: t.createdAt.toISOString(),
-      }));
+      .map(t => {
+        const numInv = getNumericInvoiceNumber(t);
+        return {
+          billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
+          invoiceNumber: numInv,
+          billNumber: numInv,
+          invoiceNo: numInv,
+          customerName: t.notes || 'Retail Sale',
+          billAmount: t.saleAmount,
+          commissionEarned: t.commissionAmount,
+          date: t.createdAt.toISOString(),
+        };
+      });
 
     res.json({
       success: true,
