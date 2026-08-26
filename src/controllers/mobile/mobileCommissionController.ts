@@ -439,18 +439,24 @@ export const getMobileWebhookLogs = async (
         const meta = extractWebhookMeta(log.payload);
         const isCreditNote = String(log.eventType || '').toUpperCase().includes('CREDIT_NOTE') || String(log.billId || '').startsWith('CN-');
         const matchedCnLine = empCreditNoteLines.find(c => c.creditNote.creditNoteNo === log.billId);
+        const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
+        const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber))
+          ? meta.invoiceNumber
+          : (matchedCnLine ? matchedCnLine.creditNote.invoiceNo : `HWM-${numInv}`);
 
         results.push({
           id: log.id,
           eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
           status: log.status || 'SUCCESS',
-          billId: log.billId || meta.billId || null,
-          invoiceNo: meta.invoiceNumber || (matchedCnLine ? matchedCnLine.creditNote.invoiceNo : null),
+          billId: numInv,
+          invoiceNo: cleanInvoiceNo,
+          invoiceNumber: cleanInvoiceNo,
           amount: isCreditNote && matchedCnLine ? Number(matchedCnLine.creditAmount) : (log.amount ?? meta.amount ?? 0),
           commissionAmount: isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : (meta.commissionAmount ?? 0),
           customerName: meta.customerName && meta.customerName !== 'N/A' ? meta.customerName : '-',
           errorMessage: log.errorMessage || null,
           createdAt: log.createdAt,
+          externalEventId: meta.eventId || log.id,
         });
       }
     } catch (_) { /* table may not exist */ }
@@ -458,18 +464,21 @@ export const getMobileWebhookLogs = async (
     // Fallback: If any CreditNoteLine for this employee is missing from WebhookLog, add log item
     for (const line of empCreditNoteLines) {
       const cnNo = line.creditNote.creditNoteNo;
-      if (!results.some((r) => r.billId === cnNo)) {
+      const numCnInv = getNumericInvoiceNumber({ invoiceNumber: line.creditNote.invoiceNo, billId: cnNo, id: line.id });
+      if (!results.some((r) => r.billId === numCnInv || r.invoiceNo === line.creditNote.invoiceNo)) {
         results.push({
           id: `cn-${line.id}`,
           eventType: 'CREDIT_NOTE_CREATED',
           status: 'SUCCESS',
-          billId: cnNo,
-          invoiceNo: line.creditNote.invoiceNo,
+          billId: numCnInv,
+          invoiceNo: line.creditNote.invoiceNo || `HWM-${numCnInv}`,
+          invoiceNumber: line.creditNote.invoiceNo || `HWM-${numCnInv}`,
           amount: Number(line.creditAmount),
           commissionAmount: -Number(line.commissionAdjustment),
           customerName: 'Customer',
           errorMessage: null,
           createdAt: line.createdAt,
+          externalEventId: cnNo,
         });
       }
     }
@@ -494,21 +503,25 @@ export const getMobileWebhookLogs = async (
 
         if (!isMatch) continue;
 
+        const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
+        const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber)) ? meta.invoiceNumber : `HWM-${numInv}`;
+
         // Skip if already covered by WebhookLog (same billId)
-        const billId = log.billId || meta.billId || null;
-        if (billId && results.some((r) => r.billId === billId)) continue;
+        if (numInv && results.some((r) => r.billId === numInv)) continue;
 
         results.push({
           id: `hopkid-${log.id}`,
           eventType: meta.eventType || 'INVOICE_CREATED',
           status: 'SUCCESS',
-          billId,
-          invoiceNo: meta.invoiceNumber || null,
+          billId: numInv,
+          invoiceNo: cleanInvoiceNo,
+          invoiceNumber: cleanInvoiceNo,
           amount: log.amount ?? meta.amount ?? 0,
           commissionAmount: meta.commissionAmount ?? 0,
           customerName: meta.customerName || 'N/A',
           errorMessage: null,
           createdAt: log.createdAt,
+          externalEventId: meta.eventId || log.id,
         });
       }
     } catch (_) { /* table may not exist */ }
@@ -619,9 +632,9 @@ export const getMobileCommissionSummary = async (
           // LATEST SALE (MOST RECENT TRANSACTION)
           // ═════════════════════════════════════════════════════════════
           latestSale: summary.latestSale ? {
-            billId: summary.latestSale.billId,
-            invoiceNumber: summary.latestSale.invoiceNumber || getNumericInvoiceNumber(summary.latestSale),
-            billNumber: summary.latestSale.billNumber || getNumericInvoiceNumber(summary.latestSale),
+            billId: getNumericInvoiceNumber(summary.latestSale),
+            invoiceNumber: summary.latestSale.invoiceNumber || `HWM-${getNumericInvoiceNumber(summary.latestSale)}`,
+            billNumber: getNumericInvoiceNumber(summary.latestSale),
             date: summary.latestSale.date.toISOString().split('T')[0],
             displayDate: new Date(summary.latestSale.date).toLocaleDateString('en-IN'),
             displayTime: new Date(summary.latestSale.date).toLocaleTimeString('en-IN'),
@@ -917,38 +930,75 @@ export const getMobileCommissionBillDetail = async (
       });
     }
 
-    // Try to load HopkidWebhookLog by ID (UUID), billId, or raw payload matching
-    let webhookLog = await prisma.hopkidWebhookLog.findFirst({
+    // Try to load WebhookLog or HopkidWebhookLog by ID (UUID), billId, or raw payload matching
+    let rawPayloadData: any = null;
+    let foundLogId: string | null = null;
+    let foundEventId: string | null = null;
+    let foundCreatedAt: Date | null = null;
+    let foundAmount: number | null = null;
+
+    // 1. Check WebhookLog first (primary webhook store)
+    const wLog = await prisma.webhookLog.findFirst({
       where: {
         OR: [
           { id: billIdStr },
           { billId: billIdStr },
+          ...(sale?.billId ? [{ billId: sale.billId }] : []),
+          ...(sale?.invoiceNumber ? [{ billId: sale.invoiceNumber }] : []),
           ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ billId: String(id) })) : []),
         ],
       },
+      orderBy: { createdAt: 'desc' },
     });
 
-    if (!webhookLog) {
-      // Match parent billId robustly against hyphenated invoice numbers or raw payload
-      const logs = await prisma.hopkidWebhookLog.findMany({
-        orderBy: { id: 'desc' },
-        take: 100,
+    if (wLog) {
+      rawPayloadData = wLog.payload;
+      foundLogId = wLog.id;
+      foundCreatedAt = wLog.createdAt;
+      foundAmount = wLog.amount;
+    } else {
+      // 2. Check HopkidWebhookLog
+      let hLog = await prisma.hopkidWebhookLog.findFirst({
+        where: {
+          OR: [
+            { id: billIdStr },
+            { billId: billIdStr },
+            ...(sale?.billId ? [{ billId: sale.billId }] : []),
+            ...(sale?.invoiceNumber ? [{ billId: sale.invoiceNumber }] : []),
+            ...(possibleTxnIds.length > 0 ? possibleTxnIds.map(id => ({ billId: String(id) })) : []),
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
       });
-      webhookLog = logs.find(l =>
-        l.id === billIdStr ||
-        (l.billId && (billIdStr === l.billId || billIdStr.startsWith(l.billId) || l.billId.startsWith(billIdStr))) ||
-        (l.rawPayload && String(l.rawPayload).includes(billIdStr))
-      ) || null;
+
+      if (!hLog) {
+        const logs = await prisma.hopkidWebhookLog.findMany({
+          orderBy: { id: 'desc' },
+          take: 100,
+        });
+        hLog = logs.find(l =>
+          l.id === billIdStr ||
+          (l.billId && (billIdStr === l.billId || billIdStr.startsWith(l.billId) || l.billId.startsWith(billIdStr))) ||
+          (l.rawPayload && String(l.rawPayload).includes(billIdStr))
+        ) || null;
+      }
+
+      if (hLog) {
+        rawPayloadData = hLog.rawPayload;
+        foundLogId = hLog.id;
+        foundCreatedAt = hLog.createdAt;
+        foundAmount = hLog.amount;
+      }
     }
 
     // 3. If no commissionTransaction exists, but a Webhook Log exists, construct detail response directly from Webhook Log
-    if (!sale && webhookLog) {
-      const meta = extractWebhookMeta(webhookLog.rawPayload);
+    if (!sale && rawPayloadData) {
+      const meta = extractWebhookMeta(rawPayloadData);
       const invoiceData = meta.invoice || {};
-      const grossSale = safeParseAmount(webhookLog.amount || invoiceData.grandTotal || invoiceData.grossAmount || 0);
+      const grossSale = safeParseAmount(foundAmount || invoiceData.grandTotal || invoiceData.grossAmount || 0);
       const discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
       const tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || 0);
-      const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: webhookLog.billId || billIdStr, id: webhookLog.id });
+      const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: meta.billId || billIdStr, id: foundLogId });
       const rate = employee.commissionPercentage ?? 1;
       const commAmount = safeParseAmount(meta.commissionAmount || 0) || Math.round(((grossSale * rate) / 100) * 100) / 100;
       const invString = meta.invoiceNumber || `HWM-${numInv}`;
@@ -984,10 +1034,10 @@ export const getMobileCommissionBillDetail = async (
           newAmount: grossSale,
           oldCommission: 0,
           newCommission: commAmount,
-          date: webhookLog.createdAt,
+          date: foundCreatedAt || new Date().toISOString(),
           status: 'APPROVED',
           description: `Live POS Webhook Event (${meta.eventType || 'INVOICE_CREATED'})`,
-          createdAt: webhookLog.createdAt,
+          createdAt: foundCreatedAt || new Date().toISOString(),
           customerName: meta.customerName || 'Retail Customer',
           customerPhone: meta.customerPhone || '-',
           paymentMode: meta.paymentMode || '-',
@@ -996,7 +1046,7 @@ export const getMobileCommissionBillDetail = async (
           grossSale,
           discount,
           tax,
-          externalEventId: meta.eventId || webhookLog.id,
+          externalEventId: meta.eventId || foundLogId,
           employee: {
             name: `${employee.firstName} ${employee.lastName}`.trim(),
             code: employee.employeeCode,
@@ -1007,7 +1057,7 @@ export const getMobileCommissionBillDetail = async (
     }
 
     // 4. Live fallback: Attempt fetching invoice from HopKid POS API if not in DB
-    if (!sale && !webhookLog) {
+    if (!sale && !rawPayloadData) {
       console.log(`ℹ️ [Mobile Bill Detail] Bill ID "${billIdStr}" not found in DB. Attempting live fetch from HopKid POS API...`);
       try {
         const fetchedInvoice = await fetchHopkidInvoiceDetails(billIdStr);
@@ -1134,8 +1184,8 @@ export const getMobileCommissionBillDetail = async (
     let discount = 0;
     let tax = 0;
 
-    if (webhookLog) {
-      const meta = extractWebhookMeta(webhookLog.rawPayload);
+    if (rawPayloadData) {
+      const meta = extractWebhookMeta(rawPayloadData);
       customerName = meta.customerName || customerName;
       customerPhone = meta.customerPhone || customerPhone;
       paymentMode = meta.paymentMode || paymentMode;
@@ -1161,6 +1211,15 @@ export const getMobileCommissionBillDetail = async (
       grossSale = safeParseAmount(invoiceData.grandTotal || invoiceData.grossAmount || sale.saleAmount);
       discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
       tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || invoiceData.vat || 0);
+    }
+
+    // Fallback for paymentMode if not found in payload
+    if (!paymentMode || paymentMode === '-') {
+      const notesStr = `${sale.notes || ''}`;
+      const pmMatch = notesStr.match(/payment(?:\s*mode)?:\s*([A-Za-z0-9_]+)/i);
+      if (pmMatch) {
+        paymentMode = pmMatch[1].toUpperCase();
+      }
     }
 
     // Fallback: If products array is missing, query sibling CommissionTransactions sharing parent invoice
@@ -1251,7 +1310,7 @@ export const getMobileCommissionBillDetail = async (
         grossSale,
         discount,
         tax,
-        externalEventId: webhookLog?.id || null,
+        externalEventId: foundLogId || null,
         employee: {
           name: empName,
           code: employee.employeeCode,

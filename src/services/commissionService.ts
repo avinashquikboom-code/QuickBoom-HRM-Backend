@@ -212,8 +212,8 @@ export class CommissionService {
 
     const numInv = getNumericInvoiceNumber(latestSale);
     return {
-      billId: latestSale.billId || latestSale.invoiceNumber || `TXN-${latestSale.id}`,
-      invoiceNumber: numInv,
+      billId: numInv,
+      invoiceNumber: latestSale.invoiceNumber || `HWM-${numInv}`,
       billNumber: numInv,
       date: latestSale.createdAt,
       netAmount: latestSale.saleAmount,

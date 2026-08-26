@@ -527,14 +527,65 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     firstItem?.customerPhone ||
     null;
 
-  const paymentMode =
+  const rawPaymentMode =
     creditNote.PaymentMode ||
+    creditNote.paymentMode ||
+    creditNote.payment_mode ||
+    creditNote.PaymentMethod ||
+    creditNote.paymentMethod ||
+    creditNote.paymentType ||
+    creditNote.payMode ||
     payload?.PaymentMode ||
     payload?.paymentMode ||
+    payload?.payment_mode ||
+    payload?.PaymentMethod ||
+    payload?.paymentMethod ||
+    payload?.paymentType ||
+    payload?.payMode ||
+    payload?.pay_mode ||
+    payload?.tenderMode ||
+    payload?.modeOfPayment ||
+    payload?.data?.PaymentMode ||
     payload?.data?.paymentMode ||
+    payload?.data?.payment_mode ||
+    payload?.data?.PaymentMethod ||
+    payload?.data?.paymentMethod ||
+    payload?.data?.paymentType ||
+    payload?.data?.payMode ||
+    payload?.data?.tenderMode ||
+    payload?.data?.modeOfPayment ||
+    payload?.invoice?.PaymentMode ||
+    payload?.invoice?.paymentMode ||
+    payload?.invoice?.payment_mode ||
+    payload?.invoice?.paymentType ||
+    invoice.PaymentMode ||
     invoice.paymentMode ||
+    invoice.payment_mode ||
+    invoice.PaymentMethod ||
+    invoice.paymentMethod ||
     invoice.paymentType ||
+    invoice.payMode ||
+    invoice.tenderMode ||
+    invoice.modeOfPayment ||
+    firstItem?.PaymentMode ||
+    firstItem?.paymentMode ||
+    firstItem?.payment_mode ||
+    firstItem?.payMode ||
+    firstItem?.tenderMode ||
+    (Array.isArray(payload?.payments) && (payload.payments[0]?.mode || payload.payments[0]?.paymentMode || payload.payments[0]?.paymentType)) ||
+    (Array.isArray(payload?.data?.payments) && (payload.data.payments[0]?.mode || payload.data.payments[0]?.paymentMode || payload.data.payments[0]?.paymentType)) ||
+    (Array.isArray(invoice.payments) && (invoice.payments[0]?.mode || invoice.payments[0]?.paymentMode || invoice.payments[0]?.paymentType)) ||
+    (Array.isArray(invoice.paymentDetails) && (invoice.paymentDetails[0]?.paymentMode || invoice.paymentDetails[0]?.mode)) ||
+    (Array.isArray(payload?.tenders) && (payload.tenders[0]?.tenderType || payload.tenders[0]?.mode)) ||
     null;
+
+  let paymentMode: string | null = null;
+  if (rawPaymentMode) {
+    const str = String(rawPaymentMode).trim();
+    if (str.length > 0 && str !== '-' && str.toLowerCase() !== 'null' && str.toLowerCase() !== 'undefined') {
+      paymentMode = str.toUpperCase();
+    }
+  }
 
   const branchName =
     creditNote.branchName ||

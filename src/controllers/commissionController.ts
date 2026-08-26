@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee, safeParseDate } from '../utils/commissionHelper';
+import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee, safeParseDate, getNumericInvoiceNumber } from '../utils/commissionHelper';
 import { deduplicateCommissionTransactions } from '../utils/commissionDeduplicator';
 
 // Commission Dashboard Stats
@@ -285,12 +285,14 @@ export const searchSalesByBillId = async (
       commission,
     });
 
+    const numInv = getNumericInvoiceNumber(sale);
     res.json({
       success: true,
       data: {
         sale: {
           id: sale.id,
-          billId: sale.billId || sale.invoiceNumber,
+          billId: numInv,
+          invoiceNumber: sale.invoiceNumber || `HWM-${numInv}`,
           amount: sale.saleAmount,
           saleDate: sale.createdAt,
           source: 'HOPKID_WEBHOOK',
