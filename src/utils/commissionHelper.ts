@@ -1105,7 +1105,19 @@ export function getNumericInvoiceNumber(item: {
   }
 
   // Deterministic fallback based on autoincrement ID (starts at 1000 + id)
-  const idNum = typeof item.id === 'number' ? item.id : parseInt(String(item.id || '1').replace(/\D/g, '') || '1', 10);
+  let idNum = 1;
+  if (typeof item.id === 'number' && Number.isSafeInteger(item.id)) {
+    idNum = item.id;
+  } else if (item.id) {
+    const rawId = String(item.id);
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+    if (isUuid) {
+      idNum = (parseInt(rawId.replace(/-/g, '').slice(0, 6), 16) % 9000) + 1;
+    } else {
+      const digits = rawId.replace(/\D/g, '').slice(0, 6);
+      idNum = digits ? parseInt(digits, 10) : 1;
+    }
+  }
   return 1000 + (idNum > 0 ? idNum : 1);
 }
 

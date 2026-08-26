@@ -824,12 +824,30 @@ export const getMobileCommissionBillDetail = async (
 
     const rawBillId = req.params.billId;
     const billIdStr = Array.isArray(rawBillId) ? String(rawBillId[0]) : String(rawBillId);
-    const numericPart = parseInt(billIdStr.replace(/\D/g, ''), 10);
+
+    // Only populate possibleTxnIds if billIdStr is not a UUID / hex string and fits safely into 32-bit signed Int
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(billIdStr);
     const possibleTxnIds: number[] = [];
-    if (!isNaN(numericPart) && numericPart > 0) {
-      possibleTxnIds.push(numericPart);
-      if (numericPart > 1000) {
-        possibleTxnIds.push(numericPart - 1000);
+    if (!isUuid) {
+      if (/^\d+$/.test(billIdStr)) {
+        const parsed = parseInt(billIdStr, 10);
+        if (Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2147483647) {
+          possibleTxnIds.push(parsed);
+          if (parsed > 1000) {
+            possibleTxnIds.push(parsed - 1000);
+          }
+        }
+      } else if (!/[a-fA-F]/.test(billIdStr)) {
+        const digitsOnly = billIdStr.replace(/\D/g, '');
+        if (digitsOnly.length > 0 && digitsOnly.length <= 9) {
+          const parsed = parseInt(digitsOnly, 10);
+          if (Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2147483647) {
+            possibleTxnIds.push(parsed);
+            if (parsed > 1000) {
+              possibleTxnIds.push(parsed - 1000);
+            }
+          }
+        }
       }
     }
 
