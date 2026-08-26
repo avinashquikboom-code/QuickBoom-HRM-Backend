@@ -65,9 +65,12 @@ export const getMyPayslips = async (
       return {
         ...ps,
         advanceDeduction: ps.advanceDeduction || 0,
+        advanceSalary: ps.advanceDeduction || 0,
+        totalAdvanceSalary: ps.advanceDeduction || 0,
         expenseReimbursement: ps.expenseReimbursement || 0,
         approvedExpenses: ps.expenseReimbursement || 0,
         approvedExpenseAmount: ps.expenseReimbursement || 0,
+        totalExpenses: ps.expenseReimbursement || 0,
         commissionEarned: ps.commissionEarned || 0,
         presentDays: ps.presentDays || 0,
         absentDays: ps.absentDays || 0,
@@ -103,9 +106,12 @@ export const getMyPayslips = async (
         return {
           ...ps,
           advanceDeduction: ps.advanceDeduction || 0,
+          advanceSalary: ps.advanceDeduction || 0,
+          totalAdvanceSalary: ps.advanceDeduction || 0,
           expenseReimbursement: ps.expenseReimbursement || 0,
           approvedExpenses: ps.expenseReimbursement || 0,
           approvedExpenseAmount: ps.expenseReimbursement || 0,
+          totalExpenses: ps.expenseReimbursement || 0,
           commissionEarned: ps.commissionEarned || 0,
           presentDays: ps.presentDays || 0,
           absentDays: ps.absentDays || 0,
@@ -254,14 +260,14 @@ export const downloadPayslip = async (
     });
 
     const ss = employeeWithSalary?.salaryStructure;
-    const originalBasic = ss?.basicSalary || payslip.baseSalary || 45000;
+    const originalBasic = ss?.basicSalary || payslip.baseSalary || 10000;
     
     // Determine ratio (actual base salary divided by configured base salary)
     const ratio = originalBasic > 0 ? (payslip.baseSalary / originalBasic) : 1.0;
 
     const basic = payslip.baseSalary;
-    const hra = ss ? Math.round(ss.hra * ratio) : Math.round(basic * 0.40);
-    const ta = ss ? Math.round(ss.travelAllowance * ratio) : Math.round(basic * 0.10);
+    const hra = ss ? Math.round(ss.hra * ratio) : Math.round(basic * 0.20);
+    const ta = ss ? Math.round(ss.travelAllowance * ratio) : 0;
     const medical = ss ? Math.round(ss.medicalAllowance * ratio) : 0;
     const special = ss ? Math.round(ss.specialAllowance * ratio) : 0;
     const incentive = ss?.incentive || 0;
@@ -269,14 +275,12 @@ export const downloadPayslip = async (
 
     // Remaining allowance is distributed if there is a mismatch
     const calculatedAllowance = hra + ta + medical + special + incentive + bonus;
-    const extraAllowance = Math.max(0, payslip.allowance - (calculatedAllowance - basic));
+    const extraAllowance = Math.max(0, payslip.allowance - calculatedAllowance);
     const finalSpecial = special + extraAllowance;
 
-    const grossEarnings = basic + payslip.allowance;
     const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
     const pf = ss?.pfEnabled ? Math.round(basic * (ss.employeePfRate / 100)) : 0;
-    const esic = ss?.esicEnabled ? Math.round(grossEarnings * (ss.employeeEsicRate / 100)) : 0;
-    const totalDeductions = payslip.deductions;
+    const esic = ss?.esicEnabled ? Math.round((basic + payslip.allowance) * (ss.employeeEsicRate / 100)) : 0;
 
     const monthStart = new Date(payslip.year, payslip.month - 1, 1, 0, 0, 0, 0);
     const monthEnd = new Date(payslip.year, payslip.month, 0, 23, 59, 59, 999);
@@ -289,33 +293,37 @@ export const downloadPayslip = async (
       _sum: { commissionAmount: true }
     });
     let commissionEarned = commAggregate._sum?.commissionAmount || 0;
-    if (commissionEarned === 0) {
-      const empCommSum = await prisma.commissionTransaction.aggregate({
+    if (commissionEarned === 0 && payslip.commissionEarned) {
+      commissionEarned = payslip.commissionEarned;
+    }
+
+    // Active Advance Salary deduction calculation
+    let advanceDeduction = payslip.advanceDeduction || 0;
+    if (advanceDeduction === 0) {
+      const activeAdvances = await prisma.salaryAdvance.findMany({
         where: {
-          employeeId: payslip.employeeId,
-          status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+          wallet: { employeeId: payslip.employeeId },
+          status: 'APPROVED',
+          remainingAmount: { gt: 0 },
+          OR: [
+            { approvedAt: { lte: monthEnd } },
+            { approvedAt: null, requestedOn: { lte: monthEnd } },
+            { approvedAt: null, createdAt: { lte: monthEnd } }
+          ]
         },
-        _sum: { commissionAmount: true }
+        orderBy: { approvedAt: 'asc' }
       });
-      commissionEarned = empCommSum._sum?.commissionAmount || 0;
+      for (const adv of activeAdvances) {
+        const standardEmi = adv.monthlyEmi > 0 
+          ? adv.monthlyEmi 
+          : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
+        const remaining = adv.remainingAmount > 0 ? adv.remainingAmount : Math.max(0, adv.amount - (adv.paidAmount || 0));
+        advanceDeduction += Math.min(standardEmi, remaining);
+      }
+      advanceDeduction = Math.round(advanceDeduction * 100) / 100;
     }
 
-    const advanceDeduction = payslip.advanceDeduction || 0;
-    const dailySalary = payslip.dailySalary || (basic / (payslip.workingDays || 26));
-    const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
-    const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
-    const otherDeductions = Math.max(0, Math.round((totalDeductions - pf - esic - advanceDeduction - halfDayDeduction - leaveDeduction) * 100) / 100);
-
-    const earningsItems: { name: string; amount: number }[] = [
-      { name: 'Basic Salary', amount: basic },
-      { name: 'House Rent Allowance (HRA)', amount: hra },
-      { name: 'Allowances (Travel/Medical)', amount: ta + medical },
-      { name: 'Special Allowance & Bonus', amount: finalSpecial + incentive + bonus },
-    ];
-    if (commissionEarned > 0) {
-      earningsItems.push({ name: 'Commission', amount: commissionEarned });
-    }
-    const expenseReimbursement = payslip.expenseReimbursement || 0;
+    // Approved Expenses / Reimbursements
     const approvedExpenses = await prisma.expense.findMany({
       where: {
         employeeId: payslip.employeeId,
@@ -325,27 +333,64 @@ export const downloadPayslip = async (
       orderBy: { date: 'asc' },
     });
     const expenseCategories: Record<string, number> = {};
+    let totalApprovedExpenses = 0;
     for (const exp of approvedExpenses) {
       const cat = exp.category || 'Other';
-      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + (exp.amount || 0)) * 100) / 100;
+      const amt = exp.amount || 0;
+      totalApprovedExpenses += amt;
+      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + amt) * 100) / 100;
     }
-    const catEntries = Object.entries(expenseCategories);
-    if (catEntries.length > 0) {
-      for (const [cat, amt] of catEntries) {
-        earningsItems.push({ name: `${cat} Expense`, amount: amt });
-      }
-    } else if (expenseReimbursement > 0) {
-      earningsItems.push({ name: 'Total Approved Expenses', amount: expenseReimbursement });
+    const expenseReimbursement = payslip.expenseReimbursement > 0 
+      ? payslip.expenseReimbursement 
+      : Math.round(totalApprovedExpenses * 100) / 100;
+
+    const dailySalary = payslip.dailySalary || (basic / (payslip.workingDays || 26));
+    const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
+    const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
+
+    // Gross Earnings = Basic + Allowance components + Commission
+    const grossEarnings = Math.round((basic + (payslip.allowance || 0) + (commissionEarned > 0 ? commissionEarned : 0)) * 100) / 100;
+
+    // Total Deductions = Statutory + Half-Day + Leave + Advance Salary + Other
+    const itemizedDeductions = pf + esic + halfDayDeduction + leaveDeduction + advanceDeduction;
+    const totalDeductions = payslip.deductions > 0 
+      ? payslip.deductions 
+      : Math.round(itemizedDeductions * 100) / 100;
+    const otherDeductions = Math.max(0, Math.round((totalDeductions - itemizedDeductions) * 100) / 100);
+
+    // Net Salary = Gross Earnings - Total Deductions
+    const netSalary = Math.max(0, Math.round((grossEarnings - totalDeductions) * 100) / 100);
+
+    // Total Take-Home Pay = Net Salary + Reimbursements
+    const totalTakeHomePay = Math.round((netSalary + expenseReimbursement) * 100) / 100;
+
+    // Build Earnings Items
+    const earningsItems: { name: string; amount: number }[] = [
+      { name: 'Basic Salary', amount: basic },
+      { name: 'House Rent Allowance (HRA)', amount: hra },
+      { name: 'Allowances (Travel/Medical)', amount: ta + medical },
+    ];
+    if (finalSpecial + incentive + bonus > 0) {
+      earningsItems.push({ name: 'Special Allowance & Bonus', amount: finalSpecial + incentive + bonus });
+    }
+    if (commissionEarned > 0) {
+      earningsItems.push({ name: 'Commission', amount: commissionEarned });
     }
 
+    // Build Deductions Items
     const deductionsItems: { name: string; amount: number }[] = [];
-    if (pf > 0) deductionsItems.push({ name: 'Provident Fund (PF)', amount: pf });
-    if (esic > 0) deductionsItems.push({ name: 'ESIC', amount: esic });
+    if (pf > 0 || ss?.pfEnabled) deductionsItems.push({ name: 'Provident Fund (PF)', amount: pf });
+    if (esic > 0 || ss?.esicEnabled) deductionsItems.push({ name: 'ESIC / Tax', amount: esic });
     if (halfDayDeduction > 0) deductionsItems.push({ name: `Half Day (${payslip.halfDays} half days)`, amount: halfDayDeduction });
     if (leaveDeduction > 0) deductionsItems.push({ name: `Leave (${payslip.unpaidLeaveDays} unpaid leaves)`, amount: leaveDeduction });
-    if (advanceDeduction > 0) deductionsItems.push({ name: 'Advance Deduction', amount: advanceDeduction });
+    if (advanceDeduction > 0) {
+      deductionsItems.push({ name: 'Advance Salary', amount: advanceDeduction });
+    }
     if (otherDeductions > 0) deductionsItems.push({ name: 'Other Deductions', amount: otherDeductions });
-    if (deductionsItems.length === 0) deductionsItems.push({ name: 'No Deductions', amount: 0 });
+    if (deductionsItems.length === 0) {
+      deductionsItems.push({ name: 'Advance Salary', amount: 0 });
+      deductionsItems.push({ name: 'Other Deductions', amount: 0 });
+    }
 
     const maxRows = Math.max(earningsItems.length, deductionsItems.length);
     const tableRows: any[] = [];
@@ -378,94 +423,142 @@ export const downloadPayslip = async (
       ]
     ];
 
+    // Build Reimbursements / Expenses Section Table Body if any expenses exist
+    const catEntries = Object.entries(expenseCategories);
+    const reimbursementsTableBody: any[] = [
+      [
+        { text: 'Reimbursement / Expense Category', bold: true, fillColor: '#f3f4f6' },
+        { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' }
+      ]
+    ];
+
+    if (catEntries.length > 0) {
+      for (const [cat, amt] of catEntries) {
+        reimbursementsTableBody.push([
+          { text: `${cat} Expense` },
+          { text: `Rs. ${amt.toLocaleString('en-IN')}`, alignment: 'right' }
+        ]);
+      }
+    } else if (expenseReimbursement > 0) {
+      reimbursementsTableBody.push([
+        { text: 'Approved Expenses' },
+        { text: `Rs. ${expenseReimbursement.toLocaleString('en-IN')}`, alignment: 'right' }
+      ]);
+    } else {
+      reimbursementsTableBody.push([
+        { text: 'No Expenses / Reimbursements', color: '#6b7280', italics: true },
+        { text: 'Rs. 0', alignment: 'right', color: '#6b7280' }
+      ]);
+    }
+
+    reimbursementsTableBody.push([
+      { text: 'Total Reimbursements', bold: true, fillColor: '#ecfdf5', color: '#047857' },
+      { text: `Rs. ${expenseReimbursement.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#ecfdf5', color: '#047857' }
+    ]);
+
+    const docContent: any[] = [
+      // Title Header
+      { text: 'HOPKID PORTAL', style: 'companyName', alignment: 'center' },
+      { text: 'Human Resources · Payroll Division', style: 'companySub', alignment: 'center', margin: [0, 2, 0, 15] },
+      
+      { text: 'SALARY SLIP', style: 'docTitle', alignment: 'center', margin: [0, 0, 0, 20] },
+      
+      // Employee details table
+      {
+        style: 'tableExample',
+        table: {
+          widths: ['*', '*'],
+          body: [
+            [
+              {
+                text: [
+                  { text: 'Employee Name: ', bold: true }, payslip.employeeName, '\n',
+                  { text: 'Employee Code: ', bold: true }, payslip.employeeCode, '\n',
+                  { text: 'Designation:   ', bold: true }, payslip.designation, '\n',
+                  { text: 'Department:    ', bold: true }, payslip.department
+                ],
+                margin: [5, 5, 5, 5]
+              },
+              {
+                text: [
+                  { text: 'Office / Branch:     ', bold: true }, payslip.officeName, '\n',
+                  { text: 'Pay Period:          ', bold: true }, periodLabel, '\n',
+                  { text: 'Total Days of Month: ', bold: true }, `${totalDaysInMonth} Days`, '\n',
+                  { text: 'Document ID:         ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
+                  { text: 'Status:              ', bold: true }, 'PAID'
+                ],
+                margin: [5, 5, 5, 5]
+              }
+            ]
+          ]
+        },
+        layout: 'lightHorizontalLines'
+      },
+      
+      { text: 'Salary Breakdown', style: 'sectionHeader', margin: [0, 20, 0, 8] },
+      
+      // Earnings & Deductions Table
+      {
+        table: {
+          widths: ['*', 'auto', '*', 'auto'],
+          body: earningsTableBody
+        },
+        layout: 'grid'
+      },
+
+      // Reimbursements Section
+      { text: 'Reimbursements / Expenses', style: 'sectionHeader', margin: [0, 16, 0, 8] },
+      {
+        table: {
+          widths: ['*', 'auto'],
+          body: reimbursementsTableBody
+        },
+        layout: 'grid'
+      },
+      
+      // Net pay calculation breakdown & block
+      {
+        margin: [0, 20, 0, 0],
+        table: {
+          widths: ['*'],
+          body: [
+            [
+              {
+                fillColor: PRIMARY_COLOR,
+                color: 'white',
+                text: [
+                  { text: 'PAYABLE SUMMARY\n', fontSize: 10, bold: true },
+                  { text: `Gross Earnings: Rs. ${grossEarnings.toLocaleString('en-IN')}  |  Less Deductions: Rs. ${totalDeductions.toLocaleString('en-IN')}  |  Net Salary: Rs. ${netSalary.toLocaleString('en-IN')}\n`, fontSize: 9 },
+                  ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${expenseReimbursement.toLocaleString('en-IN')}\n`, fontSize: 9, bold: true }] : []),
+                  { text: `\nTOTAL TAKE-HOME PAY\n`, fontSize: 11, bold: true },
+                  { text: `INR ${totalTakeHomePay.toLocaleString('en-IN')}/-\n`, fontSize: 18, bold: true },
+                  { text: `In Words: ${payslip.netInWords || `${totalTakeHomePay.toLocaleString('en-IN')} Rupees Only`}`, fontSize: 9, italics: true }
+                ],
+                alignment: 'center',
+                margin: [15, 12, 15, 12]
+              }
+            ]
+          ]
+        },
+        layout: 'noBorders'
+      },
+      
+      // Footer disclaimer
+      { 
+        text: 'This is a computer-generated salary slip and does not require a physical signature.', 
+        style: 'footerDisclaimer', 
+        alignment: 'center', 
+        margin: [0, 35, 0, 0] 
+      }
+    ];
+
     const docDefinition = {
-      content: [
-        // Title Header
-        { text: 'HOPKID PORTAL', style: 'companyName', alignment: 'center' },
-        { text: 'Human Resources · Payroll Division', style: 'companySub', alignment: 'center', margin: [0, 2, 0, 15] },
-        
-        { text: 'SALARY SLIP', style: 'docTitle', alignment: 'center', margin: [0, 0, 0, 20] },
-        
-        // Employee details table
-        {
-          style: 'tableExample',
-          table: {
-            widths: ['*', '*'],
-            body: [
-              [
-                {
-                  text: [
-                    { text: 'Employee Name: ', bold: true }, payslip.employeeName, '\n',
-                    { text: 'Employee Code: ', bold: true }, payslip.employeeCode, '\n',
-                    { text: 'Designation:   ', bold: true }, payslip.designation, '\n',
-                    { text: 'Department:    ', bold: true }, payslip.department
-                  ],
-                  margin: [5, 5, 5, 5]
-                },
-                {
-                  text: [
-                    { text: 'Office / Branch:     ', bold: true }, payslip.officeName, '\n',
-                    { text: 'Pay Period:          ', bold: true }, periodLabel, '\n',
-                    { text: 'Total Days of Month: ', bold: true }, `${totalDaysInMonth} Days`, '\n',
-                    { text: 'Document ID:         ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
-                    { text: 'Status:              ', bold: true }, 'PAID'
-                  ],
-                  margin: [5, 5, 5, 5]
-                }
-              ]
-            ]
-          },
-          layout: 'lightHorizontalLines'
-        },
-        
-        { text: 'Salary Breakdown', style: 'sectionHeader', margin: [0, 20, 0, 8] },
-        
-        // Earnings & Deductions Table
-        {
-          table: {
-            widths: ['*', 'auto', '*', 'auto'],
-            body: earningsTableBody
-          },
-          layout: 'grid'
-        },
-        
-        // Net pay block
-        {
-          margin: [0, 25, 0, 0],
-          table: {
-            widths: ['*'],
-            body: [
-              [
-                {
-                  fillColor: PRIMARY_COLOR,
-                  color: 'white',
-                  text: [
-                    { text: 'NET TAKE-HOME PAY\n', fontSize: 10, bold: true },
-                    { text: `INR ${payslip.netSalary.toLocaleString('en-IN')}/-`, fontSize: 18, bold: true },
-                    { text: `\nIn Words: ${payslip.netInWords}`, fontSize: 9, italics: true }
-                  ],
-                  alignment: 'center',
-                  margin: [15, 12, 15, 12]
-                }
-              ]
-            ]
-          },
-          layout: 'noBorders'
-        },
-        
-        // Footer disclaimer
-        { 
-          text: 'This is a computer-generated salary slip and does not require a physical signature.', 
-          style: 'footerDisclaimer', 
-          alignment: 'center', 
-          margin: [0, 50, 0, 0] 
-        }
-      ],
+      content: docContent,
       styles: {
         companyName: { fontSize: 20, bold: true, color: PRIMARY_COLOR },
         companySub: { fontSize: 9, color: '#6b7280' },
         docTitle: { fontSize: 14, bold: true, decoration: 'underline', color: '#111827' },
-        sectionHeader: { fontSize: 12, bold: true, color: '#374151' },
+        sectionHeader: { fontSize: 11, bold: true, color: '#374151' },
         footerDisclaimer: { fontSize: 8, color: '#9ca3af', italics: true }
       },
       defaultStyle: {

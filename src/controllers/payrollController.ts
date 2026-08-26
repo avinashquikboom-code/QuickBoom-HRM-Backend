@@ -340,9 +340,7 @@ export const generatePayslipPDF = async (
       Roboto: { normal: 'Helvetica', bold: 'Helvetica-Bold', italics: 'Helvetica-Oblique', bolditalics: 'Helvetica-BoldOblique' },
     });
     const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    const grossSalary = payslip.baseSalary + payslip.allowance;
-    const netSalary   = payslip.netSalary;
-    const deductions  = payslip.deductions;
+    const grossEarnings = payslip.baseSalary + payslip.allowance;
     const generatedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
     const monthLabel  = `${MONTH_NAMES[monthNum - 1]} ${yearNum}`;
     const statusColor = payslip.status === 'PAID' ? '#059669' : payslip.status === 'PENDING' ? '#D97706' : '#6B7280';
@@ -362,6 +360,32 @@ export const generatePayslipPDF = async (
     });
     const commissionEarned = (payslip as any).commissionEarned ?? (commAggregate._sum?.commissionAmount || 0);
 
+    // Active Advance Salary deduction calculation
+    let advanceDeduction = payslip.advanceDeduction || 0;
+    if (advanceDeduction === 0) {
+      const activeAdvances = await prisma.salaryAdvance.findMany({
+        where: {
+          wallet: { employeeId: payslip.employeeId },
+          status: 'APPROVED',
+          remainingAmount: { gt: 0 },
+          OR: [
+            { approvedAt: { lte: monthEnd } },
+            { approvedAt: null, requestedOn: { lte: monthEnd } },
+            { approvedAt: null, createdAt: { lte: monthEnd } }
+          ]
+        },
+        orderBy: { approvedAt: 'asc' }
+      });
+      for (const adv of activeAdvances) {
+        const standardEmi = adv.monthlyEmi > 0 
+          ? adv.monthlyEmi 
+          : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
+        const remaining = adv.remainingAmount > 0 ? adv.remainingAmount : Math.max(0, adv.amount - (adv.paidAmount || 0));
+        advanceDeduction += Math.min(standardEmi, remaining);
+      }
+      advanceDeduction = Math.round(advanceDeduction * 100) / 100;
+    }
+
     const earningsTableBody: any[] = [
       [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }],
       [{ text: 'Basic Salary',    fontSize: 9, color: '#111827', fillColor: '#F9FAFB' }, { text: fmt(payslip.baseSalary),  fontSize: 9, alignment: 'right', color: '#111827', fillColor: '#F9FAFB' }],
@@ -375,7 +399,13 @@ export const generatePayslipPDF = async (
       ]);
     }
 
-    const expenseReimbursement = (payslip as any).expenseReimbursement || 0;
+    const totalGross = Math.round((grossEarnings + (commissionEarned > 0 ? commissionEarned : 0)) * 100) / 100;
+    earningsTableBody.push([
+      { text: 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
+      { text: fmt(totalGross), fontSize: 9, bold: true, alignment: 'right', color: '#059669', fillColor: '#ECFDF5' }
+    ]);
+
+    // Approved Expenses / Reimbursements
     const approvedExpenses = await prisma.expense.findMany({
       where: {
         employeeId: payslip.employeeId,
@@ -385,29 +415,24 @@ export const generatePayslipPDF = async (
       orderBy: { date: 'asc' },
     });
     const expenseCategories: Record<string, number> = {};
+    let totalApprovedExpenses = 0;
     for (const exp of approvedExpenses) {
       const cat = exp.category || 'Other';
-      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + (exp.amount || 0)) * 100) / 100;
+      const amt = exp.amount || 0;
+      totalApprovedExpenses += amt;
+      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + amt) * 100) / 100;
     }
-    const catEntries = Object.entries(expenseCategories);
-    if (catEntries.length > 0) {
-      for (const [cat, amt] of catEntries) {
-        earningsTableBody.push([
-          { text: `${cat} Expense`, fontSize: 9, color: '#111827' },
-          { text: fmt(amt), fontSize: 9, alignment: 'right', color: '#111827' }
-        ]);
-      }
-    } else if (expenseReimbursement > 0) {
-      earningsTableBody.push([
-        { text: 'Total Approved Expenses', fontSize: 9, color: '#111827' },
-        { text: fmt(expenseReimbursement), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
+    const expenseReimbursement = (payslip as any).expenseReimbursement > 0 
+      ? (payslip as any).expenseReimbursement 
+      : Math.round(totalApprovedExpenses * 100) / 100;
 
     const dailySalary = payslip.dailySalary || (payslip.baseSalary / (payslip.workingDays || 26));
     const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
-    const advanceDeduction = payslip.advanceDeduction || 0;
+
+    const itemizedDeductions = halfDayDeduction + leaveDeduction + advanceDeduction;
+    const deductions = payslip.deductions > 0 ? payslip.deductions : itemizedDeductions;
+    const otherDeductions = Math.max(0, Math.round((deductions - itemizedDeductions) * 100) / 100);
 
     const deductionsTableBody: any[] = [
       [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }]
@@ -427,13 +452,11 @@ export const generatePayslipPDF = async (
     }
     if (advanceDeduction > 0) {
       deductionsTableBody.push([
-        { text: 'Advance Deduction', fontSize: 9, color: '#111827' },
+        { text: 'Advance Salary', fontSize: 9, color: '#111827' },
         { text: fmt(advanceDeduction), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
     }
 
-    const itemizedTotal = halfDayDeduction + leaveDeduction + advanceDeduction;
-    const otherDeductions = Math.max(0, Math.round((deductions - itemizedTotal) * 100) / 100);
     if (otherDeductions > 0) {
       deductionsTableBody.push([
         { text: 'Other Deductions', fontSize: 9, color: '#111827' },
@@ -443,7 +466,11 @@ export const generatePayslipPDF = async (
 
     if (deductionsTableBody.length === 1) {
       deductionsTableBody.push([
-        { text: 'No Deductions', fontSize: 9, color: '#6B7280', italics: true },
+        { text: 'Advance Salary', fontSize: 9, color: '#6B7280' },
+        { text: fmt(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
+      ]);
+      deductionsTableBody.push([
+        { text: 'Other Deductions', fontSize: 9, color: '#6B7280' },
         { text: fmt(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
       ]);
     }
@@ -452,6 +479,39 @@ export const generatePayslipPDF = async (
       { text: 'Total Deductions', fontSize: 9, bold: true, color: '#DC2626', fillColor: '#FEF2F2' },
       { text: fmt(deductions), fontSize: 9, bold: true, alignment: 'right', color: '#DC2626', fillColor: '#FEF2F2' }
     ]);
+
+    // Reimbursements table body
+    const catEntries = Object.entries(expenseCategories);
+    const reimbursementsTableBody: any[] = [
+      [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }]
+    ];
+
+    if (catEntries.length > 0) {
+      for (const [cat, amt] of catEntries) {
+        reimbursementsTableBody.push([
+          { text: `${cat} Expense`, fontSize: 9, color: '#111827' },
+          { text: fmt(amt), fontSize: 9, alignment: 'right', color: '#111827' }
+        ]);
+      }
+    } else if (expenseReimbursement > 0) {
+      reimbursementsTableBody.push([
+        { text: 'Approved Expenses', fontSize: 9, color: '#111827' },
+        { text: fmt(expenseReimbursement), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    } else {
+      reimbursementsTableBody.push([
+        { text: 'No Expenses / Reimbursements', fontSize: 9, color: '#6B7280', italics: true },
+        { text: fmt(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
+      ]);
+    }
+
+    reimbursementsTableBody.push([
+      { text: 'Total Reimbursements', fontSize: 9, bold: true, color: '#047857', fillColor: '#ECFDF5' },
+      { text: fmt(expenseReimbursement), fontSize: 9, bold: true, alignment: 'right', color: '#047857', fillColor: '#ECFDF5' }
+    ]);
+
+    const netSalary = Math.max(0, Math.round((totalGross - deductions) * 100) / 100);
+    const totalTakeHomePay = Math.round((netSalary + expenseReimbursement) * 100) / 100;
 
     const docDefinition: any = {
       pageSize: 'A4',
@@ -483,10 +543,11 @@ export const generatePayslipPDF = async (
         ], margin: [0, 0, 0, 20] },
         // Stat cards
         { columns: [
-          { stack: [{ text: fmt(grossSalary), fontSize: 15, bold: true, color: PRIMARY, alignment: 'center' }, { text: 'GROSS SALARY', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,8,0] },
-          { stack: [{ text: fmt(deductions),  fontSize: 15, bold: true, color: '#DC2626', alignment: 'center' }, { text: 'DEDUCTIONS',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,8,0] },
-          { stack: [{ text: fmt(netSalary),   fontSize: 15, bold: true, color: '#059669', alignment: 'center' }, { text: 'NET SALARY',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,8,0] },
-          { stack: [{ text: payslip.status,   fontSize: 12, bold: true, color: statusColor, alignment: 'center' }, { text: 'STATUS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }] },
+          { stack: [{ text: fmt(totalGross), fontSize: 14, bold: true, color: PRIMARY, alignment: 'center' }, { text: 'GROSS EARNINGS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
+          { stack: [{ text: fmt(deductions),  fontSize: 14, bold: true, color: '#DC2626', alignment: 'center' }, { text: 'DEDUCTIONS',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
+          { stack: [{ text: fmt(netSalary),   fontSize: 14, bold: true, color: '#059669', alignment: 'center' }, { text: 'NET SALARY',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
+          ...(expenseReimbursement > 0 ? [{ stack: [{ text: fmt(expenseReimbursement), fontSize: 14, bold: true, color: '#0D9488', alignment: 'center' }, { text: 'REIMBURSEMENTS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] }] : []),
+          { stack: [{ text: fmt(totalTakeHomePay), fontSize: 14, bold: true, color: '#047857', alignment: 'center' }, { text: 'TAKE-HOME PAY', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }] },
         ], margin: [0,0,0,16] },
         { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 1, lineColor: '#E5E7EB' }], margin: [0,0,0,16] },
         // Employee info
@@ -556,16 +617,25 @@ export const generatePayslipPDF = async (
             body: deductionsTableBody,
           },
           layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
+          margin: [0,0,0,16],
+        },
+        // Reimbursements / Expenses
+        { text: 'Reimbursements / Expenses', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
+        { table: { headerRows: 1, widths: ['*', 120],
+            body: reimbursementsTableBody,
+          },
+          layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
           margin: [0,0,0,20],
         },
         // Net salary box
-        { canvas: [{ type: 'rect', x: 0, y: 0, w: 523, h: 54, color: '#F0FDFA', r: 2 }, { type: 'rect', x: 0, y: 0, w: 6, h: 54, color: PRIMARY }] },
+        { canvas: [{ type: 'rect', x: 0, y: 0, w: 523, h: 58, color: '#F0FDFA', r: 2 }, { type: 'rect', x: 0, y: 0, w: 6, h: 58, color: PRIMARY }] },
         { columns: [
           { stack: [
-            { text: 'NET SALARY (TAKE HOME)', fontSize: 8, bold: true, color: '#6B7280', margin: [0,-50,0,4] },
-            { text: payslip.netInWords || 'N/A', fontSize: 8, color: '#374151', italics: true },
+            { text: `Net Salary: ${fmt(netSalary)} ${expenseReimbursement > 0 ? `+ Reimbursements: ${fmt(expenseReimbursement)}` : ''}`, fontSize: 8, color: '#4B5563', margin: [0,-52,0,2] },
+            { text: 'TOTAL TAKE-HOME PAY', fontSize: 9, bold: true, color: '#111827', margin: [0,0,0,2] },
+            { text: payslip.netInWords || `${totalTakeHomePay.toLocaleString('en-IN')} Rupees Only`, fontSize: 8, color: '#374151', italics: true },
           ], margin: [14,0,0,0] },
-          { text: fmt(netSalary), fontSize: 20, bold: true, color: PRIMARY, alignment: 'right', margin: [0,-52,0,0] },
+          { text: fmt(totalTakeHomePay), fontSize: 18, bold: true, color: PRIMARY, alignment: 'right', margin: [0,-52,0,0] },
         ], margin: [0,0,0,24] },
         // Disclaimer
         { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E5E7EB' }], margin: [0,4,0,10] },
@@ -919,9 +989,12 @@ export const getAdminPayrollSlips = async (
         allowance: slip.allowance || 0,
         deductions: slip.deductions || 0,
         advanceDeduction: slip.advanceDeduction || 0,
+        advanceSalary: slip.advanceDeduction || 0,
+        totalAdvanceSalary: slip.advanceDeduction || 0,
         expenseReimbursement: slip.expenseReimbursement || 0,
         approvedExpenses: slip.expenseReimbursement || 0,
         approvedExpenseAmount: slip.expenseReimbursement || 0,
+        totalExpenses: slip.expenseReimbursement || 0,
         status: slip.status || 'Approved',
         month: slip.month,
         year: slip.year,
