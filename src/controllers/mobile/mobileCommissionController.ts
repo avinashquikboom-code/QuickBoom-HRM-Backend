@@ -258,9 +258,10 @@ export const getMobileCommissionDaily = async (
     const bills = transactions.map(t => {
       const numInv = getNumericInvoiceNumber(t);
       return {
-        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-        invoiceNumber: numInv,
+        billId: numInv,
+        invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
         billNumber: numInv,
+        invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
         amount: t.saleAmount,
         commission: t.commissionAmount,
         time: t.createdAt,

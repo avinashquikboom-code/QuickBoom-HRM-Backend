@@ -95,10 +95,10 @@ export const fetchCommissionWallet = async (
       const numInv = getNumericInvoiceNumber(t);
       return {
         id: t.id.toString(),
-        billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-        invoiceNumber: numInv,
+        billId: numInv,
         billNumber: numInv,
-        invoiceNo: numInv,
+        invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
+        invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
         customerName: t.notes || 'Retail Sale',
         billAmount: t.saleAmount,
         commissionPercentage: t.commissionPercent || 0,
@@ -266,7 +266,6 @@ export const fetchCommissionHistory = async (
             }
           } catch (e) {}
 
-          const rawBill = log.billId || meta.invoiceNumber || meta.billId || `WH-${log.id}`;
           const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId, id: log.id });
           const amount = log.amount || meta.grossAmount || meta.grandTotal || 0;
           const comm = meta.commissionAmount || 0;
@@ -275,10 +274,10 @@ export const fetchCommissionHistory = async (
 
           return {
             id: `WH-${log.id}`,
-            billId: rawBill,
-            invoiceNumber: numInv,
+            billId: numInv,
             billNumber: numInv,
-            invoiceNo: numInv,
+            invoiceNumber: meta.invoiceNumber || `HWM-${numInv}`,
+            invoiceNo: meta.invoiceNumber || `HWM-${numInv}`,
             customerName: cust,
             billAmount: amount,
             commissionPercentage: Math.round(pct * 10) / 10,
@@ -310,10 +309,10 @@ export const fetchCommissionHistory = async (
           const numInv = getNumericInvoiceNumber(t);
           return {
             id: t.id.toString(),
-            billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-            invoiceNumber: numInv,
+            billId: numInv,
             billNumber: numInv,
-            invoiceNo: numInv,
+            invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
+            invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
             customerName: t.notes || 'Retail Sale',
             billAmount: t.saleAmount,
             commissionPercentage: t.commissionPercent || 0,
@@ -464,10 +463,10 @@ export const fetchCommissionDetails = async (
       .map(t => {
         const numInv = getNumericInvoiceNumber(t);
         return {
-          billId: t.billId || t.invoiceNumber || `TXN-${t.id}`,
-          invoiceNumber: numInv,
+          billId: numInv,
           billNumber: numInv,
-          invoiceNo: numInv,
+          invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
+          invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
           customerName: t.notes || 'Retail Sale',
           billAmount: t.saleAmount,
           commissionEarned: t.commissionAmount,

@@ -121,10 +121,10 @@ router.get('/', authenticateToken, roleMiddleware(['ADMIN', 'SUPERADMIN', 'STORE
       const empName = bill.employee ? `${bill.employee.firstName} ${bill.employee.lastName}`.trim() : 'N/A';
       const numInv = getNumericInvoiceNumber(bill);
       return {
-        billId: bill.billId || bill.invoiceNumber || `TXN-${bill.id}`,
-        invoiceNumber: numInv,
+        billId: numInv,
+        invoiceNumber: bill.invoiceNumber || `HWM-${numInv}`,
         billNumber: numInv,
-        invoiceNo: numInv,
+        invoiceNo: bill.invoiceNumber || `HWM-${numInv}`,
         date: bill.createdAt.toISOString().split('T')[0],
         displayDate: formatDisplayDate(bill.createdAt),
         employeeName: empName,

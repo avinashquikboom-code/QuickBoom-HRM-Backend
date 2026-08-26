@@ -346,28 +346,35 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     creditNote.InvoiceNo ||
     creditNote.invoiceNo ||
     creditNote.invoiceNumber ||
+    creditNote.InvoiceNumber ||
     creditNote.SalesID ||
     creditNote.CNNo ||
+    creditNote.cnNo ||
     creditNote.creditNoteNo ||
     payload?.InvoiceNo ||
     payload?.SalesID ||
     payload?.data?.InvoiceNo ||
     payload?.data?.SalesID ||
     invoice.invoiceNumber ||
+    invoice.InvoiceNumber ||
     invoice.invoiceNo ||
-    invoice.invoiceId ||
-    invoice.invoice_id ||
+    invoice.InvoiceNo ||
+    invoice.invoice_no ||
     payload?.data?.invoiceNumber ||
+    payload?.data?.InvoiceNumber ||
     payload?.data?.invoiceNo ||
-    payload?.data?.invoiceId ||
-    payload?.data?.invoice_id ||
+    payload?.data?.InvoiceNo ||
+    payload?.data?.invoice_no ||
     payload?.invoiceNumber ||
+    payload?.InvoiceNumber ||
     payload?.invoiceNo ||
-    payload?.invoiceId ||
-    payload?.invoice_id ||
+    payload?.InvoiceNo ||
+    payload?.invoice_no ||
     firstItem?.invoiceNumber ||
+    firstItem?.InvoiceNumber ||
     firstItem?.invoiceNo ||
-    firstItem?.invoiceId ||
+    firstItem?.InvoiceNo ||
+    (invoice.invoiceId && !/^[0-9a-fA-F-]{36}$/.test(String(invoice.invoiceId)) ? invoice.invoiceId : null) ||
     null;
 
   // 2. Resolve numeric Bill ID (strictly numeric, never a UUID)
@@ -375,33 +382,72 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   let resolvedBillId: string | null = null;
 
   const billCandidates = [
+    creditNote.billNumber,
+    creditNote.billNo,
+    creditNote.bill_no,
+    creditNote.BillNo,
+    creditNote.BillNumber,
     creditNote.CNID,
     creditNote.CNNo,
+    creditNote.cnNo,
     creditNote.creditNoteNo,
     creditNote.number,
     creditNote.exchangeNo,
-    invoice.billId,
-    invoice.bill_id,
     invoice.billNumber,
+    invoice.BillNumber,
     invoice.billNo,
-    invoice.invoiceId,
-    invoice.invoice_id,
-    payload?.data?.billId,
-    payload?.data?.bill_id,
+    invoice.BillNo,
+    invoice.bill_no,
+    invoice.billId,
+    invoice.BillId,
+    invoice.BillID,
+    invoice.bill_id,
+    invoice.invoiceNumber,
+    invoice.InvoiceNumber,
+    invoice.invoiceNo,
+    invoice.InvoiceNo,
+    invoice.invoice_no,
     payload?.data?.billNumber,
+    payload?.data?.BillNumber,
     payload?.data?.billNo,
-    payload?.data?.invoiceId,
-    payload?.data?.invoice_id,
-    payload?.billId,
-    payload?.bill_id,
+    payload?.data?.BillNo,
+    payload?.data?.bill_no,
+    payload?.data?.billId,
+    payload?.data?.BillId,
+    payload?.data?.BillID,
+    payload?.data?.bill_id,
+    payload?.data?.invoiceNumber,
+    payload?.data?.InvoiceNumber,
+    payload?.data?.invoiceNo,
+    payload?.data?.InvoiceNo,
+    payload?.data?.invoice_no,
     payload?.billNumber,
+    payload?.BillNumber,
     payload?.billNo,
-    payload?.invoiceId,
-    payload?.invoice_id,
-    firstItem?.billId,
-    firstItem?.bill_id,
+    payload?.BillNo,
+    payload?.bill_no,
+    payload?.billId,
+    payload?.BillId,
+    payload?.BillID,
+    payload?.bill_id,
+    payload?.invoiceNumber,
+    payload?.InvoiceNumber,
+    payload?.invoiceNo,
+    payload?.InvoiceNo,
+    payload?.invoice_no,
+    firstItem?.billNumber,
+    firstItem?.BillNumber,
     firstItem?.billNo,
-    firstItem?.invoiceId,
+    firstItem?.BillNo,
+    firstItem?.bill_no,
+    firstItem?.billId,
+    firstItem?.BillId,
+    firstItem?.BillID,
+    firstItem?.bill_id,
+    firstItem?.invoiceNumber,
+    firstItem?.InvoiceNumber,
+    firstItem?.invoiceNo,
+    firstItem?.InvoiceNo,
     rawInvoiceNumber,
   ];
 
@@ -1150,40 +1196,36 @@ export async function createWebhookLog(data: {
 }
 
 /**
- * Resolves a clean integer invoice / bill number for mobile UI and API responses.
- * Reuses numeric billId or invoiceNumber if present; otherwise derives a sequential integer (1000 + id).
- * Example: 89, 93, 1001, 1002...
+ * Resolves a clean integer POS invoice / bill number for mobile UI and API responses.
+ * Reuses numeric billNumber, billId, or invoiceNumber if present; preserves true POS bill number.
+ * Example: 89, 93, 94...
  */
 export function getNumericInvoiceNumber(item: {
   id?: number | string | null;
   invoiceNumber?: string | number | null;
   billId?: string | number | null;
   billNumber?: number | null;
+  invoiceNo?: string | number | null;
+  notes?: string | null;
+  description?: string | null;
 }): number {
-  if (item.billNumber && typeof item.billNumber === 'number' && item.billNumber > 0) {
-    return item.billNumber;
+  // 1. Direct positive integer billNumber
+  if (item.billNumber !== null && item.billNumber !== undefined) {
+    if (typeof item.billNumber === 'number' && item.billNumber > 0 && item.billNumber <= 2147483647) {
+      return item.billNumber;
+    }
+    const parsed = parseInt(String(item.billNumber).replace(/\D/g, ''), 10);
+    if (!isNaN(parsed) && parsed > 0 && parsed <= 2147483647) return parsed;
   }
+
+  // 2. Direct billId (numeric or clean code like "89", "HWM-89")
   if (item.billId !== null && item.billId !== undefined) {
     if (typeof item.billId === 'number' && item.billId > 0 && item.billId <= 2147483647) {
       return item.billId;
     }
     const str = String(item.billId).trim();
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-    if (!isUuid) {
-      const digits = str.replace(/\D/g, '');
-      if (digits.length > 0 && digits.length <= 9) {
-        const num = parseInt(digits, 10);
-        if (num > 0 && num <= 2147483647) return num;
-      }
-    }
-  }
-  if (item.invoiceNumber !== null && item.invoiceNumber !== undefined) {
-    if (typeof item.invoiceNumber === 'number' && item.invoiceNumber > 0 && item.invoiceNumber <= 2147483647) {
-      return item.invoiceNumber;
-    }
-    const str = String(item.invoiceNumber).trim();
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
-    if (!isUuid) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(str);
+    if (!isUuid && str.length > 0) {
       const digits = str.replace(/\D/g, '');
       if (digits.length > 0 && digits.length <= 9) {
         const num = parseInt(digits, 10);
@@ -1192,21 +1234,50 @@ export function getNumericInvoiceNumber(item: {
     }
   }
 
-  // Deterministic fallback based on autoincrement ID (starts at 1000 + id)
-  let idNum = 1;
-  if (typeof item.id === 'number' && Number.isSafeInteger(item.id)) {
-    idNum = item.id;
-  } else if (item.id) {
-    const rawId = String(item.id);
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
-    if (isUuid) {
-      idNum = (parseInt(rawId.replace(/-/g, '').slice(0, 6), 16) % 9000) + 1;
-    } else {
-      const digits = rawId.replace(/\D/g, '').slice(0, 6);
-      idNum = digits ? parseInt(digits, 10) : 1;
+  // 3. Invoice Number string / number (e.g. "HWM-89", "INV-93", "89")
+  const rawInv = item.invoiceNumber ?? item.invoiceNo;
+  if (rawInv !== null && rawInv !== undefined) {
+    if (typeof rawInv === 'number' && rawInv > 0 && rawInv <= 2147483647) {
+      return rawInv;
+    }
+    const str = String(rawInv).trim();
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(str);
+    if (!isUuid && str.length > 0) {
+      const digits = str.replace(/\D/g, '');
+      if (digits.length > 0 && digits.length <= 9) {
+        const num = parseInt(digits, 10);
+        if (num > 0 && num <= 2147483647) return num;
+      }
     }
   }
-  return 1000 + (idNum > 0 ? idNum : 1);
+
+  // 4. Notes / Description inspect for embedded bill reference
+  const noteStr = String(item.notes || item.description || '');
+  if (noteStr) {
+    const match = noteStr.match(/(?:Invoice|Bill|INV|HWM)\s*#?\s*(\d+)/i);
+    if (match && match[1]) {
+      const num = parseInt(match[1], 10);
+      if (num > 0 && num <= 2147483647) return num;
+    }
+  }
+
+  // 5. Fallback cleanly to integer id if available
+  if (typeof item.id === 'number' && Number.isSafeInteger(item.id) && item.id > 0 && item.id <= 2147483647) {
+    return item.id;
+  }
+  if (item.id) {
+    const rawId = String(item.id).trim();
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(rawId);
+    if (!isUuid && rawId.length > 0) {
+      const digits = rawId.replace(/\D/g, '');
+      if (digits.length > 0 && digits.length <= 9) {
+        const num = parseInt(digits, 10);
+        if (num > 0 && num <= 2147483647) return num;
+      }
+    }
+  }
+
+  return 1;
 }
 
 /**

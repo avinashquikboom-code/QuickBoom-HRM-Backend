@@ -404,7 +404,17 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
     }
   }
 
-  const primaryBillId = meta.billId || invoice.invoiceNo || invoice.invoiceId || `BILL-${Date.now()}`;
+  const isUuidStr = (s?: any) => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(String(s || ''));
+  const primaryBillId =
+    meta.billId ||
+    (invoice.billNumber && !isUuidStr(invoice.billNumber) ? String(invoice.billNumber) : null) ||
+    (invoice.billNo && !isUuidStr(invoice.billNo) ? String(invoice.billNo) : null) ||
+    (invoice.invoiceNo && !isUuidStr(invoice.invoiceNo) ? String(invoice.invoiceNo) : null) ||
+    (invoice.invoiceNumber && !isUuidStr(invoice.invoiceNumber) ? String(invoice.invoiceNumber) : null) ||
+    (invoice.invoiceId && !isUuidStr(invoice.invoiceId) ? String(invoice.invoiceId) : null) ||
+    (meta.eventId ? String(meta.eventId) : null) ||
+    (invoice.invoiceId ? String(invoice.invoiceId) : null) ||
+    `BILL-${Date.now()}`;
   const primaryAmount = meta.amount || invoice.netAmount || 0;
 
   let itemsToProcess: any[] = [];
