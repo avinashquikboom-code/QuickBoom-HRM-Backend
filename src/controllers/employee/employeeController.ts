@@ -74,7 +74,9 @@ export const fetchEmployeeProfile = async (
           office: employee.office?.name || 'Unassigned',
           storeId: employee.storeId ? employee.storeId.toString() : (employee.store?.id ? employee.store.id.toString() : null),
           storeName: employee.store?.name || null,
-          joinDate: employee.createdAt.toISOString(),
+          joiningDate: employee.joiningDate ? employee.joiningDate.toISOString() : null,
+          dateOfJoining: employee.joiningDate ? employee.joiningDate.toISOString() : null,
+          joinDate: employee.joiningDate ? employee.joiningDate.toISOString() : employee.createdAt.toISOString(),
         },
         profile: {
           id: profile.id,

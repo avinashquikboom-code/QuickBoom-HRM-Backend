@@ -341,6 +341,8 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
         storeId: user.employee.storeId?.toString() || user.employee.officeId?.toString(),
         storeName: user.employee.office?.name || user.employee.branchName,
         salary: user.employee.salaryStructure ? user.employee.salaryStructure.monthlySalary : 0,
+        joiningDate: user.employee.joiningDate ? user.employee.joiningDate.toISOString() : null,
+        dateOfJoining: user.employee.joiningDate ? user.employee.joiningDate.toISOString() : null,
         office: user.employee.office ? {
           id: user.employee.office.id,
           name: user.employee.office.name,
@@ -603,6 +605,8 @@ export const getMobileProfile = async (req: AuthenticatedRequest, res: Response)
         storeId: user.employee.storeId?.toString() || user.employee.officeId?.toString(),
         storeName: user.employee.office?.name || user.employee.branchName,
         salary: user.employee.salaryStructure ? user.employee.salaryStructure.monthlySalary : 0,
+        joiningDate: user.employee.joiningDate ? user.employee.joiningDate.toISOString() : null,
+        dateOfJoining: user.employee.joiningDate ? user.employee.joiningDate.toISOString() : null,
         office: user.employee.office ? {
           id: user.employee.office.id,
           name: user.employee.office.name,

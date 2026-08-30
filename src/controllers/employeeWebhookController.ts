@@ -258,6 +258,15 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 
     const designation = employee.designation || employee.role || null;
 
+    const rawJoiningDate = employee.joiningDate || employee.dateOfJoining || employee.dateofJoining ||
+                           employee.joining_date || employee.date_of_joining || employee.joinDate ||
+                           employee.date_joined || data.joiningDate || data.dateOfJoining ||
+                           data.dateofJoining || data.joining_date || data.date_of_joining || data.joinDate;
+    let joiningDate: Date | null = rawJoiningDate ? new Date(rawJoiningDate) : null;
+    if (joiningDate && isNaN(joiningDate.getTime())) {
+      joiningDate = null;
+    }
+
     const newEmployee = await prisma.employee.create({
       data: {
         employeeID: hopkidEmployeeId,
@@ -267,6 +276,7 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
         mobileNumber,
         designation,
         commissionPercentage: commissionRate,
+        joiningDate,
         storeId,
         officeId,
         status: 'active',
@@ -468,6 +478,18 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       updateData.storeId = storeId;
       if (officeId) updateData.officeId = officeId;
       changes.push(`Store/Branch ID: ${existingEmployee.storeId || 'None'} → ${storeId}`);
+    }
+
+    const rawJoiningDate = employee.joiningDate || employee.dateOfJoining || employee.dateofJoining ||
+                           employee.joining_date || employee.date_of_joining || employee.joinDate ||
+                           employee.date_joined || data.joiningDate || data.dateOfJoining ||
+                           data.dateofJoining || data.joining_date || data.date_of_joining || data.joinDate;
+    if (rawJoiningDate !== undefined && rawJoiningDate !== null) {
+      const parsedJoiningDate = new Date(rawJoiningDate);
+      if (!isNaN(parsedJoiningDate.getTime())) {
+        updateData.joiningDate = parsedJoiningDate;
+        changes.push(`Joining Date: ${parsedJoiningDate.toISOString()}`);
+      }
     }
 
     const rawSalary = employee.basicSalary || employee.salary || employee.basicPay || employee.grossSalary;
