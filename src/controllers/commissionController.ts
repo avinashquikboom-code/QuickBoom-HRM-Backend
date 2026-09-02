@@ -408,15 +408,15 @@ export const getCommissionTransactions = async (
     const dedupedTransactions = deduplicateCommissionTransactions(eligible);
 
     // Enrich transactions with isActive from WebhookLog records or notes
-    const billIds = dedupedTransactions.map((t) => t.billId).filter(Boolean) as string[];
-    const invoiceNumbers = dedupedTransactions.map((t) => t.invoiceNumber).filter(Boolean) as string[];
+    const billIds = dedupedTransactions.map((t) => String(t.billId || '')).filter(Boolean);
+    const invoiceNumbers = dedupedTransactions.map((t) => String(t.invoiceNumber || '')).filter(Boolean);
 
     const relevantLogs = (billIds.length > 0 || invoiceNumbers.length > 0)
       ? await prisma.webhookLog.findMany({
           where: {
             OR: [
               { billId: { in: billIds } },
-              { billId: { in: billIds.map((b) => b.replace(/^HWM-/, '')) } },
+              { billId: { in: billIds.map((b) => String(b).replace(/^HWM-/, '')) } },
               { billId: { in: invoiceNumbers } },
             ],
           },
@@ -444,12 +444,14 @@ export const getCommissionTransactions = async (
 
     const transactions = dedupedTransactions.map((t) => {
       let activeVal: boolean | null = null;
-      if (t.billId && billActiveMap.has(t.billId)) {
-        activeVal = billActiveMap.get(t.billId)!;
-      } else if (t.invoiceNumber && billActiveMap.has(String(t.invoiceNumber))) {
-        activeVal = billActiveMap.get(String(t.invoiceNumber))!;
-      } else if (t.billId && billActiveMap.has(t.billId.replace(/^HWM-/, ''))) {
-        activeVal = billActiveMap.get(t.billId.replace(/^HWM-/, ''))!;
+      const bIdStr = String(t.billId || '');
+      const invStr = String(t.invoiceNumber || '');
+      if (bIdStr && billActiveMap.has(bIdStr)) {
+        activeVal = billActiveMap.get(bIdStr)!;
+      } else if (invStr && billActiveMap.has(invStr)) {
+        activeVal = billActiveMap.get(invStr)!;
+      } else if (bIdStr && billActiveMap.has(bIdStr.replace(/^HWM-/, ''))) {
+        activeVal = billActiveMap.get(bIdStr.replace(/^HWM-/, ''))!;
       } else if (typeof t.notes === 'string') {
         const match = t.notes.match(/isActive:\s*(true|false)/i);
         if (match) {

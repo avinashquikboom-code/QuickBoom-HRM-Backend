@@ -1125,7 +1125,10 @@ export async function getCommissionStats(params?: {
     whereClause.employeeId = params.employeeId;
   }
   if (params?.storeId && !isNaN(params.storeId) && params.storeId > 0) {
-    whereClause.storeId = params.storeId;
+    whereClause.OR = [
+      { storeId: params.storeId },
+      { employee: { storeId: params.storeId } },
+    ];
   }
 
   if (params?.startDate || params?.endDate) {
@@ -1202,19 +1205,31 @@ export async function getCommissionStats(params?: {
   const lifetimeSales = allTransactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0);
 
   // Group top performers from the active transaction set using net contribution (accounting for deltas)
-  const performerMap = new Map<number, { employee: any; totalCommission: number; totalSales: number }>();
+  // When a timeframe is selected, allTransactions represents that timeframe. When 'ALL' is selected, rank across all records.
+  const performerMap = new Map<string, { employee: any; totalCommission: number; totalSales: number }>();
 
-  monthTxns.forEach((t) => {
-    if (!t.employee) return;
-    const empId = t.employeeId;
+  allTransactions.forEach((t) => {
+    const empId = String(t.employeeId || t.employee?.id || 'unknown');
     const { netSales, netCommission } = getTransactionNetContribution(t);
     const existing = performerMap.get(empId);
+
+    const resolvedEmployee = t.employee || {
+      id: t.employeeId || null,
+      firstName: 'Employee',
+      lastName: t.employeeId ? `#${t.employeeId}` : 'N/A',
+      employeeCode: t.employeeId ? `EMP-${t.employeeId}` : 'N/A',
+      store: t.store || null
+    };
+
     if (existing) {
       existing.totalCommission += netCommission;
       existing.totalSales += netSales;
+      if (t.employee && (!existing.employee || existing.employee.firstName === 'Employee')) {
+        existing.employee = t.employee;
+      }
     } else {
       performerMap.set(empId, {
-        employee: t.employee,
+        employee: resolvedEmployee,
         totalCommission: netCommission,
         totalSales: netSales,
       });
@@ -1232,7 +1247,7 @@ export async function getCommissionStats(params?: {
     .slice(0, 10);
 
   console.log(`[Commission Dashboard]\nFilters:\nstartDate: ${params?.startDate || 'none'}\nendDate: ${params?.endDate || 'none'}\nstoreId: ${params?.storeId || 'all'}\nemployeeId: ${params?.employeeId || 'all'}`);
-  console.log(`[Commission Dashboard]\nTransactions found: ${monthTxns.length}\nTop performers found: ${topPerformers.length}\nTotal sales: ₹${Math.round(monthSales * 100) / 100}\nTotal commission: ₹${Math.round(monthComm * 100) / 100}`);
+  console.log(`[Commission Dashboard]\nTransactions found: ${allTransactions.length}\nTop performers found: ${topPerformers.length}\nTotal sales: ₹${Math.round(monthSales * 100) / 100}\nTotal commission: ₹${Math.round(monthComm * 100) / 100}`);
 
   return {
     today: {
