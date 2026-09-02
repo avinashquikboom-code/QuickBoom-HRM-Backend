@@ -442,6 +442,18 @@ export const getCommissionTransactions = async (
       } catch (e) {}
     }
 
+    // Fetch related SalesExchanges, CreditNotes, and Sales to accurately resolve old/new bill reconciliation
+    const [salesExchanges, creditNotes, allSales] = await Promise.all([
+      prisma.salesExchange.findMany().catch(() => []),
+      prisma.creditNote.findMany({ include: { lineItems: true } }).catch(() => []),
+      prisma.sales.findMany({ select: { id: true, billId: true, netAmount: true, status: true, replacedBySaleId: true } }).catch(() => []),
+    ]);
+
+    const salesMap = new Map<string, any>();
+    for (const s of allSales) {
+      if (s.billId) salesMap.set(s.billId, s);
+    }
+
     const transactions = dedupedTransactions.map((t) => {
       let activeVal: boolean | null = null;
       const bIdStr = String(t.billId || '');
@@ -459,9 +471,127 @@ export const getCommissionTransactions = async (
         }
       }
 
+      const bill = String(t.billId || t.invoiceNumber || '').trim();
+      const notes = String(t.notes || '').trim();
+      const ev = String(t.eventType || '').toUpperCase();
+      const rate = Number(t.commissionPercent ?? t.employee?.commissionPercentage ?? 1);
+
+      // Match exchange
+      const exMatch = notes.match(/\(EX:\s*([^)]+)\)/i);
+      const exNo = exMatch ? exMatch[1].trim() : null;
+
+      const matchedEx = salesExchanges.find(e => 
+        (exNo && e.exchangeNo === exNo) ||
+        e.newInvoiceNo === bill ||
+        e.originalInvoiceNo === bill ||
+        bill.startsWith(e.newInvoiceNo) ||
+        bill.replace(/-NEW$/, '') === e.newInvoiceNo
+      );
+
+      // Match credit note
+      const matchedCn = creditNotes.find(c => 
+        c.creditNoteNo === bill ||
+        c.invoiceNo === bill ||
+        bill.startsWith(c.creditNoteNo)
+      );
+
+      const isCreditNote =
+        ev.includes('CREDIT_NOTE') ||
+        bill.startsWith('CN-') ||
+        bill.startsWith('HKACN') ||
+        notes.toUpperCase().includes('CREDIT NOTE') ||
+        notes.toUpperCase().includes('CREDIT_NOTE') ||
+        !!matchedCn;
+
+      const isExchange =
+        ev.includes('EXCHANGE') ||
+        bill.startsWith('EX-') ||
+        bill.startsWith('INV-EX-') ||
+        notes.toUpperCase().includes('EXCHANGE') ||
+        !!matchedEx;
+
+      const oldNotesMatch = notes.match(/Old Amount:\s*[₹$]?([0-9.]+)/i);
+      const newNotesMatch = notes.match(/New Amount:\s*[₹$]?([0-9.]+)/i);
+      const notesOld = oldNotesMatch ? Number(oldNotesMatch[1]) : null;
+      const notesNew = newNotesMatch ? Number(newNotesMatch[1]) : null;
+
+      let oldBillAmount: number | null = null;
+      let newBillAmount: number = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
+      let differenceAmount: number | null = null;
+      let oldBillCommission: number | null = null;
+      let newBillCommission: number = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
+      let commissionDifference: number | null = null;
+
+      if (isExchange) {
+        const origAmt = matchedEx
+          ? Number(matchedEx.originalAmount)
+          : (t.oldAmount !== null && t.oldAmount !== undefined && Number(t.oldAmount) > 0 ? Number(t.oldAmount) : notesOld);
+        const newAmt = matchedEx
+          ? Number(matchedEx.newAmount)
+          : (notesNew !== null ? notesNew : (t.newAmount && Number(t.newAmount) > 0 ? Number(t.newAmount) : Number(t.saleAmount || 0)));
+
+        if (origAmt !== null && origAmt > 0) {
+          oldBillAmount = origAmt;
+          newBillAmount = newAmt;
+          differenceAmount = Math.round((oldBillAmount - newBillAmount) * 100) / 100;
+          oldBillCommission = matchedEx && Number(matchedEx.originalCommission) > 0
+            ? Number(matchedEx.originalCommission)
+            : (t.oldCommission && Number(t.oldCommission) > 0 ? Number(t.oldCommission) : Math.round(((oldBillAmount * rate) / 100) * 100) / 100);
+          newBillCommission = matchedEx && Number(matchedEx.newCommission) > 0
+            ? Number(matchedEx.newCommission)
+            : (t.newCommission && Number(t.newCommission) > 0 ? Number(t.newCommission) : Math.round(((newBillAmount * rate) / 100) * 100) / 100);
+          commissionDifference = Math.round((oldBillCommission - newBillCommission) * 100) / 100;
+        }
+      } else if (isCreditNote) {
+        let origAmt: number | null = null;
+        if (matchedCn?.invoiceNo && salesMap.has(matchedCn.invoiceNo)) {
+          origAmt = Number(salesMap.get(matchedCn.invoiceNo).netAmount);
+        } else if (t.oldAmount && Number(t.oldAmount) > 0) {
+          origAmt = Number(t.oldAmount);
+        } else if (notesOld !== null && notesOld > 0) {
+          origAmt = notesOld;
+        }
+        const cnAmt = matchedCn ? Number(matchedCn.creditAmount) : (notesNew !== null ? notesNew : Number(t.newAmount || t.saleAmount || 0));
+
+        if (origAmt !== null && origAmt > 0) {
+          oldBillAmount = origAmt;
+          newBillAmount = cnAmt;
+          differenceAmount = Math.round((oldBillAmount - newBillAmount) * 100) / 100;
+          oldBillCommission = Math.round(((oldBillAmount * rate) / 100) * 100) / 100;
+          newBillCommission = Math.round(((newBillAmount * rate) / 100) * 100) / 100;
+          commissionDifference = Math.round((oldBillCommission - newBillCommission) * 100) / 100;
+        }
+      } else if (ev === 'INVOICE_UPDATED' || (notesOld !== null && notesOld > 0) || (t.oldAmount && Number(t.oldAmount) > 0)) {
+        const origAmt = t.oldAmount && Number(t.oldAmount) > 0 ? Number(t.oldAmount) : notesOld;
+        const newAmt = notesNew !== null ? notesNew : Number(t.newAmount || t.saleAmount || 0);
+
+        if (origAmt !== null && origAmt > 0) {
+          oldBillAmount = origAmt;
+          newBillAmount = newAmt;
+          differenceAmount = Math.round((oldBillAmount - newBillAmount) * 100) / 100;
+          oldBillCommission = t.oldCommission && Number(t.oldCommission) > 0
+            ? Number(t.oldCommission)
+            : Math.round(((oldBillAmount * rate) / 100) * 100) / 100;
+          newBillCommission = t.newCommission && Number(t.newCommission) > 0
+            ? Number(t.newCommission)
+            : Math.round(((newBillAmount * rate) / 100) * 100) / 100;
+          commissionDifference = Math.round((oldBillCommission - newBillCommission) * 100) / 100;
+        }
+      }
+
       return {
         ...t,
         isActive: activeVal,
+        oldAmount: oldBillAmount,
+        oldBillAmount,
+        differenceAmount,
+        newAmount: newBillAmount,
+        newBillAmount,
+        oldCommission: oldBillCommission,
+        oldBillCommission,
+        commissionDifference,
+        newCommission: newBillCommission,
+        newBillCommission,
       };
     });
 

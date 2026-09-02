@@ -31,6 +31,37 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
       ? t.invoiceNumber
       : `HWM-${numInv}`;
 
+    const isCreditNote =
+      String(t.eventType || '').toUpperCase().includes('CREDIT_NOTE') ||
+      String(t.billId || '').startsWith('CN-') ||
+      String(t.billId || '').startsWith('HKACN') ||
+      String(t.notes || '').toUpperCase().includes('CREDIT NOTE') ||
+      String(t.notes || '').toUpperCase().includes('CREDIT_NOTE');
+
+    const isExchange =
+      String(t.eventType || '').toUpperCase().includes('EXCHANGE') ||
+      String(t.billId || '').startsWith('EX-') ||
+      String(t.billId || '').startsWith('INV-EX-') ||
+      String(t.notes || '').toUpperCase().includes('EXCHANGE');
+
+    const isAdjustment = isCreditNote || isExchange;
+
+    const hasOldAmount = isAdjustment && t.oldAmount !== null && t.oldAmount !== undefined && Number(t.oldAmount) > 0;
+    const oldAmtVal: number | null = hasOldAmount ? Number(t.oldAmount) : null;
+    const newAmtVal: number = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
+
+    const diffAmtVal: number | null = oldAmtVal !== null ? Math.round((oldAmtVal - newAmtVal) * 100) / 100 : null;
+
+    const oldCommVal: number | null = oldAmtVal !== null
+      ? (t.oldCommission !== null && t.oldCommission !== undefined && Number(t.oldCommission) > 0 ? Number(t.oldCommission) : Math.round(((oldAmtVal * rate) / 100) * 100) / 100)
+      : null;
+
+    const newCommVal: number = comm;
+
+    const commDiffVal: number | null = oldCommVal !== null
+      ? Math.round((oldCommVal - newCommVal) * 100) / 100
+      : null;
+
     const formattedTxn = {
       ...t,
       billId: numInv,
@@ -41,10 +72,16 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
       commissionAmount: comm,
       commissionPercent: rate,
       totalCommission: comm,
-      oldAmount: Number(t.oldAmount || 0),
-      newAmount: Number(t.newAmount || t.saleAmount || 0),
-      oldCommission: Number(t.oldCommission || 0),
-      newCommission: Number(t.newCommission || comm),
+      oldAmount: oldAmtVal,
+      oldBillAmount: oldAmtVal,
+      newAmount: newAmtVal,
+      newBillAmount: newAmtVal,
+      differenceAmount: diffAmtVal,
+      oldCommission: oldCommVal,
+      oldBillCommission: oldCommVal,
+      newCommission: newCommVal,
+      newBillCommission: newCommVal,
+      commissionDifference: commDiffVal,
     };
 
     if (!map.has(key)) {
