@@ -983,14 +983,14 @@ export async function processCreditNoteCreated(payload: any, eventId?: string | 
 
       const origSaleAmt = originalTx ? Number(originalTx.saleAmount || originalTx.newAmount || 0) : 0;
       const origCommAmt = originalTx ? Number(originalTx.commissionAmount || originalTx.newCommission || 0) : 0;
-      const diffAmt = Math.round((returnAmount - origSaleAmt) * 100) / 100;
-      const commDiff = Math.round((returnCommission - origCommAmt) * 100) / 100;
+      const diffAmt = origSaleAmt > 0 ? Math.round((origSaleAmt - returnAmount) * 100) / 100 : null;
+      const commDiff = origCommAmt > 0 ? Math.round((origCommAmt - returnCommission) * 100) / 100 : null;
 
       const existingCnTx = await prisma.commissionTransaction.findFirst({
         where: { billId: creditNoteNo, employeeId: empId },
       });
 
-      const cnNotes = `HopKid Credit Note ${creditNoteNo} (CN Amount: ₹${returnAmount}, Original Bill: ₹${origSaleAmt}, Diff: ${diffAmt >= 0 ? '+' : ''}₹${diffAmt})`;
+      const cnNotes = `HopKid Credit Note ${creditNoteNo} (CN Amount: ₹${returnAmount}, Original Bill: ₹${origSaleAmt}${diffAmt !== null ? `, Diff: ${diffAmt >= 0 ? '+' : ''}₹${diffAmt}` : ''})`;
 
       if (existingCnTx) {
         await prisma.commissionTransaction.update({
@@ -1237,6 +1237,11 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
     const roundedAmount = Number(group.totalSaleAmount.toFixed(2));
     const roundedCommission = Number(group.totalCommissionAmount.toFixed(2));
 
+    const exOldAmount = group.isOld ? Math.abs(roundedAmount) : (totalOldSales > 0 ? totalOldSales : (originalSale?.netAmount ? Number(originalSale.netAmount) : 0));
+    const exOldComm = group.isOld ? Math.abs(roundedCommission) : (totalOldCommission > 0 ? totalOldCommission : 0);
+    const exDiffAmt = exOldAmount > 0 ? Math.round((exOldAmount - roundedAmount) * 100) / 100 : null;
+    const exCommDiff = exOldComm > 0 ? Math.round((exOldComm - roundedCommission) * 100) / 100 : null;
+
     const existingExTx = await prisma.commissionTransaction.findFirst({
       where: { billId: exchangeBillId, employeeId: group.employee.id }
     });
@@ -1248,11 +1253,11 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
           saleAmount: roundedAmount,
           commissionAmount: roundedCommission,
           commissionPercent: group.rate,
-          oldAmount: existingExTx.saleAmount || 0,
+          oldAmount: exOldAmount > 0 ? exOldAmount : (existingExTx.oldAmount || 0),
           newAmount: roundedAmount,
-          oldCommission: existingExTx.commissionAmount || 0,
+          oldCommission: exOldComm > 0 ? exOldComm : (existingExTx.oldCommission || 0),
           newCommission: roundedCommission,
-          commissionDifference: roundedCommission - (existingExTx.commissionAmount || 0),
+          commissionDifference: exCommDiff !== null ? exCommDiff : (existingExTx.commissionDifference || 0),
           eventType: 'SALES_EXCHANGE',
           createdAt: txnExDate,
           updatedAt: new Date(),
@@ -1267,17 +1272,17 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
           commissionType: 'PERCENTAGE',
           commissionPercent: group.rate,
           commissionAmount: roundedCommission,
-          oldAmount: group.isOld ? Math.abs(roundedAmount) : 0,
+          oldAmount: exOldAmount,
           newAmount: roundedAmount,
-          oldCommission: group.isOld ? Math.abs(roundedCommission) : 0,
+          oldCommission: exOldComm,
           newCommission: roundedCommission,
-          commissionDifference: roundedCommission,
+          commissionDifference: exCommDiff !== null ? exCommDiff : 0,
           eventType: 'SALES_EXCHANGE',
           billId: exchangeBillId,
           invoiceNumber: exchangeBillId,
           status: 'APPROVED',
           createdAt: txnExDate,
-          notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})`,
+          notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})${exOldAmount > 0 ? ` (Old Amount: ₹${exOldAmount}, New Amount: ₹${roundedAmount})` : ''}`,
         },
       });
     }
@@ -1289,8 +1294,8 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
 
   const origAmountVal = totalOldSales > 0 ? totalOldSales : Number(originalSale?.netAmount || 0);
   const newAmountVal = Number(totalNewSales || 0);
-  const diffAmountVal = newAmountVal - origAmountVal;
-  const diffCommVal = totalNewCommission - totalOldCommission;
+  const diffAmountVal = origAmountVal - newAmountVal; // OLD - NEW
+  const diffCommVal = totalOldCommission - totalNewCommission; // OLD - NEW
 
   await prisma.salesExchange.upsert({
     where: { exchangeNo: exchangeNo },
