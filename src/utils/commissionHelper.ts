@@ -337,6 +337,7 @@ export interface ExtractedWebhookMeta {
   commissionAmount: number | null;
   eventId: string | null;
   salesmen: any[];
+  isActive?: boolean | null;
 }
 
 export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
@@ -998,6 +999,19 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     commissionAmount,
     eventId: eventId ? String(eventId) : null,
     salesmen,
+    isActive: (() => {
+      const raw =
+        firstItem?.isActive ??
+        lineItems.find((i: any) => i && i.isActive !== undefined && i.isActive !== null)?.isActive ??
+        invoice?.isActive ??
+        creditNote?.isActive ??
+        payload?.data?.invoice?.isActive ??
+        payload?.data?.creditNote?.isActive ??
+        payload?.data?.isActive ??
+        payload?.isActive ??
+        null;
+      return raw !== null && raw !== undefined ? Boolean(raw) : null;
+    })(),
   };
 }
 

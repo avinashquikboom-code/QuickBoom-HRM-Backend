@@ -956,6 +956,86 @@ export async function processCreditNoteCreated(payload: any, eventId?: string | 
     }
   }
 
+  // Record commission transaction with difference calculation: Difference Amount = CN Amount - Original Bill Amount
+  for (const [empId, empData] of employeeCommissionMap.entries()) {
+    try {
+      const salesman = empData.employee;
+      const rateVal = salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 1;
+      const returnAmount = empData.totalReturnAmount > 0 ? empData.totalReturnAmount : totalAmount;
+      const returnCommission = Math.round(((returnAmount * rateVal) / 100) * 100) / 100;
+
+      // Find original bill transaction
+      let originalTx: any = null;
+      if (invoiceNo) {
+        originalTx = await prisma.commissionTransaction.findFirst({
+          where: {
+            OR: [
+              { invoiceNumber: invoiceNo },
+              { billId: invoiceNo },
+              { billId: `HWM-${invoiceNo}` },
+              { billId: invoiceNo.replace(/^HWM-/, '') },
+            ],
+            employeeId: empId,
+          },
+          orderBy: { id: 'desc' },
+        });
+      }
+
+      const origSaleAmt = originalTx ? Number(originalTx.saleAmount || originalTx.newAmount || 0) : 0;
+      const origCommAmt = originalTx ? Number(originalTx.commissionAmount || originalTx.newCommission || 0) : 0;
+      const diffAmt = Math.round((returnAmount - origSaleAmt) * 100) / 100;
+      const commDiff = Math.round((returnCommission - origCommAmt) * 100) / 100;
+
+      const existingCnTx = await prisma.commissionTransaction.findFirst({
+        where: { billId: creditNoteNo, employeeId: empId },
+      });
+
+      const cnNotes = `HopKid Credit Note ${creditNoteNo} (CN Amount: ₹${returnAmount}, Original Bill: ₹${origSaleAmt}, Diff: ${diffAmt >= 0 ? '+' : ''}₹${diffAmt})`;
+
+      if (existingCnTx) {
+        await prisma.commissionTransaction.update({
+          where: { id: existingCnTx.id },
+          data: {
+            saleAmount: returnAmount,
+            commissionAmount: returnCommission,
+            commissionPercent: rateVal,
+            oldAmount: origSaleAmt,
+            newAmount: returnAmount,
+            oldCommission: origCommAmt,
+            newCommission: returnCommission,
+            commissionDifference: commDiff,
+            eventType: 'CREDIT_NOTE_CREATED',
+            notes: cnNotes,
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        await prisma.commissionTransaction.create({
+          data: {
+            employeeId: empId,
+            storeId: salesman.storeId || null,
+            saleAmount: returnAmount,
+            commissionType: 'PERCENTAGE',
+            commissionPercent: rateVal,
+            commissionAmount: returnCommission,
+            oldAmount: origSaleAmt,
+            newAmount: returnAmount,
+            oldCommission: origCommAmt,
+            newCommission: returnCommission,
+            commissionDifference: commDiff,
+            eventType: 'CREDIT_NOTE_CREATED',
+            billId: creditNoteNo,
+            invoiceNumber: invoiceNo || creditNoteNo,
+            status: 'PENDING',
+            notes: cnNotes,
+          },
+        });
+      }
+    } catch (cnTxErr: any) {
+      console.error('[CreditNote CommissionTransaction] ❌ Error:', cnTxErr?.message);
+    }
+  }
+
   // Recalculate monthly commission for affected employees
   const cnDate = new Date(creditNote.creditDate || creditNote.date || new Date());
   const month = `${cnDate.getFullYear()}-${String(cnDate.getMonth() + 1).padStart(2, '0')}`;

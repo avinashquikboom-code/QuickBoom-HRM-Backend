@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee, safeParseDate, getNumericInvoiceNumber, parseIstStartOfDay, parseIstEndOfDay, getTransactionNetContribution } from '../utils/commissionHelper';
+import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee, safeParseDate, getNumericInvoiceNumber, parseIstStartOfDay, parseIstEndOfDay, getTransactionNetContribution, extractWebhookMeta } from '../utils/commissionHelper';
 import { deduplicateCommissionTransactions } from '../utils/commissionDeduplicator';
 
 // Commission Dashboard Stats
@@ -388,7 +388,63 @@ export const getCommissionTransactions = async (
     });
 
     const eligible = rawTransactions.filter((t) => isEligibleCommissionEmployee(t.employee));
-    const transactions = deduplicateCommissionTransactions(eligible);
+    const dedupedTransactions = deduplicateCommissionTransactions(eligible);
+
+    // Enrich transactions with isActive from WebhookLog records or notes
+    const billIds = dedupedTransactions.map((t) => t.billId).filter(Boolean) as string[];
+    const invoiceNumbers = dedupedTransactions.map((t) => t.invoiceNumber).filter(Boolean) as string[];
+
+    const relevantLogs = (billIds.length > 0 || invoiceNumbers.length > 0)
+      ? await prisma.webhookLog.findMany({
+          where: {
+            OR: [
+              { billId: { in: billIds } },
+              { billId: { in: billIds.map((b) => b.replace(/^HWM-/, '')) } },
+              { billId: { in: invoiceNumbers } },
+            ],
+          },
+          select: { billId: true, payload: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+
+    const billActiveMap = new Map<string, boolean>();
+    for (const log of relevantLogs) {
+      if (!log.billId) continue;
+      try {
+        const parsed = typeof log.payload === 'string' ? JSON.parse(log.payload) : log.payload;
+        const meta = extractWebhookMeta(parsed);
+        if (meta.isActive !== null && meta.isActive !== undefined && !billActiveMap.has(log.billId)) {
+          billActiveMap.set(log.billId, meta.isActive);
+          billActiveMap.set(`HWM-${log.billId}`, meta.isActive);
+          billActiveMap.set(log.billId.replace(/^HWM-/, ''), meta.isActive);
+          if (meta.invoiceNumber) {
+            billActiveMap.set(meta.invoiceNumber, meta.isActive);
+          }
+        }
+      } catch (e) {}
+    }
+
+    const transactions = dedupedTransactions.map((t) => {
+      let activeVal: boolean | null = null;
+      if (t.billId && billActiveMap.has(t.billId)) {
+        activeVal = billActiveMap.get(t.billId)!;
+      } else if (t.invoiceNumber && billActiveMap.has(String(t.invoiceNumber))) {
+        activeVal = billActiveMap.get(String(t.invoiceNumber))!;
+      } else if (t.billId && billActiveMap.has(t.billId.replace(/^HWM-/, ''))) {
+        activeVal = billActiveMap.get(t.billId.replace(/^HWM-/, ''))!;
+      } else if (typeof t.notes === 'string') {
+        const match = t.notes.match(/isActive:\s*(true|false)/i);
+        if (match) {
+          activeVal = match[1].toLowerCase() === 'true';
+        }
+      }
+
+      return {
+        ...t,
+        isActive: activeVal,
+      };
+    });
 
     console.log(`[Commission API]\nFilter:\nmonth: ${startDate ? String(startDate).slice(0, 7) : 'all'}\nstoreId: ${whereClause.storeId || 'all'}\nemployeeId: ${whereClause.employeeId || 'all'}\nstartDate: ${startDate || 'none'}\nendDate: ${endDate || 'none'}`);
     console.log(`[Commission API]\nTransactions found: ${transactions.length}`);
