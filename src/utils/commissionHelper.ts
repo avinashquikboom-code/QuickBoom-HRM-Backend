@@ -318,6 +318,10 @@ export interface ExtractedWebhookMeta {
   billId: string | null;
   invoiceNumber: string | null;
   amount: number;
+  cnAmount?: number;
+  refundAmount?: number;
+  cnNo?: string | null;
+  creditNote?: any;
   eventType: string;
   customerName: string | null;
   customerPhone: string | null;
@@ -341,6 +345,10 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
       billId: null,
       invoiceNumber: null,
       amount: 0,
+      cnAmount: 0,
+      refundAmount: 0,
+      cnNo: null,
+      creditNote: {},
       eventType: 'INVOICE_CREATED',
       customerName: null,
       customerPhone: null,
@@ -368,6 +376,10 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
         billId: null,
         invoiceNumber: null,
         amount: 0,
+        cnAmount: 0,
+        refundAmount: 0,
+        cnNo: null,
+        creditNote: {},
         eventType: 'INVOICE_CREATED',
         customerName: null,
         customerPhone: null,
@@ -387,8 +399,48 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     }
   }
 
-  const creditNote = payload?.data?.creditNote || payload?.creditNote || payload?.data?.salesExchange || payload?.salesExchange || payload?.data || payload || {};
+  const rawEventType = payload?.eventType || payload?.topic || payload?.event || null;
+  const eventType = normalizeEventType(rawEventType, 'INVOICE_CREATED', payload);
+  const isCreditNote =
+    eventType === 'CREDIT_NOTE_CREATED' ||
+    eventType === 'CREDIT_NOTE_UPDATED' ||
+    rawEventType === 'creditnote.created' ||
+    rawEventType === 'credit_note.created' ||
+    rawEventType === 'creditnote.updated' ||
+    rawEventType === 'credit_note.updated' ||
+    Boolean(payload?.data?.creditNote || payload?.creditNote);
+
+  const creditNote = payload?.data?.creditNote || payload?.creditNote || payload?.data?.salesExchange || payload?.salesExchange || {};
   const invoice = payload?.data?.invoice || payload?.invoice || {};
+
+  const cnAmount = safeParseAmount(
+    creditNote.cnAmount ??
+    creditNote.cn_amount ??
+    creditNote.CNAmount ??
+    creditNote.creditAmount ??
+    payload?.data?.creditNote?.cnAmount ??
+    payload?.creditNote?.cnAmount ??
+    null
+  );
+
+  const refundAmount = safeParseAmount(
+    creditNote.refundAmount ??
+    creditNote.RefundAmount ??
+    creditNote.refund_amount ??
+    payload?.data?.creditNote?.refundAmount ??
+    payload?.creditNote?.refundAmount ??
+    0
+  );
+
+  const cnNo =
+    creditNote.cnNo ||
+    creditNote.CNNo ||
+    creditNote.cn_no ||
+    creditNote.creditNoteNo ||
+    creditNote.CreditNoteNo ||
+    payload?.data?.creditNote?.cnNo ||
+    payload?.creditNote?.cnNo ||
+    null;
 
   const rawSalesmen =
     payload?.data?.salesmen ||
@@ -440,16 +492,17 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.data?.id ||
     null;
 
-  // 1. Resolve raw string invoice number / code (e.g. "HWM-89", "HWM-93", "CN-12", "INV-102")
+  // 1. Resolve raw string invoice number / code (e.g. "HKACN373", "HWM-89", "CN-12", "INV-102")
   const rawInvoiceNumber =
+    (isCreditNote && cnNo) ||
+    creditNote.cnNo ||
+    creditNote.CNNo ||
+    creditNote.creditNoteNo ||
     creditNote.InvoiceNo ||
     creditNote.invoiceNo ||
     creditNote.invoiceNumber ||
     creditNote.InvoiceNumber ||
     creditNote.SalesID ||
-    creditNote.CNNo ||
-    creditNote.cnNo ||
-    creditNote.creditNoteNo ||
     payload?.InvoiceNo ||
     payload?.SalesID ||
     payload?.data?.InvoiceNo ||
@@ -481,15 +534,16 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   let resolvedBillId: string | null = null;
 
   const billCandidates = [
+    (isCreditNote && cnNo),
+    creditNote.cnNo,
+    creditNote.CNNo,
+    creditNote.creditNoteNo,
     creditNote.billNumber,
     creditNote.billNo,
     creditNote.bill_no,
     creditNote.BillNo,
     creditNote.BillNumber,
     creditNote.CNID,
-    creditNote.CNNo,
-    creditNote.cnNo,
-    creditNote.creditNoteNo,
     creditNote.number,
     creditNote.exchangeNo,
     invoice.billNumber,
@@ -581,67 +635,50 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   if (rawInvoiceNumber && !isUuidPattern.test(String(rawInvoiceNumber))) {
     invoiceNumber = String(rawInvoiceNumber).trim();
   } else if (billId && /^\d+$/.test(billId)) {
-    invoiceNumber = `HWM-${billId}`;
+    invoiceNumber = isCreditNote ? (cnNo || `CN-${billId}`) : `HWM-${billId}`;
   } else if (billId) {
     invoiceNumber = billId;
   }
 
-  let rawAmount =
-    creditNote.CNAmount ??
-    creditNote.creditAmount ??
-    creditNote.RefundAmount ??
-    creditNote.BillAmount ??
-    creditNote.totalAmount ??
-    creditNote.newAmount ??
-    creditNote.amount ??
-    payload?.CNAmount ??
-    payload?.creditAmount ??
-    payload?.RefundAmount ??
-    payload?.BillAmount ??
-    payload?.data?.CNAmount ??
-    payload?.data?.RefundAmount ??
-    invoice.netAmount ??
-    invoice.totalAmount ??
-    invoice.grandTotal ??
-    payload?.data?.invoice?.netAmount ??
-    payload?.data?.invoice?.totalAmount ??
-    payload?.data?.netAmount ??
-    payload?.data?.totalAmount ??
-    payload?.data?.grandTotal ??
-    firstItem?.CNAmount ??
-    firstItem?.creditAmount ??
-    firstItem?.productNetAmount ??
-    firstItem?.netAmount ??
-    firstItem?.amount ??
-    payload?.data?.amount ??
-    payload?.data?.saleAmount ??
-    payload?.amount ??
-    payload?.saleAmount ??
-    payload?.totalAmount ??
-    payload?.grandTotal ??
-    payload?.netAmount;
+  let rawAmount = isCreditNote
+    ? cnAmount
+    : (
+        invoice.netAmount ??
+        invoice.totalAmount ??
+        invoice.grandTotal ??
+        payload?.data?.invoice?.netAmount ??
+        payload?.data?.invoice?.totalAmount ??
+        payload?.data?.netAmount ??
+        payload?.data?.totalAmount ??
+        payload?.data?.grandTotal ??
+        firstItem?.productNetAmount ??
+        firstItem?.netAmount ??
+        firstItem?.amount ??
+        payload?.data?.amount ??
+        payload?.data?.saleAmount ??
+        payload?.amount ??
+        payload?.saleAmount ??
+        payload?.totalAmount ??
+        payload?.grandTotal ??
+        payload?.netAmount
+      );
 
   let amount = safeParseAmount(rawAmount);
 
-  // If amount is 0 and line items exist, calculate sum from returned items
-  if (amount === 0 && lineItems.length > 0) {
+  // If amount is 0 and line items exist on non-creditnote events, calculate sum from items
+  if (amount === 0 && !isCreditNote && lineItems.length > 0) {
     let sum = 0;
     for (const item of lineItems) {
       const itemAmt = Number(
-        item.CNAmount ??
-        item.creditAmount ??
+        item.productNetAmount ??
         item.Amount ??
         item.amount ??
-        item.productNetAmount ??
         (Number(item.Price || item.price || 0) * Number(item.Quantity || item.quantity || 1))
       ) || 0;
       sum += itemAmt;
     }
     if (sum > 0) amount = Math.round(sum * 100) / 100;
   }
-
-  const rawEventType = payload?.eventType || payload?.topic || payload?.event || null;
-  const eventType = normalizeEventType(rawEventType, 'INVOICE_CREATED', payload);
 
   const customerName =
     invoice.customerName ||
@@ -942,6 +979,10 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     billId: billId ? String(billId) : null,
     invoiceNumber: invoiceNumber ? String(invoiceNumber) : null,
     amount,
+    cnAmount: isCreditNote ? cnAmount : 0,
+    refundAmount: isCreditNote ? refundAmount : 0,
+    cnNo: cnNo ? String(cnNo) : null,
+    creditNote,
     eventType: String(eventType),
     customerName: customerName ? String(customerName) : null,
     customerPhone: customerPhone ? String(customerPhone) : null,
