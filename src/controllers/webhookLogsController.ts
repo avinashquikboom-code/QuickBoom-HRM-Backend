@@ -526,14 +526,14 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           let origBillComm = origRecord ? Number(origRecord.commissionAmount || 0) : 0;
 
           // If not in memory log map, search in database
-          if (origBillAmt === 0) {
-            // Try by reference invoice or customer
-            const searchCust = meta.customerName || log.customerName;
+          if (origBillAmt === 0 && refInv) {
+            // Try by reference invoice
             const dbSale = await prisma.sales.findFirst({
               where: {
                 OR: [
-                  ...(refInv ? [{ billId: String(refInv) }, { billId: `HWM-${refInv}` }, { billId: { contains: String(refInv) } }] : []),
-                  ...(searchCust && searchCust !== 'N/A' ? [{ customerName: { contains: searchCust, mode: 'insensitive' as const } }] : []),
+                  { billId: String(refInv) },
+                  { billId: `HWM-${refInv}` },
+                  { billId: { contains: String(refInv) } },
                 ]
               }
             });
@@ -817,14 +817,15 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
       const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || meta.invoiceNumber || log.invoiceNo;
       const cust = meta.customerName || log.customerName;
 
-      let origSale = await prisma.sales.findFirst({
+      let origSale = refInv ? await prisma.sales.findFirst({
         where: {
           OR: [
-            ...(refInv ? [{ billId: String(refInv) }, { billId: `HWM-${refInv}` }, { billId: { contains: String(refInv) } }] : []),
-            ...(cust && cust !== 'N/A' ? [{ customerName: { contains: cust, mode: 'insensitive' as const } }] : []),
+            { billId: String(refInv) },
+            { billId: `HWM-${refInv}` },
+            { billId: { contains: String(refInv) } },
           ]
         }
-      });
+      }) : null;
 
       if (origSale && Number(origSale.netAmount || 0) > 0) {
         oldAmount = Number(origSale.netAmount);
