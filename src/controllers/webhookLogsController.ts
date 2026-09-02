@@ -463,7 +463,9 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
     let combined = Array.from(uniqueLogsMap.values());
 
-    // Build lookup map for Invoices by invoiceNo, billId, and customer+store for precise matching
+    // Build lookup map for Invoices by normalized identifiers for precise reconciliation
+    const normKey = (s: any) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
     const invoiceLogMap = new Map<string, any>();
     for (const l of combined) {
       const isCn =
@@ -473,18 +475,19 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         (l.cnAmount !== undefined && l.cnAmount !== null && Number(l.cnAmount) > 0);
 
       if (!isCn && Number(l.amount || 0) > 0) {
-        if (l.invoiceNo) invoiceLogMap.set(String(l.invoiceNo).toUpperCase(), l);
-        if (l.invoiceNumber) invoiceLogMap.set(String(l.invoiceNumber).toUpperCase(), l);
+        if (l.invoiceNo) invoiceLogMap.set(normKey(l.invoiceNo), l);
+        if (l.invoiceNumber) invoiceLogMap.set(normKey(l.invoiceNumber), l);
         if (l.billId) {
-          invoiceLogMap.set(String(l.billId).toUpperCase(), l);
-          invoiceLogMap.set(`HWM-${l.billId}`.toUpperCase(), l);
-          invoiceLogMap.set(String(l.billId).replace(/^HWM-/, '').toUpperCase(), l);
+          invoiceLogMap.set(normKey(l.billId), l);
+          invoiceLogMap.set(normKey(`HWM-${l.billId}`), l);
+          invoiceLogMap.set(normKey(String(l.billId).replace(/^HWM-/, '')), l);
         }
         if (l.customerName && l.customerName !== 'N/A') {
-          const custKey = `${String(l.customerName).toUpperCase()}_${String(l.storeName || '').toUpperCase()}`;
-          if (!invoiceLogMap.has(custKey)) {
-            invoiceLogMap.set(custKey, l);
-          }
+          const custStoreKey = `${normKey(l.customerName)}_${normKey(l.storeName)}`;
+          if (!invoiceLogMap.has(custStoreKey)) invoiceLogMap.set(custStoreKey, l);
+
+          const custKey = normKey(l.customerName);
+          if (!invoiceLogMap.has(custKey)) invoiceLogMap.set(custKey, l);
         }
       }
     }
@@ -508,26 +511,29 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           let origRecord: any = null;
           if (refInv) {
             origRecord =
-              invoiceLogMap.get(String(refInv).toUpperCase()) ||
-              invoiceLogMap.get(`HWM-${refInv}`.toUpperCase()) ||
-              invoiceLogMap.get(String(refInv).replace(/^HWM-/, '').toUpperCase());
+              invoiceLogMap.get(normKey(refInv)) ||
+              invoiceLogMap.get(normKey(`HWM-${refInv}`)) ||
+              invoiceLogMap.get(normKey(String(refInv).replace(/^HWM-/, '')));
           }
-          if (!origRecord && meta.customerName && meta.customerName !== 'N/A') {
-            const custKey = `${String(meta.customerName).toUpperCase()}_${String(meta.storeName || meta.branchName || log.storeName || '').toUpperCase()}`;
-            origRecord = invoiceLogMap.get(custKey);
+          if (!origRecord && (meta.customerName || log.customerName) && (meta.customerName !== 'N/A' || log.customerName !== 'N/A')) {
+            const cust = meta.customerName || log.customerName;
+            const store = meta.storeName || meta.branchName || log.storeName;
+            const custStoreKey = `${normKey(cust)}_${normKey(store)}`;
+            origRecord = invoiceLogMap.get(custStoreKey) || invoiceLogMap.get(normKey(cust));
           }
 
           let origBillAmt = origRecord ? Number(origRecord.amount || 0) : 0;
           let origBillComm = origRecord ? Number(origRecord.commissionAmount || 0) : 0;
 
           // If not in memory log map, search in database
-          if (origBillAmt === 0 && refInv) {
+          if (origBillAmt === 0) {
+            // Try by reference invoice or customer
+            const searchCust = meta.customerName || log.customerName;
             const dbSale = await prisma.sales.findFirst({
               where: {
                 OR: [
-                  { billId: String(refInv) },
-                  { billId: `HWM-${refInv}` },
-                  { billId: { contains: String(refInv) } },
+                  ...(refInv ? [{ billId: String(refInv) }, { billId: `HWM-${refInv}` }, { billId: { contains: String(refInv) } }] : []),
+                  ...(searchCust && searchCust !== 'N/A' ? [{ customerName: { contains: searchCust, mode: 'insensitive' as const } }] : []),
                 ]
               }
             });
@@ -536,18 +542,24 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
             }
           }
 
-          const cnAmt = Number(log.cnAmount || meta.cnAmount || log.amount || 0);
-          if (origBillAmt > 0) {
+          const rawCnAmt = meta.cnAmount || (cn.cnAmount !== undefined ? Number(cn.cnAmount) : (log.cnAmount || log.amount || 0));
+          const cnAmt = Number(rawCnAmt || 0);
+
+          // Keep raw event amount
+          log.cnAmount = cnAmt;
+          log.amount = cnAmt > 0 ? cnAmt : log.amount;
+
+          if (origBillAmt > 0 && cnAmt > 0) {
             log.oldAmount = origBillAmt;
             log.newAmount = cnAmt;
             log.differenceAmount = Math.round((cnAmt - origBillAmt) * 100) / 100;
             log.oldCommission = origBillComm;
             log.newCommission = Number(log.commissionAmount || 0);
             log.commissionDifference = Math.round(((Number(log.commissionAmount || 0)) - origBillComm) * 100) / 100;
-          } else if (cnAmt > 0) {
+          } else {
             log.oldAmount = null;
             log.newAmount = cnAmt;
-            log.differenceAmount = cnAmt;
+            log.differenceAmount = null;
           }
 
           if (log.billId) {
@@ -785,9 +797,55 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
 
     const parsed = parseRawPayload(log.payload);
     const meta = extractWebhookMeta(parsed);
+    const isCreditNote =
+      String(log.eventType || meta.eventType || '').toUpperCase().includes('CREDIT_NOTE') ||
+      String(log.billId || meta.billId || '').startsWith('CN-') ||
+      String(log.billId || meta.billId || '').startsWith('HKACN') ||
+      (meta.cnAmount !== undefined && meta.cnAmount !== null && Number(meta.cnAmount) > 0);
+
+    const rawCnAmt = meta.cnAmount || (meta.creditNote?.cnAmount !== undefined ? Number(meta.creditNote.cnAmount) : (log.cnAmount || log.amount || 0));
+    const cnAmt = Number(rawCnAmt || 0);
+
+    let oldAmount: number | null = null;
+    let differenceAmount: number | null = null;
+    let oldCommission: number | null = null;
+    let newCommission: number | null = null;
+    let commissionDifference: number | null = null;
+
+    if (isCreditNote) {
+      const cn = meta.creditNote || parsed?.data?.creditNote || parsed?.creditNote || {};
+      const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || meta.invoiceNumber || log.invoiceNo;
+      const cust = meta.customerName || log.customerName;
+
+      let origSale = await prisma.sales.findFirst({
+        where: {
+          OR: [
+            ...(refInv ? [{ billId: String(refInv) }, { billId: `HWM-${refInv}` }, { billId: { contains: String(refInv) } }] : []),
+            ...(cust && cust !== 'N/A' ? [{ customerName: { contains: cust, mode: 'insensitive' as const } }] : []),
+          ]
+        }
+      });
+
+      if (origSale && Number(origSale.netAmount || 0) > 0) {
+        oldAmount = Number(origSale.netAmount);
+        differenceAmount = Math.round((cnAmt - oldAmount) * 100) / 100;
+        oldCommission = Math.round((oldAmount * 0.01) * 100) / 100;
+        newCommission = Number(meta.commissionAmount || log.commissionAmount || (cnAmt * 0.01));
+        commissionDifference = Math.round(((newCommission || 0) - (oldCommission || 0)) * 100) / 100;
+      }
+    }
+
     log = {
       ...log,
-      amount: log.amount ?? meta.amount,
+      amount: isCreditNote && cnAmt > 0 ? cnAmt : (log.amount ?? meta.amount),
+      cnAmount: isCreditNote ? cnAmt : meta.cnAmount,
+      refundAmount: meta.refundAmount || 0,
+      oldAmount,
+      newAmount: isCreditNote ? cnAmt : null,
+      differenceAmount,
+      oldCommission,
+      newCommission,
+      commissionDifference,
       billId: log.billId || meta.billId,
       eventType: log.eventType || meta.eventType,
     };
