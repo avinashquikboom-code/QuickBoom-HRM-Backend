@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { getCommissionStats, getNumericInvoiceNumber } from '../utils/commissionHelper';
+import { getCommissionStats, getNumericInvoiceNumber, getIstMonthRange } from '../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 import { CommissionService } from '../services/commissionService';
 
@@ -83,15 +83,22 @@ export const fetchCommissionWallet = async (
     const lifetimeCommission = approvedOrPaid.reduce((sum, t) => sum + t.commissionAmount, 0);
 
     const now = new Date();
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    const currYear = istDate.getUTCFullYear();
+    const currMonth = istDate.getUTCMonth() + 1; // 1-12
+
     const today = await CommissionService.getDailyMetrics(employee.id);
     const weekly = await CommissionService.getWeeklyMetrics(employee.id);
     const monthly = await CommissionService.getMonthlyMetrics(employee.id);
 
-    const lastMonthStart    = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd      = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-    const lastMonthTxns    = approvedOrPaid.filter(t => {
+    const lastMonthNum = currMonth === 1 ? 12 : currMonth - 1;
+    const lastMonthYear = currMonth === 1 ? currYear - 1 : currYear;
+    const lastMonthRange = getIstMonthRange(lastMonthYear, lastMonthNum);
+
+    const lastMonthTxns = approvedOrPaid.filter(t => {
       const dt = new Date(t.createdAt);
-      return dt >= lastMonthStart && dt <= lastMonthEnd;
+      return dt >= lastMonthRange.monthStart && dt <= lastMonthRange.monthEnd;
     });
     const lastMonthCommission = lastMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
 
@@ -589,17 +596,19 @@ export const fetchSalarySlipCommission = async (
     // fallback to current-month date range so salary slip always shows real commission.
     if (transactions.length === 0) {
       const now = new Date();
-      // If payrollIdString looks like "YYYY-MM", use that month; otherwise use current month.
-      let year = now.getFullYear();
-      let month = now.getMonth(); // 0-based
+      const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+      const istDate = new Date(istTime);
+      let year = istDate.getUTCFullYear();
+      let month = istDate.getUTCMonth() + 1; // 1-12
       const monthMatch = /^(\d{4})-(\d{2})$/.exec(payrollIdString);
       if (monthMatch) {
         year = parseInt(monthMatch[1], 10);
-        month = parseInt(monthMatch[2], 10) - 1;
+        month = parseInt(monthMatch[2], 10);
       }
-      const monthStart = new Date(year, month, 1, 0, 0, 0, 0);
-      const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
-      queryDescription = `month=${year}-${String(month + 1).padStart(2, '0')} (${monthStart.toISOString()} to ${monthEnd.toISOString()})`;
+      const monthRange = getIstMonthRange(year, month);
+      const monthStart = monthRange.monthStart;
+      const monthEnd = monthRange.monthEnd;
+      queryDescription = `month=${year}-${String(month).padStart(2, '0')} (${monthStart.toISOString()} to ${monthEnd.toISOString()})`;
 
       transactions = await prisma.commissionTransaction.findMany({
         where: {

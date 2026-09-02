@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import payrollService from '../../services/payrollService';
+import { getIstMonthRange } from '../../utils/commissionHelper';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -282,8 +283,9 @@ export const downloadPayslip = async (
     const pf = ss?.pfEnabled ? Math.round(basic * (ss.employeePfRate / 100)) : 0;
     const esic = ss?.esicEnabled ? Math.round((basic + payslip.allowance) * (ss.employeeEsicRate / 100)) : 0;
 
-    const monthStart = new Date(payslip.year, payslip.month - 1, 1, 0, 0, 0, 0);
-    const monthEnd = new Date(payslip.year, payslip.month, 0, 23, 59, 59, 999);
+    const monthRange = getIstMonthRange(payslip.year, payslip.month);
+    const monthStart = monthRange.monthStart;
+    const monthEnd = monthRange.monthEnd;
     const commAggregate = await prisma.commissionTransaction.aggregate({
       where: {
         employeeId: payslip.employeeId,
@@ -292,10 +294,9 @@ export const downloadPayslip = async (
       },
       _sum: { commissionAmount: true }
     });
-    let commissionEarned = commAggregate._sum?.commissionAmount || 0;
-    if (commissionEarned === 0 && payslip.commissionEarned) {
-      commissionEarned = payslip.commissionEarned;
-    }
+    const commissionEarned = (commAggregate._sum?.commissionAmount !== undefined && commAggregate._sum?.commissionAmount !== null)
+      ? commAggregate._sum.commissionAmount
+      : (payslip.commissionEarned || 0);
 
     // Active Advance Salary deduction calculation
     let advanceDeduction = payslip.advanceDeduction || 0;

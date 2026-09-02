@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { getEffectiveUserPermissions, DEFAULT_EMPLOYEE_PERMISSIONS } from '../utils/permissionHelper';
+import { getIstMonthRange } from '../utils/commissionHelper';
 
 import payrollService from '../services/payrollService';
 
@@ -52,8 +53,10 @@ export const getSalarySlip = async (
     }
 
     const now = new Date();
-    let targetYear = now.getFullYear();
-    let targetMonth = now.getMonth() + 1; // 1-12
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    let targetYear = istDate.getUTCFullYear();
+    let targetMonth = istDate.getUTCMonth() + 1; // 1-12
 
     if (year && !isNaN(Number(year))) {
       targetYear = Number(year);
@@ -70,7 +73,10 @@ export const getSalarySlip = async (
       }
     }
 
-    const isCurrentMonth = (targetYear === now.getFullYear() && targetMonth === (now.getMonth() + 1));
+    const isCurrentMonth = (targetYear === istDate.getUTCFullYear() && targetMonth === (istDate.getUTCMonth() + 1));
+    const monthRange = getIstMonthRange(targetYear, targetMonth);
+    const monthStart = monthRange.monthStart;
+    const monthEnd = monthRange.monthEnd;
 
     // Use persistent database Payslip record or calculate via PayrollService
     let dbPayslip = await prisma.payslip.findFirst({
@@ -141,9 +147,6 @@ export const getSalarySlip = async (
     const salaryAdvanceLimit = ss?.salaryAdvanceLimit !== undefined && ss?.salaryAdvanceLimit !== null
       ? ss.salaryAdvanceLimit
       : 25000;
-
-    const monthStart = new Date(targetYear, targetMonth - 1, 1, 0, 0, 0, 0);
-    const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
 
     // Fetch active salary advances for employee
     const activeAdvances = await prisma.salaryAdvance.findMany({

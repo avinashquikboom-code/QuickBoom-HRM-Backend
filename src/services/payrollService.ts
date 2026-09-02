@@ -1,5 +1,6 @@
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
+import { getIstMonthRange } from '../utils/commissionHelper';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -128,9 +129,11 @@ class PayrollService {
       const overtime = this.calculateOvertime(attendanceData, salaryStructure);
       const bonus = await this.calculateBonus(employeeId, month, year);
 
-      // Fetch commission earned for this month
-      const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-      const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+      // Fetch commission earned strictly for this month (IST boundaries)
+      const monthRange = getIstMonthRange(year, month);
+      const monthStart = monthRange.monthStart;
+      const monthEnd = monthRange.monthEnd;
+
       const commAggregate = await prisma.commissionTransaction.aggregate({
         where: {
           employeeId,
@@ -139,17 +142,7 @@ class PayrollService {
         },
         _sum: { commissionAmount: true }
       });
-      let commissionEarned = commAggregate._sum?.commissionAmount || 0;
-      if (commissionEarned === 0) {
-        const empCommSum = await prisma.commissionTransaction.aggregate({
-          where: {
-            employeeId,
-            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
-          },
-          _sum: { commissionAmount: true }
-        });
-        commissionEarned = empCommSum._sum?.commissionAmount || 0;
-      }
+      const commissionEarned = commAggregate._sum?.commissionAmount || 0;
 
       // Fetch approved expenses for this month
       const approvedExpenseRecords = await prisma.expense.findMany({
@@ -683,12 +676,13 @@ class PayrollService {
    */
   private async getAttendanceData(employeeId: number, month: number, year: number, office?: any): Promise<any> {
     try {
+      const monthRange = getIstMonthRange(year, month);
       const totalCalendarDays = new Date(year, month, 0).getDate();
-      const startDateStr = `${year}-${String(month).padStart(2, '0')}-01`;
-      const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(totalCalendarDays).padStart(2, '0')}`;
+      const startDateStr = monthRange.startDateStr;
+      const endDateStr = monthRange.endDateStr;
 
-      const startDate = new Date(year, month - 1, 1, 0, 0, 0, 0);
-      const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+      const startDate = monthRange.monthStart;
+      const endDate = monthRange.monthEnd;
 
       // Fetch attendance records for month
       const attendanceRecords = await prisma.attendance.findMany({
@@ -715,6 +709,12 @@ class PayrollService {
         }
       });
 
+      const toIstYmd = (d: Date | string) => {
+        const dt = new Date(d);
+        const ist = new Date(dt.getTime() + 5.5 * 60 * 60 * 1000);
+        return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
+      };
+
       const officeWorkingDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
       let scheduledWorkingDays = 0;
@@ -737,14 +737,14 @@ class PayrollService {
 
         const isWeeklyOff = !officeWorkingDays.includes(dayName);
         const isHoliday = holidays.some(h => {
-          const hStr = h.date.toISOString().split('T')[0];
+          const hStr = toIstYmd(h.date);
           return hStr === dateStr;
         });
 
         const att = attendanceRecords.find(a => a.date === dateStr);
         const leave = approvedLeaves.find(l => {
-          const fStr = l.fromDate.toISOString().split('T')[0];
-          const tStr = l.toDate.toISOString().split('T')[0];
+          const fStr = toIstYmd(l.fromDate);
+          const tStr = toIstYmd(l.toDate);
           return fStr <= dateStr && dateStr <= tStr;
         });
 

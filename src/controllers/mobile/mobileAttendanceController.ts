@@ -5,6 +5,7 @@ import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import geofenceService from '../../services/geofenceService';
 import { Role } from '@prisma/client';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
+import { getIstMonthRange } from '../../utils/commissionHelper';
 const PdfPrinter = require('pdfmake');
 import auditLogService from '../../services/auditLogService';
 import { logActivity } from '../../utils/activityLogger';
@@ -1326,12 +1327,11 @@ export const getAttendanceHistory = async (req: AuthenticatedRequest, res: Respo
     // Build date filter
     let dateFilter = {};
     if (month && year) {
-      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-      const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
+      const monthRange = getIstMonthRange(Number(year), Number(month));
       dateFilter = {
         date: {
-          gte: startDate,
-          lte: endDate
+          gte: monthRange.startDateStr,
+          lte: monthRange.endDateStr
         }
       };
     }
@@ -1441,29 +1441,23 @@ export const getAttendanceStats = async (req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    // Build date filter
-    let dateFilter = {};
+    // Build date filter strictly in IST
+    let monthRange;
     if (month && year) {
-      const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-      const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
-      dateFilter = {
-        date: {
-          gte: startDate,
-          lte: endDate
-        }
-      };
+      monthRange = getIstMonthRange(Number(year), Number(month));
     } else {
-      // Default to current month
       const now = new Date();
-      const startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-      const endDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-31`;
-      dateFilter = {
-        date: {
-          gte: startDate,
-          lte: endDate
-        }
-      };
+      const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+      const istDate = new Date(istTime);
+      monthRange = getIstMonthRange(istDate.getUTCFullYear(), istDate.getUTCMonth() + 1);
     }
+
+    const dateFilter = {
+      date: {
+        gte: monthRange.startDateStr,
+        lte: monthRange.endDateStr
+      }
+    };
 
     const attendances = await prisma.attendance.findMany({
       where: {

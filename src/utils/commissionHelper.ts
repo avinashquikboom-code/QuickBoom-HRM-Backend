@@ -198,6 +198,45 @@ export function parseIstEndOfDay(dateInput?: string | Date | null): Date {
 }
 
 /**
+ * Resolves exact UTC Date boundaries for an IST month (00:00:00.000 IST 1st day to 23:59:59.999 IST last day).
+ * Month is 1-based (1 = Jan, ..., 12 = Dec).
+ */
+export function getIstMonthRange(yearInput?: number | null, monthInput?: number | null): {
+  monthStart: Date;
+  monthEnd: Date;
+  year: number;
+  month: number;
+  startDateStr: string;
+  endDateStr: string;
+} {
+  const now = new Date();
+  const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(istTime);
+
+  const year = yearInput && !isNaN(yearInput) ? yearInput : istDate.getUTCFullYear();
+  const month = monthInput && !isNaN(monthInput) ? monthInput : (istDate.getUTCMonth() + 1);
+
+  const totalCalendarDays = new Date(year, month, 0).getDate();
+
+  // monthStart in UTC corresponding to 00:00:00.000 IST 1st of month
+  const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+  // monthEnd in UTC corresponding to 23:59:59.999 IST last of month
+  const monthEnd = new Date(Date.UTC(year, month - 1, totalCalendarDays, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+
+  const startDateStr = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(totalCalendarDays).padStart(2, '0')}`;
+
+  return {
+    monthStart,
+    monthEnd,
+    year,
+    month,
+    startDateStr,
+    endDateStr
+  };
+}
+
+/**
  * Parse sale date correctly handling timezone, ISO, YYYY-MM-DD, and Indian date formats.
  */
 export async function parseSaleDateCorrectly(invoiceDateString: string): Promise<Date> {
@@ -995,19 +1034,22 @@ export async function getCommissionStats(params?: {
   const dateVal = istDate.getUTCDate();
 
   // todayStart in UTC corresponding to 00:00:00.000 IST today
-  const todayStart = new Date(Date.UTC(year, month, dateVal) - 5.5 * 60 * 60 * 1000);
+  const todayStart = new Date(Date.UTC(year, month, dateVal, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
   // todayEnd in UTC corresponding to 23:59:59.999 IST today
   const todayEnd = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
-  // monthStart in UTC corresponding to 00:00:00.000 IST 1st of month
-  const monthStart = new Date(Date.UTC(year, month, 1) - 5.5 * 60 * 60 * 1000);
+
+  const monthRange = getIstMonthRange(year, month + 1);
 
   const todayTxns = allTransactions.filter(
     (t) => new Date(t.createdAt) >= todayStart && new Date(t.createdAt) <= todayEnd
   );
-  // If dateRange filter was explicitly provided, allTransactions is the filtered set; otherwise filter by current month
+  // If dateRange filter was explicitly provided, allTransactions is the filtered set; otherwise filter strictly by current month
   const monthTxns = (params?.startDate || params?.endDate)
     ? allTransactions
-    : allTransactions.filter((t) => new Date(t.createdAt) >= monthStart);
+    : allTransactions.filter((t) => {
+        const txnDate = new Date(t.createdAt);
+        return txnDate >= monthRange.monthStart && txnDate <= monthRange.monthEnd;
+      });
 
   const pendingTxns = allTransactions.filter(
     (t) => t.status === 'PENDING' || t.status === 'APPROVED'

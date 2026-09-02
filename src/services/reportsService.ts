@@ -46,11 +46,19 @@ class ReportsService {
       const { startDate, endDate } = config.dateRange;
       const { departmentId, employeeId, officeId } = config.filters || {};
 
+      const toIstYmdStr = (d: Date | string): string => {
+        const dt = new Date(d);
+        const ist = new Date(dt.getTime() + 5.5 * 60 * 60 * 1000);
+        return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
+      };
+      const startDateStr = toIstYmdStr(startDate);
+      const endDateStr = toIstYmdStr(endDate);
+
       // Build where clause
       const whereClause: any = {
         date: {
-          gte: startDate,
-          lte: endDate
+          gte: startDateStr,
+          lte: endDateStr
         }
       };
 

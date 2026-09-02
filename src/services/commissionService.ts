@@ -1,5 +1,5 @@
 import { prisma } from '../utils/db';
-import { getTransactionNetContribution, getNumericInvoiceNumber } from '../utils/commissionHelper';
+import { getTransactionNetContribution, getNumericInvoiceNumber, getIstMonthRange } from '../utils/commissionHelper';
 
 export class CommissionService {
   /**
@@ -17,12 +17,11 @@ export class CommissionService {
     const dateVal = istDate.getUTCDate();
 
     // dayStart in UTC corresponding to 00:00:00.000 IST
-    const dayStart = new Date(Date.UTC(year, month, dateVal) - 5.5 * 60 * 60 * 1000);
+    const dayStart = new Date(Date.UTC(year, month, dateVal, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
     // dayEnd in UTC corresponding to 23:59:59.999 IST
     const dayEnd = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
 
-    const displayDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`;
-    console.log(`[Daily Metrics] Employee: ${employeeId}, IST Date: ${displayDateStr}`);
+    console.log(`[Daily Metrics] Employee: ${employeeId}, IST Date: ${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`);
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
@@ -58,14 +57,14 @@ export class CommissionService {
     const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
 
     console.log(`[Daily Metrics] ✅ Results:`, {
-      date: displayDateStr,
+      date: `${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`,
       netSales: totalNetSales,
       commission: totalCommission,
       billCount: sales.length
     });
 
     return {
-      date: displayDateStr,
+      date: `${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`,
       totalSales: totalNetSales,
       netSales: totalNetSales,
       totalSalesAmount: totalNetSales,
@@ -93,10 +92,9 @@ export class CommissionService {
     console.log(`[Monthly Metrics] Employee: ${employeeId}, Month: ${targetMonth}`);
 
     const [year, monthNum] = targetMonth.split('-').map(Number);
-    // monthStart in UTC corresponding to 00:00:00.000 IST
-    const monthStart = new Date(Date.UTC(year, monthNum - 1, 1) - 5.5 * 60 * 60 * 1000);
-    // monthEnd in UTC corresponding to 23:59:59.999 IST
-    const monthEnd = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+    const monthRange = getIstMonthRange(year, monthNum);
+    const monthStart = monthRange.monthStart;
+    const monthEnd = monthRange.monthEnd;
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
@@ -299,8 +297,9 @@ export class CommissionService {
    */
   static async calculateMonthlyCommission(employeeId: number, month: string): Promise<any> {
     const [year, monthNum] = month.split('-').map(Number);
-    const monthStart = new Date(Date.UTC(year, monthNum - 1, 1) - 5.5 * 60 * 60 * 1000);
-    const monthEnd = new Date(Date.UTC(year, monthNum, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+    const monthRange = getIstMonthRange(year, monthNum);
+    const monthStart = monthRange.monthStart;
+    const monthEnd = monthRange.monthEnd;
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
