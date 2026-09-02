@@ -552,13 +552,13 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           if (origBillAmt > 0 && cnAmt > 0) {
             log.oldAmount = origBillAmt;
             log.newAmount = cnAmt;
-            log.differenceAmount = Math.round((cnAmt - origBillAmt) * 100) / 100;
+            log.differenceAmount = Math.round((origBillAmt - cnAmt) * 100) / 100;
             log.oldCommission = origBillComm;
             log.newCommission = Number(log.commissionAmount || 0);
             log.commissionDifference = Math.round(((Number(log.commissionAmount || 0)) - origBillComm) * 100) / 100;
           } else {
             log.oldAmount = null;
-            log.newAmount = cnAmt;
+            log.newAmount = cnAmt > 0 ? cnAmt : null;
             log.differenceAmount = null;
           }
 
@@ -828,7 +828,7 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
 
       if (origSale && Number(origSale.netAmount || 0) > 0) {
         oldAmount = Number(origSale.netAmount);
-        differenceAmount = Math.round((cnAmt - oldAmount) * 100) / 100;
+        differenceAmount = Math.round((oldAmount - cnAmt) * 100) / 100;
         oldCommission = Math.round((oldAmount * 0.01) * 100) / 100;
         newCommission = Number(meta.commissionAmount || log.commissionAmount || (cnAmt * 0.01));
         commissionDifference = Math.round(((newCommission || 0) - (oldCommission || 0)) * 100) / 100;
