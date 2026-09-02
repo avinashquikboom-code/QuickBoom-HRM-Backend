@@ -641,45 +641,51 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     invoiceNumber = billId;
   }
 
-  let rawAmount = isCreditNote
-    ? cnAmount
-    : (
-        invoice.netAmount ??
-        invoice.totalAmount ??
-        invoice.grandTotal ??
-        payload?.data?.invoice?.netAmount ??
-        payload?.data?.invoice?.totalAmount ??
-        payload?.data?.netAmount ??
-        payload?.data?.totalAmount ??
-        payload?.data?.grandTotal ??
-        firstItem?.productNetAmount ??
-        firstItem?.netAmount ??
-        firstItem?.amount ??
-        payload?.data?.amount ??
-        payload?.data?.saleAmount ??
-        payload?.amount ??
-        payload?.saleAmount ??
-        payload?.totalAmount ??
-        payload?.grandTotal ??
-        payload?.netAmount
-      );
-
-  let amount = safeParseAmount(rawAmount);
-
-  // If amount is 0 and line items exist on non-creditnote events, calculate sum from items
-  if (amount === 0 && !isCreditNote && lineItems.length > 0) {
-    let sum = 0;
+  // Calculate line items sum dynamically from productNetAmount / amount
+  let lineItemsSum = 0;
+  let hasLineItemsWithAmount = false;
+  if (!isCreditNote && Array.isArray(lineItems) && lineItems.length > 0) {
     for (const item of lineItems) {
       const itemAmt = Number(
         item.productNetAmount ??
         item.Amount ??
         item.amount ??
+        item.netAmount ??
         (Number(item.Price || item.price || 0) * Number(item.Quantity || item.quantity || 1))
-      ) || 0;
-      sum += itemAmt;
+      );
+      if (!isNaN(itemAmt) && itemAmt > 0) {
+        lineItemsSum += itemAmt;
+        hasLineItemsWithAmount = true;
+      }
     }
-    if (sum > 0) amount = Math.round(sum * 100) / 100;
   }
+
+  let rawAmount = isCreditNote
+    ? cnAmount
+    : (hasLineItemsWithAmount
+        ? lineItemsSum
+        : (
+            invoice.netAmount ??
+            invoice.totalAmount ??
+            invoice.grandTotal ??
+            payload?.data?.invoice?.netAmount ??
+            payload?.data?.invoice?.totalAmount ??
+            payload?.data?.netAmount ??
+            payload?.data?.totalAmount ??
+            payload?.data?.grandTotal ??
+            firstItem?.productNetAmount ??
+            firstItem?.netAmount ??
+            firstItem?.amount ??
+            payload?.data?.amount ??
+            payload?.data?.saleAmount ??
+            payload?.amount ??
+            payload?.saleAmount ??
+            payload?.totalAmount ??
+            payload?.grandTotal ??
+            payload?.netAmount
+          ));
+
+  let amount = safeParseAmount(rawAmount);
 
   const customerName =
     invoice.customerName ||

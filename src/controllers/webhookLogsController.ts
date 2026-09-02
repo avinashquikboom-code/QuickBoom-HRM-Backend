@@ -463,13 +463,93 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
     let combined = Array.from(uniqueLogsMap.values());
 
-    // Enrich Credit Note logs from DB if fields are missing or amount is 0
+    // Build lookup map for Invoices by invoiceNo, billId, and customer+store for precise matching
+    const invoiceLogMap = new Map<string, any>();
+    for (const l of combined) {
+      const isCn =
+        String(l.eventType || '').toUpperCase().includes('CREDIT_NOTE') ||
+        String(l.billId || '').startsWith('CN-') ||
+        String(l.billId || '').startsWith('HKACN') ||
+        (l.cnAmount !== undefined && l.cnAmount !== null && Number(l.cnAmount) > 0);
+
+      if (!isCn && Number(l.amount || 0) > 0) {
+        if (l.invoiceNo) invoiceLogMap.set(String(l.invoiceNo).toUpperCase(), l);
+        if (l.invoiceNumber) invoiceLogMap.set(String(l.invoiceNumber).toUpperCase(), l);
+        if (l.billId) {
+          invoiceLogMap.set(String(l.billId).toUpperCase(), l);
+          invoiceLogMap.set(`HWM-${l.billId}`.toUpperCase(), l);
+          invoiceLogMap.set(String(l.billId).replace(/^HWM-/, '').toUpperCase(), l);
+        }
+        if (l.customerName && l.customerName !== 'N/A') {
+          const custKey = `${String(l.customerName).toUpperCase()}_${String(l.storeName || '').toUpperCase()}`;
+          if (!invoiceLogMap.has(custKey)) {
+            invoiceLogMap.set(custKey, l);
+          }
+        }
+      }
+    }
+
+    // Enrich Credit Note logs from DB and calculate difference against original invoice
     for (let i = 0; i < combined.length; i++) {
       const log = combined[i];
-      const isCreditNote = String(log.eventType || '').toUpperCase().includes('CREDIT_NOTE') || String(log.billId || '').startsWith('CN-');
+      const isCreditNote =
+        String(log.eventType || '').toUpperCase().includes('CREDIT_NOTE') ||
+        String(log.billId || '').startsWith('CN-') ||
+        String(log.billId || '').startsWith('HKACN') ||
+        (log.cnAmount !== undefined && log.cnAmount !== null && Number(log.cnAmount) > 0);
 
       if (isCreditNote) {
         try {
+          const parsedPayload = parseRawPayload(log.payload);
+          const meta = extractWebhookMeta(parsedPayload);
+          const cn = meta.creditNote || parsedPayload?.data?.creditNote || parsedPayload?.creditNote || {};
+          const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || meta.invoiceNumber || log.invoiceNo;
+
+          let origRecord: any = null;
+          if (refInv) {
+            origRecord =
+              invoiceLogMap.get(String(refInv).toUpperCase()) ||
+              invoiceLogMap.get(`HWM-${refInv}`.toUpperCase()) ||
+              invoiceLogMap.get(String(refInv).replace(/^HWM-/, '').toUpperCase());
+          }
+          if (!origRecord && meta.customerName && meta.customerName !== 'N/A') {
+            const custKey = `${String(meta.customerName).toUpperCase()}_${String(meta.storeName || meta.branchName || log.storeName || '').toUpperCase()}`;
+            origRecord = invoiceLogMap.get(custKey);
+          }
+
+          let origBillAmt = origRecord ? Number(origRecord.amount || 0) : 0;
+          let origBillComm = origRecord ? Number(origRecord.commissionAmount || 0) : 0;
+
+          // If not in memory log map, search in database
+          if (origBillAmt === 0 && refInv) {
+            const dbSale = await prisma.sales.findFirst({
+              where: {
+                OR: [
+                  { billId: String(refInv) },
+                  { billId: `HWM-${refInv}` },
+                  { billId: { contains: String(refInv) } },
+                ]
+              }
+            });
+            if (dbSale) {
+              origBillAmt = Number(dbSale.netAmount || 0);
+            }
+          }
+
+          const cnAmt = Number(log.cnAmount || meta.cnAmount || log.amount || 0);
+          if (origBillAmt > 0) {
+            log.oldAmount = origBillAmt;
+            log.newAmount = cnAmt;
+            log.differenceAmount = Math.round((cnAmt - origBillAmt) * 100) / 100;
+            log.oldCommission = origBillComm;
+            log.newCommission = Number(log.commissionAmount || 0);
+            log.commissionDifference = Math.round(((Number(log.commissionAmount || 0)) - origBillComm) * 100) / 100;
+          } else if (cnAmt > 0) {
+            log.oldAmount = null;
+            log.newAmount = cnAmt;
+            log.differenceAmount = cnAmt;
+          }
+
           if (log.billId) {
             const cnRecord = await prisma.creditNote.findUnique({
               where: { creditNoteNo: log.billId },
