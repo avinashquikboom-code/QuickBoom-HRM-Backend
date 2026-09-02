@@ -644,32 +644,42 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   const eventType = normalizeEventType(rawEventType, 'INVOICE_CREATED', payload);
 
   const customerName =
+    invoice.customerName ||
+    invoice.CustomerName ||
     creditNote.CustomerName ||
     creditNote.customerName ||
     creditNote.Customer ||
     creditNote.customer ||
+    payload?.data?.invoice?.customerName ||
+    payload?.data?.invoice?.CustomerName ||
     payload?.CustomerName ||
     payload?.customerName ||
     payload?.data?.CustomerName ||
     payload?.data?.customerName ||
-    invoice.customerName ||
-    invoice.customer ||
     firstItem?.CustomerName ||
     firstItem?.customerName ||
-    payload?.name ||
     null;
 
   const customerPhone =
+    invoice.customerPhoneNo ||
+    invoice.CustomerPhoneNo ||
+    invoice.customerPhone ||
+    invoice.CustomerPhone ||
     creditNote.PhoneNumber ||
     creditNote.customerPhone ||
+    creditNote.customerPhoneNo ||
     creditNote.phone ||
+    payload?.data?.invoice?.customerPhoneNo ||
+    payload?.data?.invoice?.customerPhone ||
     payload?.PhoneNumber ||
     payload?.customerPhone ||
+    payload?.customerPhoneNo ||
     payload?.data?.PhoneNumber ||
     payload?.data?.customerPhone ||
-    invoice.customerPhone ||
+    payload?.data?.customerPhoneNo ||
     firstItem?.PhoneNumber ||
     firstItem?.customerPhone ||
+    firstItem?.customerPhoneNo ||
     null;
 
   const rawPaymentMode =
@@ -733,19 +743,30 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   }
 
   const branchName =
-    creditNote.branchName ||
     invoice.branchName ||
-    payload?.branchName ||
+    invoice.BranchName ||
+    creditNote.branchName ||
+    creditNote.BranchName ||
+    payload?.data?.invoice?.branchName ||
+    payload?.data?.invoice?.BranchName ||
     payload?.data?.branchName ||
+    payload?.data?.BranchName ||
+    payload?.branchName ||
+    payload?.BranchName ||
     firstItem?.branchName ||
     null;
 
   const storeName =
-    creditNote.storeName ||
-    invoice.storeName ||
     invoice.branchName ||
+    invoice.BranchName ||
+    invoice.storeName ||
+    invoice.StoreName ||
+    creditNote.branchName ||
+    creditNote.storeName ||
     invoice.store ||
     invoice.branch ||
+    payload?.data?.invoice?.branchName ||
+    payload?.data?.invoice?.storeName ||
     payload?.data?.storeName ||
     payload?.data?.branchName ||
     payload?.data?.store ||
@@ -780,6 +801,23 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     firstSalesman.salesmanName ||
     firstSalesman.Name ||
     firstSalesman.name ||
+    firstItem?.employeeCode ||
+    firstItem?.employeeID ||
+    firstItem?.employeeId ||
+    firstItem?.code ||
+    firstItem?.empCode ||
+    firstItem?.hopkidCode ||
+    firstItem?.salesmanCode ||
+    firstItem?.Salesman ||
+    firstItem?.salesman ||
+    firstItem?.employeePhoneNo ||
+    firstItem?.employeeContactNo ||
+    firstItem?.mobileNo ||
+    firstItem?.mobileNumber ||
+    firstItem?.phone ||
+    firstItem?.phoneNumber ||
+    firstItem?.employeeName ||
+    firstItem?.name ||
     creditNote.Salesman ||
     creditNote.CreatedBy ||
     creditNote.salesmanName ||
@@ -792,23 +830,6 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.salesmanName ||
     payload?.data?.Salesman ||
     payload?.data?.CreatedBy ||
-    firstItem?.Salesman ||
-    firstItem?.salesman ||
-    firstItem?.employeeCode ||
-    firstItem?.salesmanCode ||
-    firstItem?.code ||
-    firstItem?.empCode ||
-    firstItem?.hopkidCode ||
-    firstItem?.employeeId ||
-    firstItem?.salesmanId ||
-    firstItem?.employeePhoneNo ||
-    firstItem?.employeeContactNo ||
-    firstItem?.mobileNo ||
-    firstItem?.mobileNumber ||
-    firstItem?.phone ||
-    firstItem?.phoneNumber ||
-    firstItem?.employeeName ||
-    firstItem?.name ||
     invoice?.employeeCode ||
     invoice?.salesmanCode ||
     invoice?.empCode ||
@@ -851,6 +872,14 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     firstSalesman.employeeName ||
     firstSalesman.Salesman ||
     firstSalesman.salesman ||
+    firstItem?.employeeName ||
+    firstItem?.salesmanName ||
+    firstItem?.name ||
+    firstItem?.Salesman ||
+    firstItem?.salesman ||
+    firstItem?.salesPerson ||
+    firstItem?.salespersonName ||
+    firstItem?.empName ||
     creditNote.Salesman ||
     creditNote.CreatedBy ||
     creditNote.salesmanName ||
@@ -860,14 +889,6 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.salesmanName ||
     payload?.data?.Salesman ||
     payload?.data?.CreatedBy ||
-    firstItem?.Salesman ||
-    firstItem?.salesman ||
-    firstItem?.employeeName ||
-    firstItem?.salesmanName ||
-    firstItem?.salesPerson ||
-    firstItem?.salespersonName ||
-    firstItem?.empName ||
-    firstItem?.name ||
     invoice?.employeeName ||
     invoice?.salesmanName ||
     invoice?.salesman ||
@@ -888,8 +909,34 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.empName ||
     payload?.name ||
     null;
-  const rawComm = payload?.commissionAmount || payload?.data?.commissionAmount;
-  const commissionAmount = rawComm !== undefined && rawComm !== null ? parseFloat(String(rawComm)) : null;
+
+  // Calculate total commission across all line items if line items provide commission or commissionAmount
+  let totalCommissionFromItems = 0;
+  let hasLineItemCommission = false;
+
+  for (const item of lineItems) {
+    const rawItemComm = item.commissionAmount ?? item.commission_amount ?? item.CommissionAmount ?? item.commAmount;
+    if (rawItemComm !== undefined && rawItemComm !== null && !isNaN(Number(rawItemComm))) {
+      totalCommissionFromItems += Number(rawItemComm);
+      hasLineItemCommission = true;
+    } else {
+      const rawRate = item.commission ?? item.commissionRate ?? item.Commission;
+      const rawNet = item.productNetAmount ?? item.netAmount ?? item.amount;
+      if (rawRate !== undefined && rawRate !== null && rawNet !== undefined && rawNet !== null) {
+        const calculated = (Number(rawNet) * Number(rawRate)) / 100;
+        if (!isNaN(calculated)) {
+          totalCommissionFromItems += calculated;
+          hasLineItemCommission = true;
+        }
+      }
+    }
+  }
+
+  const rawComm = hasLineItemCommission
+    ? totalCommissionFromItems
+    : (payload?.commissionAmount ?? payload?.data?.commissionAmount ?? payload?.data?.invoice?.commissionAmount);
+
+  const commissionAmount = rawComm !== undefined && rawComm !== null && !isNaN(parseFloat(String(rawComm))) ? Math.round(parseFloat(String(rawComm)) * 100) / 100 : null;
 
   return {
     billId: billId ? String(billId) : null,
@@ -907,7 +954,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     firstItem,
     employeeIdentifier: employeeIdentifier ? String(employeeIdentifier) : null,
     employeeName: employeeName ? String(employeeName) : null,
-    commissionAmount: commissionAmount && !isNaN(commissionAmount) ? commissionAmount : null,
+    commissionAmount,
     eventId: eventId ? String(eventId) : null,
     salesmen,
   };

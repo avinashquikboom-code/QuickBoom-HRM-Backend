@@ -189,7 +189,24 @@ export async function groupAndCalculateCommissionBySalesman(
       let productCommission = 0;
       let commissionRate = 0;
 
-      if (policy) {
+      // Prioritize lineItem.commissionAmount & lineItem.commission from ERP webhook payload
+      const directLineCommAmount =
+        lineItem.commissionAmount !== null && lineItem.commissionAmount !== undefined && !isNaN(Number(lineItem.commissionAmount))
+          ? Number(lineItem.commissionAmount)
+          : (lineItem.commission_amount !== null && lineItem.commission_amount !== undefined && !isNaN(Number(lineItem.commission_amount)) ? Number(lineItem.commission_amount) : null);
+
+      const directLineCommRate =
+        lineItem.commission !== null && lineItem.commission !== undefined && !isNaN(Number(lineItem.commission))
+          ? Number(lineItem.commission)
+          : (lineItem.commissionRate !== null && lineItem.commissionRate !== undefined && !isNaN(Number(lineItem.commissionRate)) ? Number(lineItem.commissionRate) : null);
+
+      if (directLineCommAmount !== null) {
+        productCommission = directLineCommAmount;
+        commissionRate = directLineCommRate !== null ? directLineCommRate : (productNetAmount > 0 ? Math.round(((directLineCommAmount / productNetAmount) * 100) * 100) / 100 : 0);
+      } else if (directLineCommRate !== null) {
+        commissionRate = directLineCommRate;
+        productCommission = Math.round(((productNetAmount * directLineCommRate) / 100) * 100) / 100;
+      } else if (policy) {
         if (policy.commissionType === 'PERCENTAGE') {
           commissionRate = policy.commissionValue;
           productCommission = (productNetAmount * policy.commissionValue) / 100;
@@ -201,6 +218,8 @@ export async function groupAndCalculateCommissionBySalesman(
         commissionRate = salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0;
         productCommission = (productNetAmount * commissionRate) / 100;
       }
+
+      console.log(`[WEBHOOK_LINE_ITEM] Product: ${productName} | Employee: ${salesman.employeeCode} (${salesman.firstName} ${salesman.lastName}) | Amount: ₹${productNetAmount} | Commission: ${commissionRate}% | CommAmount: ₹${productCommission}`);
 
       const isOld = parseIsOld(lineItem);
       const effectiveProdAmount = isOld ? -Math.abs(productNetAmount) : Math.abs(productNetAmount);
@@ -419,7 +438,9 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
   const primaryAmount = meta.amount || invoice.netAmount || 0;
 
   let itemsToProcess: any[] = [];
-  if (meta.salesmen && meta.salesmen.length > 0) {
+  if (meta.lineItems && meta.lineItems.length > 0) {
+    itemsToProcess = meta.lineItems;
+  } else if (meta.salesmen && meta.salesmen.length > 0) {
     itemsToProcess = meta.salesmen.map((s, idx) => ({
       productID: s.productId || s.productID || `SALESMAN-${idx + 1}`,
       productName: s.productName || s.name || `Salesman Allocation`,
@@ -429,13 +450,13 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       employeePhoneNo: s.employeePhoneNo || s.mobileNo || s.phone,
       isOld: s.isOld ?? s.IsOld,
     }));
-  } else if (meta.lineItems.length > 0) {
-    itemsToProcess = meta.lineItems;
   } else {
     itemsToProcess = [effectiveData];
   }
 
   const resolvedEventId = eventIdParam || meta.eventId || null;
+
+  console.log(`[WEBHOOK_INVOICE] invoiceNo: ${meta.invoiceNumber || primaryBillId} | branchName: ${meta.branchName || 'N/A'} | netAmount: ₹${primaryAmount} | customerName: ${meta.customerName ?? 'N/A'} | customerPhone: ${meta.customerPhone ?? 'N/A'}`);
 
   const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || effectiveData.createdAt || effectiveData.transactionDate;
   const validDate = await parseSaleDateCorrectly(dateStr || '');
@@ -523,10 +544,10 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         // Wallet gets incremental delta (newCommission - oldCommission)
         // ═══════════════════════════════════════════════════════════════
         const rateVal = salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : (existingTx.commissionPercent ?? 1);
-        const oldComm = oldSaleAmount > 0 ? Math.round(((oldSaleAmount * rateVal) / 100) * 100) / 100 : (existingTx.oldCommission || oldCommission);
-        const newComm = newSaleAmount > 0 ? Math.round(((newSaleAmount * rateVal) / 100) * 100) / 100 : newCommissionAmount;
-        const totalCommissionEarned = isCancelledOrReturned ? 0 : Math.round((oldComm + newComm) * 100) / 100;
-        const commDelta = Math.round((newComm - oldCommission) * 100) / 100;
+        const oldComm = existingTx.commissionAmount || (oldSaleAmount > 0 ? Math.round(((oldSaleAmount * rateVal) / 100) * 100) / 100 : (existingTx.oldCommission || 0));
+        const newComm = commAmt > 0 ? commAmt : (newSaleAmount > 0 ? Math.round(((newSaleAmount * rateVal) / 100) * 100) / 100 : newCommissionAmount);
+        const totalCommissionEarned = isCancelledOrReturned ? 0 : newComm;
+        const commDelta = Math.round((totalCommissionEarned - oldCommission) * 100) / 100;
         const saleDelta = newSaleAmount - oldSaleAmount;
 
         console.log(`[Invoice Updated]\nBillId: ${billIdKey}\nOld Amount: ₹${oldSaleAmount}\nNew Amount: ₹${newSaleAmount}\nFinal Amount: ₹${newSaleAmount}`);
@@ -591,6 +612,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
 
         console.log(`[Invoice Updated]\nBillId: ${billIdKey}\nAmount: ₹${newSaleAmount}\nEmployee(s): ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
         console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: ${oldSaleAmount}\nnewAmount: ${newSaleAmount}\ncommissionRate: ${rateVal}%\noldCommission: ${oldComm}\nnewCommission: ${newComm}\ntotalCommission: ${totalCommissionEarned}\ncommissionAdjustment: ${commDelta >= 0 ? '+' : ''}${commDelta}`);
+        console.log(`[WEBHOOK_PERSISTED] (UPDATE) dbRecordId: ${existingTx.id} | invoiceNo: ${existingTx.invoiceNumber || meta.invoiceNumber || billIdKey} | employeeCode: ${salesman.employeeCode || salesman.id} | commissionAmount: ₹${totalCommissionEarned}`);
 
         // Wallet adjustment for commission delta ONLY
         if (commDelta !== 0) {
@@ -704,7 +726,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         console.log(`[Commission Audit]   incrementalCommission: ₹${finalCommAmount}`);
         console.log(`[Commission Audit]   finalCommission: ₹${finalCommAmount}`);
         console.log(`[Commission Audit]   eventId: ${resolvedEventId || 'N/A'}`);
-        console.log(`[Commission Audit]   upsertWasCreate: ${wasCreated}`);
+        console.log(`[WEBHOOK_PERSISTED] (CREATE) dbRecordId: ${upsertedTx?.id || 'new'} | invoiceNo: ${meta.invoiceNumber || billIdKey} | employeeCode: ${salesman.employeeCode || salesman.id} | commissionAmount: ₹${finalCommAmount}`);
 
         if (!isCancelledOrReturned && finalCommAmount > 0) {
           if (wasCreated) {
@@ -1306,6 +1328,7 @@ async function executeWebhookPipeline(
     // STEP 1: IDEMPOTENCY CHECK
     const idempotency = await checkWebhookIdempotency(payload, normalizedType);
     const resolvedEventId = idempotency.eventId || (meta.eventId ? String(meta.eventId) : null);
+    console.log(`[WEBHOOK_RECEIVED] eventId: ${resolvedEventId || 'N/A'} | topic: ${payload?.topic || normalizedType} | invoiceId: ${meta.invoice?.invoiceId || meta.billId || 'N/A'} | invoiceNo: ${meta.invoiceNumber || 'N/A'}`);
     console.log(`[Webhook Idempotency]\nEventId: ${resolvedEventId || 'N/A'}\nDuplicate: ${idempotency.isDuplicate ? 'YES' : 'NO'}`);
 
     if (idempotency.isDuplicate) {

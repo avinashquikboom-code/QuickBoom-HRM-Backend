@@ -125,7 +125,8 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       const firstSalesman = (Array.isArray(parsed.salesmen) && parsed.salesmen[0]) || 
                             (Array.isArray(parsed.data?.salesmen) && parsed.data.salesmen[0]) ||
                             (Array.isArray(rawMeta.salesmen) && rawMeta.salesmen[0]) || {};
-      const firstItem = (Array.isArray(parsed.lineItems) && parsed.lineItems[0]) ||
+      const firstItem = (Array.isArray(parsed.data?.lineItems) && parsed.data.lineItems[0]) ||
+                        (Array.isArray(parsed.lineItems) && parsed.lineItems[0]) ||
                         (Array.isArray(parsed.CreditNoteProducts) && parsed.CreditNoteProducts[0]) ||
                         (Array.isArray(parsed.SalesExchangeProductList) && parsed.SalesExchangeProductList[0]) || {};
 
@@ -148,6 +149,8 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         firstItem.salesman,
         firstItem.employeeCode,
         firstItem.salesmanCode,
+        firstItem.employeeID,
+        firstItem.employeeId,
         firstItem.employeeName,
         firstItem.name,
         parsed.employeeCode,
@@ -201,6 +204,11 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       const sName = firstSalesman.SalesmanName || firstSalesman.salesmanName || firstSalesman.Name || firstSalesman.name || firstSalesman.employeeName;
       if (sName) return String(sName).trim();
 
+      const firstItem = (Array.isArray(parsed.data?.lineItems) && parsed.data.lineItems[0]) ||
+                        (Array.isArray(parsed.lineItems) && parsed.lineItems[0]) || {};
+      const itemEmpName = firstItem.employeeName || firstItem.name || firstItem.salesmanName;
+      if (itemEmpName) return String(itemEmpName).trim();
+
       const pName = parsed.name || parsed.employeeName || parsed.salesmanName || parsed.Salesman || parsed.CreatedBy || parsed.salesPerson ||
                     parsed.data?.name || parsed.data?.employeeName || parsed.data?.employee?.name || parsed.employee?.name;
       if (pName) return String(pName).trim();
@@ -211,16 +219,20 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     };
 
     const resolveStoreName = (rawMeta: any, rawLogStoreId?: number | null, empId?: number | null, rawPayload?: any, empInfo?: EmpInfo | null): string => {
-      if (rawMeta.storeName && rawMeta.storeName !== 'N/A') return rawMeta.storeName;
       if (rawMeta.branchName && rawMeta.branchName !== 'N/A') return rawMeta.branchName;
+      if (rawMeta.storeName && rawMeta.storeName !== 'N/A') return rawMeta.storeName;
       if (rawMeta.storeId && storeById.has(rawMeta.storeId)) return storeById.get(rawMeta.storeId)!;
       if (rawLogStoreId && storeById.has(rawLogStoreId)) return storeById.get(rawLogStoreId)!;
 
       const parsed = parseRawPayload(rawPayload);
-      const pStore = parsed.branchName || parsed.storeName || parsed.BranchName || parsed.StoreName ||
+      const pStore = parsed.data?.invoice?.branchName || parsed.data?.invoice?.BranchName ||
+                    parsed.data?.invoice?.storeName || parsed.data?.invoice?.StoreName ||
+                    parsed.invoice?.branchName || parsed.invoice?.BranchName ||
+                    parsed.invoice?.storeName || parsed.invoice?.StoreName ||
+                    parsed.branchName || parsed.storeName || parsed.BranchName || parsed.StoreName ||
                     parsed.store || parsed.branch || parsed.data?.branchName || parsed.data?.storeName ||
                     parsed.data?.BranchName || parsed.data?.StoreName || parsed.data?.store || parsed.data?.branch ||
-                    parsed.invoice?.storeName || parsed.invoice?.branchName || parsed.creditNote?.storeName || parsed.creditNote?.branchName;
+                    parsed.creditNote?.storeName || parsed.creditNote?.branchName;
       
       if (pStore) {
         if (typeof pStore === 'string') {
