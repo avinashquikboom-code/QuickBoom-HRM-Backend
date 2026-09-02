@@ -763,7 +763,23 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   const storeIdParsed = creditNote.storeId ? parseInt(String(creditNote.storeId), 10) : (invoice.storeId ? parseInt(String(invoice.storeId), 10) : (payload?.storeId ? parseInt(String(payload.storeId), 10) : null));
   const storeId = isNaN(storeIdParsed as number) ? null : storeIdParsed;
 
+  const firstSalesman = (Array.isArray(salesmen) && salesmen[0]) || {};
+
   const employeeIdentifier =
+    firstSalesman.SalesmanCode ||
+    firstSalesman.salesmanCode ||
+    firstSalesman.Code ||
+    firstSalesman.code ||
+    firstSalesman.SalesmanId ||
+    firstSalesman.salesmanId ||
+    firstSalesman.employeeID ||
+    firstSalesman.employeeId ||
+    firstSalesman.Id ||
+    firstSalesman.id ||
+    firstSalesman.SalesmanName ||
+    firstSalesman.salesmanName ||
+    firstSalesman.Name ||
+    firstSalesman.name ||
     creditNote.Salesman ||
     creditNote.CreatedBy ||
     creditNote.salesmanName ||
@@ -826,6 +842,15 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     null;
 
   const employeeName =
+    firstSalesman.SalesmanName ||
+    firstSalesman.salesmanName ||
+    firstSalesman.SalesPersonName ||
+    firstSalesman.salespersonName ||
+    firstSalesman.Name ||
+    firstSalesman.name ||
+    firstSalesman.employeeName ||
+    firstSalesman.Salesman ||
+    firstSalesman.salesman ||
     creditNote.Salesman ||
     creditNote.CreatedBy ||
     creditNote.salesmanName ||

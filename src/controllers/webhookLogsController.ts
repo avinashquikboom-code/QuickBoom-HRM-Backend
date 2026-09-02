@@ -11,21 +11,39 @@ const ADMIN_ROLES = [Role.ADMIN, Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.HR]
 const SUPERADMIN_ROLES = [Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.ADMIN];
 
 /**
+ * Helper to safely parse raw payload if stored as JSON string
+ */
+function parseRawPayload(raw: any): any {
+  if (!raw) return {};
+  if (typeof raw === 'object') return raw;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+/**
  * GET /api/webhook/logs
  * 
- * Returns all webhook logs with filtering across both WebhookLog and HopkidWebhookLog
+ * Returns all webhook logs with global visibility across all employees, all stores,
+ * and all webhook event types.
  */
 router.get('/logs', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { status, eventType, limit = '100', offset = '0' } = req.query;
+    const { status, eventType, store, search, fromDate, toDate, limit, offset } = req.query;
 
-    const limitNum = parseInt(limit as string, 10) || 100;
+    const limitNum = limit ? (parseInt(limit as string, 10) || 5000) : 5000;
     const offsetNum = parseInt(offset as string, 10) || 0;
 
     const statusFilter = status ? String(status).toUpperCase() : null;
     const eventTypeFilter = eventType ? normalizeEventType(String(eventType)) : null;
+    const storeFilter = store && String(store) !== 'ALL' ? String(store).trim() : null;
 
-    // Pre-fetch employee lookup maps for resolving employee names and assigned stores
+    // 1. Pre-fetch employee lookup maps for resolving employee names, codes, and assigned stores
     let allEmployees: any[] = [];
     try {
       allEmployees = await prisma.employee.findMany({
@@ -37,7 +55,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           firstName: true,
           lastName: true,
           storeId: true,
-          store: { select: { id: true, name: true } }
+          store: { select: { id: true, name: true, code: true } }
         },
       });
     } catch (e) {
@@ -47,69 +65,38 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     interface EmpInfo {
       id: number;
       name: string;
+      code: string;
       storeName: string | null;
+      storeId: number | null;
     }
 
     const empById = new Map<number, EmpInfo>();
     const empByGuid = new Map<string, EmpInfo>();
     const empByCode = new Map<string, EmpInfo>();
     const empByMobile = new Map<string, EmpInfo>();
+    const empByName = new Map<string, EmpInfo>();
 
     for (const emp of allEmployees) {
-      const name = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || emp.employeeCode || 'Employee';
+      const name = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || emp.employeeCode || `Employee #${emp.id}`;
       const storeName = emp.store?.name || null;
-      const info: EmpInfo = { id: emp.id, name, storeName };
+      const storeId = emp.storeId || emp.store?.id || null;
+      const info: EmpInfo = { id: emp.id, name, code: emp.employeeCode, storeName, storeId };
 
       empById.set(emp.id, info);
-      if (emp.employeeID) empByGuid.set(emp.employeeID.toLowerCase(), info);
-      if (emp.employeeCode) empByCode.set(emp.employeeCode.toLowerCase(), info);
-      if (emp.mobileNumber) empByMobile.set(emp.mobileNumber.toLowerCase(), info);
+      if (emp.employeeID) empByGuid.set(emp.employeeID.toLowerCase().trim(), info);
+      if (emp.employeeCode) empByCode.set(emp.employeeCode.toLowerCase().trim(), info);
+      if (emp.mobileNumber) {
+        const mobClean = emp.mobileNumber.replace(/\D/g, '');
+        if (mobClean.length >= 10) {
+          empByMobile.set(mobClean.slice(-10), info);
+        }
+        empByMobile.set(emp.mobileNumber.toLowerCase().trim(), info);
+      }
+      if (name) empByName.set(name.toLowerCase(), info);
+      if (emp.firstName) empByName.set(emp.firstName.toLowerCase().trim(), info);
     }
 
-    const findEmpInfo = (empId: number | null, rawMeta: any, rawPayload: any): EmpInfo | null => {
-      if (empId && empById.has(empId)) return empById.get(empId)!;
-
-      const candidateIds = [
-        rawMeta.employeeIdentifier,
-        rawPayload?.employeeId,
-        rawPayload?.employeeID,
-        rawPayload?.id,
-        rawPayload?.data?.employeeId,
-        rawPayload?.data?.employeeID,
-        rawPayload?.data?.employee?.employeeID,
-        rawPayload?.data?.employee?.employeeId,
-        rawPayload?.data?.employee?.employeeCode,
-        rawPayload?.employee?.employeeID,
-        rawPayload?.employee?.employeeId,
-        rawPayload?.employee?.employeeCode,
-      ].filter(Boolean);
-
-      for (const cand of candidateIds) {
-        const str = String(cand).toLowerCase();
-        if (empByGuid.has(str)) return empByGuid.get(str)!;
-        if (empByCode.has(str)) return empByCode.get(str)!;
-        if (empByMobile.has(str)) return empByMobile.get(str)!;
-      }
-
-      return null;
-    };
-
-    const resolveEmpName = (empId: number | null, rawMeta: any, rawLogName?: string | null, rawPayload?: any) => {
-      const info = findEmpInfo(empId, rawMeta, rawPayload);
-      if (info) return info.name;
-
-      if (rawMeta.employeeName) return rawMeta.employeeName;
-      if (rawLogName) return rawLogName;
-
-      const pName = rawPayload?.name || rawPayload?.data?.name || rawPayload?.employee?.name || rawPayload?.data?.employee?.name;
-      if (pName) return String(pName);
-
-      if (rawMeta.employeeIdentifier) return rawMeta.employeeIdentifier;
-
-      return 'N/A';
-    };
-
-    // Pre-fetch store lookup maps for resolving store names
+    // 2. Pre-fetch store lookup maps for resolving store names
     let allStores: any[] = [];
     try {
       allStores = await prisma.store.findMany({
@@ -121,30 +108,141 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
     const storeById = new Map<number, string>();
     const storeByCode = new Map<string, string>();
+    const storeByName = new Map<string, string>();
 
     for (const st of allStores) {
       if (st.name) {
         storeById.set(st.id, st.name);
-        if (st.code) storeByCode.set(st.code.toLowerCase(), st.name);
+        storeByName.set(st.name.toLowerCase().trim(), st.name);
+        if (st.code) storeByCode.set(st.code.toLowerCase().trim(), st.name);
       }
     }
 
-    const resolveStoreName = (rawMeta: any, rawLogStoreId?: number | null, empId?: number | null, rawPayload?: any) => {
-      if (rawMeta.storeName) return rawMeta.storeName;
-      if (rawMeta.branchName) return rawMeta.branchName;
-      if (rawMeta.storeId && storeById.has(rawMeta.storeId)) return storeById.get(rawMeta.storeId)!;
-      if (rawLogStoreId && storeById.has(rawLogStoreId)) return storeById.get(rawLogStoreId)!;
+    const findEmpInfo = (empId: number | null, rawMeta: any, rawPayload: any): EmpInfo | null => {
+      if (empId && empById.has(empId)) return empById.get(empId)!;
 
-      const info = findEmpInfo(empId || null, rawMeta, rawPayload);
-      if (info?.storeName) return info.storeName;
+      const parsed = parseRawPayload(rawPayload);
+      const firstSalesman = (Array.isArray(parsed.salesmen) && parsed.salesmen[0]) || 
+                            (Array.isArray(parsed.data?.salesmen) && parsed.data.salesmen[0]) ||
+                            (Array.isArray(rawMeta.salesmen) && rawMeta.salesmen[0]) || {};
+      const firstItem = (Array.isArray(parsed.lineItems) && parsed.lineItems[0]) ||
+                        (Array.isArray(parsed.CreditNoteProducts) && parsed.CreditNoteProducts[0]) ||
+                        (Array.isArray(parsed.SalesExchangeProductList) && parsed.SalesExchangeProductList[0]) || {};
 
-      const pStore = rawPayload?.branchName || rawPayload?.storeName || rawPayload?.store || rawPayload?.data?.branchName || rawPayload?.data?.storeName || rawPayload?.data?.employee?.branchName || rawPayload?.data?.employee?.store;
-      if (pStore) return typeof pStore === 'string' ? pStore : (pStore.name || 'N/A');
+      const candidateIds = [
+        rawMeta.employeeIdentifier,
+        rawMeta.employeeName,
+        firstSalesman.SalesmanCode,
+        firstSalesman.salesmanCode,
+        firstSalesman.Code,
+        firstSalesman.code,
+        firstSalesman.SalesmanId,
+        firstSalesman.salesmanId,
+        firstSalesman.employeeID,
+        firstSalesman.employeeId,
+        firstSalesman.SalesmanName,
+        firstSalesman.salesmanName,
+        firstSalesman.Name,
+        firstSalesman.name,
+        firstItem.Salesman,
+        firstItem.salesman,
+        firstItem.employeeCode,
+        firstItem.salesmanCode,
+        firstItem.employeeName,
+        firstItem.name,
+        parsed.employeeCode,
+        parsed.employeeId,
+        parsed.employeeID,
+        parsed.id,
+        parsed.data?.employeeCode,
+        parsed.data?.employeeId,
+        parsed.data?.employeeID,
+        parsed.data?.employee?.employeeCode,
+        parsed.data?.employee?.employeeID,
+        parsed.data?.employee?.employeeId,
+        parsed.data?.employee?.name,
+        parsed.employee?.employeeCode,
+        parsed.employee?.employeeID,
+        parsed.employee?.employeeId,
+        parsed.employee?.name,
+        parsed.Salesman,
+        parsed.CreatedBy,
+        parsed.salesPerson,
+        parsed.salespersonName,
+      ].filter(Boolean);
+
+      for (const cand of candidateIds) {
+        const str = String(cand).trim();
+        const strLower = str.toLowerCase();
+        if (empByGuid.has(strLower)) return empByGuid.get(strLower)!;
+        if (empByCode.has(strLower)) return empByCode.get(strLower)!;
+        if (empByName.has(strLower)) return empByName.get(strLower)!;
+        const digits = str.replace(/\D/g, '');
+        if (digits.length >= 10 && empByMobile.has(digits.slice(-10))) {
+          return empByMobile.get(digits.slice(-10))!;
+        }
+        const parsedInt = parseInt(str, 10);
+        if (!isNaN(parsedInt) && empById.has(parsedInt)) return empById.get(parsedInt)!;
+      }
+
+      return null;
+    };
+
+    const resolveEmpName = (empId: number | null, rawMeta: any, rawLogName?: string | null, rawPayload?: any): string => {
+      const info = findEmpInfo(empId, rawMeta, rawPayload);
+      if (info) return info.name;
+
+      if (rawMeta.employeeName && rawMeta.employeeName !== 'N/A') return rawMeta.employeeName;
+      if (rawLogName && rawLogName !== 'N/A') return rawLogName;
+
+      const parsed = parseRawPayload(rawPayload);
+      const firstSalesman = (Array.isArray(parsed.salesmen) && parsed.salesmen[0]) || 
+                            (Array.isArray(parsed.data?.salesmen) && parsed.data.salesmen[0]) || {};
+      const sName = firstSalesman.SalesmanName || firstSalesman.salesmanName || firstSalesman.Name || firstSalesman.name || firstSalesman.employeeName;
+      if (sName) return String(sName).trim();
+
+      const pName = parsed.name || parsed.employeeName || parsed.salesmanName || parsed.Salesman || parsed.CreatedBy || parsed.salesPerson ||
+                    parsed.data?.name || parsed.data?.employeeName || parsed.data?.employee?.name || parsed.employee?.name;
+      if (pName) return String(pName).trim();
+
+      if (rawMeta.employeeIdentifier && rawMeta.employeeIdentifier !== 'N/A') return rawMeta.employeeIdentifier;
 
       return 'N/A';
     };
 
-    // 1. Fetch from WebhookLog
+    const resolveStoreName = (rawMeta: any, rawLogStoreId?: number | null, empId?: number | null, rawPayload?: any, empInfo?: EmpInfo | null): string => {
+      if (rawMeta.storeName && rawMeta.storeName !== 'N/A') return rawMeta.storeName;
+      if (rawMeta.branchName && rawMeta.branchName !== 'N/A') return rawMeta.branchName;
+      if (rawMeta.storeId && storeById.has(rawMeta.storeId)) return storeById.get(rawMeta.storeId)!;
+      if (rawLogStoreId && storeById.has(rawLogStoreId)) return storeById.get(rawLogStoreId)!;
+
+      const parsed = parseRawPayload(rawPayload);
+      const pStore = parsed.branchName || parsed.storeName || parsed.BranchName || parsed.StoreName ||
+                    parsed.store || parsed.branch || parsed.data?.branchName || parsed.data?.storeName ||
+                    parsed.data?.BranchName || parsed.data?.StoreName || parsed.data?.store || parsed.data?.branch ||
+                    parsed.invoice?.storeName || parsed.invoice?.branchName || parsed.creditNote?.storeName || parsed.creditNote?.branchName;
+      
+      if (pStore) {
+        if (typeof pStore === 'string') {
+          const lower = pStore.toLowerCase().trim();
+          if (storeByName.has(lower)) return storeByName.get(lower)!;
+          if (storeByCode.has(lower)) return storeByCode.get(lower)!;
+          return pStore;
+        }
+        if (typeof pStore === 'object' && pStore !== null) {
+          return pStore.name || pStore.storeName || pStore.code || 'N/A';
+        }
+      }
+
+      if (empInfo?.storeName) return empInfo.storeName;
+
+      const info = findEmpInfo(empId || null, rawMeta, rawPayload);
+      if (info?.storeName) return info.storeName;
+
+      return 'N/A';
+    };
+
+    // 1. Fetch from WebhookLog (all records)
     const where: any = {};
     if (statusFilter && statusFilter !== 'ALL') where.status = statusFilter;
     if (eventTypeFilter && eventTypeFilter !== 'ALL') {
@@ -152,6 +250,11 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         { eventType: { equals: eventTypeFilter, mode: 'insensitive' } },
         { eventType: { equals: eventTypeFilter.toLowerCase(), mode: 'insensitive' } },
       ];
+    }
+    if (fromDate || toDate) {
+      where.createdAt = {};
+      if (fromDate) where.createdAt.gte = new Date(String(fromDate));
+      if (toDate) where.createdAt.lte = new Date(String(toDate));
     }
 
     let webhookLogs: any[] = [];
@@ -166,12 +269,14 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
     // Map WebhookLog items
     const mappedWebhookLogs = webhookLogs.map((log) => {
-      const meta = extractWebhookMeta(log.payload);
+      const parsedPayload = parseRawPayload(log.payload);
+      const meta = extractWebhookMeta(parsedPayload);
       const amountVal = log.amount !== null && log.amount !== undefined && log.amount !== 0 ? log.amount : meta.amount;
       const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
       const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber)) ? meta.invoiceNumber : `HWM-${numInv}`;
-      const resolvedEmpName = resolveEmpName(log.employeeId, meta, null, log.payload);
-      const resolvedStoreName = resolveStoreName(meta, null, log.employeeId, log.payload);
+      const empInfo = findEmpInfo(log.employeeId, meta, parsedPayload);
+      const resolvedEmpName = resolveEmpName(log.employeeId, meta, null, parsedPayload);
+      const resolvedStoreName = resolveStoreName(meta, null, log.employeeId, parsedPayload, empInfo);
       const resolvedEventId = log.eventId || meta.eventId || log.id;
 
       return {
@@ -190,34 +295,36 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       };
     });
 
-    const existingBillIds = new Set(mappedWebhookLogs.map((l) => l.billId).filter(Boolean));
+    const existingBillEmpKeys = new Set(mappedWebhookLogs.map((l) => `${l.billId}_${l.employeeName}`));
     const existingEventIds = new Set(mappedWebhookLogs.map((l) => l.eventId).filter(Boolean));
 
-    // 2. Fetch from HopkidWebhookLog as fallback for unmapped raw webhooks only
+    // 2. Fetch from HopkidWebhookLog
     let hopkidLogsMapped: any[] = [];
     if (!statusFilter || statusFilter === 'ALL' || statusFilter === 'SUCCESS') {
       try {
         const hopkidRawLogs = await prisma.hopkidWebhookLog.findMany({
           orderBy: { createdAt: 'desc' },
-          take: 200,
         });
 
         for (const log of hopkidRawLogs) {
-          const meta = extractWebhookMeta(log.rawPayload);
+          const parsedPayload = parseRawPayload(log.rawPayload);
+          const meta = extractWebhookMeta(parsedPayload);
           const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
           const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
           const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber)) ? meta.invoiceNumber : `HWM-${numInv}`;
           const resolvedEventId = meta.eventId || log.id;
 
-          if (numInv && existingBillIds.has(numInv)) continue;
-          if (resolvedEventId && existingEventIds.has(resolvedEventId)) continue;
+          const empInfo = findEmpInfo(null, meta, parsedPayload);
+          const resolvedEmpName = resolveEmpName(null, meta, log.name, parsedPayload);
+          const resolvedStoreName = resolveStoreName(meta, log.storeId, null, parsedPayload, empInfo);
 
-          const resolvedEmpName = resolveEmpName(null, meta, log.name, log.rawPayload);
-          const resolvedStoreName = resolveStoreName(meta, log.storeId, null, log.rawPayload);
+          const billEmpKey = `${numInv}_${resolvedEmpName}`;
+          if (numInv && existingBillEmpKeys.has(billEmpKey)) continue;
+          if (resolvedEventId && existingEventIds.has(resolvedEventId)) continue;
 
           hopkidLogsMapped.push({
             id: `hopkid-${log.id}`,
-            eventType: normalizeEventType(meta.eventType, 'INVOICE_CREATED', log.rawPayload),
+            eventType: normalizeEventType(meta.eventType, 'INVOICE_CREATED', parsedPayload),
             status: 'SUCCESS',
             payload: log.rawPayload,
             employeeId: null,
@@ -241,22 +348,85 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // Combine & deduplicate deterministically
+    // 3. Include CommissionTransaction records as unified webhook stream source
+    let commLogsMapped: any[] = [];
+    try {
+      const commTransactions = await prisma.commissionTransaction.findMany({
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true, storeId: true, store: { select: { name: true } } } },
+          store: { select: { id: true, name: true, code: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      for (const t of commTransactions) {
+        const numInv = getNumericInvoiceNumber({ invoiceNumber: t.invoiceNumber, billId: t.billId, id: t.id });
+        const cleanInvoiceNo = t.invoiceNumber || `HWM-${numInv}`;
+        const empName = t.employee ? `${t.employee.firstName || ''} ${t.employee.lastName || ''}`.trim() : 'N/A';
+        const storeName = t.store?.name || t.employee?.store?.name || (t.storeId && storeById.get(t.storeId)) || 'N/A';
+
+        const billEmpKey = `${numInv}_${empName}`;
+        if (numInv && existingBillEmpKeys.has(billEmpKey)) continue;
+
+        const syntheticPayload = {
+          eventId: `COMM-${t.id}`,
+          billId: t.billId || numInv,
+          invoiceNumber: cleanInvoiceNo,
+          amount: t.saleAmount,
+          commissionAmount: t.commissionAmount,
+          eventType: t.eventType || 'INVOICE_CREATED',
+          employee: {
+            id: t.employeeId,
+            name: empName,
+            code: t.employee?.employeeCode,
+          },
+          store: {
+            id: t.storeId,
+            name: storeName,
+          },
+          createdAt: t.createdAt,
+        };
+
+        commLogsMapped.push({
+          id: `comm-tx-${t.id}`,
+          eventType: normalizeEventType(t.eventType, 'INVOICE_CREATED', syntheticPayload),
+          status: t.status === 'REJECTED' ? 'FAILED' : 'SUCCESS',
+          payload: JSON.stringify(syntheticPayload),
+          employeeId: t.employeeId,
+          amount: t.saleAmount || 0,
+          billId: numInv,
+          invoiceNo: cleanInvoiceNo,
+          invoiceNumber: cleanInvoiceNo,
+          customerName: 'N/A',
+          employeeName: empName,
+          storeName: storeName,
+          commissionAmount: t.commissionAmount || 0,
+          errorMessage: null,
+          processedAt: t.createdAt,
+          createdAt: t.createdAt,
+          eventId: `COMM-${t.id}`,
+          externalEventId: `COMM-${t.id}`,
+        });
+      }
+    } catch (e) {
+      commLogsMapped = [];
+    }
+
+    // Combine & deduplicate deterministically per event / bill + employee
     const { view, latestOnly } = req.query;
     const isLatestView = view === 'latest' || latestOnly === 'true';
 
-    const combinedRaw = [...mappedWebhookLogs, ...hopkidLogsMapped];
+    const combinedRaw = [...mappedWebhookLogs, ...hopkidLogsMapped, ...commLogsMapped];
     const uniqueLogsMap = new Map<string, any>();
 
     for (const log of combinedRaw) {
       const normType = normalizeEventType(log.eventType);
       const normBill = log.billId || log.invoiceNo || `LOG-${log.id}`;
+      const empKey = log.employeeName || log.employeeId || 'ALL';
       
       const key = isLatestView
-        ? `ENTITY_${normBill}`
-        : (log.eventId
-            ? `${normType}_EVT_${log.eventId}`
-            : `${normType}_BILL_${normBill}_AMT_${log.amount || 0}`);
+        ? `ENTITY_${normBill}_EMP_${empKey}`
+        : `${normType}_BILL_${normBill}_EMP_${empKey}_ID_${log.id}`;
 
       if (!uniqueLogsMap.has(key)) {
         uniqueLogsMap.set(key, log);
@@ -273,7 +443,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    const combined = Array.from(uniqueLogsMap.values());
+    let combined = Array.from(uniqueLogsMap.values());
 
     // Enrich Credit Note logs from DB if fields are missing or amount is 0
     for (let i = 0; i < combined.length; i++) {
@@ -316,6 +486,24 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
+    // Apply storeFilter and search if requested at API level
+    if (storeFilter && storeFilter !== 'ALL') {
+      combined = combined.filter((l) => l.storeName === storeFilter);
+    }
+
+    if (search && String(search).trim()) {
+      const q = String(search).toLowerCase().trim();
+      combined = combined.filter((l) =>
+        String(l.billId || '').toLowerCase().includes(q) ||
+        String(l.invoiceNo || '').toLowerCase().includes(q) ||
+        String(l.customerName || '').toLowerCase().includes(q) ||
+        String(l.employeeName || '').toLowerCase().includes(q) ||
+        String(l.storeName || '').toLowerCase().includes(q) ||
+        String(l.eventType || '').toLowerCase().includes(q) ||
+        String(l.amount || '').includes(q)
+      );
+    }
+
     // Sort by createdAt desc
     combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -329,6 +517,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         total,
         limit: limitNum,
         offset: offsetNum,
+        totalPages: Math.ceil(total / limitNum) || 1,
       },
     });
   } catch (error: any) {
@@ -340,38 +529,19 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 /**
  * GET /api/webhook/stats
  * 
- * Returns webhook stats (success, failed, total, totalAmount)
+ * Returns webhook stats (success, failed, total, totalAmount) across all events
  */
 router.get('/stats', async (req: Request, res: Response): Promise<void> => {
   try {
-    let webhookLogs: any[] = [];
-    try {
-      webhookLogs = await prisma.webhookLog.findMany();
-    } catch (e) {
-      webhookLogs = [];
-    }
-
-    let hopkidLogsMapped: any[] = [];
-    try {
-      const hopkidRawLogs = await prisma.hopkidWebhookLog.findMany();
-      hopkidLogsMapped = hopkidRawLogs.map((log) => {
-        const meta = extractWebhookMeta(log.rawPayload);
-        const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
-        const billIdVal = log.billId || meta.billId;
-
-        return {
-          id: `hopkid-${log.id}`,
-          billId: billIdVal || null,
-          status: 'SUCCESS',
-          amount: amountVal || 0,
-        };
-      });
-    } catch (e) {
-      hopkidLogsMapped = [];
-    }
+    const [webhookLogs, hopkidRawLogs, commTransactions] = await Promise.all([
+      prisma.webhookLog.findMany().catch(() => []),
+      prisma.hopkidWebhookLog.findMany().catch(() => []),
+      prisma.commissionTransaction.findMany().catch(() => []),
+    ]);
 
     const mappedWebhookLogs = webhookLogs.map((log) => {
-      const meta = extractWebhookMeta(log.payload);
+      const parsed = parseRawPayload(log.payload);
+      const meta = extractWebhookMeta(parsed);
       const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
       const billIdVal = log.billId || meta.billId;
 
@@ -383,12 +553,34 @@ router.get('/stats', async (req: Request, res: Response): Promise<void> => {
       };
     });
 
-    const combined = [...mappedWebhookLogs];
-    const existingBillIds = new Set(combined.map((c) => c.billId).filter(Boolean));
+    const existingBillIds = new Set(mappedWebhookLogs.map((c) => c.billId).filter(Boolean));
 
-    for (const hLog of hopkidLogsMapped) {
-      if (!hLog.billId || !existingBillIds.has(hLog.billId)) {
-        combined.push(hLog);
+    const combined = [...mappedWebhookLogs];
+
+    for (const log of hopkidRawLogs) {
+      const parsed = parseRawPayload(log.rawPayload);
+      const meta = extractWebhookMeta(parsed);
+      const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
+      const billIdVal = log.billId || meta.billId;
+
+      if (!billIdVal || !existingBillIds.has(billIdVal)) {
+        combined.push({
+          id: `hopkid-${log.id}`,
+          billId: billIdVal || null,
+          status: 'SUCCESS',
+          amount: amountVal || 0,
+        });
+      }
+    }
+
+    for (const t of commTransactions) {
+      if (t.billId && !existingBillIds.has(t.billId)) {
+        combined.push({
+          id: `comm-${t.id}`,
+          billId: t.billId,
+          status: t.status === 'REJECTED' ? 'FAILED' : 'SUCCESS',
+          amount: t.saleAmount || 0,
+        });
       }
     }
 
@@ -428,15 +620,16 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
 
     let log: any = await prisma.webhookLog.findUnique({
       where: { id: id as string },
-    });
+    }).catch(() => null);
 
     if (!log) {
       const hopkidLog = await prisma.hopkidWebhookLog.findUnique({
         where: { id: id as string },
-      });
+      }).catch(() => null);
 
       if (hopkidLog) {
-        const meta = extractWebhookMeta(hopkidLog.rawPayload);
+        const parsed = parseRawPayload(hopkidLog.rawPayload);
+        const meta = extractWebhookMeta(parsed);
         log = {
           id: hopkidLog.id,
           eventType: meta.eventType || 'INVOICE_CREATED',
@@ -450,20 +643,56 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
           createdAt: hopkidLog.createdAt,
         };
       }
-    } else {
-      const meta = extractWebhookMeta(log.payload);
-      log = {
-        ...log,
-        amount: log.amount ?? meta.amount,
-        billId: log.billId || meta.billId,
-        eventType: log.eventType || meta.eventType,
-      };
+    }
+
+    if (!log && String(id).startsWith('comm-tx-')) {
+      const commId = parseInt(String(id).replace('comm-tx-', ''), 10);
+      if (!isNaN(commId)) {
+        const t = await prisma.commissionTransaction.findUnique({
+          where: { id: commId },
+          include: { employee: true, store: true }
+        });
+        if (t) {
+          const syntheticPayload = {
+            eventId: `COMM-${t.id}`,
+            billId: t.billId,
+            invoiceNumber: t.invoiceNumber,
+            amount: t.saleAmount,
+            commissionAmount: t.commissionAmount,
+            eventType: t.eventType,
+            employee: t.employee,
+            store: t.store,
+            createdAt: t.createdAt
+          };
+          log = {
+            id: `comm-tx-${t.id}`,
+            eventType: t.eventType || 'INVOICE_CREATED',
+            status: t.status === 'REJECTED' ? 'FAILED' : 'SUCCESS',
+            payload: JSON.stringify(syntheticPayload, null, 2),
+            employeeId: t.employeeId,
+            amount: t.saleAmount,
+            billId: t.billId,
+            errorMessage: null,
+            processedAt: t.createdAt,
+            createdAt: t.createdAt
+          };
+        }
+      }
     }
 
     if (!log) {
       res.status(404).json({ success: false, message: 'Log not found' });
       return;
     }
+
+    const parsed = parseRawPayload(log.payload);
+    const meta = extractWebhookMeta(parsed);
+    log = {
+      ...log,
+      amount: log.amount ?? meta.amount,
+      billId: log.billId || meta.billId,
+      eventType: log.eventType || meta.eventType,
+    };
 
     res.json({ success: true, data: log });
   } catch (error: any) {
