@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee, safeParseDate, getNumericInvoiceNumber } from '../utils/commissionHelper';
+import { getCommissionStats, resolveEmployeeId, isEligibleCommissionEmployee, safeParseDate, getNumericInvoiceNumber, parseIstStartOfDay, parseIstEndOfDay, getTransactionNetContribution } from '../utils/commissionHelper';
 import { deduplicateCommissionTransactions } from '../utils/commissionDeduplicator';
 
 // Commission Dashboard Stats
@@ -365,14 +365,10 @@ export const getCommissionTransactions = async (
     if (startDate || endDate) {
       whereClause.createdAt = {};
       if (startDate) {
-        const startOf = safeParseDate(startDate as string);
-        startOf.setHours(0, 0, 0, 0);
-        whereClause.createdAt.gte = startOf;
+        whereClause.createdAt.gte = parseIstStartOfDay(startDate as string);
       }
       if (endDate) {
-        const endOf = safeParseDate(endDate as string);
-        endOf.setHours(23, 59, 59, 999);
-        whereClause.createdAt.lte = endOf;
+        whereClause.createdAt.lte = parseIstEndOfDay(endDate as string);
       }
     }
 
@@ -719,26 +715,10 @@ export const fetchCommissionReport = async (
     let gteDate: Date | undefined;
     let lteDate: Date | undefined;
     if (fromStr) {
-      const d = new Date(fromStr.includes('T') ? fromStr : `${fromStr}T00:00:00+05:30`);
-      if (isNaN(d.getTime())) {
-        res.status(400).json({
-          success: false,
-          message: 'Invalid "from" date format. Use ISO 8601 format (YYYY-MM-DD).',
-        });
-        return;
-      }
-      gteDate = d;
+      gteDate = parseIstStartOfDay(fromStr);
     }
     if (toStr) {
-      const d = new Date(toStr.includes('T') ? toStr : `${toStr}T23:59:59.999+05:30`);
-      if (isNaN(d.getTime())) {
-        res.status(400).json({
-          success: false,
-          message: 'Invalid "to" date format. Use ISO 8601 format (YYYY-MM-DD).',
-        });
-        return;
-      }
-      lteDate = d;
+      lteDate = parseIstEndOfDay(toStr);
     }
 
     if (gteDate && lteDate && gteDate > lteDate) {
@@ -940,14 +920,14 @@ export const fetchCommissionReport = async (
         };
       }
 
-      const amount = tx.saleAmount || 0;
-      if (amount > 0) {
-        groups[key].sales += amount;
+      const { netSales, netCommission } = getTransactionNetContribution(tx);
+      if (netSales >= 0) {
+        groups[key].sales += netSales;
       } else {
-        groups[key].credits += Math.abs(amount);
+        groups[key].credits += Math.abs(netSales);
       }
 
-      groups[key].commissionAmount += (tx.commissionAmount || 0);
+      groups[key].commissionAmount += netCommission;
       if (tx.commissionPercent !== null && tx.commissionPercent !== undefined) {
         groups[key].rates.push(tx.commissionPercent);
       }

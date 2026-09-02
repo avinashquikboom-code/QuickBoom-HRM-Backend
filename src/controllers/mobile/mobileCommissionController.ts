@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails, getTransactionNetContribution, getNumericInvoiceNumber } from '../../utils/commissionHelper';
+import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails, getTransactionNetContribution, getNumericInvoiceNumber, parseIstStartOfDay, parseIstEndOfDay } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { CommissionService } from '../../services/commissionService';
 import { deduplicateCommissionTransactions } from '../../utils/commissionDeduplicator';
@@ -127,29 +127,26 @@ export const getMobileCommissionTransactions = async (
     if (startDate || endDate) {
       whereClause.createdAt = {};
       if (startDate) {
-        const dateOnly = startDate.toString().split('T')[0];
-        whereClause.createdAt.gte = new Date(`${dateOnly}T00:00:00+05:30`);
+        whereClause.createdAt.gte = parseIstStartOfDay(startDate as string);
       }
       if (endDate) {
-        const dateOnly = endDate.toString().split('T')[0];
-        whereClause.createdAt.lte = new Date(`${dateOnly}T23:59:59.999+05:30`);
+        whereClause.createdAt.lte = parseIstEndOfDay(endDate as string);
       }
     }
 
-    const rawTransactions = await prisma.commissionTransaction.findMany({
+    const allMatchingRaw = await prisma.commissionTransaction.findMany({
       where: whereClause,
       orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
-      take: parseInt(limit as string),
-      skip: parseInt(offset as string),
     });
 
-    const transactions = deduplicateCommissionTransactions(rawTransactions);
+    const allMatchingDeduplicated = deduplicateCommissionTransactions(allMatchingRaw);
 
-    const total = await prisma.commissionTransaction.count({
-      where: whereClause,
-    });
+    const total = allMatchingDeduplicated.length;
+    const limitNum = parseInt(limit as string) || 50;
+    const offsetNum = parseInt(offset as string) || 0;
+    const transactions = allMatchingDeduplicated.slice(offsetNum, offsetNum + limitNum);
 
-    console.log(`[MOBILE-COMMISSION-DIAG] Transactions retrieved for employee id=${employee.id} | found=${transactions.length}, total=${total}`);
+    console.log(`[MOBILE-COMMISSION-DIAG] Transactions retrieved for employee id=${employee.id} | page=${transactions.length}, total=${total}`);
 
 function sanitizeHopKidNote(note: string | null | undefined, numInv: number): string {
   if (!note || note === 'Retail Sale' || note === 'Retail product') {
@@ -164,24 +161,14 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
 
     const mappedTransactions = transactions.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
-      const rate = t.commissionPercent ?? employee.commissionPercentage ?? 1;
-      let comm = t.commissionAmount;
+      const rate = Number(t.commissionPercent ?? employee.commissionPercentage ?? 1);
+      const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
+      let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
       if (!comm || comm === 0) {
-        if (t.eventType === 'INVOICE_UPDATED' && (t.oldAmount || 0) > 0) {
-          const oldC = Math.round((((t.oldAmount || 0) * rate) / 100) * 100) / 100;
-          const newC = Math.round((((t.saleAmount || 0) * rate) / 100) * 100) / 100;
-          comm = Math.round((oldC + newC) * 100) / 100;
-        } else {
-          comm = Math.round(((t.saleAmount * rate) / 100) * 100) / 100;
-        }
+        comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
       }
 
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
-      console.log({
-        invoiceId: t.billId || t.id,
-        billNumber: numInv,
-        hopkidInvoiceNumber: `HopKid Invoice #${numInv}`
-      });
 
       return {
         id: t.id,
@@ -192,17 +179,17 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
         invoiceId: t.billId || String(t.id),
         hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
         customerName: noteClean,
-        amount: t.newAmount || t.saleAmount,
-        saleAmount: t.newAmount || t.saleAmount,
+        amount: effectiveSale,
+        saleAmount: effectiveSale,
         commission: comm,
         commissionType: t.commissionType,
         commissionPercent: rate,
         commissionAmount: comm,
         totalCommission: comm,
-        oldAmount: t.oldAmount || 0,
-        newAmount: t.newAmount || t.saleAmount,
-        oldCommission: t.oldCommission || 0,
-        newCommission: t.newCommission || comm,
+        oldAmount: Number(t.oldAmount || 0),
+        newAmount: effectiveSale,
+        oldCommission: Number(t.oldCommission || 0),
+        newCommission: comm,
         status: t.status,
         date: t.createdAt,
         createdAt: t.createdAt,
@@ -214,9 +201,9 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
     });
 
     const summary = {
-      totalSales: transactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0),
-      totalCommission: transactions.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0),
-      transactionCount: transactions.length,
+      totalSales: allMatchingDeduplicated.reduce((sum, t) => sum + getTransactionNetContribution(t).netSales, 0),
+      totalCommission: allMatchingDeduplicated.reduce((sum, t) => sum + getTransactionNetContribution(t).netCommission, 0),
+      transactionCount: allMatchingDeduplicated.length,
     };
 
     res.json({
@@ -622,8 +609,13 @@ export const getMobileCommissionSummary = async (
           // ═════════════════════════════════════════════════════════════
           today: {
             date: summary.today.date,
+            totalSales: summary.today.totalSales ?? summary.today.netSales,
             netSales: summary.today.netSales,
+            totalSalesAmount: summary.today.netSales,
+            totalCommission: summary.today.totalCommission ?? summary.today.commission,
             commission: summary.today.commission,
+            totalCommissionEarned: summary.today.commission,
+            commissionAmount: summary.today.commission,
             billCount: summary.today.billCount,
             label: "Today's Performance"
           },
@@ -634,8 +626,13 @@ export const getMobileCommissionSummary = async (
           thisWeek: {
             from: summary.weekly.start,
             to: summary.weekly.end,
+            totalSales: summary.weekly.totalSales ?? summary.weekly.netSales,
             netSales: summary.weekly.netSales,
+            totalSalesAmount: summary.weekly.netSales,
+            totalCommission: summary.weekly.totalCommission ?? summary.weekly.commission,
             commission: summary.weekly.commission,
+            totalCommissionEarned: summary.weekly.commission,
+            commissionAmount: summary.weekly.commission,
             billCount: summary.weekly.billCount,
             label: "This Week's Performance"
           },
@@ -645,10 +642,17 @@ export const getMobileCommissionSummary = async (
           // ═════════════════════════════════════════════════════════════
           thisMonth: {
             month: summary.thisMonth.month,
+            monthName: summary.thisMonth.monthName ?? summary.thisMonth.month,
+            year: summary.thisMonth.year ?? summary.thisMonth.month.split('-')[0],
+            totalSales: summary.thisMonth.totalSales ?? summary.thisMonth.netSales,
             netSales: summary.thisMonth.netSales,
+            totalSalesAmount: summary.thisMonth.netSales,
+            totalCommission: summary.thisMonth.totalCommission ?? summary.thisMonth.commission,
             commission: summary.thisMonth.commission,
+            totalCommissionEarned: summary.thisMonth.commission,
+            commissionAmount: summary.thisMonth.commission,
             billCount: summary.thisMonth.billCount,
-            label: 'This Month'
+            label: "This Month's Performance"
           },
 
           // ═════════════════════════════════════════════════════════════
@@ -744,8 +748,8 @@ export const getMobileCommissionBills = async (
         toDate   = new Date(year + 1, 0, 1);
         break;
       case 'custom_range':
-        fromDate = from ? new Date(from as string) : new Date(Date.UTC(year, month, 1, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
-        toDate   = to   ? new Date(to as string)   : new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+        fromDate = from ? parseIstStartOfDay(from as string) : new Date(Date.UTC(year, month, 1, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+        toDate   = to   ? parseIstEndOfDay(to as string)   : new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
         break;
       case 'current_month':
       default:
@@ -784,16 +788,11 @@ export const getMobileCommissionBills = async (
 
     const bills: any[] = txs.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
-      const rate = t.commissionPercent ?? employee.commissionPercentage ?? 1;
-      let comm = t.commissionAmount;
+      const rate = Number(t.commissionPercent ?? employee.commissionPercentage ?? 1);
+      const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
+      let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
       if (!comm || comm === 0) {
-        if (t.eventType === 'INVOICE_UPDATED' && (t.oldAmount || 0) > 0) {
-          const oldC = Math.round((((t.oldAmount || 0) * rate) / 100) * 100) / 100;
-          const newC = Math.round((((t.saleAmount || 0) * rate) / 100) * 100) / 100;
-          comm = Math.round((oldC + newC) * 100) / 100;
-        } else {
-          comm = Math.round(((t.saleAmount * rate) / 100) * 100) / 100;
-        }
+        comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
       }
       return {
         id: String(t.id),
@@ -801,14 +800,14 @@ export const getMobileCommissionBills = async (
         billNumber: numInv,
         invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
         invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
-        saleAmount: t.saleAmount,
+        saleAmount: effectiveSale,
         commission: comm,
         commissionAmount: comm,
         commissionRate: rate,
-        oldAmount: t.oldAmount || 0,
-        newAmount: t.newAmount || t.saleAmount,
-        oldCommission: t.oldCommission || 0,
-        newCommission: t.newCommission || comm,
+        oldAmount: Number(t.oldAmount || 0),
+        newAmount: effectiveSale,
+        oldCommission: Number(t.oldCommission || 0),
+        newCommission: comm,
         totalCommission: comm,
         date: t.createdAt,
         status: t.status,

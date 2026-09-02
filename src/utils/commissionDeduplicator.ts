@@ -22,15 +22,10 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
     const key = `${t.employeeId}_${invoiceKey}`;
     const numInv = getNumericInvoiceNumber(t);
     const rate = Number(t.commissionPercent ?? t.employee?.commissionPercentage ?? 1);
-    let comm = Number(t.commissionAmount || 0);
+    const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
+    let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
     if (!comm || comm === 0) {
-      if (t.eventType === 'INVOICE_UPDATED' && Number(t.oldAmount || 0) > 0) {
-        const oldC = Math.round(((Number(t.oldAmount || 0) * rate) / 100) * 100) / 100;
-        const newC = Math.round(((Number(t.saleAmount || 0) * rate) / 100) * 100) / 100;
-        comm = Math.round((oldC + newC) * 100) / 100;
-      } else {
-        comm = Math.round(((Number(t.saleAmount || 0) * rate) / 100) * 100) / 100;
-      }
+      comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
     }
     const invStr = (t.invoiceNumber && typeof t.invoiceNumber === 'string' && !/^[0-9a-fA-F-]{36}$/.test(t.invoiceNumber))
       ? t.invoiceNumber

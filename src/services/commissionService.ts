@@ -66,9 +66,15 @@ export class CommissionService {
 
     return {
       date: displayDateStr,
+      totalSales: totalNetSales,
       netSales: totalNetSales,
+      totalSalesAmount: totalNetSales,
+      totalCommission: totalCommission,
       commission: totalCommission,
-      billCount: sales.length
+      totalCommissionEarned: totalCommission,
+      commissionAmount: totalCommission,
+      billCount: sales.length,
+      label: "Today's Performance"
     };
   }
 
@@ -103,8 +109,27 @@ export class CommissionService {
       }
     });
 
-    const totalNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
-    const totalCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
+    let creditLines: any[] = [];
+    try {
+      creditLines = await prisma.creditNoteLine.findMany({
+        where: {
+          employeeId: employeeId,
+          createdAt: {
+            gte: monthStart,
+            lte: monthEnd
+          }
+        }
+      });
+    } catch (_) {}
+
+    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
+    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
+
+    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
+    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+
+    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
+    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
 
     console.log(`[Monthly Metrics] ✅ Results:`, {
       month: targetMonth,
@@ -115,9 +140,17 @@ export class CommissionService {
 
     return {
       month: targetMonth,
+      monthName: targetMonth,
+      year: String(year),
+      totalSales: totalNetSales,
       netSales: totalNetSales,
+      totalSalesAmount: totalNetSales,
+      totalCommission: totalCommission,
       commission: totalCommission,
-      billCount: sales.length
+      totalCommissionEarned: totalCommission,
+      commissionAmount: totalCommission,
+      billCount: sales.length,
+      label: "This Month's Performance"
     };
   }
 
@@ -178,9 +211,17 @@ export class CommissionService {
     return {
       start: weekStart.toISOString().split('T')[0],
       end: weekEnd.toISOString().split('T')[0],
+      from: weekStart.toISOString().split('T')[0],
+      to: weekEnd.toISOString().split('T')[0],
+      totalSales: totalNetSales,
       netSales: totalNetSales,
+      totalSalesAmount: totalNetSales,
+      totalCommission: totalCommission,
       commission: totalCommission,
-      billCount: sales.length
+      totalCommissionEarned: totalCommission,
+      commissionAmount: totalCommission,
+      billCount: sales.length,
+      label: "This Week's Performance"
     };
   }
 

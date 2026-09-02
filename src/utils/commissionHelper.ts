@@ -138,6 +138,66 @@ export function safeParseDate(val: any): Date {
 }
 
 /**
+ * Resolves the start of day (00:00:00.000 IST) in UTC Date object.
+ * e.g., "2026-09-01" -> 2026-08-31T18:30:00.000Z
+ */
+export function parseIstStartOfDay(dateInput?: string | Date | null): Date {
+  if (!dateInput) {
+    const now = new Date();
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    return new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate(), 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+  }
+  const str = String(dateInput).trim();
+  const dateOnly = str.split('T')[0].split(' ')[0];
+  if (dateOnly.includes('-')) {
+    const parts = dateOnly.split('-').map(Number);
+    if (parts.length >= 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+    }
+  } else if (dateOnly.includes('/')) {
+    const parts = dateOnly.split('/').map(Number);
+    if (parts.length >= 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return new Date(Date.UTC(parts[2], parts[1] - 1, parts[0], 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+    }
+  }
+  const parsed = safeParseDate(dateInput);
+  const istTime = parsed.getTime() + 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(istTime);
+  return new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate(), 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+}
+
+/**
+ * Resolves the end of day (23:59:59.999 IST) in UTC Date object.
+ * e.g., "2026-09-01" -> 2026-09-01T18:29:59.999Z
+ */
+export function parseIstEndOfDay(dateInput?: string | Date | null): Date {
+  if (!dateInput) {
+    const now = new Date();
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    return new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate(), 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+  }
+  const str = String(dateInput).trim();
+  const dateOnly = str.split('T')[0].split(' ')[0];
+  if (dateOnly.includes('-')) {
+    const parts = dateOnly.split('-').map(Number);
+    if (parts.length >= 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+    }
+  } else if (dateOnly.includes('/')) {
+    const parts = dateOnly.split('/').map(Number);
+    if (parts.length >= 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return new Date(Date.UTC(parts[2], parts[1] - 1, parts[0], 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+    }
+  }
+  const parsed = safeParseDate(dateInput);
+  const istTime = parsed.getTime() + 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(istTime);
+  return new Date(Date.UTC(istDate.getUTCFullYear(), istDate.getUTCMonth(), istDate.getUTCDate(), 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+}
+
+/**
  * Parse sale date correctly handling timezone, ISO, YYYY-MM-DD, and Indian date formats.
  */
 export async function parseSaleDateCorrectly(invoiceDateString: string): Promise<Date> {
@@ -899,14 +959,10 @@ export async function getCommissionStats(params?: {
   if (params?.startDate || params?.endDate) {
     whereClause.createdAt = {};
     if (params.startDate) {
-      const startOf = safeParseDate(params.startDate);
-      startOf.setHours(0, 0, 0, 0);
-      whereClause.createdAt.gte = startOf;
+      whereClause.createdAt.gte = parseIstStartOfDay(params.startDate);
     }
     if (params.endDate) {
-      const endOf = safeParseDate(params.endDate);
-      endOf.setHours(23, 59, 59, 999);
-      whereClause.createdAt.lte = endOf;
+      whereClause.createdAt.lte = parseIstEndOfDay(params.endDate);
     }
   }
 
