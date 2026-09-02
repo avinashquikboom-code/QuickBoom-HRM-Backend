@@ -9,6 +9,7 @@ import { pushNotificationService } from '../../services/pushNotificationService'
 import securityService from '../../services/securityService';
 import { expenseReceiptService } from '../../services/expenseReceiptService';
 import leaveBalanceService from '../../services/leaveBalanceService';
+import { getIstMonthRange } from '../../utils/commissionHelper';
 import {
   isProtectedEmail,
   isProtectedUser,
@@ -689,11 +690,42 @@ export const fetchHRExpenses = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Optional ?status=PENDING|APPROVED|REJECTED|PAID|ALL filter
-    const { status } = req.query as { status?: string };
+    // Optional ?status=PENDING|APPROVED|REJECTED|PAID|ALL & ?month=YYYY-MM or ?year & ?startDate/?endDate filter
+    const { status, month, year, startDate, endDate } = req.query as { 
+      status?: string, 
+      month?: string, 
+      year?: string,
+      startDate?: string,
+      endDate?: string
+    };
     const whereClause: any = {};
     if (status && status !== 'ALL') {
       whereClause.status = status.toUpperCase();
+    }
+
+    if (startDate && endDate) {
+      whereClause.date = {
+        gte: new Date(startDate),
+        lte: new Date(endDate),
+      };
+    } else if (month && month !== 'ALL') {
+      let mNum: number | null = null;
+      let yNum: number | null = null;
+      if (String(month).includes('-')) {
+        const parts = String(month).split('-');
+        yNum = parseInt(parts[0], 10);
+        mNum = parseInt(parts[1], 10);
+      } else if (year) {
+        yNum = parseInt(String(year), 10);
+        mNum = parseInt(String(month), 10);
+      }
+      if (yNum && mNum) {
+        const monthRange = getIstMonthRange(yNum, mNum);
+        whereClause.date = {
+          gte: monthRange.monthStart,
+          lte: monthRange.monthEnd,
+        };
+      }
     }
 
     const expenses = await prisma.expense.findMany({

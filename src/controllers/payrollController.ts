@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import payrollService from '../services/payrollService';
 import { prisma } from '../utils/db';
+import { getIstMonthRange } from '../utils/commissionHelper';
 
 // ==========================================
 // Enhanced Payroll Controller
@@ -753,8 +754,20 @@ export const getPayrollDashboard = async (
   try {
     const { month, year } = req.query as { month?: string, year?: string };
     
-    const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
-    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+    const now = new Date();
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    let targetYear = istDate.getUTCFullYear();
+    let targetMonth = istDate.getUTCMonth() + 1;
+
+    if (month && String(month).includes('-')) {
+      const parts = String(month).split('-');
+      targetYear = parseInt(parts[0], 10);
+      targetMonth = parseInt(parts[1], 10);
+    } else {
+      if (year && !isNaN(parseInt(String(year), 10))) targetYear = parseInt(String(year), 10);
+      if (month && !isNaN(parseInt(String(month), 10))) targetMonth = parseInt(String(month), 10);
+    }
 
     // Get comprehensive dashboard data
     const stats = await payrollService.getPayrollStats(targetMonth, targetYear);
@@ -819,8 +832,20 @@ export const getAdminPayrollStats = async (
   try {
     const { month, year } = req.query as { month?: string, year?: string };
     
-    const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
-    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+    const now = new Date();
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    let targetYear = istDate.getUTCFullYear();
+    let targetMonth = istDate.getUTCMonth() + 1;
+
+    if (month && String(month).includes('-')) {
+      const parts = String(month).split('-');
+      targetYear = parseInt(parts[0], 10);
+      targetMonth = parseInt(parts[1], 10);
+    } else {
+      if (year && !isNaN(parseInt(String(year), 10))) targetYear = parseInt(String(year), 10);
+      if (month && !isNaN(parseInt(String(month), 10))) targetMonth = parseInt(String(month), 10);
+    }
 
     const stats = await payrollService.getPayrollStats(targetMonth, targetYear);
     
@@ -832,16 +857,15 @@ export const getAdminPayrollStats = async (
       errors: 0
     };
 
-    // Get trend data for last 5 months
+    // Get trend data for 5 months leading up to target month
     const trendData = [];
     for (let i = 4; i >= 0; i--) {
-      const trendMonth = new Date();
-      trendMonth.setMonth(trendMonth.getMonth() - i);
-      const m = trendMonth.getMonth() + 1;
-      const y = trendMonth.getFullYear();
+      const trendDate = new Date(targetYear, targetMonth - 1 - i, 1);
+      const m = trendDate.getMonth() + 1;
+      const y = trendDate.getFullYear();
       const monthStats = await payrollService.getPayrollStats(m, y);
       trendData.push({
-        name: trendMonth.toLocaleDateString('en-US', { month: 'short' }),
+        name: trendDate.toLocaleDateString('en-US', { month: 'short' }),
         amount: monthStats.summary?.total_net_salary || 0,
         trend: 0
       });
@@ -911,8 +935,10 @@ export const getAdminPayrollSlips = async (
 
     if (!month || month === 'current') {
       const now = new Date();
-      targetMonth = now.getMonth() + 1;
-      targetYear = now.getFullYear();
+      const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+      const istDate = new Date(istTime);
+      targetMonth = istDate.getUTCMonth() + 1;
+      targetYear = istDate.getUTCFullYear();
       whereClause = { month: targetMonth, year: targetYear };
     } else if (month !== 'ALL') {
       const [year, monthNum] = month.split('-').map(Number);

@@ -2,21 +2,42 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
+import { getIstMonthRange } from '../utils/commissionHelper';
 
 /**
  * GET /api/payroll/admin/advances
- * Admin endpoint to list all salary advances across employees with status filter.
+ * Admin endpoint to list all salary advances across employees with status and month filter.
  */
 export const getAdminSalaryAdvances = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const { status } = req.query;
+    const { status, month, year } = req.query as { status?: string, month?: string, year?: string };
 
     const whereClause: any = {};
     if (status && status !== 'ALL') {
       whereClause.status = (status as string).toUpperCase();
+    }
+
+    if (month && month !== 'ALL') {
+      let mNum: number | null = null;
+      let yNum: number | null = null;
+      if (String(month).includes('-')) {
+        const parts = String(month).split('-');
+        yNum = parseInt(parts[0], 10);
+        mNum = parseInt(parts[1], 10);
+      } else if (year) {
+        yNum = parseInt(String(year), 10);
+        mNum = parseInt(String(month), 10);
+      }
+      if (yNum && mNum) {
+        const monthRange = getIstMonthRange(yNum, mNum);
+        whereClause.requestedOn = {
+          gte: monthRange.monthStart,
+          lte: monthRange.monthEnd,
+        };
+      }
     }
 
     const advances = await prisma.salaryAdvance.findMany({
