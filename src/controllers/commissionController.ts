@@ -325,52 +325,69 @@ export const getCommissionTransactions = async (
   try {
     const { employeeId, storeId, status, startDate, endDate, search, billId } = req.query;
 
-    const whereClause: any = {};
+    const conditions: any[] = [];
     if (employeeId) {
       const resolvedId = await resolveEmployeeId(employeeId as string);
-      whereClause.employeeId = resolvedId !== null ? resolvedId : -1;
+      conditions.push({ employeeId: resolvedId !== null ? resolvedId : -1 });
     } else if (req.user?.role === 'EMPLOYEE' && req.user?.id) {
       const currentEmp = await prisma.employee.findFirst({
         where: { userId: req.user.id }
       });
       if (currentEmp) {
-        whereClause.employeeId = currentEmp.id;
+        conditions.push({ employeeId: currentEmp.id });
       }
     }
     
     if (storeId && storeId !== 'all' && storeId !== '' && !isNaN(parseInt(storeId as string, 10))) {
-      whereClause.storeId = parseInt(storeId as string, 10);
+      const sId = parseInt(storeId as string, 10);
+      conditions.push({
+        OR: [
+          { storeId: sId },
+          { employee: { storeId: sId } },
+        ]
+      });
     }
     if (status && status !== 'all' && status !== '') {
-      whereClause.status = status as string;
+      conditions.push({ status: status as string });
     }
 
     if (billId) {
       const bId = Array.isArray(billId) ? String(billId[0]) : String(billId);
-      whereClause.OR = [
-        { billId: bId },
-        { invoiceNumber: bId },
-      ];
+      conditions.push({
+        OR: [
+          { billId: bId },
+          { invoiceNumber: bId },
+          { billId: `HWM-${bId}` },
+          { invoiceNumber: `HWM-${bId}` },
+        ]
+      });
     } else if (search) {
       const term = Array.isArray(search) ? String(search[0]).trim() : String(search).trim();
-      whereClause.OR = [
-        { billId: { contains: term, mode: 'insensitive' } },
-        { invoiceNumber: { contains: term, mode: 'insensitive' } },
-        { employee: { firstName: { contains: term, mode: 'insensitive' } } },
-        { employee: { lastName: { contains: term, mode: 'insensitive' } } },
-        { employee: { employeeCode: { contains: term, mode: 'insensitive' } } },
-      ];
+      conditions.push({
+        OR: [
+          { billId: { contains: term, mode: 'insensitive' } },
+          { invoiceNumber: { contains: term, mode: 'insensitive' } },
+          { employee: { firstName: { contains: term, mode: 'insensitive' } } },
+          { employee: { lastName: { contains: term, mode: 'insensitive' } } },
+          { employee: { employeeCode: { contains: term, mode: 'insensitive' } } },
+          { store: { name: { contains: term, mode: 'insensitive' } } },
+          { employee: { store: { name: { contains: term, mode: 'insensitive' } } } },
+        ]
+      });
     }
 
     if (startDate || endDate) {
-      whereClause.createdAt = {};
+      const dateCond: any = {};
       if (startDate) {
-        whereClause.createdAt.gte = parseIstStartOfDay(startDate as string);
+        dateCond.gte = parseIstStartOfDay(startDate as string);
       }
       if (endDate) {
-        whereClause.createdAt.lte = parseIstEndOfDay(endDate as string);
+        dateCond.lte = parseIstEndOfDay(endDate as string);
       }
+      conditions.push({ createdAt: dateCond });
     }
+
+    const whereClause: any = conditions.length > 0 ? { AND: conditions } : {};
 
     const rawTransactions = await prisma.commissionTransaction.findMany({
       where: whereClause,
