@@ -939,8 +939,8 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
 
     let oldAmount: number | null = null;
     let oldBillAmount: number | null = null;
-    let newAmount: number = Number(log.amount ?? meta.amount ?? 0);
-    let newBillAmount: number = Number(log.amount ?? meta.amount ?? 0);
+    let newAmount: number | null = null;
+    let newBillAmount: number | null = null;
     let differenceAmount: number | null = null;
     let oldCommission: number | null = null;
     let newCommission: number | null = null;
@@ -1035,7 +1035,7 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
 
     log = {
       ...log,
-      amount: isCreditNote && cnAmt > 0 ? cnAmt : (isExchange && newBillAmount > 0 ? newBillAmount : (log.amount ?? meta.amount)),
+      amount: isCreditNote && cnAmt > 0 ? cnAmt : (isExchange && newBillAmount !== null && newBillAmount > 0 ? newBillAmount : (log.amount ?? meta.amount)),
       cnAmount: isCreditNote ? cnAmt : meta.cnAmount,
       refundAmount: meta.refundAmount || 0,
       oldAmount,
