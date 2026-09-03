@@ -55,6 +55,288 @@ export function getTransactionNetContribution(t: {
   };
 }
 
+export interface NormalizedBillReconciliation {
+  oldBillAmount: number | null;
+  differenceAmount: number | null;
+  newBillAmount: number | null;
+  oldBillCommission: number | null;
+  commissionDifference: number | null;
+  newBillCommission: number | null;
+}
+
+/**
+ * Resolves full bill and commission reconciliation (Old Bill, New Bill, Difference, Old Comm, New Comm, Comm Diff)
+ * Core business rule:
+ *   Original Bill is the OLD BILL.
+ *   Exchange / Credit Note is the NEW BILL.
+ *   differenceAmount = oldBillAmount - newBillAmount (e.g. 848 - 1398 = -550)
+ *   commissionDifference = oldBillCommission - newBillCommission (e.g. 8.48 - 13.98 = -5.50)
+ * For normal Invoice Created:
+ *   oldBillAmount: null, differenceAmount: null, newBillAmount: null, oldBillCommission: null, commissionDifference: null, newBillCommission: actualCommission
+ */
+export function resolveBillAndCommissionReconciliation(params: {
+  eventType?: string | null;
+  billId?: string | number | null;
+  invoiceNumber?: string | number | null;
+  invoiceNo?: string | number | null;
+  amount?: number | string | null;
+  commissionAmount?: number | string | null;
+  commissionPercent?: number | string | null;
+  employeeRate?: number | string | null;
+  notes?: string | null;
+  description?: string | null;
+  payload?: any;
+  oldAmount?: number | string | null;
+  oldBillAmount?: number | string | null;
+  newAmount?: number | string | null;
+  newBillAmount?: number | string | null;
+  differenceAmount?: number | string | null;
+  oldCommission?: number | string | null;
+  oldBillCommission?: number | string | null;
+  newCommission?: number | string | null;
+  newBillCommission?: number | string | null;
+  commissionDifference?: number | string | null;
+  cnAmount?: number | string | null;
+  lookups?: {
+    salesMap?: Map<string, any>;
+    creditNotesMap?: Map<string, any>;
+    exchangesMap?: Map<string, any>;
+    invoiceLogMap?: Map<string, any>;
+    transactionsMap?: Map<string, any>;
+  };
+}): NormalizedBillReconciliation {
+  const normKey = (s: any) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+  const evStr = String(params.eventType || '').toUpperCase();
+  const billStr = String(params.billId || params.invoiceNumber || params.invoiceNo || '').toUpperCase();
+  const notesStr = String(params.notes || params.description || '');
+
+  let parsedPayload: any = {};
+  if (params.payload) {
+    if (typeof params.payload === 'object') {
+      parsedPayload = params.payload;
+    } else if (typeof params.payload === 'string') {
+      try {
+        parsedPayload = JSON.parse(params.payload);
+      } catch {
+        parsedPayload = {};
+      }
+    }
+  }
+
+  const isCreditNote =
+    evStr.includes('CREDIT_NOTE') ||
+    billStr.startsWith('CN-') ||
+    billStr.startsWith('HKACN') ||
+    notesStr.toUpperCase().includes('CREDIT NOTE') ||
+    notesStr.toUpperCase().includes('CREDIT_NOTE') ||
+    (params.cnAmount !== undefined && params.cnAmount !== null && Number(params.cnAmount) > 0) ||
+    Boolean(parsedPayload?.data?.creditNote || parsedPayload?.creditNote || parsedPayload?.CreditNoteProducts);
+
+  const isExchange =
+    evStr.includes('EXCHANGE') ||
+    billStr.startsWith('EX-') ||
+    billStr.startsWith('INV-EX-') ||
+    notesStr.toUpperCase().includes('EXCHANGE') ||
+    Boolean(parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || parsedPayload?.SalesExchangeProductList || parsedPayload?.data?.SalesExchangeProductList);
+
+  const isInvoiceUpdated =
+    evStr.includes('INVOICE_UPDATED') ||
+    notesStr.toUpperCase().includes('INVOICE_UPDATED');
+
+  const isAdjustment = isCreditNote || isExchange || isInvoiceUpdated;
+
+  const rawAmount = safeParseAmount(params.amount);
+  const commRate = params.commissionPercent !== undefined && params.commissionPercent !== null && !isNaN(Number(params.commissionPercent))
+    ? Number(params.commissionPercent)
+    : (params.employeeRate !== undefined && params.employeeRate !== null && !isNaN(Number(params.employeeRate)) ? Number(params.employeeRate) : 1);
+
+  // Parse notes regex for old/new amounts (e.g. "Original Bill: ₹848", "Old Amount: ₹848", "CN Amount: ₹1398", "New Amount: ₹1398")
+  const oldNotesMatch = notesStr.match(/(?:Original Bill|Old Amount|Old Bill|Original Amount):\s*[₹$]?([0-9.]+)/i);
+  const newNotesMatch = notesStr.match(/(?:CN Amount|New Amount|Replacement Amount|New Bill):\s*[₹$]?([0-9.]+)/i);
+  const notesOld = oldNotesMatch ? Number(oldNotesMatch[1]) : null;
+  const notesNew = newNotesMatch ? Number(newNotesMatch[1]) : null;
+
+  // 1. Normal Invoice Created: No related Exchange / Credit Note
+  if (!isAdjustment && (!notesOld || notesOld <= 0) && (!params.oldBillAmount || Number(params.oldBillAmount) <= 0) && (!params.oldAmount || Number(params.oldAmount) <= 0)) {
+    const directComm = params.commissionAmount !== undefined && params.commissionAmount !== null && !isNaN(Number(params.commissionAmount)) && Number(params.commissionAmount) > 0
+      ? Number(params.commissionAmount)
+      : (params.newBillCommission !== undefined && params.newBillCommission !== null && Number(params.newBillCommission) > 0
+          ? Number(params.newBillCommission)
+          : (params.newCommission !== undefined && params.newCommission !== null && Number(params.newCommission) > 0
+              ? Number(params.newCommission)
+              : Math.round(((rawAmount * commRate) / 100) * 100) / 100));
+
+    return {
+      oldBillAmount: null,
+      differenceAmount: null,
+      newBillAmount: null,
+      oldBillCommission: null,
+      commissionDifference: null,
+      newBillCommission: directComm,
+    };
+  }
+
+  // 2. Adjustment: Resolve Old Bill Amount
+  let oldBillAmount: number | null = null;
+  let oldBillCommission: number | null = null;
+
+  if (params.oldBillAmount !== undefined && params.oldBillAmount !== null && Number(params.oldBillAmount) > 0) {
+    oldBillAmount = Number(params.oldBillAmount);
+  } else if (params.oldAmount !== undefined && params.oldAmount !== null && Number(params.oldAmount) > 0) {
+    oldBillAmount = Number(params.oldAmount);
+  } else if (notesOld !== null && notesOld > 0) {
+    oldBillAmount = notesOld;
+  }
+
+  // If old bill amount not directly present, resolve from lookups/payload
+  if (oldBillAmount === null && isCreditNote) {
+    const cn = parsedPayload?.data?.creditNote || parsedPayload?.creditNote || {};
+    const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || params.invoiceNumber || params.invoiceNo;
+
+    if (!refInv && params.lookups?.creditNotesMap) {
+      const cnRec = params.lookups.creditNotesMap.get(normKey(billStr)) ||
+                    params.lookups.creditNotesMap.get(normKey(params.billId)) ||
+                    params.lookups.creditNotesMap.get(normKey(params.invoiceNo));
+      if (cnRec?.invoiceNo) {
+        const origSale = params.lookups.salesMap?.get(normKey(cnRec.invoiceNo)) ||
+                         params.lookups.transactionsMap?.get(normKey(cnRec.invoiceNo)) ||
+                         params.lookups.invoiceLogMap?.get(normKey(cnRec.invoiceNo));
+        if (origSale) {
+          oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
+          oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
+        }
+      }
+    }
+
+    if (oldBillAmount === null && refInv && params.lookups) {
+      const origSale = params.lookups.salesMap?.get(normKey(refInv)) ||
+                       params.lookups.transactionsMap?.get(normKey(refInv)) ||
+                       params.lookups.invoiceLogMap?.get(normKey(refInv));
+      if (origSale) {
+        oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
+        oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
+      }
+    }
+  }
+
+  if (oldBillAmount === null && isExchange) {
+    const ex = parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || parsedPayload || {};
+    const refInv = ex.originalInvoiceNo || ex.originalInvoiceNumber || ex.originalBillId || ex.refInvoiceNo;
+
+    if (params.lookups?.exchangesMap) {
+      const exRec = params.lookups.exchangesMap.get(normKey(billStr)) ||
+                    params.lookups.exchangesMap.get(normKey(params.billId)) ||
+                    params.lookups.exchangesMap.get(normKey(ex.exchangeNo));
+      if (exRec) {
+        if (Number(exRec.originalAmount) > 0) oldBillAmount = Number(exRec.originalAmount);
+        if (Number(exRec.originalCommission) > 0) oldBillCommission = Number(exRec.originalCommission);
+      }
+    }
+
+    if (oldBillAmount === null && Number(ex.originalAmount || ex.oldAmount || ex.returnAmount) > 0) {
+      oldBillAmount = Number(ex.originalAmount || ex.oldAmount || ex.returnAmount);
+    }
+
+    if (oldBillAmount === null && refInv && params.lookups) {
+      const origSale = params.lookups.salesMap?.get(normKey(refInv)) ||
+                       params.lookups.transactionsMap?.get(normKey(refInv)) ||
+                       params.lookups.invoiceLogMap?.get(normKey(refInv));
+      if (origSale) {
+        oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
+        oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
+      }
+    }
+  }
+
+  // 3. Adjustment: Resolve New Bill Amount
+  let newBillAmount: number | null = null;
+  if (params.newBillAmount !== undefined && params.newBillAmount !== null && Number(params.newBillAmount) > 0) {
+    newBillAmount = Number(params.newBillAmount);
+  } else if (params.newAmount !== undefined && params.newAmount !== null && Number(params.newAmount) > 0) {
+    newBillAmount = Number(params.newAmount);
+  } else if (notesNew !== null && notesNew > 0) {
+    newBillAmount = notesNew;
+  } else if (isCreditNote) {
+    const cn = parsedPayload?.data?.creditNote || parsedPayload?.creditNote || {};
+    const cnAmt = Number(params.cnAmount || cn.cnAmount || cn.creditAmount || cn.totalAmount || rawAmount || 0);
+    newBillAmount = cnAmt > 0 ? cnAmt : (rawAmount > 0 ? rawAmount : null);
+  } else if (isExchange) {
+    const ex = parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || {};
+    const exAmt = Number(ex.newAmount || ex.newSaleAmount || rawAmount || 0);
+    newBillAmount = exAmt > 0 ? exAmt : (rawAmount > 0 ? rawAmount : null);
+  } else {
+    newBillAmount = rawAmount > 0 ? rawAmount : null;
+  }
+
+  // 4. Calculate Difference: differenceAmount = oldBillAmount - newBillAmount (e.g. 848 - 1398 = -550)
+  let differenceAmount: number | null = null;
+  if (oldBillAmount !== null && newBillAmount !== null) {
+    differenceAmount = Math.round((oldBillAmount - newBillAmount) * 100) / 100;
+  } else if (params.differenceAmount !== undefined && params.differenceAmount !== null) {
+    differenceAmount = Number(params.differenceAmount);
+  }
+
+  // 5. Resolve Commissions
+  if (oldBillCommission === null && oldBillAmount !== null) {
+    if (params.oldBillCommission !== undefined && params.oldBillCommission !== null && Number(params.oldBillCommission) > 0) {
+      oldBillCommission = Number(params.oldBillCommission);
+    } else if (params.oldCommission !== undefined && params.oldCommission !== null && Number(params.oldCommission) > 0) {
+      oldBillCommission = Number(params.oldCommission);
+    } else {
+      oldBillCommission = Math.round(((oldBillAmount * commRate) / 100) * 100) / 100;
+    }
+  }
+
+  let newBillCommission: number | null = null;
+  if (newBillAmount !== null) {
+    if (params.newBillCommission !== undefined && params.newBillCommission !== null && Number(params.newBillCommission) > 0) {
+      newBillCommission = Number(params.newBillCommission);
+    } else if (params.newCommission !== undefined && params.newCommission !== null && Number(params.newCommission) > 0) {
+      newBillCommission = Number(params.newCommission);
+    } else if (params.commissionAmount !== undefined && params.commissionAmount !== null && Number(params.commissionAmount) > 0) {
+      newBillCommission = Number(params.commissionAmount);
+    } else {
+      newBillCommission = Math.round(((newBillAmount * commRate) / 100) * 100) / 100;
+    }
+  }
+
+  // commissionDifference = oldBillCommission - newBillCommission (e.g. 8.48 - 13.98 = -5.50)
+  let commissionDifference: number | null = null;
+  if (oldBillCommission !== null && newBillCommission !== null) {
+    commissionDifference = Math.round((oldBillCommission - newBillCommission) * 100) / 100;
+  } else if (params.commissionDifference !== undefined && params.commissionDifference !== null) {
+    commissionDifference = Number(params.commissionDifference);
+  }
+
+  return {
+    oldBillAmount,
+    differenceAmount,
+    newBillAmount,
+    oldBillCommission,
+    commissionDifference,
+    newBillCommission,
+  };
+}
+
+export function resolveBillReconciliation(params: any) {
+  const res = resolveBillAndCommissionReconciliation(params);
+  return {
+    oldBillAmount: res.oldBillAmount,
+    newBillAmount: res.newBillAmount,
+    differenceAmount: res.differenceAmount,
+  };
+}
+
+export function resolveCommissionReconciliation(params: any) {
+  const res = resolveBillAndCommissionReconciliation(params);
+  return {
+    oldBillCommission: res.oldBillCommission,
+    newBillCommission: res.newBillCommission,
+    commissionDifference: res.commissionDifference,
+  };
+}
+
 /**
  * Safely parses any date value (ISO strings, YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, or timestamps).
  * Resolves Indian date format (DD/MM/YYYY or DD-MM-YYYY) correctly without treating day as month,

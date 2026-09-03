@@ -979,12 +979,43 @@ export async function processCreditNoteCreated(payload: any, eventId?: string | 
           },
           orderBy: { id: 'desc' },
         });
+
+        if (!originalTx) {
+          originalTx = await prisma.commissionTransaction.findFirst({
+            where: {
+              OR: [
+                { invoiceNumber: invoiceNo },
+                { billId: invoiceNo },
+                { billId: `HWM-${invoiceNo}` },
+                { billId: invoiceNo.replace(/^HWM-/, '') },
+              ],
+            },
+            orderBy: { id: 'desc' },
+          });
+        }
       }
 
-      const origSaleAmt = originalTx ? Number(originalTx.saleAmount || originalTx.newAmount || 0) : 0;
-      const origCommAmt = originalTx ? Number(originalTx.commissionAmount || originalTx.newCommission || 0) : 0;
+      let origSaleAmt = originalTx ? Number(originalTx.saleAmount || originalTx.newAmount || 0) : 0;
+      let origCommAmt = originalTx ? Number(originalTx.commissionAmount || originalTx.newCommission || 0) : 0;
+
+      if (origSaleAmt === 0 && invoiceNo) {
+        const dbSale = await prisma.sales.findFirst({
+          where: {
+            OR: [
+              { billId: invoiceNo },
+              { billId: `HWM-${invoiceNo}` },
+              { billId: invoiceNo.replace(/^HWM-/, '') },
+            ]
+          }
+        });
+        if (dbSale && Number(dbSale.netAmount) > 0) {
+          origSaleAmt = Number(dbSale.netAmount);
+          origCommAmt = Math.round(((origSaleAmt * rateVal) / 100) * 100) / 100;
+        }
+      }
+
       const diffAmt = origSaleAmt > 0 ? Math.round((origSaleAmt - returnAmount) * 100) / 100 : null;
-      const commDiff = origCommAmt > 0 ? Math.round((origCommAmt - returnCommission) * 100) / 100 : null;
+      const commDiff = origSaleAmt > 0 ? Math.round((origCommAmt - returnCommission) * 100) / 100 : null;
 
       const existingCnTx = await prisma.commissionTransaction.findFirst({
         where: { billId: creditNoteNo, employeeId: empId },
