@@ -1160,12 +1160,81 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
   }
 
   const exchangeNo = String(exchange.exchangeNo || exchange.number || `EX-${Date.now()}`);
-  const originalInvoiceNo = String(exchange.originalInvoiceNo || exchange.originalInvoiceNumber || exchange.billId || '');
-  const newInvoiceNo = String(exchange.newInvoiceNo || exchange.newInvoiceNumber || `INV-EX-${Date.now()}`);
+  const originalInvoiceNo = String(
+    exchange.originalInvoiceNo ||
+    exchange.originalInvoiceNumber ||
+    exchange.originalBillId ||
+    exchange.originalInvoiceId ||
+    exchange.refInvoiceNo ||
+    exchange.refInvoiceNumber ||
+    exchange.salesID ||
+    exchange.SalesID ||
+    exchange.parentInvoiceId ||
+    exchange.parentInvoiceNo ||
+    exchange.relatedInvoiceId ||
+    exchange.relatedInvoiceNo ||
+    payload.salesID ||
+    payload.SalesID ||
+    payload.originalInvoiceNo ||
+    payload.originalInvoiceNumber ||
+    exchange.billId ||
+    ''
+  );
+  const newInvoiceNo = String(exchange.newInvoiceNo || exchange.newInvoiceNumber || exchange.invoiceNo || exchange.invoiceNumber || `INV-EX-${Date.now()}`);
 
-  const originalSale = await prisma.sales.findFirst({
-    where: { billId: { contains: originalInvoiceNo } }
-  });
+  let originalSale: any = null;
+  if (originalInvoiceNo) {
+    originalSale = await prisma.sales.findFirst({
+      where: {
+        OR: [
+          { billId: originalInvoiceNo },
+          { billId: `HWM-${originalInvoiceNo}` },
+          { billId: originalInvoiceNo.replace(/^HWM-/i, '') },
+          { billId: { contains: originalInvoiceNo } },
+        ]
+      }
+    });
+
+    if (!originalSale) {
+      const origTx = await prisma.commissionTransaction.findFirst({
+        where: {
+          OR: [
+            { billId: originalInvoiceNo },
+            { invoiceNumber: originalInvoiceNo },
+            { billId: `HWM-${originalInvoiceNo}` },
+            { invoiceNumber: `HWM-${originalInvoiceNo}` },
+            { billId: originalInvoiceNo.replace(/^HWM-/i, '') },
+            { invoiceNumber: originalInvoiceNo.replace(/^HWM-/i, '') },
+          ]
+        }
+      });
+      if (origTx) {
+        originalSale = {
+          id: `tx-${origTx.id}`,
+          billId: origTx.billId || origTx.invoiceNumber,
+          netAmount: origTx.saleAmount,
+          employeeId: origTx.employeeId,
+        };
+      }
+    }
+
+    if (!originalSale) {
+      try {
+        const fetched = await fetchHopkidInvoiceDetails(originalInvoiceNo);
+        if (fetched) {
+          const fMeta = extractWebhookMeta(fetched.data || fetched);
+          if (fMeta.amount > 0) {
+            originalSale = {
+              id: originalInvoiceNo,
+              billId: fMeta.invoiceNumber || originalInvoiceNo,
+              netAmount: fMeta.amount,
+              employeeId: null,
+            };
+          }
+        }
+      } catch (_) {}
+    }
+  }
 
   let totalNewSales = 0;
   let totalOldSales = 0;
@@ -1194,8 +1263,8 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
       const baseComm = (rawAmount * rate) / 100;
 
       // Existing Sales Exchange Rule:
-      // IsOld = 1 (Returned item) -> SUBTRACT (-)
-      // IsOld = 0 (Sold item) -> ADD (+)
+      // IsOld = 1 (Returned item from original bill)
+      // IsOld = 0 (New sold item)
       const effectiveSaleAmount = isOld ? -Math.abs(rawAmount) : Math.abs(rawAmount);
       const effectiveCommission = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
 
@@ -1261,6 +1330,20 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
     }
   }
 
+  // Resolve true Previous Bill Amount and New Bill Amount
+  const origAmountVal =
+    Number(exchange.originalAmount || exchange.oldAmount || exchange.returnAmount || 0) > 0
+      ? Number(exchange.originalAmount || exchange.oldAmount || exchange.returnAmount)
+      : (totalOldSales > 0 ? totalOldSales : Number(originalSale?.netAmount || 0));
+
+  const newAmountVal =
+    Number(exchange.newAmount || exchange.newSaleAmount || exchange.totalAmount || 0) > 0
+      ? Number(exchange.newAmount || exchange.newSaleAmount || exchange.totalAmount)
+      : (totalNewSales > 0 ? totalNewSales : Number(exchange.amount || 0));
+
+  const diffAmountVal = Math.round((origAmountVal - newAmountVal) * 100) / 100; // OLD - NEW
+  const diffCommVal = Math.round((totalOldCommission - totalNewCommission) * 100) / 100; // OLD - NEW
+
   // Update/create aggregated CommissionTransactions per (Employee + isOld)
   const txnExDate = new Date(exchange.exchangeDate || exchange.date || new Date());
   for (const group of exchangeEmployeeMap.values()) {
@@ -1268,10 +1351,12 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
     const roundedAmount = Number(group.totalSaleAmount.toFixed(2));
     const roundedCommission = Number(group.totalCommissionAmount.toFixed(2));
 
-    const exOldAmount = group.isOld ? Math.abs(roundedAmount) : (totalOldSales > 0 ? totalOldSales : (originalSale?.netAmount ? Number(originalSale.netAmount) : 0));
-    const exOldComm = group.isOld ? Math.abs(roundedCommission) : (totalOldCommission > 0 ? totalOldCommission : 0);
-    const exDiffAmt = exOldAmount > 0 ? Math.round((exOldAmount - roundedAmount) * 100) / 100 : null;
-    const exCommDiff = exOldComm > 0 ? Math.round((exOldComm - roundedCommission) * 100) / 100 : null;
+    const exOldAmount = origAmountVal;
+    const exNewAmount = newAmountVal;
+    const exOldComm = totalOldCommission;
+    const exNewComm = totalNewCommission;
+    const exDiffAmt = diffAmountVal;
+    const exCommDiff = diffCommVal;
 
     const existingExTx = await prisma.commissionTransaction.findFirst({
       where: { billId: exchangeBillId, employeeId: group.employee.id }
@@ -1284,11 +1369,11 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
           saleAmount: roundedAmount,
           commissionAmount: roundedCommission,
           commissionPercent: group.rate,
-          oldAmount: exOldAmount > 0 ? exOldAmount : (existingExTx.oldAmount || 0),
-          newAmount: roundedAmount,
-          oldCommission: exOldComm > 0 ? exOldComm : (existingExTx.oldCommission || 0),
-          newCommission: roundedCommission,
-          commissionDifference: exCommDiff !== null ? exCommDiff : (existingExTx.commissionDifference || 0),
+          oldAmount: exOldAmount,
+          newAmount: exNewAmount,
+          oldCommission: exOldComm,
+          newCommission: exNewComm,
+          commissionDifference: exCommDiff,
           eventType: 'SALES_EXCHANGE',
           createdAt: txnExDate,
           updatedAt: new Date(),
@@ -1304,16 +1389,16 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
           commissionPercent: group.rate,
           commissionAmount: roundedCommission,
           oldAmount: exOldAmount,
-          newAmount: roundedAmount,
+          newAmount: exNewAmount,
           oldCommission: exOldComm,
-          newCommission: roundedCommission,
-          commissionDifference: exCommDiff !== null ? exCommDiff : 0,
+          newCommission: exNewComm,
+          commissionDifference: exCommDiff,
           eventType: 'SALES_EXCHANGE',
           billId: exchangeBillId,
           invoiceNumber: exchangeBillId,
           status: 'APPROVED',
           createdAt: txnExDate,
-          notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo})${exOldAmount > 0 ? ` (Old Amount: ₹${exOldAmount}, New Amount: ₹${roundedAmount})` : ''}`,
+          notes: `Sales Exchange ${group.isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'} (EX: ${exchangeNo}) (Old Bill: ₹${origAmountVal}, New Bill: ₹${newAmountVal}, Difference: ${diffAmountVal >= 0 ? '+' : ''}₹${diffAmountVal})`,
         },
       });
     }
@@ -1323,20 +1408,15 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
     primaryNewEmployeeId = originalSale?.employeeId || 1;
   }
 
-  const origAmountVal = totalOldSales > 0 ? totalOldSales : Number(originalSale?.netAmount || 0);
-  const newAmountVal = Number(totalNewSales || 0);
-  const diffAmountVal = origAmountVal - newAmountVal; // OLD - NEW
-  const diffCommVal = totalOldCommission - totalNewCommission; // OLD - NEW
-
   await prisma.salesExchange.upsert({
     where: { exchangeNo: exchangeNo },
     update: {
       originalInvoiceNo: originalInvoiceNo,
       newInvoiceNo: newInvoiceNo,
       exchangeDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
-      originalSaleId: originalSale?.id || null,
+      originalSaleId: originalSale?.id ? String(originalSale.id) : null,
       newSaleId: newSaleIds.join(','),
-      employeeId: primaryNewEmployeeId,
+      employeeId: primaryNewEmployeeId || 1,
       originalAmount: origAmountVal,
       newAmount: newAmountVal,
       amountDifference: diffAmountVal,
@@ -1352,9 +1432,9 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
       originalInvoiceNo: originalInvoiceNo,
       newInvoiceNo: newInvoiceNo,
       exchangeDate: new Date(exchange.exchangeDate || exchange.date || new Date()),
-      originalSaleId: originalSale?.id || null,
+      originalSaleId: originalSale?.id ? String(originalSale.id) : null,
       newSaleId: newSaleIds.join(','),
-      employeeId: primaryNewEmployeeId,
+      employeeId: primaryNewEmployeeId || 1,
       originalAmount: origAmountVal,
       newAmount: newAmountVal,
       amountDifference: diffAmountVal,
@@ -1365,6 +1445,16 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
       status: 'ACTIVE'
     }
   });
+
+  // Debug logging for every Invoice Exchange
+  console.log(`[Invoice Exchange Debug]
+currentExchangeInvoiceId: ${exchangeNo}
+currentExchangeInvoiceNo: ${newInvoiceNo}
+previousInvoiceId: ${originalSale?.id || originalInvoiceNo || 'N/A'}
+previousInvoiceNo: ${originalInvoiceNo || originalSale?.billId || 'N/A'}
+previousBillAmount: ${origAmountVal}
+newBillAmount: ${newAmountVal}
+differenceAmount: ${diffAmountVal}`);
 
   const exDate = new Date(exchange.exchangeDate || exchange.date || new Date());
   const month = `${exDate.getFullYear()}-${String(exDate.getMonth() + 1).padStart(2, '0')}`;

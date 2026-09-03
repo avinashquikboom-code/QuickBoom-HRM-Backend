@@ -485,12 +485,25 @@ export const getCommissionTransactions = async (
     const exMap = new Map<string, any>();
     for (const e of salesExchanges) {
       if (e.exchangeNo) {
-        exMap.set(String(e.exchangeNo).trim().toLowerCase(), e);
+        const clean = String(e.exchangeNo).trim().toLowerCase();
+        exMap.set(clean, e);
         exMap.set(normKey(e.exchangeNo), e);
       }
       if (e.newInvoiceNo) {
-        exMap.set(String(e.newInvoiceNo).trim().toLowerCase(), e);
+        const clean = String(e.newInvoiceNo).trim().toLowerCase();
+        exMap.set(clean, e);
         exMap.set(normKey(e.newInvoiceNo), e);
+        exMap.set(normKey(clean.replace(/-(NEW|RET)$/i, '')), e);
+        exMap.set(normKey(clean.replace(/^HWM-/i, '')), e);
+      }
+      if (e.originalInvoiceNo) {
+        const clean = String(e.originalInvoiceNo).trim().toLowerCase();
+        exMap.set(clean, e);
+        exMap.set(normKey(e.originalInvoiceNo), e);
+        exMap.set(normKey(clean.replace(/^HWM-/i, '')), e);
+      }
+      if (e.id) {
+        exMap.set(normKey(e.id), e);
       }
     }
 

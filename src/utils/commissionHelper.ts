@@ -181,70 +181,149 @@ export function resolveBillAndCommissionReconciliation(params: {
   let oldBillAmount: number | null = null;
   let oldBillCommission: number | null = null;
 
-  if (params.oldBillAmount !== undefined && params.oldBillAmount !== null && Number(params.oldBillAmount) > 0) {
-    oldBillAmount = Number(params.oldBillAmount);
-  } else if (params.oldAmount !== undefined && params.oldAmount !== null && Number(params.oldAmount) > 0) {
-    oldBillAmount = Number(params.oldAmount);
-  } else if (notesOld !== null && notesOld > 0) {
-    oldBillAmount = notesOld;
-  }
-
-  // If old bill amount not directly present, resolve from lookups/payload
-  if (oldBillAmount === null && isCreditNote) {
-    const cn = parsedPayload?.data?.creditNote || parsedPayload?.creditNote || {};
-    const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || params.invoiceNumber || params.invoiceNo;
-
-    if (!refInv && params.lookups?.creditNotesMap) {
-      const cnRec = params.lookups.creditNotesMap.get(normKey(billStr)) ||
-                    params.lookups.creditNotesMap.get(normKey(params.billId)) ||
-                    params.lookups.creditNotesMap.get(normKey(params.invoiceNo));
-      if (cnRec?.invoiceNo) {
-        const origSale = params.lookups.salesMap?.get(normKey(cnRec.invoiceNo)) ||
-                         params.lookups.transactionsMap?.get(normKey(cnRec.invoiceNo)) ||
-                         params.lookups.invoiceLogMap?.get(normKey(cnRec.invoiceNo));
-        if (origSale) {
-          oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
-          oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
-        }
-      }
-    }
-
-    if (oldBillAmount === null && refInv && params.lookups) {
-      const origSale = params.lookups.salesMap?.get(normKey(refInv)) ||
-                       params.lookups.transactionsMap?.get(normKey(refInv)) ||
-                       params.lookups.invoiceLogMap?.get(normKey(refInv));
-      if (origSale) {
-        oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
-        oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
-      }
-    }
-  }
-
-  if (oldBillAmount === null && isExchange) {
+  // For exchanges, first check if explicit previous bill / exchange record exists
+  if (isExchange) {
     const ex = parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || parsedPayload || {};
-    const refInv = ex.originalInvoiceNo || ex.originalInvoiceNumber || ex.originalBillId || ex.refInvoiceNo;
+    const refInv =
+      ex.originalInvoiceNo ||
+      ex.originalInvoiceNumber ||
+      ex.originalBillId ||
+      ex.originalInvoiceId ||
+      ex.refInvoiceNo ||
+      ex.refInvoiceNumber ||
+      ex.salesID ||
+      ex.SalesID ||
+      ex.parentInvoiceId ||
+      ex.parentInvoiceNo ||
+      ex.relatedInvoiceId ||
+      ex.relatedInvoiceNo ||
+      parsedPayload?.salesID ||
+      parsedPayload?.SalesID ||
+      parsedPayload?.originalInvoiceNo ||
+      parsedPayload?.originalInvoiceNumber;
 
     if (params.lookups?.exchangesMap) {
-      const exRec = params.lookups.exchangesMap.get(normKey(billStr)) ||
-                    params.lookups.exchangesMap.get(normKey(params.billId)) ||
-                    params.lookups.exchangesMap.get(normKey(ex.exchangeNo));
+      const cleanBill = String(params.billId || billStr || '').trim();
+      const cleanInvNo = String(params.invoiceNo || params.invoiceNumber || '').trim();
+      const baseBill = cleanBill.replace(/-(NEW|RET)$/i, '').replace(/^HWM-/i, '');
+      const baseInv = cleanInvNo.replace(/-(NEW|RET)$/i, '').replace(/^HWM-/i, '');
+
+      const exRec =
+        params.lookups.exchangesMap.get(normKey(billStr)) ||
+        params.lookups.exchangesMap.get(normKey(params.billId)) ||
+        params.lookups.exchangesMap.get(normKey(params.invoiceNo)) ||
+        params.lookups.exchangesMap.get(normKey(params.invoiceNumber)) ||
+        params.lookups.exchangesMap.get(normKey(cleanBill)) ||
+        params.lookups.exchangesMap.get(normKey(cleanInvNo)) ||
+        params.lookups.exchangesMap.get(normKey(baseBill)) ||
+        params.lookups.exchangesMap.get(normKey(baseInv)) ||
+        params.lookups.exchangesMap.get(normKey(ex.exchangeNo)) ||
+        params.lookups.exchangesMap.get(normKey(ex.newInvoiceNo)) ||
+        params.lookups.exchangesMap.get(normKey(ex.originalInvoiceNo)) ||
+        (refInv ? params.lookups.exchangesMap.get(normKey(refInv)) : null);
+
       if (exRec) {
         if (Number(exRec.originalAmount) > 0) oldBillAmount = Number(exRec.originalAmount);
         if (Number(exRec.originalCommission) > 0) oldBillCommission = Number(exRec.originalCommission);
       }
     }
 
-    if (oldBillAmount === null && Number(ex.originalAmount || ex.oldAmount || ex.returnAmount) > 0) {
-      oldBillAmount = Number(ex.originalAmount || ex.oldAmount || ex.returnAmount);
+    // Check line items for IsOld: true items (returned items from original bill)
+    if (oldBillAmount === null) {
+      const rawExchangeItems =
+        parsedPayload?.SalesExchangeProductList ||
+        parsedPayload?.data?.SalesExchangeProductList ||
+        parsedPayload?.data?.lineItems ||
+        parsedPayload?.lineItems ||
+        [];
+      if (Array.isArray(rawExchangeItems) && rawExchangeItems.length > 0) {
+        let oldItemsSum = 0;
+        for (const item of rawExchangeItems) {
+          if (parseIsOld(item)) {
+            const itemAmt = Number(item.productNetAmount || item.Total || item.price || item.amount || item.netAmount || 0);
+            if (!isNaN(itemAmt) && itemAmt > 0) {
+              oldItemsSum += itemAmt;
+            }
+          }
+        }
+        if (oldItemsSum > 0) {
+          oldBillAmount = oldItemsSum;
+        }
+      }
+    }
+
+    if (oldBillAmount === null && Number(ex.originalAmount || ex.oldAmount || ex.returnAmount || ex.originalBillAmount) > 0) {
+      oldBillAmount = Number(ex.originalAmount || ex.oldAmount || ex.returnAmount || ex.originalBillAmount);
     }
 
     if (oldBillAmount === null && refInv && params.lookups) {
-      const origSale = params.lookups.salesMap?.get(normKey(refInv)) ||
-                       params.lookups.transactionsMap?.get(normKey(refInv)) ||
-                       params.lookups.invoiceLogMap?.get(normKey(refInv));
+      const origSale =
+        params.lookups.salesMap?.get(normKey(refInv)) ||
+        params.lookups.salesMap?.get(normKey(String(refInv).replace(/^HWM-/i, ''))) ||
+        params.lookups.salesMap?.get(normKey(`HWM-${refInv}`)) ||
+        params.lookups.transactionsMap?.get(normKey(refInv)) ||
+        params.lookups.transactionsMap?.get(normKey(String(refInv).replace(/^HWM-/i, ''))) ||
+        params.lookups.transactionsMap?.get(normKey(`HWM-${refInv}`)) ||
+        params.lookups.invoiceLogMap?.get(normKey(refInv)) ||
+        params.lookups.invoiceLogMap?.get(normKey(String(refInv).replace(/^HWM-/i, ''))) ||
+        params.lookups.invoiceLogMap?.get(normKey(`HWM-${refInv}`));
       if (origSale) {
         oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
         oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
+      }
+    }
+
+    if (oldBillAmount === null && notesOld !== null && notesOld > 0) {
+      oldBillAmount = notesOld;
+    }
+
+    if (oldBillAmount === null && params.oldBillAmount !== undefined && params.oldBillAmount !== null && Number(params.oldBillAmount) > 0) {
+      oldBillAmount = Number(params.oldBillAmount);
+    } else if (oldBillAmount === null && params.oldAmount !== undefined && params.oldAmount !== null && Number(params.oldAmount) > 0) {
+      oldBillAmount = Number(params.oldAmount);
+    } else if (oldBillAmount === null && params.amount !== undefined && params.amount !== null && Number(params.amount) > 0) {
+      oldBillAmount = Number(params.amount);
+    }
+  } else {
+    // Non-exchange adjustments (e.g. Credit Note)
+    if (params.oldBillAmount !== undefined && params.oldBillAmount !== null && Number(params.oldBillAmount) > 0) {
+      oldBillAmount = Number(params.oldBillAmount);
+    } else if (params.oldAmount !== undefined && params.oldAmount !== null && Number(params.oldAmount) > 0) {
+      oldBillAmount = Number(params.oldAmount);
+    } else if (notesOld !== null && notesOld > 0) {
+      oldBillAmount = notesOld;
+    }
+
+    if (oldBillAmount === null && isCreditNote) {
+      const cn = parsedPayload?.data?.creditNote || parsedPayload?.creditNote || {};
+      const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || params.invoiceNumber || params.invoiceNo;
+
+      if (!refInv && params.lookups?.creditNotesMap) {
+        const cnRec =
+          params.lookups.creditNotesMap.get(normKey(billStr)) ||
+          params.lookups.creditNotesMap.get(normKey(params.billId)) ||
+          params.lookups.creditNotesMap.get(normKey(params.invoiceNo));
+        if (cnRec?.invoiceNo) {
+          const origSale =
+            params.lookups.salesMap?.get(normKey(cnRec.invoiceNo)) ||
+            params.lookups.transactionsMap?.get(normKey(cnRec.invoiceNo)) ||
+            params.lookups.invoiceLogMap?.get(normKey(cnRec.invoiceNo));
+          if (origSale) {
+            oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
+            oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
+          }
+        }
+      }
+
+      if (oldBillAmount === null && refInv && params.lookups) {
+        const origSale =
+          params.lookups.salesMap?.get(normKey(refInv)) ||
+          params.lookups.transactionsMap?.get(normKey(refInv)) ||
+          params.lookups.invoiceLogMap?.get(normKey(refInv));
+        if (origSale) {
+          oldBillAmount = Number(origSale.netAmount || origSale.saleAmount || origSale.amount || 0) || null;
+          oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
+        }
       }
     }
   }
@@ -263,13 +342,31 @@ export function resolveBillAndCommissionReconciliation(params: {
     newBillAmount = cnAmt > 0 ? cnAmt : (rawAmount > 0 ? rawAmount : null);
   } else if (isExchange) {
     const ex = parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || {};
-    const exAmt = Number(ex.newAmount || ex.newSaleAmount || rawAmount || 0);
+    // Check line items for IsOld: false items (new items being purchased)
+    const rawExchangeItems =
+      parsedPayload?.SalesExchangeProductList ||
+      parsedPayload?.data?.SalesExchangeProductList ||
+      parsedPayload?.data?.lineItems ||
+      parsedPayload?.lineItems ||
+      [];
+    let newItemsSum = 0;
+    if (Array.isArray(rawExchangeItems) && rawExchangeItems.length > 0) {
+      for (const item of rawExchangeItems) {
+        if (!parseIsOld(item)) {
+          const itemAmt = Number(item.productNetAmount || item.Total || item.price || item.amount || item.netAmount || 0);
+          if (!isNaN(itemAmt) && itemAmt > 0) {
+            newItemsSum += itemAmt;
+          }
+        }
+      }
+    }
+    const exAmt = Number(ex.newAmount || ex.newSaleAmount || (newItemsSum > 0 ? newItemsSum : (rawAmount > 0 ? rawAmount : 0)));
     newBillAmount = exAmt > 0 ? exAmt : (rawAmount > 0 ? rawAmount : null);
   } else {
     newBillAmount = rawAmount > 0 ? rawAmount : null;
   }
 
-  // 4. Calculate Difference: differenceAmount = oldBillAmount - newBillAmount (e.g. 848 - 1398 = -550)
+  // 4. Calculate Difference: differenceAmount = oldBillAmount - newBillAmount (e.g. 2300 - 2998 = -698)
   let differenceAmount: number | null = null;
   if (oldBillAmount !== null && newBillAmount !== null) {
     differenceAmount = Math.round((oldBillAmount - newBillAmount) * 100) / 100;
@@ -278,6 +375,7 @@ export function resolveBillAndCommissionReconciliation(params: {
   }
 
   // 5. Resolve Commissions
+  // OLD BILL COMMISSION: commission calculated from PREVIOUS/ORIGINAL BILL
   if (oldBillCommission === null && oldBillAmount !== null) {
     if (params.oldBillCommission !== undefined && params.oldBillCommission !== null && Number(params.oldBillCommission) > 0) {
       oldBillCommission = Number(params.oldBillCommission);
@@ -288,6 +386,7 @@ export function resolveBillAndCommissionReconciliation(params: {
     }
   }
 
+  // NEW BILL COMMISSION: commission calculated from CURRENT EXCHANGE BILL
   let newBillCommission: number | null = null;
   if (newBillAmount !== null) {
     if (params.newBillCommission !== undefined && params.newBillCommission !== null && Number(params.newBillCommission) > 0) {
@@ -301,12 +400,33 @@ export function resolveBillAndCommissionReconciliation(params: {
     }
   }
 
-  // commissionDifference = oldBillCommission - newBillCommission (e.g. 8.48 - 13.98 = -5.50)
+  // COMMISSION DIFFERENCE: oldBillCommission - newBillCommission (e.g. 23.00 - 29.98 = -6.98)
   let commissionDifference: number | null = null;
   if (oldBillCommission !== null && newBillCommission !== null) {
     commissionDifference = Math.round((oldBillCommission - newBillCommission) * 100) / 100;
   } else if (params.commissionDifference !== undefined && params.commissionDifference !== null) {
     commissionDifference = Number(params.commissionDifference);
+  }
+
+  // Debug logging for every Invoice Exchange
+  if (isExchange) {
+    const ex = parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || parsedPayload || {};
+    const refInv =
+      ex.originalInvoiceNo ||
+      ex.originalInvoiceNumber ||
+      ex.originalBillId ||
+      ex.salesID ||
+      ex.SalesID ||
+      ex.refInvoiceNo ||
+      'N/A';
+    console.log(`[Invoice Exchange Debug]
+currentExchangeInvoiceId: ${billStr || params.billId || 'N/A'}
+currentExchangeInvoiceNo: ${params.invoiceNumber || params.invoiceNo || billStr || 'N/A'}
+previousInvoiceId: ${refInv}
+previousInvoiceNo: ${refInv}
+previousBillAmount: ${oldBillAmount}
+newBillAmount: ${newBillAmount}
+differenceAmount: ${differenceAmount}`);
   }
 
   return {

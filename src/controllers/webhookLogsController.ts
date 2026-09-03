@@ -159,8 +159,20 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         exMapByExchangeNo.set(normKey(e.exchangeNo), e);
       }
       if (e.newInvoiceNo) {
-        exMapByExchangeNo.set(String(e.newInvoiceNo).trim().toLowerCase(), e);
+        const clean = String(e.newInvoiceNo).trim().toLowerCase();
+        exMapByExchangeNo.set(clean, e);
         exMapByExchangeNo.set(normKey(e.newInvoiceNo), e);
+        exMapByExchangeNo.set(normKey(clean.replace(/-(NEW|RET)$/i, '')), e);
+        exMapByExchangeNo.set(normKey(clean.replace(/^HWM-/i, '')), e);
+      }
+      if (e.originalInvoiceNo) {
+        const clean = String(e.originalInvoiceNo).trim().toLowerCase();
+        exMapByExchangeNo.set(clean, e);
+        exMapByExchangeNo.set(normKey(e.originalInvoiceNo), e);
+        exMapByExchangeNo.set(normKey(clean.replace(/^HWM-/i, '')), e);
+      }
+      if (e.id) {
+        exMapByExchangeNo.set(normKey(e.id), e);
       }
     }
 
@@ -893,12 +905,25 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
     const exMapByExchangeNo = new Map<string, any>();
     for (const e of allExchanges) {
       if (e.exchangeNo) {
-        exMapByExchangeNo.set(String(e.exchangeNo).trim().toLowerCase(), e);
+        const clean = String(e.exchangeNo).trim().toLowerCase();
+        exMapByExchangeNo.set(clean, e);
         exMapByExchangeNo.set(normKey(e.exchangeNo), e);
       }
       if (e.newInvoiceNo) {
-        exMapByExchangeNo.set(String(e.newInvoiceNo).trim().toLowerCase(), e);
+        const clean = String(e.newInvoiceNo).trim().toLowerCase();
+        exMapByExchangeNo.set(clean, e);
         exMapByExchangeNo.set(normKey(e.newInvoiceNo), e);
+        exMapByExchangeNo.set(normKey(clean.replace(/-(NEW|RET)$/i, '')), e);
+        exMapByExchangeNo.set(normKey(clean.replace(/^HWM-/i, '')), e);
+      }
+      if (e.originalInvoiceNo) {
+        const clean = String(e.originalInvoiceNo).trim().toLowerCase();
+        exMapByExchangeNo.set(clean, e);
+        exMapByExchangeNo.set(normKey(e.originalInvoiceNo), e);
+        exMapByExchangeNo.set(normKey(clean.replace(/^HWM-/i, '')), e);
+      }
+      if (e.id) {
+        exMapByExchangeNo.set(normKey(e.id), e);
       }
     }
 

@@ -396,6 +396,7 @@ export const addSalesExchange = async (
               billId: resolvedBillId || null,
               invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-${isOld ? 'RET' : 'NEW'}` : null,
               status: 'APPROVED',
+              eventType: 'SALES_EXCHANGE',
               notes: notes || `Sales Exchange ${isOld ? 'Return/Old Item (IsOld: 1)' : 'New Sale (IsOld: 0)'}: ${item.productName || item.name || 'Product'} (₹${itemAmount})`,
             }
           });
@@ -478,6 +479,9 @@ export const addSalesExchange = async (
     const newComm = (newAmt * rate) / 100;
     const createdTxns: any[] = [];
 
+    const diffAmt = Math.round((retAmt - newAmt) * 100) / 100;
+    const diffComm = Math.round((oldComm - newComm) * 100) / 100;
+
     // 1. Old returned transaction (IsOld = 1) -> negative commission calculated on full return amount
     if (retAmt > 0) {
       const oldTxn = await prisma.commissionTransaction.create({
@@ -489,10 +493,16 @@ export const addSalesExchange = async (
           commissionType: 'PERCENTAGE',
           commissionPercent: rate,
           commissionAmount: -Math.abs(oldComm),
+          oldAmount: retAmt,
+          newAmount: newAmt,
+          oldCommission: oldComm,
+          newCommission: newComm,
+          commissionDifference: diffComm,
+          eventType: 'SALES_EXCHANGE',
           billId: resolvedBillId || null,
           invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-RET` : null,
           status: 'APPROVED',
-          notes: notes || `Sales Exchange Return: Old Item ₹${retAmt} (IsOld: 1)`,
+          notes: notes || `Sales Exchange Return: Old Item ₹${retAmt} (IsOld: 1) (Old Bill: ₹${retAmt}, New Bill: ₹${newAmt}, Diff: ${diffAmt >= 0 ? '+' : ''}₹${diffAmt})`,
         }
       });
       createdTxns.push(oldTxn);
@@ -509,10 +519,16 @@ export const addSalesExchange = async (
           commissionType: 'PERCENTAGE',
           commissionPercent: rate,
           commissionAmount: Math.abs(newComm),
+          oldAmount: retAmt,
+          newAmount: newAmt,
+          oldCommission: oldComm,
+          newCommission: newComm,
+          commissionDifference: diffComm,
+          eventType: 'SALES_EXCHANGE',
           billId: resolvedBillId || null,
           invoiceNumber: resolvedInvoiceNumber ? `${resolvedInvoiceNumber}-NEW` : null,
           status: 'APPROVED',
-          notes: notes || `Sales Exchange New Sale: ₹${newAmt} (IsOld: 0)`,
+          notes: notes || `Sales Exchange New Sale: ₹${newAmt} (IsOld: 0) (Old Bill: ₹${retAmt}, New Bill: ₹${newAmt}, Diff: ${diffAmt >= 0 ? '+' : ''}₹${diffAmt})`,
         }
       });
       createdTxns.push(newTxn);
