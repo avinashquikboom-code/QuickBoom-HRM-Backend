@@ -43,10 +43,9 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     const eventTypeFilter = eventType ? normalizeEventType(String(eventType)) : null;
     const storeFilter = store && String(store) !== 'ALL' ? String(store).trim() : null;
 
-    // 1. Pre-fetch employee lookup maps for resolving employee names, codes, and assigned stores
-    let allEmployees: any[] = [];
-    try {
-      allEmployees = await prisma.employee.findMany({
+    // 1. Concurrently pre-fetch lookup maps for employees, stores, sales, credit notes, and exchanges
+    const [allEmployees, allStores, allSales, allCreditNotes, allExchanges] = await Promise.all([
+      prisma.employee.findMany({
         select: {
           id: true,
           employeeID: true,
@@ -57,10 +56,20 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           storeId: true,
           store: { select: { id: true, name: true, code: true } }
         },
-      });
-    } catch (e) {
-      allEmployees = [];
-    }
+      }).catch(() => []),
+      prisma.store.findMany({
+        select: { id: true, name: true, code: true },
+      }).catch(() => []),
+      prisma.sales.findMany({
+        select: { id: true, billId: true, netAmount: true, employeeId: true },
+      }).catch(() => []),
+      prisma.creditNote.findMany({
+        select: { id: true, creditNoteNo: true, creditAmount: true, invoiceNo: true },
+      }).catch(() => []),
+      prisma.salesExchange.findMany({
+        select: { id: true, exchangeNo: true, originalAmount: true, newAmount: true, originalInvoiceNo: true, newInvoiceNo: true },
+      }).catch(() => []),
+    ]);
 
     interface EmpInfo {
       id: number;
@@ -96,16 +105,6 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       if (emp.firstName) empByName.set(emp.firstName.toLowerCase().trim(), info);
     }
 
-    // 2. Pre-fetch store lookup maps for resolving store names
-    let allStores: any[] = [];
-    try {
-      allStores = await prisma.store.findMany({
-        select: { id: true, name: true, code: true },
-      });
-    } catch (e) {
-      allStores = [];
-    }
-
     const storeById = new Map<number, string>();
     const storeByCode = new Map<string, string>();
     const storeByName = new Map<string, string>();
@@ -117,6 +116,56 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         if (st.code) storeByCode.set(st.code.toLowerCase().trim(), st.name);
       }
     }
+
+    // Build relational lookup maps for instantaneous O(1) enrichment without N+1 queries
+    const salesMapByBillId = new Map<string, any>();
+    for (const s of allSales) {
+      if (s.billId) {
+        const clean = String(s.billId).trim().toLowerCase();
+        salesMapByBillId.set(clean, s);
+        salesMapByBillId.set(clean.replace(/^hwm-/, ''), s);
+        salesMapByBillId.set(`hwm-${clean.replace(/^hwm-/, '')}`, s);
+      }
+    }
+
+    const cnMapByCreditNoteNo = new Map<string, any>();
+    for (const c of allCreditNotes) {
+      if (c.creditNoteNo) {
+        const clean = String(c.creditNoteNo).trim().toLowerCase();
+        cnMapByCreditNoteNo.set(clean, c);
+      }
+    }
+
+    const exMapByExchangeNo = new Map<string, any>();
+    for (const e of allExchanges) {
+      if (e.exchangeNo) {
+        const clean = String(e.exchangeNo).trim().toLowerCase();
+        exMapByExchangeNo.set(clean, e);
+      }
+    }
+
+    const findSale = (inv: string | number | null | undefined) => {
+      if (!inv) return null;
+      const str = String(inv).trim().toLowerCase();
+      return (
+        salesMapByBillId.get(str) ||
+        salesMapByBillId.get(str.replace(/^hwm-/, '')) ||
+        salesMapByBillId.get(`hwm-${str.replace(/^hwm-/, '')}`) ||
+        null
+      );
+    };
+
+    const findCreditNote = (cnNo: string | number | null | undefined) => {
+      if (!cnNo) return null;
+      const str = String(cnNo).trim().toLowerCase();
+      return cnMapByCreditNoteNo.get(str) || null;
+    };
+
+    const findExchange = (exNo: string | number | null | undefined) => {
+      if (!exNo) return null;
+      const str = String(exNo).trim().toLowerCase();
+      return exMapByExchangeNo.get(str) || null;
+    };
 
     const findEmpInfo = (empId: number | null, rawMeta: any, rawPayload: any): EmpInfo | null => {
       if (empId && empById.has(empId)) return empById.get(empId)!;
@@ -554,17 +603,9 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           let origBillAmt = origRecord ? Number(origRecord.amount || 0) : 0;
           let origBillComm = origRecord ? Number(origRecord.commissionAmount || 0) : 0;
 
-          // If not in memory log map, search in database
+          // If not in memory log map, search in pre-fetched database map
           if (origBillAmt === 0 && refInv) {
-            const dbSale = await prisma.sales.findFirst({
-              where: {
-                OR: [
-                  { billId: String(refInv) },
-                  { billId: `HWM-${refInv}` },
-                  { billId: { contains: String(refInv) } },
-                ]
-              }
-            });
+            const dbSale = findSale(refInv);
             if (dbSale) {
               origBillAmt = Number(dbSale.netAmount || 0);
             }
@@ -584,7 +625,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
             log.differenceAmount = Math.round((origBillAmt - cnAmt) * 100) / 100;
             log.oldCommission = origBillComm;
             log.newCommission = Number(log.commissionAmount || 0);
-            log.commissionDifference = Math.round(((Number(log.commissionAmount || 0)) - origBillComm) * 100) / 100;
+            log.commissionDifference = Math.round((origBillComm - (Number(log.commissionAmount || 0))) * 100) / 100;
           } else {
             log.oldAmount = null;
             log.oldBillAmount = null;
@@ -594,10 +635,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           }
 
           if (log.billId) {
-            const cnRecord = await prisma.creditNote.findUnique({
-              where: { creditNoteNo: String(log.billId) },
-              include: { lineItems: true }
-            }).catch(() => null);
+            const cnRecord = findCreditNote(log.billId);
             if (cnRecord) {
               if (!log.amount || log.amount === 0) {
                 log.amount = Number(cnRecord.creditAmount) || 0;
@@ -608,14 +646,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
                 log.invoiceNo = cnRecord.invoiceNo;
               }
               if ((!log.employeeName || log.employeeName === 'N/A') && cnRecord.invoiceNo) {
-                const saleRecord = await prisma.sales.findFirst({
-                  where: {
-                    OR: [
-                      { billId: cnRecord.invoiceNo },
-                      { billId: { contains: cnRecord.invoiceNo } }
-                    ]
-                  }
-                });
+                const saleRecord = findSale(cnRecord.invoiceNo);
                 if (saleRecord?.employeeId) {
                   const emp = allEmployees.find(e => e.id === saleRecord.employeeId);
                   if (emp) log.employeeName = `${emp.firstName} ${emp.lastName}`.trim();
@@ -655,29 +686,14 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           let newExAmt = lineNewSum > 0 ? lineNewSum : Number(ex.newAmount || ex.newSaleAmount || ex.newInvoiceAmount || ex.newBillAmount || log.amount || meta.amount || 0);
 
           if (origExAmt === 0 && originalInvoiceNo) {
-            const dbSale = await prisma.sales.findFirst({
-              where: {
-                OR: [
-                  { billId: String(originalInvoiceNo) },
-                  { billId: `HWM-${originalInvoiceNo}` },
-                  { billId: { contains: String(originalInvoiceNo) } },
-                ]
-              }
-            });
+            const dbSale = findSale(originalInvoiceNo);
             if (dbSale) {
               origExAmt = Number(dbSale.netAmount || 0);
             }
           }
 
           if (origExAmt === 0 && log.billId) {
-            const dbEx = await prisma.salesExchange.findFirst({
-              where: {
-                OR: [
-                  { exchangeNo: String(log.billId) },
-                  { exchangeNo: { contains: String(log.billId) } }
-                ]
-              }
-            });
+            const dbEx = findExchange(log.billId);
             if (dbEx) {
               if (Number(dbEx.originalAmount) > 0) origExAmt = Number(dbEx.originalAmount);
               if (Number(dbEx.newAmount) > 0 && newExAmt === 0) newExAmt = Number(dbEx.newAmount);
@@ -767,9 +783,9 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 router.get('/stats', async (req: Request, res: Response): Promise<void> => {
   try {
     const [webhookLogs, hopkidRawLogs, commTransactions] = await Promise.all([
-      prisma.webhookLog.findMany().catch(() => []),
-      prisma.hopkidWebhookLog.findMany().catch(() => []),
-      prisma.commissionTransaction.findMany().catch(() => []),
+      prisma.webhookLog.findMany({ select: { id: true, billId: true, status: true, amount: true, payload: true } }).catch(() => []),
+      prisma.hopkidWebhookLog.findMany({ select: { id: true, billId: true, amount: true, rawPayload: true } }).catch(() => []),
+      prisma.commissionTransaction.findMany({ select: { id: true, billId: true, invoiceNumber: true, status: true, saleAmount: true } }).catch(() => []),
     ]);
 
     const mappedWebhookLogs = webhookLogs.map((log) => {
