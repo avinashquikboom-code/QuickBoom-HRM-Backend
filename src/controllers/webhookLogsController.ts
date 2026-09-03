@@ -968,7 +968,7 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
         differenceAmount = Math.round((oldBillAmount - newBillAmount) * 100) / 100;
         oldCommission = Math.round((oldBillAmount * 0.01) * 100) / 100;
         newCommission = Number(meta.commissionAmount || log.commissionAmount || (newBillAmount * 0.01));
-        commissionDifference = Math.round(((newCommission || 0) - (oldCommission || 0)) * 100) / 100;
+        commissionDifference = Math.round(((oldCommission || 0) - (newCommission || 0)) * 100) / 100;
       } else {
         newAmount = cnAmt > 0 ? cnAmt : Number(log.amount ?? meta.amount ?? 0);
         newBillAmount = newAmount;
