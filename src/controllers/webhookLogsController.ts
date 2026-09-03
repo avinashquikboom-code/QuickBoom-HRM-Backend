@@ -3,7 +3,7 @@ import { prisma } from '../utils/db';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 import { Role } from '@prisma/client';
-import { extractWebhookMeta, getNumericInvoiceNumber, normalizeEventType } from '../utils/commissionHelper';
+import { extractWebhookMeta, getNumericInvoiceNumber, normalizeEventType, parseIsOld } from '../utils/commissionHelper';
 
 const router = Router();
 
@@ -283,17 +283,23 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
     const mappedWebhookLogs = webhookLogs.map((log) => {
       const parsedPayload = parseRawPayload(log.payload);
       const meta = extractWebhookMeta(parsedPayload);
-      const amountVal = log.amount !== null && log.amount !== undefined && log.amount !== 0 ? log.amount : meta.amount;
+      const amountVal = log.amount !== null && log.amount !== undefined && log.amount !== 0 ? Number(log.amount) : Number(meta.amount || 0);
       const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
       const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber)) ? meta.invoiceNumber : `HWM-${numInv}`;
       const empInfo = findEmpInfo(log.employeeId, meta, parsedPayload);
       const resolvedEmpName = resolveEmpName(log.employeeId, meta, null, parsedPayload);
       const resolvedStoreName = resolveStoreName(meta, null, log.employeeId, parsedPayload, empInfo);
       const resolvedEventId = log.eventId || meta.eventId || log.id;
+      const normalizedEvType = normalizeEventType(log.eventType || meta.eventType, 'INVOICE_CREATED', parsedPayload);
 
       return {
         ...log,
         amount: amountVal || 0,
+        oldAmount: null,
+        oldBillAmount: null,
+        newAmount: null,
+        newBillAmount: null,
+        differenceAmount: null,
         cnAmount: meta.cnAmount || 0,
         refundAmount: meta.refundAmount || 0,
         cnNo: meta.cnNo || null,
@@ -304,7 +310,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         employeeName: resolvedEmpName,
         storeName: resolvedStoreName,
         commissionAmount: meta.commissionAmount || 0,
-        eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
+        eventType: normalizedEvType,
         eventId: resolvedEventId,
         externalEventId: resolvedEventId,
       };
@@ -324,7 +330,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         for (const log of hopkidRawLogs) {
           const parsedPayload = parseRawPayload(log.rawPayload);
           const meta = extractWebhookMeta(parsedPayload);
-          const amountVal = log.amount !== null && log.amount !== undefined ? log.amount : meta.amount;
+          const amountVal = log.amount !== null && log.amount !== undefined ? Number(log.amount) : Number(meta.amount || 0);
           const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: log.billId || meta.billId, id: log.id });
           const cleanInvoiceNo = (meta.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(meta.invoiceNumber)) ? meta.invoiceNumber : `HWM-${numInv}`;
           const resolvedEventId = meta.eventId || log.id;
@@ -332,6 +338,7 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           const empInfo = findEmpInfo(null, meta, parsedPayload);
           const resolvedEmpName = resolveEmpName(null, meta, log.name, parsedPayload);
           const resolvedStoreName = resolveStoreName(meta, log.storeId, null, parsedPayload, empInfo);
+          const normalizedEvType = normalizeEventType(meta.eventType, 'INVOICE_CREATED', parsedPayload);
 
           const billEmpKey = `${numInv}_${resolvedEmpName}`;
           if (numInv && existingBillEmpKeys.has(billEmpKey)) continue;
@@ -339,11 +346,16 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
           hopkidLogsMapped.push({
             id: `hopkid-${log.id}`,
-            eventType: normalizeEventType(meta.eventType, 'INVOICE_CREATED', parsedPayload),
+            eventType: normalizedEvType,
             status: 'SUCCESS',
             payload: log.rawPayload,
             employeeId: null,
             amount: amountVal || 0,
+            oldAmount: null,
+            oldBillAmount: null,
+            newAmount: null,
+            newBillAmount: null,
+            differenceAmount: null,
             cnAmount: meta.cnAmount || 0,
             refundAmount: meta.refundAmount || 0,
             cnNo: meta.cnNo || null,
@@ -405,13 +417,20 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           createdAt: t.createdAt,
         };
 
+        const saleAmtVal = Number(t.saleAmount || 0);
+
         commLogsMapped.push({
           id: `comm-tx-${t.id}`,
           eventType: normalizeEventType(t.eventType, 'INVOICE_CREATED', syntheticPayload),
           status: t.status === 'REJECTED' ? 'FAILED' : 'SUCCESS',
           payload: JSON.stringify(syntheticPayload),
           employeeId: t.employeeId,
-          amount: t.saleAmount || 0,
+          amount: saleAmtVal,
+          oldAmount: (t as any).oldAmount !== null && (t as any).oldAmount !== undefined ? Number((t as any).oldAmount) : null,
+          oldBillAmount: (t as any).oldAmount !== null && (t as any).oldAmount !== undefined ? Number((t as any).oldAmount) : null,
+          newAmount: (t as any).newAmount !== null && (t as any).newAmount !== undefined && Number((t as any).newAmount) > 0 ? Number((t as any).newAmount) : null,
+          newBillAmount: (t as any).newAmount !== null && (t as any).newAmount !== undefined && Number((t as any).newAmount) > 0 ? Number((t as any).newAmount) : null,
+          differenceAmount: (t as any).differenceAmount !== null && (t as any).differenceAmount !== undefined ? Number((t as any).differenceAmount) : null,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -468,13 +487,15 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
     const invoiceLogMap = new Map<string, any>();
     for (const l of combined) {
+      const evStr = String(l.eventType || '').toUpperCase();
       const isCn =
-        String(l.eventType || '').toUpperCase().includes('CREDIT_NOTE') ||
+        evStr.includes('CREDIT_NOTE') ||
         String(l.billId || '').startsWith('CN-') ||
         String(l.billId || '').startsWith('HKACN') ||
         (l.cnAmount !== undefined && l.cnAmount !== null && Number(l.cnAmount) > 0);
+      const isEx = evStr.includes('EXCHANGE') || String(l.billId || '').startsWith('EX-');
 
-      if (!isCn && Number(l.amount || 0) > 0) {
+      if (!isCn && !isEx && Number(l.amount || 0) > 0) {
         if (l.invoiceNo) invoiceLogMap.set(normKey(l.invoiceNo), l);
         if (l.invoiceNumber) invoiceLogMap.set(normKey(l.invoiceNumber), l);
         if (l.billId) {
@@ -492,19 +513,27 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    // Enrich Credit Note logs from DB and calculate difference against original invoice
+    // Enrich logs (Credit Note, Exchange, Normal Invoices) to ensure accurate amount, oldBillAmount, differenceAmount, newBillAmount
     for (let i = 0; i < combined.length; i++) {
       const log = combined[i];
+      const parsedPayload = parseRawPayload(log.payload);
+      const meta = extractWebhookMeta(parsedPayload);
+      const evStr = String(log.eventType || meta.eventType || '').toUpperCase();
+
       const isCreditNote =
-        String(log.eventType || '').toUpperCase().includes('CREDIT_NOTE') ||
+        evStr.includes('CREDIT_NOTE') ||
         String(log.billId || '').startsWith('CN-') ||
         String(log.billId || '').startsWith('HKACN') ||
-        (log.cnAmount !== undefined && log.cnAmount !== null && Number(log.cnAmount) > 0);
+        (meta.cnAmount !== undefined && meta.cnAmount !== null && Number(meta.cnAmount) > 0) ||
+        Boolean(parsedPayload?.data?.creditNote || parsedPayload?.creditNote);
+
+      const isExchange =
+        evStr.includes('EXCHANGE') ||
+        String(log.billId || '').startsWith('EX-') ||
+        Boolean(parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || parsedPayload?.SalesExchangeProductList || parsedPayload?.data?.SalesExchangeProductList);
 
       if (isCreditNote) {
         try {
-          const parsedPayload = parseRawPayload(log.payload);
-          const meta = extractWebhookMeta(parsedPayload);
           const cn = meta.creditNote || parsedPayload?.data?.creditNote || parsedPayload?.creditNote || {};
           const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || meta.invoiceNumber || log.invoiceNo;
 
@@ -527,7 +556,6 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
 
           // If not in memory log map, search in database
           if (origBillAmt === 0 && refInv) {
-            // Try by reference invoice
             const dbSale = await prisma.sales.findFirst({
               where: {
                 OR: [
@@ -545,31 +573,36 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
           const rawCnAmt = meta.cnAmount || (cn.cnAmount !== undefined ? Number(cn.cnAmount) : (log.cnAmount || log.amount || 0));
           const cnAmt = Number(rawCnAmt || 0);
 
-          // Keep raw event amount
           log.cnAmount = cnAmt;
           log.amount = cnAmt > 0 ? cnAmt : log.amount;
 
           if (origBillAmt > 0 && cnAmt > 0) {
             log.oldAmount = origBillAmt;
+            log.oldBillAmount = origBillAmt;
             log.newAmount = cnAmt;
+            log.newBillAmount = cnAmt;
             log.differenceAmount = Math.round((origBillAmt - cnAmt) * 100) / 100;
             log.oldCommission = origBillComm;
             log.newCommission = Number(log.commissionAmount || 0);
             log.commissionDifference = Math.round(((Number(log.commissionAmount || 0)) - origBillComm) * 100) / 100;
           } else {
             log.oldAmount = null;
-            log.newAmount = cnAmt > 0 ? cnAmt : null;
+            log.oldBillAmount = null;
+            log.newAmount = cnAmt > 0 ? cnAmt : Number(log.amount || 0);
+            log.newBillAmount = cnAmt > 0 ? cnAmt : Number(log.amount || 0);
             log.differenceAmount = null;
           }
 
           if (log.billId) {
             const cnRecord = await prisma.creditNote.findUnique({
-              where: { creditNoteNo: log.billId },
+              where: { creditNoteNo: String(log.billId) },
               include: { lineItems: true }
-            });
+            }).catch(() => null);
             if (cnRecord) {
               if (!log.amount || log.amount === 0) {
                 log.amount = Number(cnRecord.creditAmount) || 0;
+                log.newAmount = Number(cnRecord.creditAmount) || 0;
+                log.newBillAmount = Number(cnRecord.creditAmount) || 0;
               }
               if (!log.invoiceNo && cnRecord.invoiceNo) {
                 log.invoiceNo = cnRecord.invoiceNo;
@@ -593,6 +626,96 @@ router.get('/logs', async (req: Request, res: Response): Promise<void> => {
         } catch (e) {
           // ignore enrichment error
         }
+      } else if (isExchange) {
+        try {
+          const ex = parsedPayload?.data?.salesExchange || parsedPayload?.salesExchange || parsedPayload || {};
+          const exLineItems = parsedPayload?.data?.lineItems ||
+            ex.lineItems ||
+            parsedPayload?.lineItems ||
+            parsedPayload?.data?.SalesExchangeProductList ||
+            ex.SalesExchangeProductList ||
+            parsedPayload?.SalesExchangeProductList ||
+            [];
+
+          let lineOldSum = 0;
+          let lineNewSum = 0;
+          if (Array.isArray(exLineItems) && exLineItems.length > 0) {
+            for (const item of exLineItems) {
+              const isOld = parseIsOld(item);
+              const itemAmt = Number(item.productNetAmount || item.netAmount || item.amount || item.Total || item.price || 0);
+              if (!isNaN(itemAmt) && itemAmt > 0) {
+                if (isOld) lineOldSum += itemAmt;
+                else lineNewSum += itemAmt;
+              }
+            }
+          }
+
+          const originalInvoiceNo = ex.originalInvoiceNo || ex.originalInvoiceNumber || ex.originalBillId || ex.refInvoiceNo || meta.invoiceNumber;
+          let origExAmt = lineOldSum > 0 ? lineOldSum : Number(ex.originalAmount || ex.oldAmount || ex.returnAmount || ex.oldBillAmount || 0);
+          let newExAmt = lineNewSum > 0 ? lineNewSum : Number(ex.newAmount || ex.newSaleAmount || ex.newInvoiceAmount || ex.newBillAmount || log.amount || meta.amount || 0);
+
+          if (origExAmt === 0 && originalInvoiceNo) {
+            const dbSale = await prisma.sales.findFirst({
+              where: {
+                OR: [
+                  { billId: String(originalInvoiceNo) },
+                  { billId: `HWM-${originalInvoiceNo}` },
+                  { billId: { contains: String(originalInvoiceNo) } },
+                ]
+              }
+            });
+            if (dbSale) {
+              origExAmt = Number(dbSale.netAmount || 0);
+            }
+          }
+
+          if (origExAmt === 0 && log.billId) {
+            const dbEx = await prisma.salesExchange.findFirst({
+              where: {
+                OR: [
+                  { exchangeNo: String(log.billId) },
+                  { exchangeNo: { contains: String(log.billId) } }
+                ]
+              }
+            });
+            if (dbEx) {
+              if (Number(dbEx.originalAmount) > 0) origExAmt = Number(dbEx.originalAmount);
+              if (Number(dbEx.newAmount) > 0 && newExAmt === 0) newExAmt = Number(dbEx.newAmount);
+            }
+          }
+
+          if (newExAmt <= 0) newExAmt = Number(log.amount || meta.amount || 0);
+
+          log.amount = newExAmt;
+          log.newAmount = newExAmt;
+          log.newBillAmount = newExAmt;
+
+          if (origExAmt > 0 && newExAmt > 0) {
+            log.oldAmount = origExAmt;
+            log.oldBillAmount = origExAmt;
+            // Rule: DIFFERENCE AMOUNT = OLD BILL AMOUNT - NEW BILL AMOUNT (848 - 1398 = -550)
+            log.differenceAmount = Math.round((origExAmt - newExAmt) * 100) / 100;
+          } else {
+            log.oldAmount = null;
+            log.oldBillAmount = null;
+            log.differenceAmount = null;
+          }
+        } catch (e) {
+          // ignore exchange error
+        }
+      } else {
+        // Normal Invoice Created / Other Standard Events:
+        // AMOUNT = actual invoice amount
+        // OLD BILL AMOUNT = null
+        // DIFFERENCE AMOUNT = null
+        // NEW BILL AMOUNT = null
+        const actAmt = Number(log.amount !== undefined && log.amount !== null ? log.amount : (meta.amount || 0));
+        log.amount = actAmt;
+        log.oldAmount = null;
+        log.oldBillAmount = null;
+        log.differenceAmount = null;
+        log.newAmount = null;
+        log.newBillAmount = null;
       }
     }
 
@@ -797,16 +920,27 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
 
     const parsed = parseRawPayload(log.payload);
     const meta = extractWebhookMeta(parsed);
+    const evStr = String(log.eventType || meta.eventType || '').toUpperCase();
+
     const isCreditNote =
-      String(log.eventType || meta.eventType || '').toUpperCase().includes('CREDIT_NOTE') ||
+      evStr.includes('CREDIT_NOTE') ||
       String(log.billId || meta.billId || '').startsWith('CN-') ||
       String(log.billId || meta.billId || '').startsWith('HKACN') ||
-      (meta.cnAmount !== undefined && meta.cnAmount !== null && Number(meta.cnAmount) > 0);
+      (meta.cnAmount !== undefined && meta.cnAmount !== null && Number(meta.cnAmount) > 0) ||
+      Boolean(parsed?.data?.creditNote || parsed?.creditNote);
+
+    const isExchange =
+      evStr.includes('EXCHANGE') ||
+      String(log.billId || meta.billId || '').startsWith('EX-') ||
+      Boolean(parsed?.data?.salesExchange || parsed?.salesExchange || parsed?.SalesExchangeProductList || parsed?.data?.SalesExchangeProductList);
 
     const rawCnAmt = meta.cnAmount || (meta.creditNote?.cnAmount !== undefined ? Number(meta.creditNote.cnAmount) : (log.cnAmount || log.amount || 0));
     const cnAmt = Number(rawCnAmt || 0);
 
     let oldAmount: number | null = null;
+    let oldBillAmount: number | null = null;
+    let newAmount: number = Number(log.amount ?? meta.amount ?? 0);
+    let newBillAmount: number = Number(log.amount ?? meta.amount ?? 0);
     let differenceAmount: number | null = null;
     let oldCommission: number | null = null;
     let newCommission: number | null = null;
@@ -815,7 +949,6 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
     if (isCreditNote) {
       const cn = meta.creditNote || parsed?.data?.creditNote || parsed?.creditNote || {};
       const refInv = cn.invoiceNo || cn.invoiceNumber || cn.salesID || cn.salesExchangeID || meta.invoiceNumber || log.invoiceNo;
-      const cust = meta.customerName || log.customerName;
 
       let origSale = refInv ? await prisma.sales.findFirst({
         where: {
@@ -829,26 +962,92 @@ router.get('/logs/:id', async (req: Request, res: Response): Promise<void> => {
 
       if (origSale && Number(origSale.netAmount || 0) > 0) {
         oldAmount = Number(origSale.netAmount);
-        differenceAmount = Math.round((oldAmount - cnAmt) * 100) / 100;
-        oldCommission = Math.round((oldAmount * 0.01) * 100) / 100;
-        newCommission = Number(meta.commissionAmount || log.commissionAmount || (cnAmt * 0.01));
+        oldBillAmount = Number(origSale.netAmount);
+        newAmount = cnAmt > 0 ? cnAmt : Number(log.amount ?? meta.amount ?? 0);
+        newBillAmount = newAmount;
+        differenceAmount = Math.round((oldBillAmount - newBillAmount) * 100) / 100;
+        oldCommission = Math.round((oldBillAmount * 0.01) * 100) / 100;
+        newCommission = Number(meta.commissionAmount || log.commissionAmount || (newBillAmount * 0.01));
         commissionDifference = Math.round(((newCommission || 0) - (oldCommission || 0)) * 100) / 100;
+      } else {
+        newAmount = cnAmt > 0 ? cnAmt : Number(log.amount ?? meta.amount ?? 0);
+        newBillAmount = newAmount;
       }
+    } else if (isExchange) {
+      const ex = parsed?.data?.salesExchange || parsed?.salesExchange || parsed || {};
+      const exLineItems = parsed?.data?.lineItems ||
+        ex.lineItems ||
+        parsed?.lineItems ||
+        parsed?.data?.SalesExchangeProductList ||
+        ex.SalesExchangeProductList ||
+        parsed?.SalesExchangeProductList ||
+        [];
+
+      let lineOldSum = 0;
+      let lineNewSum = 0;
+      if (Array.isArray(exLineItems) && exLineItems.length > 0) {
+        for (const item of exLineItems) {
+          const isOld = parseIsOld(item);
+          const itemAmt = Number(item.productNetAmount || item.netAmount || item.amount || item.Total || item.price || 0);
+          if (!isNaN(itemAmt) && itemAmt > 0) {
+            if (isOld) lineOldSum += itemAmt;
+            else lineNewSum += itemAmt;
+          }
+        }
+      }
+
+      const originalInvoiceNo = ex.originalInvoiceNo || ex.originalInvoiceNumber || ex.originalBillId || ex.refInvoiceNo || meta.invoiceNumber;
+      let origExAmt = lineOldSum > 0 ? lineOldSum : Number(ex.originalAmount || ex.oldAmount || ex.returnAmount || ex.oldBillAmount || 0);
+      let newExAmt = lineNewSum > 0 ? lineNewSum : Number(ex.newAmount || ex.newSaleAmount || ex.newInvoiceAmount || ex.newBillAmount || log.amount || meta.amount || 0);
+
+      if (origExAmt === 0 && originalInvoiceNo) {
+        const dbSale = await prisma.sales.findFirst({
+          where: {
+            OR: [
+              { billId: String(originalInvoiceNo) },
+              { billId: `HWM-${originalInvoiceNo}` },
+              { billId: { contains: String(originalInvoiceNo) } },
+            ]
+          }
+        });
+        if (dbSale) {
+          origExAmt = Number(dbSale.netAmount || 0);
+        }
+      }
+
+      if (newExAmt <= 0) newExAmt = Number(log.amount || meta.amount || 0);
+      newAmount = newExAmt;
+      newBillAmount = newExAmt;
+
+      if (origExAmt > 0 && newExAmt > 0) {
+        oldAmount = origExAmt;
+        oldBillAmount = origExAmt;
+        differenceAmount = Math.round((origExAmt - newExAmt) * 100) / 100;
+      }
+    } else {
+      const actAmt = Number(log.amount !== undefined && log.amount !== null ? log.amount : (meta.amount || 0));
+      oldAmount = null;
+      oldBillAmount = null;
+      differenceAmount = null;
+      newAmount = null;
+      newBillAmount = null;
     }
 
     log = {
       ...log,
-      amount: isCreditNote && cnAmt > 0 ? cnAmt : (log.amount ?? meta.amount),
+      amount: isCreditNote && cnAmt > 0 ? cnAmt : (isExchange && newBillAmount > 0 ? newBillAmount : (log.amount ?? meta.amount)),
       cnAmount: isCreditNote ? cnAmt : meta.cnAmount,
       refundAmount: meta.refundAmount || 0,
       oldAmount,
-      newAmount: isCreditNote ? cnAmt : null,
+      oldBillAmount,
+      newAmount,
+      newBillAmount,
       differenceAmount,
       oldCommission,
       newCommission,
       commissionDifference,
       billId: log.billId || meta.billId,
-      eventType: log.eventType || meta.eventType,
+      eventType: normalizeEventType(log.eventType || meta.eventType, 'INVOICE_CREATED', parsed),
     };
 
     res.json({ success: true, data: log });

@@ -454,6 +454,7 @@ export const getMobileWebhookLogs = async (
           ? meta.invoiceNumber
           : (matchedCnLine ? matchedCnLine.creditNote.invoiceNo : `HWM-${numInv}`);
 
+        const amtVal = isCreditNote && matchedCnLine ? Number(matchedCnLine.creditAmount) : Number(log.amount ?? meta.amount ?? 0);
         results.push({
           id: log.id,
           eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
@@ -461,7 +462,12 @@ export const getMobileWebhookLogs = async (
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
-          amount: isCreditNote && matchedCnLine ? Number(matchedCnLine.creditAmount) : (log.amount ?? meta.amount ?? 0),
+          amount: amtVal,
+          oldAmount: null,
+          oldBillAmount: null,
+          newAmount: amtVal,
+          newBillAmount: amtVal,
+          differenceAmount: null,
           commissionAmount: isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : (meta.commissionAmount ?? 0),
           customerName: meta.customerName && meta.customerName !== 'N/A' ? meta.customerName : '-',
           errorMessage: log.errorMessage || null,
@@ -476,6 +482,7 @@ export const getMobileWebhookLogs = async (
       const cnNo = line.creditNote.creditNoteNo;
       const numCnInv = getNumericInvoiceNumber({ invoiceNumber: line.creditNote.invoiceNo, billId: cnNo, id: line.id });
       if (!results.some((r) => r.billId === numCnInv || r.invoiceNo === line.creditNote.invoiceNo)) {
+        const cnLineAmt = Number(line.creditAmount);
         results.push({
           id: `cn-${line.id}`,
           eventType: 'CREDIT_NOTE_CREATED',
@@ -483,7 +490,12 @@ export const getMobileWebhookLogs = async (
           billId: numCnInv,
           invoiceNo: line.creditNote.invoiceNo || `HWM-${numCnInv}`,
           invoiceNumber: line.creditNote.invoiceNo || `HWM-${numCnInv}`,
-          amount: Number(line.creditAmount),
+          amount: cnLineAmt,
+          oldAmount: null,
+          oldBillAmount: null,
+          newAmount: cnLineAmt,
+          newBillAmount: cnLineAmt,
+          differenceAmount: null,
           commissionAmount: -Number(line.commissionAdjustment),
           customerName: 'Customer',
           errorMessage: null,
@@ -519,6 +531,8 @@ export const getMobileWebhookLogs = async (
         // Skip if already covered by WebhookLog (same billId)
         if (numInv && results.some((r) => r.billId === numInv)) continue;
 
+        const hAmtVal = Number(log.amount ?? meta.amount ?? 0);
+
         results.push({
           id: `hopkid-${log.id}`,
           eventType: meta.eventType || 'INVOICE_CREATED',
@@ -526,7 +540,12 @@ export const getMobileWebhookLogs = async (
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
-          amount: log.amount ?? meta.amount ?? 0,
+          amount: hAmtVal,
+          oldAmount: null,
+          oldBillAmount: null,
+          newAmount: hAmtVal,
+          newBillAmount: hAmtVal,
+          differenceAmount: null,
           commissionAmount: meta.commissionAmount ?? 0,
           customerName: meta.customerName || 'N/A',
           errorMessage: null,

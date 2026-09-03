@@ -516,10 +516,10 @@ export const getCommissionTransactions = async (
       const notesNew = newNotesMatch ? Number(newNotesMatch[1]) : null;
 
       let oldBillAmount: number | null = null;
-      let newBillAmount: number = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
+      let newBillAmount: number | null = null;
       let differenceAmount: number | null = null;
       let oldBillCommission: number | null = null;
-      let newBillCommission: number = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
+      let newBillCommission: number | null = null;
       let commissionDifference: number | null = null;
 
       if (isExchange) {
@@ -560,6 +560,9 @@ export const getCommissionTransactions = async (
           oldBillCommission = Math.round(((oldBillAmount * rate) / 100) * 100) / 100;
           newBillCommission = Math.round(((newBillAmount * rate) / 100) * 100) / 100;
           commissionDifference = Math.round((oldBillCommission - newBillCommission) * 100) / 100;
+        } else if (cnAmt > 0) {
+          newBillAmount = cnAmt;
+          newBillCommission = Math.round(((cnAmt * rate) / 100) * 100) / 100;
         }
       } else if (ev === 'INVOICE_UPDATED' || (notesOld !== null && notesOld > 0) || (t.oldAmount && Number(t.oldAmount) > 0)) {
         const origAmt = t.oldAmount && Number(t.oldAmount) > 0 ? Number(t.oldAmount) : notesOld;
