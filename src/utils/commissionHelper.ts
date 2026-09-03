@@ -283,9 +283,11 @@ export function resolveBillAndCommissionReconciliation(params: {
       oldBillAmount = Number(params.oldAmount);
     } else if (oldBillAmount === null && params.amount !== undefined && params.amount !== null && Number(params.amount) > 0) {
       oldBillAmount = Number(params.amount);
+    } else if (oldBillAmount === null && rawAmount > 0) {
+      oldBillAmount = rawAmount;
     }
   } else {
-    // Non-exchange adjustments (e.g. Credit Note)
+    // Non-exchange adjustments (e.g. Credit Note) or Standard Sales
     if (params.oldBillAmount !== undefined && params.oldBillAmount !== null && Number(params.oldBillAmount) > 0) {
       oldBillAmount = Number(params.oldBillAmount);
     } else if (params.oldAmount !== undefined && params.oldAmount !== null && Number(params.oldAmount) > 0) {
@@ -325,6 +327,13 @@ export function resolveBillAndCommissionReconciliation(params: {
           oldBillCommission = Number(origSale.commissionAmount || origSale.commission || 0) || null;
         }
       }
+    }
+
+    // If still null, use SALE AMOUNT
+    if (oldBillAmount === null && params.amount !== undefined && params.amount !== null && Number(params.amount) > 0) {
+      oldBillAmount = Number(params.amount);
+    } else if (oldBillAmount === null && rawAmount > 0) {
+      oldBillAmount = rawAmount;
     }
   }
 

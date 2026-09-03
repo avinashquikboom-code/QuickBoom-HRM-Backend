@@ -46,22 +46,26 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
 
     const isAdjustment = isCreditNote || isExchange;
 
-    const rawOldVal = t.oldBillAmount ?? t.oldAmount;
-    const hasOldAmount = isAdjustment && rawOldVal !== null && rawOldVal !== undefined && Number(rawOldVal) > 0;
-    const oldAmtVal: number | null = hasOldAmount ? Number(rawOldVal) : null;
-    const rawNewVal = t.newBillAmount ?? t.newAmount;
-    const newAmtVal: number = Number(rawNewVal !== undefined && rawNewVal !== null && Number(rawNewVal) > 0 ? rawNewVal : (t.saleAmount || 0));
+    const sAmt = Number(t.saleAmount || 0);
+    const rawOldVal = t.oldBillAmount ?? t.oldAmount ?? (sAmt > 0 ? sAmt : null);
+    const hasOldAmount = rawOldVal !== null && rawOldVal !== undefined && Number(rawOldVal) > 0;
+    const oldAmtVal: number | null = hasOldAmount ? Number(rawOldVal) : (sAmt > 0 ? sAmt : null);
 
-    const diffAmtVal: number | null = oldAmtVal !== null ? Math.round((oldAmtVal - newAmtVal) * 100) / 100 : null;
+    const rawNewVal = t.newBillAmount ?? t.newAmount;
+    const hasNewVal = rawNewVal !== undefined && rawNewVal !== null && Number(rawNewVal) > 0;
+    const newAmtVal: number | null = hasNewVal ? Number(rawNewVal) : (isAdjustment && sAmt > 0 && oldAmtVal !== sAmt ? sAmt : null);
+
+    const diffAmtVal: number | null = (oldAmtVal !== null && newAmtVal !== null) ? Math.round((oldAmtVal - newAmtVal) * 100) / 100 : null;
 
     const rawOldComm = t.oldBillCommission ?? t.oldCommission;
     const oldCommVal: number | null = oldAmtVal !== null
       ? (rawOldComm !== null && rawOldComm !== undefined && Number(rawOldComm) > 0 ? Number(rawOldComm) : Math.round(((oldAmtVal * rate) / 100) * 100) / 100)
       : null;
 
-    const newCommVal: number = comm;
+    const rawNewComm = t.newBillCommission ?? t.newCommission;
+    const newCommVal: number = rawNewComm !== null && rawNewComm !== undefined && Number(rawNewComm) >= 0 ? Number(rawNewComm) : comm;
 
-    const commDiffVal: number | null = oldCommVal !== null
+    const commDiffVal: number | null = (oldCommVal !== null && newAmtVal !== null)
       ? Math.round((oldCommVal - newCommVal) * 100) / 100
       : null;
 
@@ -71,7 +75,7 @@ export function deduplicateCommissionTransactions<T extends RawCommissionTxn>(tr
       billNumber: numInv,
       invoiceNumber: invStr,
       invoiceNo: invStr,
-      saleAmount: Number(t.saleAmount || 0),
+      saleAmount: sAmt,
       commissionAmount: comm,
       commissionPercent: rate,
       totalCommission: comm,
