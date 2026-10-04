@@ -1084,6 +1084,7 @@ export const getMobileCommissionBillDetail = async (
           paymentMode: meta.paymentMode || '-',
           storeName: meta.storeName || employee.store?.name || 'HopKid Store',
           products,
+          productCommissionBreakdown: [],
           grossSale,
           discount,
           tax,
@@ -1151,6 +1152,7 @@ export const getMobileCommissionBillDetail = async (
               paymentMode: meta.paymentMode || '-',
               storeName: meta.storeName || employee.store?.name || 'HopKid Store',
               products,
+              productCommissionBreakdown: [],
               grossSale,
               discount: 0,
               tax: 0,
@@ -1204,6 +1206,7 @@ export const getMobileCommissionBillDetail = async (
               price: 0,
             },
           ],
+          productCommissionBreakdown: [],
           grossSale: 0,
           discount: 0,
           tax: 0,
@@ -1348,6 +1351,9 @@ export const getMobileCommissionBillDetail = async (
         paymentMode,
         storeName,
         products,
+        productCommissionBreakdown: sale.employeeId === employee.id && Array.isArray(sale.productBreakdown)
+          ? sale.productBreakdown
+          : [],
         grossSale,
         discount,
         tax,

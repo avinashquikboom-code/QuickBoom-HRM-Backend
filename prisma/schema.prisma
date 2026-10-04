@@ -786,6 +786,7 @@ model CommissionTransaction {
   oldCommission     Float?   @default(0)
   newCommission     Float?   @default(0)
   commissionDifference Float? @default(0)
+  productBreakdown   Json?
   eventType         String?  @default("INVOICE_CREATED")
   status            String   @default("PENDING") // PENDING, APPROVED, REJECTED, PAID
   approvedBy        Int?

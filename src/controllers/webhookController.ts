@@ -232,6 +232,11 @@ export async function groupAndCalculateCommissionBySalesman(
         existing.products.push({
           productID: productId,
           productName: productName,
+          sku: lineItem.sku || lineItem.SKU || lineItem.productSKU || lineItem.productCode || null,
+          quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1) || 1,
+          saleAmount: effectiveProdAmount,
+          commissionRate,
+          commissionAmount: effectiveProdComm,
           productNetAmount: effectiveProdAmount,
           productCommission: effectiveProdComm,
           policyId: policy ? policy.id : null,
@@ -247,6 +252,11 @@ export async function groupAndCalculateCommissionBySalesman(
             {
               productID: productId,
               productName: productName,
+              sku: lineItem.sku || lineItem.SKU || lineItem.productSKU || lineItem.productCode || null,
+              quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1) || 1,
+              saleAmount: effectiveProdAmount,
+              commissionRate,
+              commissionAmount: effectiveProdComm,
               productNetAmount: effectiveProdAmount,
               productCommission: effectiveProdComm,
               policyId: policy ? policy.id : null,
@@ -577,6 +587,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             eventType: targetEventType,
             status: targetCommStatus,
             notes: updateNoteText,
+            productBreakdown: isCancelledOrReturned ? [] : commissionData.products,
             updatedAt: new Date(),
           },
         });
@@ -657,6 +668,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               eventType: targetEventType || 'INVOICE_CREATED',
               status: targetCommStatus,
               notes: noteText,
+              productBreakdown: isCancelledOrReturned ? [] : commissionData.products,
               updatedAt: new Date(),
             },
           });
@@ -681,6 +693,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               invoiceNumber: invNum,
               status: targetCommStatus,
               notes: noteText,
+              productBreakdown: isCancelledOrReturned ? [] : commissionData.products,
               createdAt: validDate,
             },
           });
@@ -769,6 +782,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             eventType: 'INVOICE_UPDATED',
             status: 'REJECTED',
             notes: `HopKid Invoice ${billDisplayTag} (Removed on Update)`,
+            productBreakdown: [],
             updatedAt: new Date(),
           },
         });
