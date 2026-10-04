@@ -63,8 +63,43 @@ export const getMyPayslips = async (
     let payslips = rawPayslips.map((ps) => {
       const calendarDays = new Date(ps.year, ps.month, 0).getDate();
       const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
+
+      const dSalary = ps.dailySalary || 0;
+      const halfDayDeduction = ps.halfDays ? Math.round((ps.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
+      const leaveDeduction = ps.unpaidLeaveDays ? Math.round((ps.unpaidLeaveDays * dSalary) * 100) / 100 : 0;
+      const advanceDeduction = ps.advanceDeduction || 0;
+      const itemizedDeductions = halfDayDeduction + leaveDeduction + advanceDeduction;
+
+      let cleanDeductions = ps.deductions || 0;
+      let cleanNetSalary = ps.netSalary || 0;
+      const baseMonthly = (ps.baseSalary || 0) + (ps.allowance || 0);
+
+      const isCorrupted = cleanDeductions > 0 && (
+        (cleanDeductions - itemizedDeductions > 5000) ||
+        (baseMonthly > 0 && Math.abs(cleanDeductions - baseMonthly) < 50)
+      );
+
+      if (isCorrupted) {
+        cleanDeductions = itemizedDeductions;
+        const totalGross = baseMonthly + (ps.commissionEarned || 0) + (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0) + (ps.expenseReimbursement || 0);
+        cleanNetSalary = Math.max(0, Math.round((totalGross - cleanDeductions) * 100) / 100);
+
+        prisma.payslip.update({
+          where: { id: ps.id },
+          data: {
+            deductions: cleanDeductions,
+            netSalary: cleanNetSalary,
+            absentDays: 0,
+          }
+        }).catch(err => console.warn(`[getMyPayslips] Failed to heal payslip #${ps.id}:`, err));
+      }
+
       return {
         ...ps,
+        deductions: cleanDeductions,
+        netSalary: cleanNetSalary,
+        presentDays: isCorrupted ? schedWorkingDays : (ps.presentDays || 0),
+        absentDays: isCorrupted ? 0 : (ps.absentDays || 0),
         advanceDeduction: ps.advanceDeduction || 0,
         advanceSalary: ps.advanceDeduction || 0,
         totalAdvanceSalary: ps.advanceDeduction || 0,
@@ -73,8 +108,6 @@ export const getMyPayslips = async (
         approvedExpenseAmount: ps.expenseReimbursement || 0,
         totalExpenses: ps.expenseReimbursement || 0,
         commissionEarned: ps.commissionEarned || 0,
-        presentDays: ps.presentDays || 0,
-        absentDays: ps.absentDays || 0,
         halfDays: ps.halfDays || 0,
         paidLeaveDays: ps.paidLeaveDays || 0,
         unpaidLeaveDays: ps.unpaidLeaveDays || 0,

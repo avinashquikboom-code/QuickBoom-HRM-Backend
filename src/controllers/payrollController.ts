@@ -1019,6 +1019,39 @@ export const getAdminPayrollSlips = async (
       const off = slip.employee?.office?.name || slip.officeName || 'Main Office';
       const schedWorkingDays = slip.workingDays || calculateScheduledWorkingDays(slip.year, slip.month, slip.employee?.office);
 
+      const dSalary = slip.dailySalary || 0;
+      const halfDayDeduction = slip.halfDays ? Math.round((slip.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
+      const leaveDeduction = slip.unpaidLeaveDays ? Math.round((slip.unpaidLeaveDays * dSalary) * 100) / 100 : 0;
+      const advanceDeduction = slip.advanceDeduction || 0;
+      const itemizedDeductions = halfDayDeduction + leaveDeduction + advanceDeduction;
+
+      let cleanDeductions = slip.deductions || 0;
+      let cleanNetSalary = slip.netSalary || 0;
+      const baseMonthly = (slip.baseSalary || 0) + (slip.allowance || 0);
+
+      // CORRUPTION GUARD:
+      // If stored slip.deductions is inflated (e.g. > itemized by > ₹5,000, or ≈ full base salary where employee had no actual unpaid leaves/advances)
+      const isCorrupted = cleanDeductions > 0 && (
+        (cleanDeductions - itemizedDeductions > 5000) ||
+        (baseMonthly > 0 && Math.abs(cleanDeductions - baseMonthly) < 50)
+      );
+
+      if (isCorrupted) {
+        cleanDeductions = itemizedDeductions;
+        const totalGross = baseMonthly + (slip.commissionEarned || 0) + (slip.extraHolidayPayout || 0) + (slip.extraWeeklyOffPayout || 0) + (slip.expenseReimbursement || 0);
+        cleanNetSalary = Math.max(0, Math.round((totalGross - cleanDeductions) * 100) / 100);
+
+        // Auto-heal the database payslip record asynchronously
+        prisma.payslip.update({
+          where: { id: slip.id },
+          data: {
+            deductions: cleanDeductions,
+            netSalary: cleanNetSalary,
+            absentDays: 0,
+          }
+        }).catch(err => console.warn(`[getAdminPayrollSlips] Failed to heal payslip #${slip.id}:`, err));
+      }
+
       return {
         id: slip.employeeId,
         employeeId: slip.employeeId,
@@ -1029,9 +1062,9 @@ export const getAdminPayrollSlips = async (
         department: dept,
         office: off,
         baseSalary: slip.baseSalary || 0,
-        netSalary: slip.netSalary || 0,
+        netSalary: cleanNetSalary,
         allowance: slip.allowance || 0,
-        deductions: slip.deductions || 0,
+        deductions: cleanDeductions,
         advanceDeduction: slip.advanceDeduction || 0,
         advanceSalary: slip.advanceDeduction || 0,
         totalAdvanceSalary: slip.advanceDeduction || 0,
@@ -1042,8 +1075,8 @@ export const getAdminPayrollSlips = async (
         status: slip.status || 'Approved',
         month: slip.month,
         year: slip.year,
-        presentDays: slip.presentDays || 0,
-        absentDays: slip.absentDays || 0,
+        presentDays: isCorrupted ? schedWorkingDays : (slip.presentDays || 0),
+        absentDays: isCorrupted ? 0 : (slip.absentDays || 0),
         halfDays: slip.halfDays || 0,
         paidLeaveDays: slip.paidLeaveDays || 0,
         unpaidLeaveDays: slip.unpaidLeaveDays || 0,

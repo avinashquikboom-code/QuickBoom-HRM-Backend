@@ -729,6 +729,59 @@ class PayrollService {
       let weeklyOffWorkedCount = 0;
       let lateMarks = 0;
 
+      // If there are NO attendance records recorded for this employee in the month,
+      // it indicates attendance was not tracked/logged via the mobile app for this period
+      // (e.g. store staff synced via external POS/HopKid API, or biometric/external systems).
+      // They must NOT be penalized as 100% absent (which would deduct their entire monthly salary).
+      // Default to 100% attendance (scheduledWorkingDays present, 0 absent).
+      if (attendanceRecords.length === 0) {
+        let schedWorkingDays = 0;
+        let holCount = 0;
+        let wOffCount = 0;
+
+        for (let day = 1; day <= totalCalendarDays; day++) {
+          const dayStr = String(day).padStart(2, '0');
+          const dateStr = `${year}-${String(month).padStart(2, '0')}-${dayStr}`;
+          const dateObj = new Date(year, month - 1, day, 12, 0, 0);
+          const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+
+          const isWeeklyOff = !officeWorkingDays.includes(dayName);
+          const isHoliday = holidays.some(h => {
+            const hStr = toIstYmd(h.date);
+            return hStr === dateStr;
+          });
+
+          if (isHoliday) {
+            holCount++;
+          } else if (isWeeklyOff) {
+            wOffCount++;
+          } else {
+            schedWorkingDays++;
+          }
+        }
+
+        const finalWorkingDays = schedWorkingDays > 0 ? schedWorkingDays : (totalCalendarDays - wOffCount - holCount) || 26;
+
+        return {
+          workingDays: finalWorkingDays,
+          totalCalendarDays,
+          presentDays: finalWorkingDays,
+          absentDays: 0,
+          halfDays: 0,
+          paidLeaveDays: 0,
+          unpaidLeaveDays: 0,
+          holidayCount: holCount,
+          weeklyOffCount: wOffCount,
+          holidayWorkedCount: 0,
+          weeklyOffWorkedCount: 0,
+          lateMarks: 0,
+          overtimeHours: 0
+        };
+      }
+
+      const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const todayIstStr = `${nowIst.getUTCFullYear()}-${String(nowIst.getUTCMonth() + 1).padStart(2, '0')}-${String(nowIst.getUTCDate()).padStart(2, '0')}`;
+
       for (let day = 1; day <= totalCalendarDays; day++) {
         const dayStr = String(day).padStart(2, '0');
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${dayStr}`;
@@ -801,7 +854,8 @@ class PayrollService {
             } else {
               paidLeaveDays++;
             }
-          } else {
+          } else if (dateStr <= todayIstStr) {
+            // Only past dates without punch/leave in an active tracking month are considered absent
             absentDays++;
           }
         }

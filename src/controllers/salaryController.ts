@@ -257,6 +257,20 @@ export const getSalarySlip = async (
           `[SalarySlip] CORRUPTED stored deductions detected for emp=${targetEmployeeId} ${targetMonth}/${targetYear}:`,
           { rawStored, freshCalc, itemizedDeductions, calcMismatch, itemizedCorrupted, using: deductions }
         );
+
+        // Auto-heal the database payslip record asynchronously
+        if (dbPayslip) {
+          const healedNet = Math.max(0, Math.round(((baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout) + expenseReimbursement) - deductions) * 100) / 100);
+          prisma.payslip.update({
+            where: { id: dbPayslip.id },
+            data: {
+              deductions,
+              netSalary: healedNet,
+              absentDays: calcResult?.absentDays ?? 0,
+              presentDays: calcResult?.presentDays ?? (dbPayslip.workingDays || 26),
+            }
+          }).catch(err => console.warn(`[SalarySlip] Failed to repair dbPayslip #${dbPayslip.id}:`, err));
+        }
       } else {
         // Stored value looks trustworthy
         deductions = rawStored;
