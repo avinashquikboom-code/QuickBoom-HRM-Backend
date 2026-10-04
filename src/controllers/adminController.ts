@@ -6287,6 +6287,11 @@ export const downloadAttendanceReport = async (
     const { month, employeeId } = req.query;
     const targetMonth = (month as string) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Kolkata' }).slice(0, 7);
 
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(targetMonth)) {
+      res.status(400).json({ success: false, message: 'Invalid month. Use YYYY-MM.' });
+      return;
+    }
+
     // Role guard
     const allowedRoles = ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
     if (!req.user?.role || !allowedRoles.includes(req.user.role)) {
