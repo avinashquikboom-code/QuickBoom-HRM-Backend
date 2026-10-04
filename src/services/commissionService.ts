@@ -78,6 +78,84 @@ export class CommissionService {
   }
 
   /**
+   * Get YESTERDAY net sales and commission for an employee (IST boundaries)
+   * Used for "Yesterday's Performance"
+   */
+  static async getYesterdayMetrics(employeeId: number): Promise<any> {
+    const now = new Date();
+    // Convert to IST (UTC+5:30)
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+
+    // Yesterday in IST
+    const year = istDate.getUTCFullYear();
+    const month = istDate.getUTCMonth();
+    const dateVal = istDate.getUTCDate() - 1; // yesterday
+
+    // dayStart in UTC corresponding to 00:00:00.000 IST yesterday
+    const dayStart = new Date(Date.UTC(year, month, dateVal, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+    // dayEnd in UTC corresponding to 23:59:59.999 IST yesterday
+    const dayEnd = new Date(Date.UTC(year, month, dateVal, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+
+    console.log(`[Yesterday Metrics] Employee: ${employeeId}, IST Date: ${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`);
+
+    const sales = await prisma.commissionTransaction.findMany({
+      where: {
+        employeeId: employeeId,
+        status: { in: ['PENDING', 'APPROVED', 'PAID'] },
+        createdAt: {
+          gte: dayStart,
+          lte: dayEnd
+        }
+      }
+    });
+
+    let creditLines: any[] = [];
+    try {
+      creditLines = await prisma.creditNoteLine.findMany({
+        where: {
+          employeeId: employeeId,
+          createdAt: {
+            gte: dayStart,
+            lte: dayEnd
+          }
+        }
+      });
+    } catch (_) {}
+
+    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
+    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
+
+    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
+    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+
+    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
+    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
+
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`;
+
+    console.log(`[Yesterday Metrics] ✅ Results:`, {
+      date: dateStr,
+      netSales: totalNetSales,
+      commission: totalCommission,
+      billCount: sales.length
+    });
+
+    return {
+      date: dateStr,
+      totalSales: totalNetSales,
+      netSales: totalNetSales,
+      totalSalesAmount: totalNetSales,
+      totalCommission: totalCommission,
+      commission: totalCommission,
+      totalCommissionEarned: totalCommission,
+      commissionAmount: totalCommission,
+      billCount: sales.length,
+      label: "Yesterday's Performance"
+    };
+  }
+
+  /**
    * Get MONTHLY net sales and commission for an employee
    * Used for "This Month's Performance"
    */

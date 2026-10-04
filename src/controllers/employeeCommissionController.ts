@@ -89,6 +89,7 @@ export const fetchCommissionWallet = async (
     const currMonth = istDate.getUTCMonth() + 1; // 1-12
 
     const today = await CommissionService.getDailyMetrics(employee.id);
+    const yesterday = await CommissionService.getYesterdayMetrics(employee.id);
     const weekly = await CommissionService.getWeeklyMetrics(employee.id);
     const monthly = await CommissionService.getMonthlyMetrics(employee.id);
 
@@ -144,8 +145,9 @@ export const fetchCommissionWallet = async (
     });
     const netSalary = latestPayslip ? latestPayslip.netSalary : 0;
 
-    const todayDateStr  = today.date;
-    const monthStr      = monthly.month;
+    const todayDateStr    = today.date;
+    const yesterdayDateStr = yesterday.date;
+    const monthStr         = monthly.month;
 
     res.json({
       success: true,
@@ -169,6 +171,17 @@ export const fetchCommissionWallet = async (
           totalCommission: todayCommission,
           billCount: todayTxnsCount,
           label: "Today's Commission",
+        },
+
+        // ═══════════════════════════════════════════════════════
+        // YESTERDAY'S COMMISSION (IST previous calendar day)
+        // ═══════════════════════════════════════════════════════
+        yesterday: {
+          date: yesterdayDateStr,
+          totalSales: yesterday.netSales,
+          totalCommission: yesterday.commission,
+          billCount: yesterday.billCount,
+          label: "Yesterday's Commission",
         },
 
         // ═══════════════════════════════════════════════════════
@@ -246,11 +259,47 @@ export const fetchCommissionHistory = async (
       whereClause.status = upperStatus;
     }
 
+    const { period } = req.query;
+
     if (startDate && endDate) {
       whereClause.createdAt = {
         gte: new Date(startDate as string),
         lte: new Date(endDate as string),
       };
+    } else if (period === 'yesterday') {
+      // Yesterday in IST (UTC+5:30)
+      const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const yYear = nowIst.getUTCFullYear();
+      const yMonth = nowIst.getUTCMonth();
+      const yDate = nowIst.getUTCDate() - 1;
+      const yStart = new Date(Date.UTC(yYear, yMonth, yDate, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+      const yEnd   = new Date(Date.UTC(yYear, yMonth, yDate, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+      whereClause.createdAt = { gte: yStart, lte: yEnd };
+    } else if (period === 'today') {
+      // Today in IST
+      const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const tYear = nowIst.getUTCFullYear();
+      const tMonth = nowIst.getUTCMonth();
+      const tDate = nowIst.getUTCDate();
+      const tStart = new Date(Date.UTC(tYear, tMonth, tDate, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+      const tEnd   = new Date(Date.UTC(tYear, tMonth, tDate, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+      whereClause.createdAt = { gte: tStart, lte: tEnd };
+    } else if (period === 'thisWeek') {
+      // Last 7 days in IST
+      const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const wYear = nowIst.getUTCFullYear();
+      const wMonth = nowIst.getUTCMonth();
+      const wDate = nowIst.getUTCDate();
+      const wStart = new Date(Date.UTC(wYear, wMonth, wDate - 6, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000);
+      const wEnd   = new Date(Date.UTC(wYear, wMonth, wDate, 23, 59, 59, 999) - 5.5 * 60 * 60 * 1000);
+      whereClause.createdAt = { gte: wStart, lte: wEnd };
+    } else if (period === 'thisMonth') {
+      const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const mYear = nowIst.getUTCFullYear();
+      const mMonth = nowIst.getUTCMonth() + 1;
+      const { getIstMonthRange } = require('../utils/commissionHelper');
+      const mRange = getIstMonthRange(mYear, mMonth);
+      whereClause.createdAt = { gte: mRange.monthStart, lte: mRange.monthEnd };
     } else if (month) {
       const parts = (month as string).split('-');
       if (parts.length === 2) {

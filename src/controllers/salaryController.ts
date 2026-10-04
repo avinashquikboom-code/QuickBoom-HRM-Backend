@@ -212,11 +212,42 @@ export const getSalarySlip = async (
     const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? Math.round((absentDays * dailySalary) * 100) / 100);
     const itemizedDeductions = halfDayDeduction + leaveDeduction + absentDeduction + advanceDeduction;
 
-    const deductions = (!isCurrentMonth && dbPayslip?.deductions !== undefined)
-      ? dbPayslip.deductions
-      : (calcResult?.deductions ?? Math.round(itemizedDeductions * 100) / 100);
+    // itemizedDeductions = attendance-based + advance (these are always re-derived fresh)
+    // For past months, use dbPayslip.deductions ONLY if it's plausible (i.e. not wildly larger
+    // than the itemizedDeductions we just computed). If the stored value appears corrupted
+    // (e.g. it nearly equals the entire gross salary), fall back to a fresh calculation.
+    const isCurrentMonth_deductionCheck = isCurrentMonth;
+    let rawStoredDeductions: number | undefined = undefined;
+    if (!isCurrentMonth_deductionCheck && dbPayslip?.deductions !== undefined) {
+      rawStoredDeductions = dbPayslip.deductions;
+    }
+
+    let deductions: number;
+    if (rawStoredDeductions !== undefined) {
+      // Sanity check: if stored deductions exceed itemizedDeductions by more than ₹5,000,
+      // it likely includes policy/statutory deductions that were double-counted.
+      // In that case, prefer a fresh calcResult or fall back to itemizedDeductions.
+      const corruptionThreshold = 5000;
+      const excessOverItemized = rawStoredDeductions - itemizedDeductions;
+      if (excessOverItemized > corruptionThreshold) {
+        // Stored deductions look inflated. Use fresh calculation if available.
+        deductions = calcResult?.deductions !== undefined
+          ? Math.round(calcResult.deductions * 100) / 100
+          : Math.round(itemizedDeductions * 100) / 100;
+        console.warn(
+          `[SalarySlip] WARNING: Stored deductions (${rawStoredDeductions}) exceed itemizedDeductions (${itemizedDeductions}) by ${excessOverItemized.toFixed(2)} — using recalculated value: ${deductions}`
+        );
+      } else {
+        deductions = rawStoredDeductions;
+      }
+    } else {
+      deductions = calcResult?.deductions !== undefined
+        ? Math.round(calcResult.deductions * 100) / 100
+        : Math.round(itemizedDeductions * 100) / 100;
+    }
 
     const otherDeductions = Math.max(0, Math.round((deductions - itemizedDeductions) * 100) / 100);
+
 
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
@@ -227,9 +258,25 @@ export const getSalarySlip = async (
 
     const grossTotal = baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout) + expenseReimbursement;
 
+    // Always recalculate netSalary from corrected values.
+    // If dbPayslip.netSalary was saved alongside corrupted deductions, trusting it would
+    // repeat the error. Recalculate from grossTotal - deductions (which has been sanitised above).
+    const recalcNetSalary = Math.max(0, Math.round((grossTotal - deductions) * 100) / 100);
     const netSalary = (!isCurrentMonth && dbPayslip?.netSalary !== undefined && dbPayslip.netSalary > 0)
-      ? dbPayslip.netSalary
-      : (calcResult?.netSalary ?? Math.max(0, Math.round((grossTotal - deductions) * 100) / 100));
+      ? (() => {
+          // Sanity-check: stored netSalary must roughly equal grossTotal - deductions (within ₹1)
+          const storedNet = dbPayslip!.netSalary;
+          const expectedNet = recalcNetSalary;
+          if (Math.abs(storedNet - expectedNet) > 1) {
+            console.warn(
+              `[SalarySlip] netSalary mismatch: stored=${storedNet}, recalculated=${expectedNet} — using recalculated value`
+            );
+            return expectedNet;
+          }
+          return storedNet;
+        })()
+      : (calcResult?.netSalary !== undefined ? Math.max(0, Math.round(calcResult.netSalary * 100) / 100) : recalcNetSalary);
+
 
     const responsePayload = {
       employeeId: employee.id,
