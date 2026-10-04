@@ -87,9 +87,16 @@ export const getSalarySlip = async (
       }
     });
 
+    // Always compute a fresh calcResult so we have correct deductions to fall back to.
+    // For past months with a stored payslip we still recalculate to detect/correct corrupted
+    // deduction values (e.g. where stored deductions ≈ gross salary due to mis-applied PF/ESIC).
     let calcResult: any = null;
-    if (!dbPayslip || isCurrentMonth || dbPayslip.baseSalary === 0 || !dbPayslip.netSalary) {
+    try {
       calcResult = await payrollService.calculatePayroll(targetEmployeeId, targetMonth, targetYear);
+    } catch (calcErr) {
+      // If calculation fails (e.g. no attendance data), fall back gracefully to stored payslip.
+      console.warn(`[SalarySlip] calculatePayroll failed for emp=${targetEmployeeId} ${targetMonth}/${targetYear}:`, calcErr);
+      calcResult = null;
     }
 
     const ss = employee.salaryStructure;
@@ -212,38 +219,48 @@ export const getSalarySlip = async (
     const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? Math.round((absentDays * dailySalary) * 100) / 100);
     const itemizedDeductions = halfDayDeduction + leaveDeduction + absentDeduction + advanceDeduction;
 
-    // itemizedDeductions = attendance-based + advance (these are always re-derived fresh)
-    // For past months, use dbPayslip.deductions ONLY if it's plausible (i.e. not wildly larger
-    // than the itemizedDeductions we just computed). If the stored value appears corrupted
-    // (e.g. it nearly equals the entire gross salary), fall back to a fresh calculation.
-    const isCurrentMonth_deductionCheck = isCurrentMonth;
-    let rawStoredDeductions: number | undefined = undefined;
-    if (!isCurrentMonth_deductionCheck && dbPayslip?.deductions !== undefined) {
-      rawStoredDeductions = dbPayslip.deductions;
-    }
+    // itemizedDeductions = attendance-based + advance (always re-derived fresh from live data).
+    //
+    // DEDUCTION SELECTION LOGIC:
+    // 1. For the CURRENT month: always use calcResult (live recalculation).
+    // 2. For PAST months: use the stored dbPayslip.deductions ONLY when it is plausible.
+    //    A stored value is treated as CORRUPTED if it exceeds the fresh calcResult.deductions
+    //    by more than ₹500, OR if it exceeds itemizedDeductions by more than ₹5,000.
+    //    This catches cases where PF/ESIC was incorrectly applied to the entire gross salary.
 
     let deductions: number;
-    if (rawStoredDeductions !== undefined) {
-      // Sanity check: if stored deductions exceed itemizedDeductions by more than ₹5,000,
-      // it likely includes policy/statutory deductions that were double-counted.
-      // In that case, prefer a fresh calcResult or fall back to itemizedDeductions.
-      const corruptionThreshold = 5000;
-      const excessOverItemized = rawStoredDeductions - itemizedDeductions;
-      if (excessOverItemized > corruptionThreshold) {
-        // Stored deductions look inflated. Use fresh calculation if available.
-        deductions = calcResult?.deductions !== undefined
-          ? Math.round(calcResult.deductions * 100) / 100
-          : Math.round(itemizedDeductions * 100) / 100;
-        console.warn(
-          `[SalarySlip] WARNING: Stored deductions (${rawStoredDeductions}) exceed itemizedDeductions (${itemizedDeductions}) by ${excessOverItemized.toFixed(2)} — using recalculated value: ${deductions}`
-        );
-      } else {
-        deductions = rawStoredDeductions;
-      }
-    } else {
+
+    if (isCurrentMonth || dbPayslip?.deductions === undefined || dbPayslip?.deductions === null) {
+      // Always use fresh calc for current month, or if no stored value exists.
       deductions = calcResult?.deductions !== undefined
         ? Math.round(calcResult.deductions * 100) / 100
         : Math.round(itemizedDeductions * 100) / 100;
+    } else {
+      const rawStored = dbPayslip.deductions;
+      const freshCalc = calcResult?.deductions !== undefined
+        ? Math.round(calcResult.deductions * 100) / 100
+        : null;
+
+      // Sanity check 1: stored deductions must not exceed fresh calc by more than ₹500
+      const calcMismatch = freshCalc !== null && (rawStored - freshCalc) > 500;
+      // Sanity check 2: stored deductions must not exceed itemized by more than ₹5,000
+      //   (catches PF/ESIC being applied to full gross salary as a single deduction block)
+      const itemizedExcess = rawStored - itemizedDeductions;
+      const itemizedCorrupted = itemizedExcess > 5000;
+
+      if (calcMismatch || itemizedCorrupted) {
+        // Stored deductions look corrupted — prefer fresh calcResult, else itemized
+        deductions = freshCalc !== null
+          ? freshCalc
+          : Math.round(itemizedDeductions * 100) / 100;
+        console.warn(
+          `[SalarySlip] CORRUPTED stored deductions detected for emp=${targetEmployeeId} ${targetMonth}/${targetYear}:`,
+          { rawStored, freshCalc, itemizedDeductions, calcMismatch, itemizedCorrupted, using: deductions }
+        );
+      } else {
+        // Stored value looks trustworthy
+        deductions = rawStored;
+      }
     }
 
     const otherDeductions = Math.max(0, Math.round((deductions - itemizedDeductions) * 100) / 100);

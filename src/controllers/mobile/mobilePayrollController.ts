@@ -354,9 +354,24 @@ export const downloadPayslip = async (
 
     // Total Deductions = Statutory + Half-Day + Leave + Advance Salary + Other
     const itemizedDeductions = pf + esic + halfDayDeduction + leaveDeduction + advanceDeduction;
-    const totalDeductions = payslip.deductions > 0 
-      ? payslip.deductions 
-      : Math.round(itemizedDeductions * 100) / 100;
+
+    // CORRUPTION GUARD: If stored payslip.deductions far exceeds itemized (by > ₹5,000),
+    // it was likely saved with a mis-applied bulk deduction (e.g. PF applied to gross instead of basic).
+    // In that case, use the freshly-derived itemized total instead.
+    let totalDeductions: number;
+    if (payslip.deductions > 0) {
+      const excessOverItemized = payslip.deductions - itemizedDeductions;
+      if (excessOverItemized > 5000) {
+        totalDeductions = itemizedDeductions;
+        console.warn(
+          `[MobilePayslipPDF] Corrupted deductions for emp=${payslip.employeeId} ${payslip.month}/${payslip.year}: stored=${payslip.deductions}, itemized=${itemizedDeductions}, using itemized`
+        );
+      } else {
+        totalDeductions = payslip.deductions;
+      }
+    } else {
+      totalDeductions = itemizedDeductions;
+    }
     const otherDeductions = Math.max(0, Math.round((totalDeductions - itemizedDeductions) * 100) / 100);
 
     // Net Salary = Gross Earnings - Total Deductions

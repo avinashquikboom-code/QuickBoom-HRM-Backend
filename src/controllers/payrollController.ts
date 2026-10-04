@@ -432,7 +432,25 @@ export const generatePayslipPDF = async (
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
 
     const itemizedDeductions = halfDayDeduction + leaveDeduction + advanceDeduction;
-    const deductions = payslip.deductions > 0 ? payslip.deductions : itemizedDeductions;
+
+    // CORRUPTION GUARD: If stored payslip.deductions is wildly inflated (e.g. > itemized by
+    // more than ₹5,000), it likely includes mis-applied PF/ESIC on the full gross salary.
+    // In that case, recalculate deductions from the correctly derived itemized components.
+    let deductions: number;
+    if (payslip.deductions > 0) {
+      const excessOverItemized = payslip.deductions - itemizedDeductions;
+      if (excessOverItemized > 5000) {
+        // Stored deductions appear corrupted — use itemized only
+        deductions = itemizedDeductions;
+        console.warn(
+          `[PayslipPDF] Corrupted deductions for emp=${payslip.employeeId} ${monthNum}/${yearNum}: stored=${payslip.deductions}, itemized=${itemizedDeductions}, using itemized`
+        );
+      } else {
+        deductions = payslip.deductions;
+      }
+    } else {
+      deductions = itemizedDeductions;
+    }
     const otherDeductions = Math.max(0, Math.round((deductions - itemizedDeductions) * 100) / 100);
 
     const deductionsTableBody: any[] = [
