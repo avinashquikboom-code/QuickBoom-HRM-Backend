@@ -9,8 +9,16 @@ class UserSessionService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
 
-    return prisma.userSession.create({
-      data: {
+    return prisma.userSession.upsert({
+      where: { token },
+      update: {
+        userId,
+        deviceInfo,
+        ipAddress,
+        expiresAt,
+        isActive: true,
+      },
+      create: {
         userId,
         token,
         deviceInfo,
@@ -40,6 +48,26 @@ class UserSessionService {
         if (session) {
           await this.revokeAllSessions(session.userId);
         }
+        return null;
+      }
+
+      // Check whether user and linked employee are active
+      const user = await prisma.user.findUnique({
+        where: { id: payload.id },
+        select: {
+          id: true,
+          isActive: true,
+          role: true,
+          employee: {
+            select: { id: true, status: true },
+          },
+        },
+      });
+
+      const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN';
+      const isEmployeeInactive = user?.employee?.status && user.employee.status.toLowerCase() !== 'active';
+      if (!user || !user.isActive || (!isAdmin && isEmployeeInactive)) {
+        await this.revokeAllSessions(session.userId);
         return null;
       }
 

@@ -1,5 +1,6 @@
 import { prisma } from './db';
 import { getIntegrationSettings } from './configService';
+import userSessionService from '../services/userSessionService';
 
 let lastSyncTime = 0;
 const SYNC_COOLDOWN = 10 * 1000; // 10 seconds cooldown to prevent spamming the external API
@@ -196,6 +197,17 @@ export async function syncHopkidEmployees(): Promise<void> {
             source: 'HOPKID',
           },
         });
+
+        if (existingEmployee.userId) {
+          const isStatusActive = status === 'active';
+          await prisma.user.update({
+            where: { id: existingEmployee.userId },
+            data: { isActive: isStatusActive },
+          });
+          if (!isStatusActive) {
+            await userSessionService.revokeAllSessions(existingEmployee.userId);
+          }
+        }
       } else {
         // Create new HopKid employee
         await prisma.employee.create({

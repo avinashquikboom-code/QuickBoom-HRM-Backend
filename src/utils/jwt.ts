@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'quickboom_secret_key_12345_67890';
 const REFRESH_SECRET = process.env.REFRESH_SECRET || 'quickboom_refresh_secret_key_12345_67890';
@@ -14,9 +15,9 @@ export const signAccessToken = (payload: UserJWTPayload): string => {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
 };
 
-// Refresh token - long-lived (7 days)
+// Refresh token - long-lived (7 days) with unique jti
 export const signRefreshToken = (payload: UserJWTPayload): string => {
-  return jwt.sign(payload, REFRESH_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, REFRESH_SECRET, { expiresIn: '7d', jwtid: crypto.randomUUID() });
 };
 
 // Legacy function for backward compatibility - uses refresh token expiration

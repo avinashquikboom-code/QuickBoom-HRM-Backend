@@ -169,6 +169,43 @@ export const authMiddleware = async (
   try {
     const decoded = verifyToken(token);
     req.user = decoded;
+
+    // Validate that user and employee account are currently ACTIVE in the database
+    const dbUser = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        isActive: true,
+        role: true,
+        employee: {
+          select: {
+            id: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (!dbUser || !dbUser.isActive) {
+      res.status(403).json({
+        success: false,
+        message: 'Your account is inactive. Please contact your administrator.',
+        errorCode: 'ACCOUNT_INACTIVE',
+      });
+      return;
+    }
+
+    const isAdminRole = dbUser.role === 'SUPER_ADMIN' || dbUser.role === 'ADMIN';
+    const isEmployeeInactive = dbUser.employee?.status && dbUser.employee.status.toLowerCase() !== 'active';
+    if (!isAdminRole && isEmployeeInactive) {
+      res.status(403).json({
+        success: false,
+        message: 'Your employee account is inactive. Please contact your administrator.',
+        errorCode: 'ACCOUNT_INACTIVE',
+      });
+      return;
+    }
+
     next();
   } catch (error) {
     res.status(401).json({

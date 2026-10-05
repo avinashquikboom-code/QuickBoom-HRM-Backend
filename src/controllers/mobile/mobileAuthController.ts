@@ -53,7 +53,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
           role: true,
           isActive: true,
           profile: { select: { id: true } },
-          employee: { select: { id: true, officeId: true, storeId: true } },
+          employee: { select: { id: true, status: true, officeId: true, storeId: true } },
         },
       });
     } else {
@@ -77,6 +77,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
         select: {
           id: true,
           userId: true,
+          status: true,
           user: {
             select: {
               id: true,
@@ -114,6 +115,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
           select: {
             id: true,
             userId: true,
+            status: true,
             user: {
               select: {
                 id: true,
@@ -143,6 +145,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
             profile: employee.user.profile,
             employee: {
               id: employee.id,
+              status: employee.status,
               officeId: employee.officeId,
               storeId: employee.storeId,
             },
@@ -153,22 +156,37 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
 
     console.log('[MOBILE_LOGIN] Phase 1 completed in:', Date.now() - phase1Start, 'ms');
 
-    if (employeeUnregistered) {
-      console.log('[MOBILE_LOGIN] Employee found in directory but user row not registered yet');
+    if (!userAuth) {
+      if (employeeUnregistered) {
+        console.log('[MOBILE_LOGIN] Employee found in directory but user row not registered yet');
+        res.status(401).json({
+          success: false,
+          message: 'Account not registered yet. Please register first using your mobile number and employee code.',
+          errorCode: 'ACCOUNT_NOT_REGISTERED'
+        });
+        return;
+      }
+
+      console.log('[MOBILE_LOGIN] User not found');
       res.status(401).json({
         success: false,
-        message: 'Account not registered yet. Please register first using your mobile number and employee code.',
-        errorCode: 'ACCOUNT_NOT_REGISTERED'
+        message: 'Invalid mobile number/email or password.',
+        errorCode: 'INVALID_CREDENTIALS'
       });
       return;
     }
 
-    if (!userAuth || !userAuth.isActive) {
-      console.log('[MOBILE_LOGIN] User not found or inactive');
-      res.status(401).json({
+    // Step: Check employee status before password authentication
+    const isEmployeeInactive = userAuth.employee?.status && userAuth.employee.status.toLowerCase() !== 'active';
+    if (isEmployeeInactive || !userAuth.isActive) {
+      console.log('[MOBILE_LOGIN] Employee account is inactive:', {
+        employeeStatus: userAuth.employee?.status,
+        userIsActive: userAuth.isActive
+      });
+      res.status(403).json({
         success: false,
-        message: 'Invalid credentials or inactive account.',
-        errorCode: 'INVALID_CREDENTIALS'
+        message: 'Your employee account is inactive. Please contact your administrator.',
+        errorCode: 'ACCOUNT_INACTIVE'
       });
       return;
     }
@@ -460,6 +478,44 @@ export const mobileRefreshToken = async (req: AuthenticatedRequest, res: Respons
 
     const ipAddress = req.ip || req.socket.remoteAddress;
     const deviceInfo = req.headers['user-agent'] || 'Mobile App';
+
+    // Verify token payload to check employee status before rotation
+    let tokenPayload: any = null;
+    try {
+      tokenPayload = verifyRefreshToken(refreshToken);
+    } catch {
+      try {
+        tokenPayload = verifyToken(refreshToken);
+      } catch {
+        // Token invalid/expired
+      }
+    }
+
+    if (tokenPayload?.id) {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: tokenPayload.id },
+        select: {
+          id: true,
+          isActive: true,
+          role: true,
+          employee: {
+            select: { id: true, status: true },
+          },
+        },
+      });
+
+      const isAdmin = dbUser?.role === 'SUPER_ADMIN' || dbUser?.role === 'ADMIN';
+      const isEmployeeInactive = dbUser?.employee?.status && dbUser.employee.status.toLowerCase() !== 'active';
+      if (!dbUser || !dbUser.isActive || (!isAdmin && isEmployeeInactive)) {
+        await userSessionService.revokeAllSessions(tokenPayload.id);
+        res.status(403).json({
+          success: false,
+          message: 'Your employee account is inactive. Please contact your administrator.',
+          errorCode: 'ACCOUNT_INACTIVE',
+        });
+        return;
+      }
+    }
 
     const rotationResult = await userSessionService.rotateToken(refreshToken, deviceInfo, ipAddress);
     if (!rotationResult) {
@@ -1038,10 +1094,10 @@ export const verifyMobileNumber = async (req: Request, res: Response): Promise<v
       return;
     }
 
-    if (employee.status !== 'active') {
-      res.status(400).json({
+    if (employee.status && employee.status.toLowerCase() !== 'active') {
+      res.status(403).json({
         success: false,
-        message: 'Your account is inactive. Contact HR.',
+        message: 'Your employee account is inactive. Please contact your administrator.',
         errorCode: 'ACCOUNT_INACTIVE'
       });
       return;
@@ -1160,10 +1216,10 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    if (employee.status !== 'active') {
-      res.status(400).json({
+    if (employee.status && employee.status.toLowerCase() !== 'active') {
+      res.status(403).json({
         success: false,
-        message: 'Your account is inactive. Contact HR.',
+        message: 'Your employee account is inactive. Please contact your administrator.',
         errorCode: 'ACCOUNT_INACTIVE'
       });
       return;
@@ -1424,6 +1480,15 @@ export const verifyResetIdentifier = async (req: Request, res: Response): Promis
       return;
     }
 
+    if (result.employee.status && result.employee.status.toLowerCase() !== 'active') {
+      res.status(403).json({
+        success: false,
+        message: 'Your employee account is inactive. Please contact your administrator.',
+        errorCode: 'ACCOUNT_INACTIVE'
+      });
+      return;
+    }
+
     if (isProtectedEmail(input) || isProtectedEmail(result.user?.email) || isProtectedEmail((result.employee as any)?.email)) {
       res.status(403).json({
         success: false,
@@ -1491,6 +1556,15 @@ export const mobileResetPassword = async (req: Request, res: Response): Promise<
     }
 
     const { employee, user } = result;
+
+    if (employee.status && employee.status.toLowerCase() !== 'active') {
+      res.status(403).json({
+        success: false,
+        message: 'Your employee account is inactive. Please contact your administrator.',
+        errorCode: 'ACCOUNT_INACTIVE'
+      });
+      return;
+    }
 
     if (isProtectedEmail(input) || isProtectedEmail(user?.email) || isProtectedEmail((employee as any)?.email)) {
       res.status(403).json({

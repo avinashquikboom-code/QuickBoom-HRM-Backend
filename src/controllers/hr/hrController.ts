@@ -9,6 +9,7 @@ import { pushNotificationService } from '../../services/pushNotificationService'
 import securityService from '../../services/securityService';
 import { expenseReceiptService } from '../../services/expenseReceiptService';
 import leaveBalanceService from '../../services/leaveBalanceService';
+import userSessionService from '../../services/userSessionService';
 import { getIstMonthRange } from '../../utils/commissionHelper';
 import {
   isProtectedEmail,
@@ -2117,6 +2118,14 @@ export const updateHREmployee = async (
       });
 
       const userUpdateData: any = {};
+
+      if (status !== undefined) {
+        const isStatusActive = status.toLowerCase() === 'active';
+        userUpdateData.isActive = isStatusActive;
+        if (!isStatusActive) {
+          await userSessionService.revokeAllSessions(updatedEmployee.userId);
+        }
+      }
 
       if (role !== undefined && role !== null && String(role).trim() !== '') {
         const validRoles = ['SUPER_ADMIN', 'HR', 'STORE_MANAGER', 'SALESMAN', 'HELPER', 'EMPLOYEE'];

@@ -10,6 +10,7 @@ import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 import { clearIntegrationCache } from '../utils/configService';
 import leaveBalanceService from '../services/leaveBalanceService';
+import userSessionService from '../services/userSessionService';
 import { logActivity } from '../utils/activityLogger';
 import {
   isProtectedEmail,
@@ -215,6 +216,17 @@ export const updateUserStatus = async (
         where: { id: empId },
         data: { status: isActive ? 'active' : 'inactive' },
       });
+
+      if (targetEmp.userId) {
+        await prisma.user.update({
+          where: { id: targetEmp.userId },
+          data: { isActive },
+        });
+        if (!isActive) {
+          await userSessionService.revokeAllSessions(targetEmp.userId);
+        }
+      }
+
       res.json({
         success: true,
         message: `Employee status updated to ${isActive ? 'Active' : 'Inactive'}.`,
@@ -250,6 +262,14 @@ export const updateUserStatus = async (
         isActive: true,
       },
     });
+
+    await prisma.employee.updateMany({
+      where: { userId },
+      data: { status: isActive ? 'active' : 'inactive' },
+    });
+    if (!isActive) {
+      await userSessionService.revokeAllSessions(userId);
+    }
 
     res.json({
       success: true,
@@ -857,6 +877,17 @@ export const updateEmployee = async (
         department: true,
       },
     });
+
+    if (status !== undefined && updatedEmployee.userId) {
+      const isStatusActive = status.toLowerCase() === 'active';
+      await prisma.user.update({
+        where: { id: updatedEmployee.userId },
+        data: { isActive: isStatusActive },
+      });
+      if (!isStatusActive) {
+        await userSessionService.revokeAllSessions(updatedEmployee.userId);
+      }
+    }
 
     // Handle shift assignment if provided
     if (shiftId) {

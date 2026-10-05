@@ -79,11 +79,23 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    if (!user || !user.isActive) {
-      console.log('❌ [LOGIN] User not found or inactive:', email);
+    if (!user) {
+      console.log('❌ [LOGIN] User not found:', identifier);
       res.status(401).json({
         success: false,
-        message: 'Invalid credentials or inactive account.',
+        message: 'Invalid credentials.',
+      });
+      return;
+    }
+
+    // Step: Check employee status before password authentication
+    const isEmployeeInactive = employeeRecord?.status && employeeRecord.status.toLowerCase() !== 'active';
+    if (isEmployeeInactive || !user.isActive) {
+      console.log('❌ [LOGIN] Employee account is inactive:', identifier);
+      res.status(403).json({
+        success: false,
+        message: 'Your employee account is inactive. Please contact your administrator.',
+        errorCode: 'ACCOUNT_INACTIVE'
       });
       return;
     }
@@ -518,10 +530,10 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
       user = employee?.user;
     }
 
-    if (!user || !user.isActive) {
+    if (!user) {
       res.status(401).json({
         success: false,
-        message: 'Invalid credentials or inactive account.',
+        message: 'Invalid credentials.',
       });
       return;
     }
@@ -532,6 +544,17 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
         success: false,
         message: `Access denied. This login portal is restricted for your role.`,
         errorCode: 'ROLE_MISMATCH'
+      });
+      return;
+    }
+
+    // Check employee status before password verification
+    const isEmpInactive = user.employee?.status && user.employee.status.toLowerCase() !== 'active';
+    if (isEmpInactive || !user.isActive) {
+      res.status(403).json({
+        success: false,
+        message: 'Your employee account is inactive. Please contact your administrator.',
+        errorCode: 'ACCOUNT_INACTIVE'
       });
       return;
     }
@@ -668,6 +691,35 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
     const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
 
     if (rToken) {
+      // Check if user or linked employee is inactive
+      try {
+        const payload = verifyRefreshToken(rToken);
+        if (payload?.id) {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: payload.id },
+            select: {
+              id: true,
+              isActive: true,
+              role: true,
+              employee: { select: { id: true, status: true } },
+            },
+          });
+          const isAdmin = dbUser?.role === 'SUPER_ADMIN' || dbUser?.role === 'ADMIN';
+          const isEmployeeInactive = dbUser?.employee?.status && dbUser.employee.status.toLowerCase() !== 'active';
+          if (!dbUser || !dbUser.isActive || (!isAdmin && isEmployeeInactive)) {
+            await userSessionService.revokeAllSessions(payload.id);
+            res.status(403).json({
+              success: false,
+              message: 'Your employee account is inactive. Please contact your administrator.',
+              errorCode: 'ACCOUNT_INACTIVE'
+            });
+            return;
+          }
+        }
+      } catch {
+        // Continue to rotateToken
+      }
+
       const rotationResult = await userSessionService.rotateToken(rToken, deviceInfo, ipAddress);
       if (!rotationResult) {
         res.status(401).json({
@@ -717,11 +769,20 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
         }
       }
 
-      const userObj = await prisma.user.findUnique({ where: { id: legacyUser.id } });
-      if (!userObj || !userObj.isActive) {
-        res.status(401).json({
+      const userObj = await prisma.user.findUnique({
+        where: { id: legacyUser.id },
+        include: { employee: { select: { id: true, status: true } } }
+      });
+      const isAdmin = userObj?.role === 'SUPER_ADMIN' || userObj?.role === 'ADMIN';
+      const isEmployeeInactive = userObj?.employee?.status && userObj.employee.status.toLowerCase() !== 'active';
+      if (!userObj || !userObj.isActive || (!isAdmin && isEmployeeInactive)) {
+        if (userObj) {
+          await userSessionService.revokeAllSessions(userObj.id);
+        }
+        res.status(403).json({
           success: false,
-          message: 'User account inactive or non-existent.',
+          message: 'Your employee account is inactive. Please contact your administrator.',
+          errorCode: 'ACCOUNT_INACTIVE'
         });
         return;
       }
