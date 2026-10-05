@@ -60,11 +60,13 @@ export const getMyPayslips = async (
       ]
     });
 
-    let payslips = rawPayslips.map((ps) => {
+    const toPayslipView = async (ps: (typeof rawPayslips)[number]) => {
       const calendarDays = new Date(ps.year, ps.month, 0).getDate();
       const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
 
-      const baseMonthly = (ps.baseSalary || 0) + (ps.allowance || 0);
+      // Earnings come from the shared backend resolver (same components as the admin payroll)
+      const earnings = await payrollService.resolvePayslipEarnings(ps);
+      const baseMonthly = earnings.grossEarnings;
       const dSalary = ps.dailySalary || (schedWorkingDays > 0 ? Math.round((baseMonthly / schedWorkingDays) * 100) / 100 : 0);
       const absentDeduction = ps.absentDays ? Math.round((ps.absentDays * dSalary) * 100) / 100 : 0;
       const halfDayDeduction = ps.halfDays ? Math.round((ps.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
@@ -73,28 +75,39 @@ export const getMyPayslips = async (
       const itemizedDeductions = absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
 
       let cleanDeductions = ps.deductions || 0;
-      let cleanNetSalary = ps.netSalary || 0;
-
       const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
 
       if (isCorrupted) {
         cleanDeductions = itemizedDeductions;
-        const totalGross = baseMonthly + (ps.commissionEarned || 0) + (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0) + (ps.expenseReimbursement || 0);
-        cleanNetSalary = Math.max(0, Math.round((totalGross - cleanDeductions) * 100) / 100);
+        const healedNet = Math.max(0, Math.round((baseMonthly + (ps.commissionEarned || 0) + (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0) + (ps.expenseReimbursement || 0) - cleanDeductions) * 100) / 100);
 
         prisma.payslip.update({
           where: { id: ps.id },
           data: {
             deductions: cleanDeductions,
-            netSalary: cleanNetSalary,
+            netSalary: healedNet,
           }
         }).catch(err => console.warn(`[getMyPayslips] Failed to heal payslip #${ps.id}:`, err));
       }
 
+      // Gross excludes commission; net = gross - deductions. Commission is reported separately.
+      const extraPayout = (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0);
+      const grossSalary = Math.round((earnings.grossEarnings + extraPayout) * 100) / 100;
+      const netSalary = Math.max(0, Math.round((grossSalary - cleanDeductions) * 100) / 100);
+
       return {
         ...ps,
+        baseSalary: earnings.baseSalary,
+        allowance: earnings.allowance,
+        hra: earnings.components.hra,
+        travelAllowance: earnings.components.travelAllowance,
+        medicalAllowance: earnings.components.medicalAllowance,
+        specialAllowance: earnings.components.specialAllowance,
+        incentive: earnings.components.incentive,
+        bonus: earnings.components.bonus,
+        grossSalary,
         deductions: cleanDeductions,
-        netSalary: cleanNetSalary,
+        netSalary,
         presentDays: ps.presentDays || 0,
         absentDays: ps.absentDays || 0,
         advanceDeduction: ps.advanceDeduction || 0,
@@ -118,7 +131,9 @@ export const getMyPayslips = async (
         workingDays: schedWorkingDays,
         totalCalendarDays: ps.totalCalendarDays || calendarDays
       };
-    });
+    };
+
+    let payslips = await Promise.all(rawPayslips.map(toPayslipView));
 
     if (payslips.length === 0) {
       const now = new Date();
@@ -131,35 +146,7 @@ export const getMyPayslips = async (
         orderBy: [{ year: 'desc' }, { month: 'desc' }]
       });
 
-      payslips = updatedRaw.map(ps => {
-        const calendarDays = new Date(ps.year, ps.month, 0).getDate();
-        const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
-        return {
-          ...ps,
-          advanceDeduction: ps.advanceDeduction || 0,
-          advanceSalary: ps.advanceDeduction || 0,
-          totalAdvanceSalary: ps.advanceDeduction || 0,
-          expenseReimbursement: ps.expenseReimbursement || 0,
-          approvedExpenses: ps.expenseReimbursement || 0,
-          approvedExpenseAmount: ps.expenseReimbursement || 0,
-          totalExpenses: ps.expenseReimbursement || 0,
-          commissionEarned: ps.commissionEarned || 0,
-          presentDays: ps.presentDays || 0,
-          absentDays: ps.absentDays || 0,
-          halfDays: ps.halfDays || 0,
-          paidLeaveDays: ps.paidLeaveDays || 0,
-          unpaidLeaveDays: ps.unpaidLeaveDays || 0,
-          holidayCount: ps.holidayCount || 0,
-          weeklyOffCount: ps.weeklyOffCount || 0,
-          holidayWorkedCount: ps.holidayWorkedCount || 0,
-          weeklyOffWorkedCount: ps.weeklyOffWorkedCount || 0,
-          extraHolidayPayout: ps.extraHolidayPayout || 0,
-          extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
-          dailySalary: ps.dailySalary || 0,
-          workingDays: schedWorkingDays,
-          totalCalendarDays: ps.totalCalendarDays || calendarDays
-        };
-      });
+      payslips = await Promise.all(updatedRaw.map(toPayslipView));
     }
 
     res.json({
@@ -304,39 +291,16 @@ export const downloadPayslip = async (
     });
 
     const ss = employeeWithSalary?.salaryStructure;
-    const basic = payslip.baseSalary;
 
-    // Salary components come from the payslip snapshot saved at payroll generation.
-    // Legacy payslips (no snapshot) use the structure only when it still matches the stored totals.
-    let hra: number, ta: number, medical: number, special: number, incentive: number, bonus: number;
-    if (payslip.hra !== null && payslip.hra !== undefined) {
-      hra = payslip.hra || 0;
-      ta = payslip.travelAllowance || 0;
-      medical = payslip.medicalAllowance || 0;
-      special = payslip.specialAllowance || 0;
-      incentive = payslip.incentive || 0;
-      bonus = payslip.bonus || 0;
-    } else if (ss && ss.basicSalary === basic &&
-      Math.abs((ss.hra + ss.travelAllowance + ss.medicalAllowance + ss.specialAllowance) - (payslip.allowance || 0)) < 0.01) {
-      hra = ss.hra;
-      ta = ss.travelAllowance;
-      medical = ss.medicalAllowance;
-      special = ss.specialAllowance;
-      incentive = ss.incentive || 0;
-      bonus = ss.bonus || 0;
-    } else {
-      hra = 0;
-      ta = 0;
-      medical = 0;
-      special = payslip.allowance || 0;
-      incentive = 0;
-      bonus = 0;
-    }
+    // Earnings come from the shared backend resolver (same components as the admin payroll)
+    const earnings = await payrollService.resolvePayslipEarnings(payslip);
+    const basic = earnings.baseSalary;
+    const { hra, travelAllowance: ta, medicalAllowance: medical, specialAllowance: special } = earnings.components;
     const finalSpecial = special;
 
     const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
     const pf = ss?.pfEnabled ? Math.round(basic * (ss.employeePfRate / 100)) : 0;
-    const esic = ss?.esicEnabled ? Math.round((basic + payslip.allowance) * (ss.employeeEsicRate / 100)) : 0;
+    const esic = ss?.esicEnabled ? Math.round((basic + earnings.allowance) * (ss.employeeEsicRate / 100)) : 0;
 
     const monthRange = getIstMonthRange(payslip.year, payslip.month);
     const monthStart = monthRange.monthStart;
@@ -405,8 +369,9 @@ export const downloadPayslip = async (
     const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
 
-    // Gross Earnings = Basic + Allowance components + Commission
-    const grossEarnings = Math.round((basic + hra + ta + medical + special + incentive + bonus + (commissionEarned > 0 ? commissionEarned : 0)) * 100) / 100;
+    // Gross Earnings = Basic + salary components (+ extra holiday/weekly-off payouts). Commission stays separate.
+    const extraPayout = (payslip.extraHolidayPayout || 0) + (payslip.extraWeeklyOffPayout || 0);
+    const grossEarnings = Math.round((earnings.grossEarnings + extraPayout) * 100) / 100;
 
     // Total Deductions = Statutory + Absent + Half-Day + Leave + Advance Salary + Other
     const itemizedDeductions = pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
@@ -433,8 +398,8 @@ export const downloadPayslip = async (
     // Net Salary = Gross Earnings - Total Deductions
     const netSalary = Math.max(0, Math.round((grossEarnings - totalDeductions) * 100) / 100);
 
-    // Total Take-Home Pay = Net Salary + Reimbursements
-    const totalTakeHomePay = Math.round((netSalary + expenseReimbursement) * 100) / 100;
+    // Total Take-Home Pay = Net Salary + Commission + Reimbursements
+    const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + expenseReimbursement) * 100) / 100;
 
     // Build Earnings Items
     const earningsItems: { name: string; amount: number }[] = [
@@ -442,8 +407,11 @@ export const downloadPayslip = async (
       { name: 'House Rent Allowance (HRA)', amount: hra },
       { name: 'Allowances (Travel/Medical)', amount: ta + medical },
     ];
-    if (finalSpecial + incentive + bonus > 0) {
-      earningsItems.push({ name: 'Special Allowance & Bonus', amount: finalSpecial + incentive + bonus });
+    if (finalSpecial > 0) {
+      earningsItems.push({ name: 'Special Allowance', amount: finalSpecial });
+    }
+    if (extraPayout > 0) {
+      earningsItems.push({ name: 'Holiday / Weekly Off Payout', amount: extraPayout });
     }
     if (commissionEarned > 0) {
       earningsItems.push({ name: 'Commission', amount: commissionEarned });
@@ -602,6 +570,7 @@ export const downloadPayslip = async (
                 text: [
                   { text: 'PAYABLE SUMMARY\n', fontSize: 10, bold: true },
                   { text: `Gross Earnings: Rs. ${grossEarnings.toLocaleString('en-IN')}  |  Less Deductions: Rs. ${totalDeductions.toLocaleString('en-IN')}  |  Net Salary: Rs. ${netSalary.toLocaleString('en-IN')}\n`, fontSize: 9 },
+                  ...(commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${commissionEarned.toLocaleString('en-IN')}\n`, fontSize: 9, bold: true }] : []),
                   ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${expenseReimbursement.toLocaleString('en-IN')}\n`, fontSize: 9, bold: true }] : []),
                   { text: `\nTOTAL TAKE-HOME PAY\n`, fontSize: 11, bold: true },
                   { text: `INR ${totalTakeHomePay.toLocaleString('en-IN')}/-\n`, fontSize: 18, bold: true },

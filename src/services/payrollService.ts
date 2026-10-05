@@ -441,6 +441,76 @@ class PayrollService {
   }
 
   /**
+   * Resolve the earnings (base + salary components) of a stored payslip.
+   * Single source for every payslip consumer (mobile list, mobile PDF).
+   * - Payslips with a component snapshot: allowance is always the sum of the snapshot components.
+   * - Legacy payslips (no snapshot) of the current month: rebuilt from the employee's salary structure
+   *   (same source the admin live calculation uses) and the payslip row is healed.
+   * - Legacy payslips of past months: structure is used only if it still reconciles with the stored
+   *   totals, otherwise the stored allowance is reported as a single lump sum.
+   */
+  async resolvePayslipEarnings(ps: {
+    id: number;
+    employeeId: number;
+    month: number;
+    year: number;
+    baseSalary: number;
+    allowance: number;
+    hra?: number | null;
+    travelAllowance?: number | null;
+    medicalAllowance?: number | null;
+    specialAllowance?: number | null;
+    incentive?: number | null;
+    bonus?: number | null;
+  }): Promise<{ baseSalary: number; allowance: number; grossEarnings: number; components: PayslipSalaryComponents }> {
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const sumOf = (c: PayslipSalaryComponents) => round2(c.hra + c.travelAllowance + c.medicalAllowance + c.specialAllowance);
+
+    const hasSnapshot = ps.hra != null && ps.travelAllowance != null && ps.medicalAllowance != null && ps.specialAllowance != null;
+    if (hasSnapshot) {
+      const components: PayslipSalaryComponents = {
+        hra: ps.hra || 0,
+        travelAllowance: ps.travelAllowance || 0,
+        medicalAllowance: ps.medicalAllowance || 0,
+        specialAllowance: ps.specialAllowance || 0,
+        incentive: ps.incentive || 0,
+        bonus: ps.bonus || 0,
+      };
+      const allowance = sumOf(components);
+      return { baseSalary: ps.baseSalary, allowance, grossEarnings: round2(ps.baseSalary + allowance), components };
+    }
+
+    const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    const isCurrentMonth = ps.year === ist.getUTCFullYear() && ps.month === ist.getUTCMonth() + 1;
+    const structure = await this.getSalaryStructure(ps.employeeId, new Date(ps.year, ps.month - 1, 1));
+    const structureComponents: PayslipSalaryComponents = {
+      hra: structure.hra || 0,
+      travelAllowance: structure.conveyance || 0,
+      medicalAllowance: structure.medical || 0,
+      specialAllowance: structure.special || 0,
+      incentive: structure.incentive || 0,
+      bonus: structure.bonus || 0,
+    };
+    const structureAllowance = sumOf(structureComponents);
+
+    if (isCurrentMonth && structure.id !== 0) {
+      const baseSalary = structure.baseSalary || ps.baseSalary;
+      await prisma.payslip.update({
+        where: { id: ps.id },
+        data: { baseSalary, allowance: structureAllowance, ...structureComponents },
+      }).catch(err => console.warn(`[resolvePayslipEarnings] Failed to heal payslip #${ps.id}:`, err));
+      return { baseSalary, allowance: structureAllowance, grossEarnings: round2(baseSalary + structureAllowance), components: structureComponents };
+    }
+
+    const reconciles = structure.id !== 0 && structure.baseSalary === ps.baseSalary && Math.abs(structureAllowance - (ps.allowance || 0)) < 0.01;
+    const allowance = ps.allowance || 0;
+    const components: PayslipSalaryComponents = reconciles
+      ? structureComponents
+      : { hra: 0, travelAllowance: 0, medicalAllowance: 0, specialAllowance: allowance, incentive: 0, bonus: 0 };
+    return { baseSalary: ps.baseSalary, allowance, grossEarnings: round2(ps.baseSalary + allowance), components };
+  }
+
+  /**
    * Get salary structure for an employee
    */
   async getSalaryStructure(employeeId: number, effectiveDate: Date): Promise<SalaryStructure> {
