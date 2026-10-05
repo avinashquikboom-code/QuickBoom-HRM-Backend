@@ -4,6 +4,7 @@ export interface ProductLineMeta {
   productName: string | null;
   sku: string | null;
   category: string | null;
+  variant: string | null;
 }
 
 const pick = (item: RawLine, keys: string[]): string | null => {
@@ -17,6 +18,7 @@ const pick = (item: RawLine, keys: string[]): string | null => {
 
 const NAME_KEYS = ['productName', 'ProductName', 'product_name', 'itemName', 'ItemName', 'item_name', 'productTitle', 'title', 'description', 'Description'];
 const SKU_KEYS = ['sku', 'SKU', 'productSKU', 'productSku', 'productCode', 'ProductCode', 'itemCode', 'ItemCode', 'barcode', 'Barcode'];
+const VARIANT_KEYS = ['variant', 'Variant', 'variantName', 'VariantName', 'variant_name'];
 const CATEGORY_KEYS = [
   'category', 'Category', 'categoryName', 'CategoryName', 'category_name',
   'productCategory', 'ProductCategory', 'productCategoryName', 'itemCategory',
@@ -28,6 +30,7 @@ export const extractProductLineMeta = (item: RawLine): ProductLineMeta => ({
   productName: pick(item, NAME_KEYS),
   sku: pick(item, SKU_KEYS),
   category: pick(item, CATEGORY_KEYS),
+  variant: pick(item, VARIANT_KEYS),
 });
 
 const isPlaceholderName = (name: unknown): boolean =>
@@ -57,6 +60,7 @@ export const enrichProductBreakdown = (stored: unknown, rawLineItems: unknown): 
       productName: isPlaceholderName(line.productName) && meta.productName ? meta.productName : line.productName,
       sku: line.sku ? line.sku : meta.sku,
       category: line.category ? line.category : meta.category,
+      variant: line.variant ? line.variant : meta.variant,
     };
   });
 };
