@@ -1,0 +1,7 @@
+-- Snapshot of salary structure components per generated payslip (NULL for legacy rows)
+ALTER TABLE "Payslip" ADD COLUMN IF NOT EXISTS "hra" DOUBLE PRECISION;
+ALTER TABLE "Payslip" ADD COLUMN IF NOT EXISTS "travelAllowance" DOUBLE PRECISION;
+ALTER TABLE "Payslip" ADD COLUMN IF NOT EXISTS "medicalAllowance" DOUBLE PRECISION;
+ALTER TABLE "Payslip" ADD COLUMN IF NOT EXISTS "specialAllowance" DOUBLE PRECISION;
+ALTER TABLE "Payslip" ADD COLUMN IF NOT EXISTS "incentive" DOUBLE PRECISION;
+ALTER TABLE "Payslip" ADD COLUMN IF NOT EXISTS "bonus" DOUBLE PRECISION;

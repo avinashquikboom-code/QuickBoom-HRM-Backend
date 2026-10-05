@@ -501,6 +501,12 @@ model Payslip {
   workingDays           Int      @default(26)
   totalCalendarDays     Int      @default(30)
   commissionEarned      Float    @default(0)
+  hra                   Float?
+  travelAllowance       Float?
+  medicalAllowance      Float?
+  specialAllowance      Float?
+  incentive             Float?
+  bonus                 Float?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
   employee              Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)

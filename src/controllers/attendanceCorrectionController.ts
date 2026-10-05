@@ -3,7 +3,7 @@ import { prisma } from '../utils/db';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
-import payrollService from '../services/payrollService';
+import payrollService, { payslipComponentData } from '../services/payrollService';
 
 // Helper to safely extract single string from params
 function getSingleParam(param: string | string[] | undefined): string | undefined {
@@ -49,6 +49,7 @@ async function recalculatePayslipIfPresent(employeeId: number, targetDate: Date)
         totalCalendarDays: calc.totalCalendarDays,
         commissionEarned: calc.commissionEarned,
         expenseReimbursement: calc.expenseReimbursement,
+        ...payslipComponentData(calc),
         updatedAt: new Date(),
       },
     });

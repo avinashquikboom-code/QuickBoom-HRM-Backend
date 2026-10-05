@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
-import payrollService from '../../services/payrollService';
+import payrollService, { payslipComponentData } from '../../services/payrollService';
 import { getIstMonthRange } from '../../utils/commissionHelper';
 const PdfPrinter = require('pdfmake');
 
@@ -226,32 +226,45 @@ export const downloadPayslip = async (
       if (targetEmpId) {
         const emp = await prisma.employee.findUnique({
           where: { id: targetEmpId },
-          include: { salaryStructure: true, office: true, department: true }
+          include: { office: true, department: true }
         });
 
         if (emp) {
-          const ss = emp.salaryStructure;
-          const gross = ss?.grossSalary || ss?.monthlySalary || (ss?.basicSalary ? ss.basicSalary * 2 : 0);
-          const basic = ss?.basicSalary || Math.round(gross * 0.5);
-          const pf = ss?.pfEnabled ? Math.round(basic * ((ss.employeePfRate || 12) / 100)) : 0;
-          const esic = ss?.esicEnabled ? Math.round(gross * ((ss.employeeEsicRate || 0.75) / 100)) : 0;
-          const net = Math.max(0, gross - (pf + esic));
-
+          // Single source of truth: the backend payroll calculation (same one admin uses)
+          const calc = await payrollService.calculatePayroll(emp.id, targetMonth, targetYear);
           payslip = {
             id: 0,
             employeeId: emp.id,
             employeeCode: emp.employeeCode,
             employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-            designation: emp.designation || 'Staff',
-            department: emp.department?.name || 'General',
-            officeName: emp.office?.name || 'Main Office',
+            designation: emp.designation || '',
+            department: emp.department?.name || '',
+            officeName: emp.office?.name || '',
             month: targetMonth,
             year: targetYear,
-            baseSalary: basic,
-            allowance: Math.max(0, gross - basic),
-            deductions: pf + esic,
-            netSalary: net,
-            netInWords: `${net.toLocaleString('en-IN')} Rupees Only`,
+            baseSalary: calc.baseSalary,
+            allowance: calc.allowance,
+            deductions: calc.deductions,
+            netSalary: calc.netSalary,
+            advanceDeduction: calc.advanceDeduction,
+            expenseReimbursement: calc.expenseReimbursement,
+            presentDays: calc.presentDays,
+            absentDays: calc.absentDays,
+            halfDays: calc.halfDays,
+            paidLeaveDays: calc.paidLeaveDays,
+            unpaidLeaveDays: calc.unpaidLeaveDays,
+            holidayCount: calc.holidayCount,
+            weeklyOffCount: calc.weeklyOffCount,
+            holidayWorkedCount: calc.holidayWorkedCount,
+            weeklyOffWorkedCount: calc.weeklyOffWorkedCount,
+            extraHolidayPayout: calc.extraHolidayPayout,
+            extraWeeklyOffPayout: calc.extraWeeklyOffPayout,
+            dailySalary: calc.dailySalary,
+            workingDays: calc.workingDays,
+            totalCalendarDays: calc.totalCalendarDays,
+            commissionEarned: calc.commissionEarned,
+            ...payslipComponentData(calc),
+            netInWords: `${calc.netSalary.toLocaleString('en-IN')} Rupees Only`,
             employee: emp,
           };
         }
@@ -291,23 +304,35 @@ export const downloadPayslip = async (
     });
 
     const ss = employeeWithSalary?.salaryStructure;
-    const originalBasic = ss?.basicSalary || payslip.baseSalary || 10000;
-    
-    // Determine ratio (actual base salary divided by configured base salary)
-    const ratio = originalBasic > 0 ? (payslip.baseSalary / originalBasic) : 1.0;
-
     const basic = payslip.baseSalary;
-    const hra = ss ? Math.round(ss.hra * ratio) : Math.round(basic * 0.20);
-    const ta = ss ? Math.round(ss.travelAllowance * ratio) : 0;
-    const medical = ss ? Math.round(ss.medicalAllowance * ratio) : 0;
-    const special = ss ? Math.round(ss.specialAllowance * ratio) : 0;
-    const incentive = ss?.incentive || 0;
-    const bonus = ss?.bonus || 0;
 
-    // Remaining allowance is distributed if there is a mismatch
-    const calculatedAllowance = hra + ta + medical + special + incentive + bonus;
-    const extraAllowance = Math.max(0, payslip.allowance - calculatedAllowance);
-    const finalSpecial = special + extraAllowance;
+    // Salary components come from the payslip snapshot saved at payroll generation.
+    // Legacy payslips (no snapshot) use the structure only when it still matches the stored totals.
+    let hra: number, ta: number, medical: number, special: number, incentive: number, bonus: number;
+    if (payslip.hra !== null && payslip.hra !== undefined) {
+      hra = payslip.hra || 0;
+      ta = payslip.travelAllowance || 0;
+      medical = payslip.medicalAllowance || 0;
+      special = payslip.specialAllowance || 0;
+      incentive = payslip.incentive || 0;
+      bonus = payslip.bonus || 0;
+    } else if (ss && ss.basicSalary === basic &&
+      Math.abs((ss.hra + ss.travelAllowance + ss.medicalAllowance + ss.specialAllowance) - (payslip.allowance || 0)) < 0.01) {
+      hra = ss.hra;
+      ta = ss.travelAllowance;
+      medical = ss.medicalAllowance;
+      special = ss.specialAllowance;
+      incentive = ss.incentive || 0;
+      bonus = ss.bonus || 0;
+    } else {
+      hra = 0;
+      ta = 0;
+      medical = 0;
+      special = payslip.allowance || 0;
+      incentive = 0;
+      bonus = 0;
+    }
+    const finalSpecial = special;
 
     const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
     const pf = ss?.pfEnabled ? Math.round(basic * (ss.employeePfRate / 100)) : 0;
@@ -381,7 +406,7 @@ export const downloadPayslip = async (
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
 
     // Gross Earnings = Basic + Allowance components + Commission
-    const grossEarnings = Math.round((basic + (payslip.allowance || 0) + (commissionEarned > 0 ? commissionEarned : 0)) * 100) / 100;
+    const grossEarnings = Math.round((basic + hra + ta + medical + special + incentive + bonus + (commissionEarned > 0 ? commissionEarned : 0)) * 100) / 100;
 
     // Total Deductions = Statutory + Absent + Half-Day + Leave + Advance Salary + Other
     const itemizedDeductions = pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;

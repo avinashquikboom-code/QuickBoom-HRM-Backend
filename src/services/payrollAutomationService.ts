@@ -17,7 +17,7 @@ export function numToWords(n: number): string {
   return numToWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + numToWords(n % 10000000) : '');
 }
 
-import payrollService from './payrollService';
+import payrollService, { payslipComponentData } from './payrollService';
 
 export class PayrollAutomationService {
   /**
@@ -81,6 +81,7 @@ export class PayrollAutomationService {
         totalCalendarDays: calculation.totalCalendarDays,
         commissionEarned: calculation.commissionEarned,
         expenseReimbursement: calculation.expenseReimbursement,
+        ...payslipComponentData(calculation),
         status,
         employeeCode: employee.employeeCode,
         employeeName: fullName,
@@ -115,6 +116,7 @@ export class PayrollAutomationService {
         totalCalendarDays: calculation.totalCalendarDays,
         commissionEarned: calculation.commissionEarned,
         expenseReimbursement: calculation.expenseReimbursement,
+        ...payslipComponentData(calculation),
         status,
         employeeCode: employee.employeeCode,
         employeeName: fullName,

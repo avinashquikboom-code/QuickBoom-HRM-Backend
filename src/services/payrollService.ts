@@ -42,7 +42,27 @@ export interface PayrollCalculation {
   extraWeeklyOffPayout: number;
   commissionEarned: number;
   overtimeHours: number;
+  components: PayslipSalaryComponents;
 }
+
+// Per-month snapshot of the salary structure components used to generate a payslip.
+export interface PayslipSalaryComponents {
+  hra: number;
+  travelAllowance: number;
+  medicalAllowance: number;
+  specialAllowance: number;
+  incentive: number;
+  bonus: number;
+}
+
+export const payslipComponentData = (calc: { components: PayslipSalaryComponents }): PayslipSalaryComponents => ({
+  hra: calc.components.hra,
+  travelAllowance: calc.components.travelAllowance,
+  medicalAllowance: calc.components.medicalAllowance,
+  specialAllowance: calc.components.specialAllowance,
+  incentive: calc.components.incentive,
+  bonus: calc.components.bonus,
+});
 
 export interface PayrollRun {
   id: string;
@@ -71,6 +91,8 @@ export interface SalaryStructure {
   conveyance: number;
   medical: number;
   special: number;
+  incentive?: number;
+  bonus?: number;
   pf: number;
   esi: number;
   professionalTax: number;
@@ -244,7 +266,15 @@ class PayrollService {
         extraHolidayPayout,
         extraWeeklyOffPayout,
         commissionEarned,
-        overtimeHours: attendanceData.overtimeHours
+        overtimeHours: attendanceData.overtimeHours,
+        components: {
+          hra: salaryStructure.hra || 0,
+          travelAllowance: salaryStructure.conveyance || 0,
+          medicalAllowance: salaryStructure.medical || 0,
+          specialAllowance: salaryStructure.special || 0,
+          incentive: salaryStructure.incentive || 0,
+          bonus: salaryStructure.bonus || 0,
+        }
       };
 
       return calculation;
@@ -453,6 +483,8 @@ class PayrollService {
         conveyance: structure.travelAllowance || 0,
         medical: structure.medicalAllowance || 0,
         special: structure.specialAllowance || 0,
+        incentive: structure.incentive || 0,
+        bonus: structure.bonus || 0,
         pf,
         esi,
         professionalTax: 0,
@@ -1054,6 +1086,7 @@ class PayrollService {
           commissionEarned: calculation.commissionEarned,
           advanceDeduction: calculation.advanceDeduction,
           expenseReimbursement: calculation.expenseReimbursement,
+          ...payslipComponentData(calculation),
           status: 'Approved',
           updatedAt: new Date()
         },
@@ -1088,6 +1121,7 @@ class PayrollService {
           workingDays: calculation.workingDays,
           totalCalendarDays: calculation.totalCalendarDays,
           commissionEarned: calculation.commissionEarned,
+          ...payslipComponentData(calculation),
           netInWords: '',
           createdAt: new Date()
         }
