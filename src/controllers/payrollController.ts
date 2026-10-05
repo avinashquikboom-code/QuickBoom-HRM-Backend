@@ -428,10 +428,11 @@ export const generatePayslipPDF = async (
       : Math.round(totalApprovedExpenses * 100) / 100;
 
     const dailySalary = payslip.dailySalary || (payslip.baseSalary / (payslip.workingDays || 26));
+    const absentDeduction = payslip.absentDays ? Math.round((payslip.absentDays * dailySalary) * 100) / 100 : 0;
     const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
 
-    const itemizedDeductions = halfDayDeduction + leaveDeduction + advanceDeduction;
+    const itemizedDeductions = absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
 
     // CORRUPTION GUARD: If stored payslip.deductions is wildly inflated (e.g. > itemized by
     // more than ₹5,000), it likely includes mis-applied PF/ESIC on the full gross salary.
@@ -457,6 +458,12 @@ export const generatePayslipPDF = async (
       [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }]
     ];
 
+    if (absentDeduction > 0) {
+      deductionsTableBody.push([
+        { text: `Absent Deduction (${payslip.absentDays} days)`, fontSize: 9, color: '#111827' },
+        { text: fmt(absentDeduction), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
     if (halfDayDeduction > 0) {
       deductionsTableBody.push([
         { text: `Half Day Deduction (${payslip.halfDays} half days)`, fontSize: 9, color: '#111827' },
@@ -1019,35 +1026,32 @@ export const getAdminPayrollSlips = async (
       const off = slip.employee?.office?.name || slip.officeName || 'Main Office';
       const schedWorkingDays = slip.workingDays || calculateScheduledWorkingDays(slip.year, slip.month, slip.employee?.office);
 
-      const dSalary = slip.dailySalary || 0;
+      const baseMonthly = (slip.baseSalary || 0) + (slip.allowance || 0);
+      const dSalary = slip.dailySalary || (schedWorkingDays > 0 ? Math.round((baseMonthly / schedWorkingDays) * 100) / 100 : 0);
+      const absentDeduction = slip.absentDays ? Math.round((slip.absentDays * dSalary) * 100) / 100 : 0;
       const halfDayDeduction = slip.halfDays ? Math.round((slip.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
       const leaveDeduction = slip.unpaidLeaveDays ? Math.round((slip.unpaidLeaveDays * dSalary) * 100) / 100 : 0;
       const advanceDeduction = slip.advanceDeduction || 0;
-      const itemizedDeductions = halfDayDeduction + leaveDeduction + advanceDeduction;
+      const itemizedDeductions = absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
 
       let cleanDeductions = slip.deductions || 0;
       let cleanNetSalary = slip.netSalary || 0;
-      const baseMonthly = (slip.baseSalary || 0) + (slip.allowance || 0);
 
       // CORRUPTION GUARD:
-      // If stored slip.deductions is inflated (e.g. > itemized by > ₹5,000, or ≈ full base salary where employee had no actual unpaid leaves/advances)
-      const isCorrupted = cleanDeductions > 0 && (
-        (cleanDeductions - itemizedDeductions > 5000) ||
-        (baseMonthly > 0 && Math.abs(cleanDeductions - baseMonthly) < 50)
-      );
+      // If stored slip.deductions is wildly inflated over the itemized total (> ₹5,000)
+      const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
 
       if (isCorrupted) {
         cleanDeductions = itemizedDeductions;
         const totalGross = baseMonthly + (slip.commissionEarned || 0) + (slip.extraHolidayPayout || 0) + (slip.extraWeeklyOffPayout || 0) + (slip.expenseReimbursement || 0);
         cleanNetSalary = Math.max(0, Math.round((totalGross - cleanDeductions) * 100) / 100);
 
-        // Auto-heal the database payslip record asynchronously
+        // Auto-heal the database payslip record asynchronously (preserve actual attendance records)
         prisma.payslip.update({
           where: { id: slip.id },
           data: {
             deductions: cleanDeductions,
             netSalary: cleanNetSalary,
-            absentDays: 0,
           }
         }).catch(err => console.warn(`[getAdminPayrollSlips] Failed to heal payslip #${slip.id}:`, err));
       }
@@ -1075,8 +1079,8 @@ export const getAdminPayrollSlips = async (
         status: slip.status || 'Approved',
         month: slip.month,
         year: slip.year,
-        presentDays: isCorrupted ? schedWorkingDays : (slip.presentDays || 0),
-        absentDays: isCorrupted ? 0 : (slip.absentDays || 0),
+        presentDays: slip.presentDays || 0,
+        absentDays: slip.absentDays || 0,
         halfDays: slip.halfDays || 0,
         paidLeaveDays: slip.paidLeaveDays || 0,
         unpaidLeaveDays: slip.unpaidLeaveDays || 0,

@@ -64,20 +64,18 @@ export const getMyPayslips = async (
       const calendarDays = new Date(ps.year, ps.month, 0).getDate();
       const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee.office);
 
-      const dSalary = ps.dailySalary || 0;
+      const baseMonthly = (ps.baseSalary || 0) + (ps.allowance || 0);
+      const dSalary = ps.dailySalary || (schedWorkingDays > 0 ? Math.round((baseMonthly / schedWorkingDays) * 100) / 100 : 0);
+      const absentDeduction = ps.absentDays ? Math.round((ps.absentDays * dSalary) * 100) / 100 : 0;
       const halfDayDeduction = ps.halfDays ? Math.round((ps.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
       const leaveDeduction = ps.unpaidLeaveDays ? Math.round((ps.unpaidLeaveDays * dSalary) * 100) / 100 : 0;
       const advanceDeduction = ps.advanceDeduction || 0;
-      const itemizedDeductions = halfDayDeduction + leaveDeduction + advanceDeduction;
+      const itemizedDeductions = absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
 
       let cleanDeductions = ps.deductions || 0;
       let cleanNetSalary = ps.netSalary || 0;
-      const baseMonthly = (ps.baseSalary || 0) + (ps.allowance || 0);
 
-      const isCorrupted = cleanDeductions > 0 && (
-        (cleanDeductions - itemizedDeductions > 5000) ||
-        (baseMonthly > 0 && Math.abs(cleanDeductions - baseMonthly) < 50)
-      );
+      const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
 
       if (isCorrupted) {
         cleanDeductions = itemizedDeductions;
@@ -89,7 +87,6 @@ export const getMyPayslips = async (
           data: {
             deductions: cleanDeductions,
             netSalary: cleanNetSalary,
-            absentDays: 0,
           }
         }).catch(err => console.warn(`[getMyPayslips] Failed to heal payslip #${ps.id}:`, err));
       }
@@ -98,8 +95,8 @@ export const getMyPayslips = async (
         ...ps,
         deductions: cleanDeductions,
         netSalary: cleanNetSalary,
-        presentDays: isCorrupted ? schedWorkingDays : (ps.presentDays || 0),
-        absentDays: isCorrupted ? 0 : (ps.absentDays || 0),
+        presentDays: ps.presentDays || 0,
+        absentDays: ps.absentDays || 0,
         advanceDeduction: ps.advanceDeduction || 0,
         advanceSalary: ps.advanceDeduction || 0,
         totalAdvanceSalary: ps.advanceDeduction || 0,
@@ -379,14 +376,15 @@ export const downloadPayslip = async (
       : Math.round(totalApprovedExpenses * 100) / 100;
 
     const dailySalary = payslip.dailySalary || (basic / (payslip.workingDays || 26));
+    const absentDeduction = payslip.absentDays ? Math.round((payslip.absentDays * dailySalary) * 100) / 100 : 0;
     const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
 
     // Gross Earnings = Basic + Allowance components + Commission
     const grossEarnings = Math.round((basic + (payslip.allowance || 0) + (commissionEarned > 0 ? commissionEarned : 0)) * 100) / 100;
 
-    // Total Deductions = Statutory + Half-Day + Leave + Advance Salary + Other
-    const itemizedDeductions = pf + esic + halfDayDeduction + leaveDeduction + advanceDeduction;
+    // Total Deductions = Statutory + Absent + Half-Day + Leave + Advance Salary + Other
+    const itemizedDeductions = pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
 
     // CORRUPTION GUARD: If stored payslip.deductions far exceeds itemized (by > ₹5,000),
     // it was likely saved with a mis-applied bulk deduction (e.g. PF applied to gross instead of basic).
@@ -430,6 +428,7 @@ export const downloadPayslip = async (
     const deductionsItems: { name: string; amount: number }[] = [];
     if (pf > 0 || ss?.pfEnabled) deductionsItems.push({ name: 'Provident Fund (PF)', amount: pf });
     if (esic > 0 || ss?.esicEnabled) deductionsItems.push({ name: 'ESIC / Tax', amount: esic });
+    if (absentDeduction > 0) deductionsItems.push({ name: `Absent (${payslip.absentDays} days)`, amount: absentDeduction });
     if (halfDayDeduction > 0) deductionsItems.push({ name: `Half Day (${payslip.halfDays} half days)`, amount: halfDayDeduction });
     if (leaveDeduction > 0) deductionsItems.push({ name: `Leave (${payslip.unpaidLeaveDays} unpaid leaves)`, amount: leaveDeduction });
     if (advanceDeduction > 0) {

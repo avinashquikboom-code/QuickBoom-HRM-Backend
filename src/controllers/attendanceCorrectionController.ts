@@ -3,6 +3,7 @@ import { prisma } from '../utils/db';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
+import payrollService from '../services/payrollService';
 
 // Helper to safely extract single string from params
 function getSingleParam(param: string | string[] | undefined): string | undefined {
@@ -22,38 +23,36 @@ async function recalculatePayslipIfPresent(employeeId: number, targetDate: Date)
 
     if (!payslip) return;
 
-    const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        employeeId,
-        date: { startsWith: monthPrefix },
-      },
-    });
-
-    const presentRecords = attendances.filter(
-      (a) => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'HALF_DAY' || a.checkIn !== null
-    );
-    const presentCount = presentRecords.length;
-
-    const salaryStructure = await prisma.salaryStructure.findUnique({
-      where: { employeeId },
-    });
-
-    const gross = salaryStructure?.grossSalary || salaryStructure?.monthlySalary || payslip.baseSalary || 25000;
-    const basic = salaryStructure?.basicSalary || Math.round(gross * 0.5);
-    const workingDays = 25;
-    const perDayRate = gross / workingDays;
-
-    const newNetSalary = Math.max(0, Math.round(presentCount * perDayRate));
+    const calc = await payrollService.calculatePayroll(employeeId, month, year);
 
     await prisma.payslip.update({
       where: { id: payslip.id },
       data: {
-        netSalary: newNetSalary,
+        baseSalary: calc.baseSalary,
+        allowance: calc.allowance,
+        deductions: calc.deductions,
+        advanceDeduction: calc.advanceDeduction,
+        netSalary: calc.netSalary,
+        presentDays: calc.presentDays,
+        absentDays: calc.absentDays,
+        halfDays: calc.halfDays,
+        paidLeaveDays: calc.paidLeaveDays,
+        unpaidLeaveDays: calc.unpaidLeaveDays,
+        holidayCount: calc.holidayCount,
+        weeklyOffCount: calc.weeklyOffCount,
+        holidayWorkedCount: calc.holidayWorkedCount,
+        weeklyOffWorkedCount: calc.weeklyOffWorkedCount,
+        extraHolidayPayout: calc.extraHolidayPayout,
+        extraWeeklyOffPayout: calc.extraWeeklyOffPayout,
+        dailySalary: calc.dailySalary,
+        workingDays: calc.workingDays,
+        totalCalendarDays: calc.totalCalendarDays,
+        commissionEarned: calc.commissionEarned,
+        expenseReimbursement: calc.expenseReimbursement,
         updatedAt: new Date(),
       },
     });
-    console.log(`📊 Recalculated payslip #${payslip.id} for employee #${employeeId}: new netSalary=${newNetSalary}`);
+    console.log(`📊 Recalculated payslip #${payslip.id} for employee #${employeeId}: new netSalary=${calc.netSalary}`);
   } catch (error) {
     console.error('Error recalculating payslip for correction:', error);
   }

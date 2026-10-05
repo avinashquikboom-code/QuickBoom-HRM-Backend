@@ -729,58 +729,61 @@ class PayrollService {
       let weeklyOffWorkedCount = 0;
       let lateMarks = 0;
 
-      // If there are NO attendance records recorded for this employee in the month,
-      // it indicates attendance was not tracked/logged via the mobile app for this period
-      // (e.g. store staff synced via external POS/HopKid API, or biometric/external systems).
-      // They must NOT be penalized as 100% absent (which would deduct their entire monthly salary).
-      // Default to 100% attendance (scheduledWorkingDays present, 0 absent).
-      if (attendanceRecords.length === 0) {
-        let schedWorkingDays = 0;
-        let holCount = 0;
-        let wOffCount = 0;
+      // Deduplicate attendance records by date into a canonical map.
+      // Deterministic Priority:
+      //  Level 5: Explicit PRESENT, LATE, FULL_DAY, HOLIDAY_WORKED, WEEKLY_OFF_WORKED
+      //  Level 4: HALF_DAY, HALF-DAY, HALFDAY, HALF DAY
+      //  Level 3: Records with checkIn/checkOut not marked ABSENT
+      //  Level 2: LEAVE, ON_LEAVE, PAID_LEAVE, UNPAID_LEAVE, PAID
+      //  Level 1: Records with punches marked ABSENT
+      //  Level 0: Plain placeholder ABSENT / unpunched placeholder
+      const attendanceByDate = new Map<string, any>();
 
-        for (let day = 1; day <= totalCalendarDays; day++) {
-          const dayStr = String(day).padStart(2, '0');
-          const dateStr = `${year}-${String(month).padStart(2, '0')}-${dayStr}`;
-          const dateObj = new Date(year, month - 1, day, 12, 0, 0);
-          const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+      const getStatusRank = (rec: any): number => {
+        const s = (rec?.status || '').toUpperCase().trim();
+        const hasPunch = Boolean(rec?.checkIn || rec?.checkOut);
+        if (s === 'PRESENT' || s === 'LATE' || s === 'FULL_DAY' || s === 'HOLIDAY_WORKED' || s === 'WEEKLY_OFF_WORKED') {
+          return 5;
+        }
+        if (s === 'HALF_DAY' || s === 'HALF-DAY' || s === 'HALFDAY' || s === 'HALF DAY') {
+          return 4;
+        }
+        if (hasPunch && s !== 'ABSENT') {
+          return 3;
+        }
+        if (s === 'LEAVE' || s === 'ON_LEAVE' || s === 'PAID_LEAVE' || s === 'UNPAID_LEAVE' || s === 'PAID') {
+          return 2;
+        }
+        if (hasPunch && s === 'ABSENT') {
+          return 1;
+        }
+        return 0;
+      };
 
-          const isWeeklyOff = !officeWorkingDays.includes(dayName);
-          const isHoliday = holidays.some(h => {
-            const hStr = toIstYmd(h.date);
-            return hStr === dateStr;
-          });
-
-          if (isHoliday) {
-            holCount++;
-          } else if (isWeeklyOff) {
-            wOffCount++;
-          } else {
-            schedWorkingDays++;
+      for (const rec of attendanceRecords) {
+        const dStr = rec.date;
+        const existing = attendanceByDate.get(dStr);
+        if (!existing) {
+          attendanceByDate.set(dStr, rec);
+        } else {
+          const rankExisting = getStatusRank(existing);
+          const rankNew = getStatusRank(rec);
+          if (rankNew > rankExisting) {
+            attendanceByDate.set(dStr, rec);
+          } else if (rankNew === rankExisting) {
+            const existingPunches = (existing.checkIn ? 1 : 0) + (existing.checkOut ? 1 : 0);
+            const newPunches = (rec.checkIn ? 1 : 0) + (rec.checkOut ? 1 : 0);
+            if (newPunches > existingPunches || (newPunches === existingPunches && new Date(rec.updatedAt || rec.createdAt) > new Date(existing.updatedAt || existing.createdAt))) {
+              attendanceByDate.set(dStr, rec);
+            }
           }
         }
-
-        const finalWorkingDays = schedWorkingDays > 0 ? schedWorkingDays : (totalCalendarDays - wOffCount - holCount) || 26;
-
-        return {
-          workingDays: finalWorkingDays,
-          totalCalendarDays,
-          presentDays: finalWorkingDays,
-          absentDays: 0,
-          halfDays: 0,
-          paidLeaveDays: 0,
-          unpaidLeaveDays: 0,
-          holidayCount: holCount,
-          weeklyOffCount: wOffCount,
-          holidayWorkedCount: 0,
-          weeklyOffWorkedCount: 0,
-          lateMarks: 0,
-          overtimeHours: 0
-        };
       }
 
       const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
       const todayIstStr = `${nowIst.getUTCFullYear()}-${String(nowIst.getUTCMonth() + 1).padStart(2, '0')}-${String(nowIst.getUTCDate()).padStart(2, '0')}`;
+      const targetMonthEndStr = `${year}-${String(month).padStart(2, '0')}-${String(totalCalendarDays).padStart(2, '0')}`;
+      const isPastMonth = targetMonthEndStr < todayIstStr;
 
       for (let day = 1; day <= totalCalendarDays; day++) {
         const dayStr = String(day).padStart(2, '0');
@@ -794,22 +797,30 @@ class PayrollService {
           return hStr === dateStr;
         });
 
-        const att = attendanceRecords.find(a => a.date === dateStr);
+        const att = attendanceByDate.get(dateStr);
         const leave = approvedLeaves.find(l => {
           const fStr = toIstYmd(l.fromDate);
           const tStr = toIstYmd(l.toDate);
           return fStr <= dateStr && dateStr <= tStr;
         });
 
-        // 9-Tier Deterministic Priority Classification
+        const rawStatus = (att?.status || '').toUpperCase().trim();
+        const hasPunch = Boolean(att?.checkIn || att?.checkOut);
+
+        const isHalfDay = rawStatus === 'HALF_DAY' || rawStatus === 'HALF-DAY' || rawStatus === 'HALFDAY' || rawStatus === 'HALF DAY';
+        const isPresent = rawStatus === 'PRESENT' || rawStatus === 'LATE' || rawStatus === 'FULL_DAY' || (hasPunch && rawStatus !== 'ABSENT' && !isHalfDay && !rawStatus.includes('LEAVE'));
+        const isLeaveStatus = rawStatus === 'LEAVE' || rawStatus === 'ON_LEAVE' || rawStatus === 'PAID_LEAVE' || rawStatus === 'UNPAID_LEAVE' || rawStatus === 'PAID';
+        const isExplicitAbsent = rawStatus === 'ABSENT';
+
+        // Deterministic Classification
         if (isHoliday) {
-          if (att && (att.checkIn || att.status === 'PRESENT' || att.status === 'HOLIDAY_WORKED')) {
+          if (isPresent || rawStatus === 'HOLIDAY_WORKED' || hasPunch) {
             holidayWorkedCount++;
           } else {
             holidayCount++;
           }
         } else if (isWeeklyOff) {
-          if (att && (att.checkIn || att.status === 'PRESENT' || att.status === 'WEEKLY_OFF_WORKED')) {
+          if (isPresent || rawStatus === 'WEEKLY_OFF_WORKED' || hasPunch) {
             weeklyOffWorkedCount++;
           } else {
             weeklyOffCount++;
@@ -818,44 +829,27 @@ class PayrollService {
           // Scheduled Working Day
           scheduledWorkingDays++;
 
-          if (att) {
-            if (att.status === 'PRESENT') {
-              presentDays++;
-              if (att.checkIn && office?.workingHoursStart) {
-                const checkInTime = new Date(att.checkIn).toTimeString().slice(0, 5);
-                if (checkInTime > office.workingHoursStart) {
-                  lateMarks++;
-                }
+          if (isHalfDay) {
+            halfDays++;
+          } else if (isPresent) {
+            presentDays++;
+            if (att?.checkIn && office?.workingHoursStart) {
+              const checkInTime = new Date(att.checkIn).toTimeString().slice(0, 5);
+              if (checkInTime > office.workingHoursStart) {
+                lateMarks++;
               }
-            } else if (att.status === 'HALF_DAY') {
-              halfDays++;
-            } else if (att.status === 'LEAVE' || att.status === 'PAID') {
-              if (leave && (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID')) {
-                unpaidLeaveDays++;
-              } else {
-                paidLeaveDays++;
-              }
-            } else if (att.status === 'ABSENT') {
-              if (leave) {
-                if (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID') {
-                  unpaidLeaveDays++;
-                } else {
-                  paidLeaveDays++;
-                }
-              } else {
-                absentDays++;
-              }
-            } else {
-              presentDays++;
             }
-          } else if (leave) {
-            if (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID') {
+          } else if (leave || isLeaveStatus) {
+            const isUnpaid = (leave && (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID')) || rawStatus === 'UNPAID_LEAVE';
+            if (isUnpaid) {
               unpaidLeaveDays++;
             } else {
               paidLeaveDays++;
             }
-          } else if (dateStr <= todayIstStr) {
-            // Only past dates without punch/leave in an active tracking month are considered absent
+          } else if (isExplicitAbsent) {
+            absentDays++;
+          } else if (isPastMonth || dateStr <= todayIstStr) {
+            // Working day with no punch/attendance record and no approved leave is ABSENT
             absentDays++;
           }
         }

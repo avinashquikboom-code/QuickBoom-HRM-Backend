@@ -17,6 +17,8 @@ export function numToWords(n: number): string {
   return numToWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + numToWords(n % 10000000) : '');
 }
 
+import payrollService from './payrollService';
+
 export class PayrollAutomationService {
   /**
    * Calculates salary for a specific employee in a target month and year,
@@ -28,7 +30,6 @@ export class PayrollAutomationService {
     year: number,
     status: string = 'Pending Approval'
   ) {
-    // 1. Fetch Employee with all metadata
     const employee = await prisma.employee.findUnique({
       where: { id: employeeId },
       include: {
@@ -42,136 +43,13 @@ export class PayrollAutomationService {
       throw new Error(`Employee with ID ${employeeId} not found.`);
     }
 
-    // 2. Query attendance records for the target month
-    const monthStr = `${year}-${String(month).padStart(2, '0')}`;
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        employeeId,
-        date: { startsWith: monthStr },
-      },
-    });
+    const calculation = await payrollService.calculatePayroll(employeeId, month, year);
 
-    // 3. Count attendance states
-    const present = attendances.filter((a) => a.status === 'PRESENT').length;
-    const late = attendances.filter((a) => a.status === 'LATE').length;
-    const halfDay = attendances.filter((a) => a.status === 'HALF_DAY').length;
-    const totalDays = attendances.length;
-
-    // Proration logic: Present days = full present + late (present but late) + half of halfDays
-    const presentDays = present + late + (halfDay * 0.5);
-    const salaryRatio = totalDays > 0 ? (presentDays / totalDays) : 1.0;
-
-    // 4. Determine base components from SalaryStructure or fallback defaults
-    let basic = 0;
-    let hra = 0;
-    let medical = 0;
-    let travel = 0;
-    let special = 0;
-    let incentive = 0;
-    let bonus = 0;
-    
-    let pfEnabled = false;
-    let employeePfRate = 12.0;
-    let esicEnabled = false;
-    let employeeEsicRate = 0.75;
-
-    if (employee.salaryStructure) {
-      const ss = employee.salaryStructure;
-      basic = ss.basicSalary;
-      hra = ss.hra;
-      medical = ss.medicalAllowance;
-      travel = ss.travelAllowance;
-      special = ss.specialAllowance;
-      incentive = ss.incentive;
-      bonus = ss.bonus;
-      pfEnabled = ss.pfEnabled;
-      employeePfRate = ss.employeePfRate;
-      esicEnabled = ss.esicEnabled;
-      employeeEsicRate = ss.employeeEsicRate;
-    } else {
-      // Fallback defaults
-      const isSenior = employee.designation?.toLowerCase().includes('senior') ||
-                       employee.designation?.toLowerCase().includes('lead') ||
-                       employee.designation?.toLowerCase().includes('manager');
-      const defaultTotal = isSenior ? 85000 : 45000;
-      basic = defaultTotal * 0.50; // 50% basic
-      hra = defaultTotal * 0.30;   // 30% HRA
-      special = defaultTotal * 0.20; // 20% special allowance
-    }
-
-    // 5. Calculate monthly earnings prorated by attendance ratio
-    const proratedBase = Math.round(basic * salaryRatio);
-    const proratedHra = Math.round(hra * salaryRatio);
-    const proratedAllowances = Math.round((medical + travel + special) * salaryRatio);
-    
-    const totalEarnings = proratedBase + proratedHra + proratedAllowances + incentive + bonus;
-
-    // 6. Calculate deductions: PF, ESIC, and Salary Advance EMI
-    // PF is calculated as % of pro-rated basic salary
-    const pfDeduction = pfEnabled ? Math.round(proratedBase * (employeePfRate / 100)) : 0;
-    
-    // ESIC is calculated as % of total earnings
-    const esicDeduction = esicEnabled ? Math.round(totalEarnings * (employeeEsicRate / 100)) : 0;
-
-    // Salary Advance EMI Deduction
-    let advanceDeduction = 0;
-    const activeAdvance = await prisma.salaryAdvance.findFirst({
-      where: {
-        wallet: { employeeId },
-        status: 'APPROVED',
-        remainingAmount: { gt: 0 },
-      },
-      orderBy: { approvedAt: 'asc' },
-    });
-
-    if (activeAdvance) {
-      const standardEmi = activeAdvance.monthlyEmi > 0 
-        ? activeAdvance.monthlyEmi 
-        : Math.round((activeAdvance.amount / (activeAdvance.months || 1)) * 100) / 100;
-      
-      advanceDeduction = Math.min(standardEmi, activeAdvance.remainingAmount);
-
-      const newPaidAmount = activeAdvance.paidAmount + advanceDeduction;
-      const newRemaining = Math.max(0, activeAdvance.remainingAmount - advanceDeduction);
-      const newPaidEmis = activeAdvance.paidEmis + 1;
-      const isPaidOff = newRemaining <= 0;
-
-      await prisma.salaryAdvance.update({
-        where: { id: activeAdvance.id },
-        data: {
-          paidAmount: newPaidAmount,
-          remainingAmount: newRemaining,
-          paidEmis: newPaidEmis,
-          status: isPaidOff ? 'PAID_OFF' : 'APPROVED',
-        },
-      });
-
-      // Log wallet debit transaction for salary advance EMI repayment
-      await prisma.walletTransaction.create({
-        data: {
-          walletId: activeAdvance.walletId,
-          title: `Salary Advance EMI (${newPaidEmis}/${activeAdvance.months})`,
-          category: 'Advance Repayment',
-          amount: advanceDeduction,
-          date: new Date(),
-          status: 'Success',
-          isCredit: false,
-          description: `Deducted EMI of ₹${advanceDeduction} for month ${month}/${year}. Remaining advance: ₹${newRemaining}.`,
-        },
-      });
-    }
-    
-    const totalDeductions = pfDeduction + esicDeduction + advanceDeduction;
-
-    // 7. Calculate Net Salary
-    const netSalary = Math.max(0, totalEarnings - totalDeductions);
-    const netInWordsStr = `${numToWords(netSalary)} Rupees Only`;
-
-    // 8. Upsert Payslip
     const designationName = employee.designation || 'Associate';
     const departmentName = employee.department?.name || 'Operations';
     const officeName = employee.office?.name || 'Headquarters';
     const fullName = `${employee.firstName} ${employee.lastName || ''}`.trim();
+    const netInWordsStr = `${numToWords(calculation.netSalary)} Rupees Only`;
 
     const payslip = await prisma.payslip.upsert({
       where: {
@@ -182,11 +60,27 @@ export class PayrollAutomationService {
         },
       },
       update: {
-        baseSalary: proratedBase,
-        allowance: totalEarnings - proratedBase, // allowance + HRA + incentive + bonus
-        deductions: totalDeductions,
-        advanceDeduction,
-        netSalary,
+        baseSalary: calculation.baseSalary,
+        allowance: calculation.allowance,
+        deductions: calculation.deductions,
+        advanceDeduction: calculation.advanceDeduction,
+        netSalary: calculation.netSalary,
+        presentDays: calculation.presentDays,
+        absentDays: calculation.absentDays,
+        halfDays: calculation.halfDays,
+        paidLeaveDays: calculation.paidLeaveDays,
+        unpaidLeaveDays: calculation.unpaidLeaveDays,
+        holidayCount: calculation.holidayCount,
+        weeklyOffCount: calculation.weeklyOffCount,
+        holidayWorkedCount: calculation.holidayWorkedCount,
+        weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
+        extraHolidayPayout: calculation.extraHolidayPayout,
+        extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+        dailySalary: calculation.dailySalary,
+        workingDays: calculation.workingDays,
+        totalCalendarDays: calculation.totalCalendarDays,
+        commissionEarned: calculation.commissionEarned,
+        expenseReimbursement: calculation.expenseReimbursement,
         status,
         employeeCode: employee.employeeCode,
         employeeName: fullName,
@@ -194,16 +88,33 @@ export class PayrollAutomationService {
         department: departmentName,
         officeName,
         netInWords: netInWordsStr,
+        updatedAt: new Date(),
       },
       create: {
         employeeId,
         month,
         year,
-        baseSalary: proratedBase,
-        allowance: totalEarnings - proratedBase,
-        deductions: totalDeductions,
-        advanceDeduction,
-        netSalary,
+        baseSalary: calculation.baseSalary,
+        allowance: calculation.allowance,
+        deductions: calculation.deductions,
+        advanceDeduction: calculation.advanceDeduction,
+        netSalary: calculation.netSalary,
+        presentDays: calculation.presentDays,
+        absentDays: calculation.absentDays,
+        halfDays: calculation.halfDays,
+        paidLeaveDays: calculation.paidLeaveDays,
+        unpaidLeaveDays: calculation.unpaidLeaveDays,
+        holidayCount: calculation.holidayCount,
+        weeklyOffCount: calculation.weeklyOffCount,
+        holidayWorkedCount: calculation.holidayWorkedCount,
+        weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
+        extraHolidayPayout: calculation.extraHolidayPayout,
+        extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+        dailySalary: calculation.dailySalary,
+        workingDays: calculation.workingDays,
+        totalCalendarDays: calculation.totalCalendarDays,
+        commissionEarned: calculation.commissionEarned,
+        expenseReimbursement: calculation.expenseReimbursement,
         status,
         employeeCode: employee.employeeCode,
         employeeName: fullName,
@@ -211,6 +122,7 @@ export class PayrollAutomationService {
         department: departmentName,
         officeName,
         netInWords: netInWordsStr,
+        createdAt: new Date(),
       },
     });
 
