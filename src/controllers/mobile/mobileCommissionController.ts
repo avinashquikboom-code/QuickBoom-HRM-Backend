@@ -1,3 +1,4 @@
+import { enrichProductBreakdown } from '../../utils/productLineMeta';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
@@ -1227,9 +1228,11 @@ export const getMobileCommissionBillDetail = async (
     let grossSale = sale.saleAmount;
     let discount = 0;
     let tax = 0;
+    let rawLineItemsForBreakdown: unknown[] = [];
 
     if (rawPayloadData) {
       const meta = extractWebhookMeta(rawPayloadData);
+      rawLineItemsForBreakdown = meta.lineItems ?? [];
       customerName = meta.customerName || customerName;
       customerPhone = meta.customerPhone || customerPhone;
       paymentMode = meta.paymentMode || paymentMode;
@@ -1351,8 +1354,8 @@ export const getMobileCommissionBillDetail = async (
         paymentMode,
         storeName,
         products,
-        productCommissionBreakdown: sale.employeeId === employee.id && Array.isArray(sale.productBreakdown)
-          ? sale.productBreakdown
+        productCommissionBreakdown: sale.employeeId === employee.id
+          ? (enrichProductBreakdown(sale.productBreakdown, rawLineItemsForBreakdown) ?? [])
           : [],
         grossSale,
         discount,

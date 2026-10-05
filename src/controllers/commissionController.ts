@@ -1,3 +1,4 @@
+import { enrichProductBreakdown } from '../utils/productLineMeta';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
@@ -437,11 +438,17 @@ export const getCommissionTransactions = async (
       : [];
 
     const billActiveMap = new Map<string, boolean>();
+    const billLineItemsMap = new Map<string, unknown[]>();
     for (const log of relevantLogs) {
       if (!log.billId) continue;
       try {
         const parsed = typeof log.payload === 'string' ? JSON.parse(log.payload) : log.payload;
         const meta = extractWebhookMeta(parsed);
+        if (meta.lineItems?.length && !billLineItemsMap.has(log.billId)) {
+          billLineItemsMap.set(log.billId, meta.lineItems);
+          billLineItemsMap.set(log.billId.replace(/^HWM-/, ''), meta.lineItems);
+          billLineItemsMap.set(`HWM-${log.billId}`, meta.lineItems);
+        }
         if (meta.isActive !== null && meta.isActive !== undefined && !billActiveMap.has(log.billId)) {
           billActiveMap.set(log.billId, meta.isActive);
           billActiveMap.set(`HWM-${log.billId}`, meta.isActive);
@@ -566,8 +573,12 @@ export const getCommissionTransactions = async (
         }
       });
 
+      const rawLines = billLineItemsMap.get(bIdStr) ?? billLineItemsMap.get(invStr) ?? billLineItemsMap.get(bIdStr.replace(/^HWM-/, ''));
+      const enrichedBreakdown = enrichProductBreakdown(t.productBreakdown, rawLines);
+
       return {
         ...t,
+        ...(enrichedBreakdown ? { productBreakdown: enrichedBreakdown } : {}),
         isActive: activeVal,
         oldAmount: recon.oldBillAmount,
         oldBillAmount: recon.oldBillAmount,

@@ -1,3 +1,4 @@
+import { extractProductLineMeta } from '../utils/productLineMeta';
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
@@ -74,7 +75,8 @@ export async function groupAndCalculateCommissionBySalesman(
     const lineItem = lineItems[i];
 
     try {
-      const productName = lineItem.productName || lineItem.name || 'Unknown Product';
+      const lineMeta = extractProductLineMeta(lineItem);
+      const productName = lineMeta.productName || lineItem.name || 'Unknown Product';
       const productId = lineItem.productID || lineItem.productId || lineItem.id || `prod-${i + 1}`;
 
       const rawProdAmount =
@@ -232,7 +234,8 @@ export async function groupAndCalculateCommissionBySalesman(
         existing.products.push({
           productID: productId,
           productName: productName,
-          sku: lineItem.sku || lineItem.SKU || lineItem.productSKU || lineItem.productCode || null,
+          sku: lineMeta.sku,
+          category: lineMeta.category,
           quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1) || 1,
           saleAmount: effectiveProdAmount,
           commissionRate,
@@ -252,7 +255,8 @@ export async function groupAndCalculateCommissionBySalesman(
             {
               productID: productId,
               productName: productName,
-              sku: lineItem.sku || lineItem.SKU || lineItem.productSKU || lineItem.productCode || null,
+              sku: lineMeta.sku,
+          category: lineMeta.category,
               quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1) || 1,
               saleAmount: effectiveProdAmount,
               commissionRate,
