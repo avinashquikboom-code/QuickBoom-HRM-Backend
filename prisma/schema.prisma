@@ -1429,3 +1429,27 @@ model SalesExchange {
 
 
 
+
+model NotificationRule {
+  id         Int      @id @default(autoincrement())
+  event      String   @unique
+  category   String
+  recipients String[]
+  inApp      Boolean  @default(true)
+  push       Boolean  @default(true)
+  status     String   @default("ACTIVE")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model NotificationTemplate {
+  id         Int      @id @default(autoincrement())
+  event      String   @unique
+  channel    String   @default("PUSH")
+  language   String   @default("English")
+  title      String
+  message    String
+  status     String   @default("ACTIVE")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
