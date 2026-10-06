@@ -342,12 +342,48 @@ async function initRolePermissions() {
   };
 
   const defaultEmployeePerms = {
-    'em-dashboard': true,
-    'em-attendance': true,
-    'em-leave': true,
-    'em-tasks': true,
-    'em-notifications': true,
-    'em-profile': true,
+    // 1. HOME & DASHBOARD
+    canViewGeofence: true,
+    canPunchInOut: true,
+    canPunchHalfDay: true,
+    canTakeBreaks: true,
+    // 2. ATTENDANCE & LOGS
+    canViewAttendance: true,
+    canViewBreakHistory: true,
+    canRequestAttendanceCorrection: true,
+    // 3. WALLET & FINANCIALS
+    canViewSalary: true,
+    canDownloadSalaryPDF: true,
+    canRequestSalaryAdvance: true,
+    canViewCommission: true,
+    canLogSale: true,
+    canViewExpenses: true,
+    canSubmitExpenseClaim: true,
+    canCancelExpenseClaim: true,
+    canRequestBankDetailsEdit: true,
+    // 4. LEAVE & HOLIDAYS
+    canViewLeaveBalance: true,
+    canViewLeaveHistory: true,
+    canApplyLeave: true,
+    canCancelLeave: true,
+    canViewHolidays: true,
+    // 5. TASKS
+    canViewTasks: true,
+    canCompleteTask: true,
+    // 6. SHIFT & GUIDELINES
+    canViewShift: true,
+    canRequestShiftChange: true,
+    canCancelShiftRequest: true,
+    canViewShiftGuidelines: true,
+    // 7. REMOTE WORK
+    canViewRemoteWorkStatus: true,
+    canApplyRemoteWork: true,
+    canCancelRemoteRequest: true,
+    // 8. PROFILE & SYSTEM
+    canViewProfile: true,
+    canEditAvatar: true,
+    canChangePassword: true,
+    canViewNotifications: true,
   };
 
   const rolesToInitialize = [
