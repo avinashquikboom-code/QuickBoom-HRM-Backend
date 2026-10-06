@@ -1,6 +1,7 @@
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
+import { numToWords } from './payrollAutomationService';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -18,6 +19,8 @@ export interface PayrollCalculation {
   bonus: number;
   netSalary: number;
   grossSalary: number;
+  grossEarnings?: number;
+  totalTakeHomePay?: number;
   workingDays: number;
   totalCalendarDays: number;
   presentDays: number;
@@ -193,8 +196,8 @@ class PayrollService {
         amount,
       }));
 
-      // Gross Salary: Regular Monthly Salary + Extra Payouts + Bonus + Overtime + Commission + Approved Expenses
-      const grossSalary = Math.round((monthlySalary + extraHolidayPayout + extraWeeklyOffPayout + bonus + overtime + commissionEarned + approvedExpenses) * 100) / 100;
+      // Gross Salary: Regular Monthly Salary + Extra Payouts + Bonus + Overtime (commission & expenses remain separate take-home additions)
+      const grossSalary = Math.round((monthlySalary + extraHolidayPayout + extraWeeklyOffPayout + bonus + overtime) * 100) / 100;
 
       // Calculate statutory deductions
       const statutoryDeductions = this.calculateDeductions(grossSalary, salaryStructure);
@@ -230,8 +233,11 @@ class PayrollService {
       // Total Deductions
       const totalDeductions = Math.round((statutoryDeductions + policyDeductions + absentDeduction + halfDayDeduction + unpaidLeaveDeduction + advanceDeduction) * 100) / 100;
 
-      // Net Salary
-      const netSalary = Math.round((grossSalary - totalDeductions) * 100) / 100;
+      // Net Salary = Gross Salary - Total Deductions
+      const netSalary = Math.max(0, Math.round((grossSalary - totalDeductions) * 100) / 100);
+
+      // Total Take-Home Pay = Net Salary + Commission + Reimbursements
+      const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + approvedExpenses) * 100) / 100;
 
       const calculation: PayrollCalculation = {
         employeeId,
@@ -248,6 +254,8 @@ class PayrollService {
         bonus,
         netSalary,
         grossSalary,
+        grossEarnings: grossSalary,
+        totalTakeHomePay,
         workingDays,
         totalCalendarDays,
         presentDays: attendanceData.presentDays,
@@ -1130,6 +1138,9 @@ class PayrollService {
       const deptName = employee?.department?.name || '';
       const offName = employee?.office?.name || '';
 
+      const totalTakeHome = Math.round((calculation.netSalary + (calculation.commissionEarned || 0) + (calculation.expenseReimbursement || 0)) * 100) / 100;
+      const netInWords = `${numToWords(Math.round(totalTakeHome))} Rupees Only`;
+
       await prisma.payslip.upsert({
         where: {
           employeeId_month_year: {
@@ -1166,6 +1177,7 @@ class PayrollService {
           advanceDeduction: calculation.advanceDeduction,
           expenseReimbursement: calculation.expenseReimbursement,
           ...payslipComponentData(calculation),
+          netInWords,
           status: 'Approved',
           updatedAt: new Date()
         },
@@ -1201,7 +1213,7 @@ class PayrollService {
           totalCalendarDays: calculation.totalCalendarDays,
           commissionEarned: calculation.commissionEarned,
           ...payslipComponentData(calculation),
-          netInWords: '',
+          netInWords,
           createdAt: new Date()
         }
       });

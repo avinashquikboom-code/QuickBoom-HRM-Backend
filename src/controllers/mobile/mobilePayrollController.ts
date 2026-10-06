@@ -29,7 +29,7 @@ export const getMyPayslips = async (
 
     const employee = await prisma.employee.findFirst({
       where: { userId: req.user?.id },
-      include: { office: true }
+      include: { office: true, salaryStructure: true }
     });
 
     if (!employee) {
@@ -72,30 +72,66 @@ export const getMyPayslips = async (
       const absentDeduction = ps.absentDays ? Math.round((ps.absentDays * dSalary) * 100) / 100 : 0;
       const halfDayDeduction = ps.halfDays ? Math.round((ps.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
       const leaveDeduction = ps.unpaidLeaveDays ? Math.round((ps.unpaidLeaveDays * dSalary) * 100) / 100 : 0;
-      const advanceDeduction = ps.advanceDeduction || 0;
-      const itemizedDeductions = absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
 
-      let cleanDeductions = ps.deductions || 0;
-      const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
-
-      if (isCorrupted) {
-        cleanDeductions = itemizedDeductions;
-        const healedNet = Math.max(0, Math.round((baseMonthly + (ps.commissionEarned || 0) + (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0) + (ps.expenseReimbursement || 0) - cleanDeductions) * 100) / 100);
-
-        prisma.payslip.update({
-          where: { id: ps.id },
-          data: {
-            deductions: cleanDeductions,
-            netSalary: healedNet,
-          }
-        }).catch(err => console.warn(`[getMyPayslips] Failed to heal payslip #${ps.id}:`, err));
+      let advanceDeduction = ps.advanceDeduction || 0;
+      if (advanceDeduction === 0) {
+        const monthEnd = new Date(ps.year, ps.month, 0, 23, 59, 59, 999);
+        const activeAdvances = await prisma.salaryAdvance.findMany({
+          where: {
+            wallet: { employeeId: ps.employeeId },
+            status: 'APPROVED',
+            remainingAmount: { gt: 0 },
+            OR: [
+              { approvedAt: { lte: monthEnd } },
+              { approvedAt: null, requestedOn: { lte: monthEnd } },
+              { approvedAt: null, createdAt: { lte: monthEnd } }
+            ]
+          },
+          orderBy: { approvedAt: 'asc' }
+        });
+        for (const adv of activeAdvances) {
+          const standardEmi = adv.monthlyEmi > 0 
+            ? adv.monthlyEmi 
+            : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
+          const remaining = adv.remainingAmount > 0 ? adv.remainingAmount : Math.max(0, adv.amount - (adv.paidAmount || 0));
+          advanceDeduction += Math.min(standardEmi, remaining);
+        }
+        advanceDeduction = Math.round(advanceDeduction * 100) / 100;
       }
 
       // Gross excludes commission; net = gross - deductions. Commission is reported separately.
       const extraPayout = (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0);
       const grossSalary = Math.round((earnings.grossEarnings + extraPayout) * 100) / 100;
+
+      const ss = employee.salaryStructure;
+      const pf = ss?.pfEnabled ? Math.round(earnings.baseSalary * (ss.employeePfRate / 100)) : 0;
+      const esic = ss?.esicEnabled ? Math.round(grossSalary * (ss.employeeEsicRate / 100)) : 0;
+
+      const itemizedDeductions = pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
+
+      let cleanDeductions = ps.deductions || 0;
+      const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
+
+      if (cleanDeductions === 0 || isCorrupted) {
+        cleanDeductions = itemizedDeductions;
+      }
+
       const netSalary = Math.max(0, Math.round((grossSalary - cleanDeductions) * 100) / 100);
       const totalTakeHomePay = Math.round((netSalary + (ps.commissionEarned || 0) + (ps.expenseReimbursement || 0)) * 100) / 100;
+      const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
+
+      if (isCorrupted || ps.netSalary !== netSalary || ps.deductions !== cleanDeductions || (ps.advanceDeduction || 0) !== advanceDeduction) {
+        prisma.payslip.update({
+          where: { id: ps.id },
+          data: {
+            deductions: cleanDeductions,
+            netSalary,
+            advanceDeduction,
+            netInWords: `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`
+          }
+        }).catch(err => console.warn(`[getMyPayslips] Failed to heal payslip #${ps.id}:`, err));
+      }
+
       const payPeriod = new Date(ps.year, ps.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
       const documentId = `HR-PAY-${ps.employeeCode}-${ps.year}${String(ps.month).padStart(2, '0')}`;
       const netInWords = ps.netInWords || `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
@@ -121,6 +157,16 @@ export const getMyPayslips = async (
         grossEarnings: grossSalary,
         deductions: cleanDeductions,
         totalDeductions: cleanDeductions,
+        advanceDeduction,
+        advanceSalary: advanceDeduction,
+        totalAdvanceSalary: advanceDeduction,
+        pf,
+        esic,
+        absentDeduction,
+        halfDayDeduction,
+        leaveDeduction,
+        otherDeductions,
+        otherDeduction: otherDeductions,
         netSalary,
         totalTakeHomePay,
         documentId,
@@ -128,9 +174,6 @@ export const getMyPayslips = async (
         netInWords,
         presentDays: ps.presentDays || 0,
         absentDays: ps.absentDays || 0,
-        advanceDeduction: ps.advanceDeduction || 0,
-        advanceSalary: ps.advanceDeduction || 0,
-        totalAdvanceSalary: ps.advanceDeduction || 0,
         expenseReimbursement: ps.expenseReimbursement || 0,
         totalReimbursements: ps.expenseReimbursement || 0,
         approvedExpenses: ps.expenseReimbursement || 0,
@@ -138,6 +181,18 @@ export const getMyPayslips = async (
         totalExpenses: ps.expenseReimbursement || 0,
         commission: ps.commissionEarned || 0,
         commissionEarned: ps.commissionEarned || 0,
+        deductionsObj: {
+          deductions: cleanDeductions,
+          totalDeductions: cleanDeductions,
+          advanceDeduction,
+          advanceSalary: advanceDeduction,
+          pf,
+          esic,
+          absentDeduction,
+          halfDayDeduction,
+          leaveDeduction,
+          otherDeductions
+        },
         halfDays: ps.halfDays || 0,
         paidLeaveDays: ps.paidLeaveDays || 0,
         unpaidLeaveDays: ps.unpaidLeaveDays || 0,
@@ -403,7 +458,8 @@ export const downloadPayslip = async (
       ? payslip.expenseReimbursement 
       : Math.round(totalApprovedExpenses * 100) / 100;
 
-    const dailySalary = payslip.dailySalary || (basic / (payslip.workingDays || 26));
+    const schedWorkingDays = payslip.workingDays || 26;
+    const dailySalary = payslip.dailySalary || (schedWorkingDays > 0 ? Math.round((earnings.grossEarnings / schedWorkingDays) * 100) / 100 : 0);
     const absentDeduction = payslip.absentDays ? Math.round((payslip.absentDays * dailySalary) * 100) / 100 : 0;
     const halfDayDeduction = payslip.halfDays ? Math.round((payslip.halfDays * 0.5 * dailySalary) * 100) / 100 : 0;
     const leaveDeduction = payslip.unpaidLeaveDays ? Math.round((payslip.unpaidLeaveDays * dailySalary) * 100) / 100 : 0;
@@ -465,11 +521,11 @@ export const downloadPayslip = async (
     if (extraPayout > 0) {
       earningsItems.push({ name: 'Holiday / Weekly Off Payout', amount: extraPayout });
     }
-    if (earningsItems.length === 1 && earnings.allowance > 0) {
-      earningsItems.push({ name: 'Allowances', amount: earnings.allowance });
-    }
     if (commissionEarned > 0) {
       earningsItems.push({ name: 'Commission', amount: commissionEarned });
+    }
+    if (earningsItems.length === 1 && earnings.allowance > 0) {
+      earningsItems.push({ name: 'Allowances', amount: earnings.allowance });
     }
 
     const fmt = (n: number) => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

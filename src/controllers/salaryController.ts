@@ -147,7 +147,7 @@ export const getSalarySlip = async (
       ? calcResult.dailySalary
       : (dbPayslip?.dailySalary && dbPayslip.dailySalary > 0)
       ? dbPayslip.dailySalary
-      : Math.round((baseSalary / workingDays) * 100) / 100;
+      : Math.round(((baseSalary + allowance) / workingDays) * 100) / 100;
 
     const totalCalendarDays = (calcResult?.totalCalendarDays)
       ? calcResult.totalCalendarDays
@@ -219,7 +219,9 @@ export const getSalarySlip = async (
     const halfDayDeduction = dbPayslip?.halfDays ? Math.round((dbPayslip.halfDays * 0.5 * dailySalary) * 100) / 100 : (calcResult?.halfDayDeduction ?? Math.round((halfDays * 0.5 * dailySalary) * 100) / 100);
     const leaveDeduction = dbPayslip?.unpaidLeaveDays ? Math.round((dbPayslip.unpaidLeaveDays * dailySalary) * 100) / 100 : (calcResult?.leaveDeduction ?? Math.round((unpaidLeaveDays * dailySalary) * 100) / 100);
     const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? Math.round((absentDays * dailySalary) * 100) / 100);
-    const itemizedDeductions = halfDayDeduction + leaveDeduction + absentDeduction + advanceDeduction;
+    const pf = ss?.pfEnabled ? Math.round(baseSalary * (ss.employeePfRate / 100)) : 0;
+    const esic = ss?.esicEnabled ? Math.round((baseSalary + allowance) * (ss.employeeEsicRate / 100)) : 0;
+    const itemizedDeductions = pf + esic + halfDayDeduction + leaveDeduction + absentDeduction + advanceDeduction;
 
     // itemizedDeductions = attendance-based + advance (always re-derived fresh from live data).
     //
@@ -262,7 +264,7 @@ export const getSalarySlip = async (
 
         // Auto-heal the database payslip record asynchronously
         if (dbPayslip) {
-          const healedNet = Math.max(0, Math.round(((baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout) + expenseReimbursement) - deductions) * 100) / 100);
+          const healedNet = Math.max(0, Math.round(((baseSalary + allowance + (extraHolidayPayout + extraWeeklyOffPayout)) - deductions) * 100) / 100);
           prisma.payslip.update({
             where: { id: dbPayslip.id },
             data: {
@@ -355,6 +357,8 @@ export const getSalarySlip = async (
       advanceDeduction,
       advanceSalary: advanceDeduction,
       totalAdvanceSalary: advanceDeduction,
+      pf,
+      esic,
       halfDayDeduction,
       leaveDeduction,
       absentDeduction,
@@ -421,6 +425,8 @@ export const getSalarySlip = async (
         leaveDeduction,
         absentDeduction,
         advanceDeduction,
+        pf,
+        esic,
         otherDeduction: otherDeductions,
         otherDeductions,
         totalDeductions: deductions,
