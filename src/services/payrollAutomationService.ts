@@ -7,14 +7,17 @@ const ones = [
 const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
 
 export function numToWords(n: number): string {
+  const isNegative = n < 0;
+  n = Math.floor(Math.abs(n));
   if (n === 0) return 'Zero';
-  if (n < 0) return 'Minus ' + numToWords(-n);
-  if (n < 20) return ones[n];
-  if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
-  if (n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + numToWords(n % 100) : '');
-  if (n < 100000) return numToWords(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + numToWords(n % 1000) : '');
-  if (n < 10000000) return numToWords(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + numToWords(n % 100000) : '');
-  return numToWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + numToWords(n % 10000000) : '');
+  let words = '';
+  if (n < 20) words = ones[n];
+  else if (n < 100) words = tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+  else if (n < 1000) words = ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' ' + numToWords(n % 100) : '');
+  else if (n < 100000) words = numToWords(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + numToWords(n % 1000) : '');
+  else if (n < 10000000) words = numToWords(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + numToWords(n % 100000) : '');
+  else words = numToWords(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + numToWords(n % 10000000) : '');
+  return isNegative ? 'Minus ' + words : words;
 }
 
 import payrollService, { payslipComponentData } from './payrollService';
