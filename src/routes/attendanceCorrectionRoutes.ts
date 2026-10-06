@@ -7,6 +7,7 @@ import {
   getHRAttendanceCorrectionDetail,
   reviewHRAttendanceCorrection,
   bulkReviewHRAttendanceCorrections,
+  bulkApproveHRAttendanceCorrections,
   exportHRAttendanceCorrections,
   getHRAttendanceCorrectionReports,
 } from '../controllers/attendanceCorrectionController';
@@ -26,6 +27,9 @@ router.get('/hr/attendance/correction-requests', authMiddleware, roleMiddleware(
 router.get('/hr/attendance/correction-reports', authMiddleware, roleMiddleware(hrRoles), getHRAttendanceCorrectionReports);
 router.get('/hr/attendance/correction-requests/export', authMiddleware, roleMiddleware(hrRoles), exportHRAttendanceCorrections);
 router.post('/hr/attendance/correction-requests/bulk-review', authMiddleware, roleMiddleware(hrRoles), bulkReviewHRAttendanceCorrections);
+router.post('/hr/attendance/correction-requests/bulk-approve', authMiddleware, roleMiddleware(hrRoles), bulkApproveHRAttendanceCorrections);
+router.post('/hr/attendance-corrections/bulk-approve', authMiddleware, roleMiddleware(hrRoles), bulkApproveHRAttendanceCorrections);
+router.post('/attendance-corrections/bulk-approve', authMiddleware, roleMiddleware(hrRoles), bulkApproveHRAttendanceCorrections);
 router.get('/hr/attendance/correction-requests/:id', authMiddleware, roleMiddleware(hrRoles), getHRAttendanceCorrectionDetail);
 router.patch('/hr/attendance/correction-requests/:id', authMiddleware, roleMiddleware(hrRoles), reviewHRAttendanceCorrection);
 

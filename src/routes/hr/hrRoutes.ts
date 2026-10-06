@@ -33,6 +33,7 @@ import {
   broadcastAnnouncement,
 } from '../../controllers/hr/hrNotificationController';
 import { fetchWorkModes } from '../../controllers/workModeController';
+import { bulkApproveHRAttendanceCorrections } from '../../controllers/attendanceCorrectionController';
 
 const router = express.Router();
 
@@ -268,6 +269,7 @@ router.get('/payroll/runs', fetchHRPayrollRuns);
 router.get('/attendance-corrections', fetchAttendanceCorrections);
 router.post('/attendance-corrections/:id/approve', approveAttendanceCorrection);
 router.post('/attendance-corrections/:id/reject', rejectAttendanceCorrection);
+router.post('/attendance-corrections/bulk-approve', roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER']), bulkApproveHRAttendanceCorrections);
 
 // Notifications & Announcements
 router.post('/notifications/send', sendNotification);

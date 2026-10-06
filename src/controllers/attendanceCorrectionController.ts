@@ -557,6 +557,86 @@ export const getHRAttendanceCorrectionDetail = async (req: Request, res: Respons
   }
 };
 
+// Helper: Core business logic to approve a single AttendanceCorrectionRequest.
+// Reused by both single Approve (reviewHRAttendanceCorrection) and bulk Approve (bulkApproveHRAttendanceCorrections).
+export async function executeCorrectionApproval(
+  request: any,
+  reviewerId: string,
+  reviewNote?: string,
+  approvalEffectDate?: Date | string
+) {
+  const isNum = !isNaN(Number(request.employeeId));
+  const numId = isNum ? Number(request.employeeId) : undefined;
+  const employee = await prisma.employee.findFirst({
+    where: {
+      OR: [
+        { employeeCode: request.employeeId },
+        ...(numId !== undefined ? [{ id: numId }, { userId: numId }] : []),
+      ],
+    },
+  });
+
+  const rawDate = request.attendanceDate instanceof Date ? request.attendanceDate : new Date(request.attendanceDate);
+  const dateFormatted = rawDate.toISOString().split('T')[0];
+
+  const updated = await prisma.$transaction(async (tx) => {
+    if (employee) {
+      const existingAttendance = await tx.attendance.findFirst({
+        where: {
+          employeeId: employee.id,
+          date: dateFormatted,
+        },
+      });
+
+      if (existingAttendance) {
+        await tx.attendance.update({
+          where: { id: existingAttendance.id },
+          data: { status: request.requestedStatus },
+        });
+      } else {
+        await tx.attendance.create({
+          data: {
+            employeeId: employee.id,
+            ...(employee.officeId ? { officeId: employee.officeId } : {}),
+            date: dateFormatted,
+            checkIn: rawDate,
+            status: request.requestedStatus,
+          },
+        });
+      }
+    }
+
+    return await tx.attendanceCorrectionRequest.update({
+      where: { id: request.id },
+      data: {
+        status: 'APPROVED',
+        reviewedBy: reviewerId,
+        reviewedAt: new Date(),
+        reviewNote: reviewNote || null,
+        approvalEffectDate: approvalEffectDate ? new Date(approvalEffectDate) : new Date(),
+      },
+    });
+  });
+
+  if (employee) {
+    // Recalculate affected salary slip if any
+    await recalculatePayslipIfPresent(employee.id, rawDate);
+
+    // Notify employee of approval
+    await notifyEmployee(
+      employee.id,
+      'Attendance Correction Approved',
+      `✅ Attendance corrected for ${dateFormatted}. Salary updated accordingly.`,
+      'ATTENDANCE_CORRECTION_APPROVED',
+      { correctionId: String(request.id) }
+    );
+  }
+
+  console.log(`🔒 [AUDIT LOG] HR ${reviewerId} reviewed AttendanceCorrectionRequest ${request.id}: status=APPROVED`);
+
+  return updated;
+}
+
 // 5. HR Review (Approve/Reject) correction request
 export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -589,43 +669,18 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
     const dateFormatted = request.attendanceDate.toISOString().split('T')[0];
 
     if (status === 'APPROVED') {
-      if (employee) {
-        const existingAttendance = await prisma.attendance.findFirst({
-          where: {
-            employeeId: employee.id,
-            date: dateFormatted,
-          },
-        });
+      const updated = await executeCorrectionApproval(
+        request,
+        reviewerId,
+        reviewNote,
+        approvalEffectDate
+      );
 
-        if (existingAttendance) {
-          await prisma.attendance.update({
-            where: { id: existingAttendance.id },
-            data: { status: request.requestedStatus },
-          });
-        } else {
-          await prisma.attendance.create({
-            data: {
-              employeeId: employee.id,
-              officeId: employee.officeId || 1,
-              date: dateFormatted,
-              checkIn: request.attendanceDate,
-              status: request.requestedStatus,
-            },
-          });
-        }
-
-        // Recalculate affected salary slip if any
-        await recalculatePayslipIfPresent(employee.id, request.attendanceDate);
-
-        // Notify employee of approval
-        await notifyEmployee(
-          employee.id,
-          'Attendance Correction Approved',
-          `✅ Attendance corrected for ${dateFormatted}. Salary updated accordingly.`,
-          'ATTENDANCE_CORRECTION_APPROVED',
-          { correctionId: String(request.id) }
-        );
-      }
+      return res.json({
+        success: true,
+        message: `Correction request approved successfully`,
+        request: updated,
+      });
     } else if (status === 'REJECTED') {
       if (employee) {
         const noteText = reviewNote ? `. Reason: ${reviewNote}` : '';
@@ -637,37 +692,168 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
           { correctionId: String(request.id) }
         );
       }
+
+      const updated = await prisma.attendanceCorrectionRequest.update({
+        where: { id },
+        data: {
+          status,
+          reviewedBy: reviewerId,
+          reviewedAt: new Date(),
+          reviewNote: reviewNote || null,
+          approvalEffectDate: approvalEffectDate ? new Date(approvalEffectDate) : new Date(),
+        },
+      });
+
+      console.log(`🔒 [AUDIT LOG] HR ${reviewerId} reviewed AttendanceCorrectionRequest ${id}: status=${status}`);
+
+      return res.json({
+        success: true,
+        message: `Correction request rejected successfully`,
+        request: updated,
+      });
     }
-
-    const updated = await prisma.attendanceCorrectionRequest.update({
-      where: { id },
-      data: {
-        status,
-        reviewedBy: reviewerId,
-        reviewedAt: new Date(),
-        reviewNote: reviewNote || null,
-        approvalEffectDate: approvalEffectDate ? new Date(approvalEffectDate) : new Date(),
-      },
-    });
-
-    console.log(`🔒 [AUDIT LOG] HR ${reviewerId} reviewed AttendanceCorrectionRequest ${id}: status=${status}`);
-
-    return res.json({
-      success: true,
-      message: `Correction request ${status.toLowerCase()} successfully`,
-      request: updated,
-    });
   } catch (error) {
     console.error('Error reviewing attendance correction:', error);
     return res.status(500).json({ error: 'Server error reviewing attendance correction' });
   }
 };
 
-// 6. HR Bulk Review Attendance Corrections
-export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedRequest, res: Response) => {
+// 6. HR Bulk Approve Attendance Corrections
+export const bulkApproveHRAttendanceCorrections = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const reviewerId = req.user?.email || String(req.user?.id || 'HR');
-    const { ids, status, reviewNote } = req.body;
+    const userRole = String(req.user?.role || '').toUpperCase().replace(/_/g, '');
+    const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
+    const hasPermission = allowedRoles.some(
+      (r) => r.replace(/_/g, '') === userRole
+    );
+
+    if (!hasPermission) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden. You do not have permissions to perform bulk approval.',
+      });
+    }
+
+    const { ids, reviewNote } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'ids array is required and must contain at least one ID',
+      });
+    }
+
+    // Fetch existing requests for all provided IDs
+    const stringIds = ids.map((id) => String(id));
+    const requests = await prisma.attendanceCorrectionRequest.findMany({
+      where: { id: { in: stringIds } },
+    });
+
+    const requestMap = new Map(requests.map((r) => [r.id, r]));
+
+    const results: Array<{
+      id: string;
+      status: 'APPROVED' | 'SKIPPED' | 'FAILED';
+      reason?: string;
+    }> = [];
+    let approvedCount = 0;
+    let failedCount = 0;
+
+    for (const rawId of ids) {
+      const id = String(rawId);
+      const request = requestMap.get(id);
+
+      if (!request) {
+        results.push({
+          id,
+          status: 'FAILED',
+          reason: 'Correction request not found',
+        });
+        failedCount++;
+        continue;
+      }
+
+      if (request.status === 'APPROVED') {
+        results.push({
+          id,
+          status: 'SKIPPED',
+          reason: 'Already approved',
+        });
+        failedCount++;
+        continue;
+      }
+
+      if (request.status === 'REJECTED') {
+        results.push({
+          id,
+          status: 'SKIPPED',
+          reason: 'Already rejected',
+        });
+        failedCount++;
+        continue;
+      }
+
+      if (request.status !== 'PENDING') {
+        results.push({
+          id,
+          status: 'SKIPPED',
+          reason: `Invalid status: ${request.status}`,
+        });
+        failedCount++;
+        continue;
+      }
+
+      try {
+        await executeCorrectionApproval(request, reviewerId, reviewNote);
+        results.push({
+          id,
+          status: 'APPROVED',
+        });
+        approvedCount++;
+      } catch (err) {
+        console.error(`Error approving correction request ${id}:`, err);
+        results.push({
+          id,
+          status: 'FAILED',
+          reason: 'Failed to process approval',
+        });
+        failedCount++;
+      }
+    }
+
+    const message = `${approvedCount} attendance ${
+      approvedCount === 1 ? 'correction' : 'corrections'
+    } approved successfully${
+      failedCount > 0 ? `. ${failedCount} could not be processed.` : '.'
+    }`;
+
+    return res.json({
+      success: true,
+      approvedCount,
+      failedCount,
+      results,
+      message,
+    });
+  } catch (error) {
+    console.error('Error in bulkApproveHRAttendanceCorrections:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error during bulk attendance correction approval',
+    });
+  }
+};
+
+// 6b. HR Bulk Review Attendance Corrections (backward compatible)
+export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { status } = req.body;
+    if (status === 'APPROVED') {
+      return bulkApproveHRAttendanceCorrections(req, res);
+    }
+
+    const reviewerId = req.user?.email || String(req.user?.id || 'HR');
+    const { ids, reviewNote } = req.body;
 
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'ids array is required' });
@@ -677,49 +863,26 @@ export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedReques
     }
 
     const requests = await prisma.attendanceCorrectionRequest.findMany({
-      where: { id: { in: ids }, status: 'PENDING' },
+      where: { id: { in: ids.map(String) }, status: 'PENDING' },
     });
 
     let processedCount = 0;
 
     for (const request of requests) {
+      const isNum = !isNaN(Number(request.employeeId));
+      const numId = isNum ? Number(request.employeeId) : undefined;
       const employee = await prisma.employee.findFirst({
-        where: { employeeCode: request.employeeId },
+        where: {
+          OR: [
+            { employeeCode: request.employeeId },
+            ...(numId !== undefined ? [{ id: numId }, { userId: numId }] : []),
+          ],
+        },
       });
 
       const dateFormatted = request.attendanceDate.toISOString().split('T')[0];
 
-      if (status === 'APPROVED' && employee) {
-        const existingAttendance = await prisma.attendance.findFirst({
-          where: { employeeId: employee.id, date: dateFormatted },
-        });
-
-        if (existingAttendance) {
-          await prisma.attendance.update({
-            where: { id: existingAttendance.id },
-            data: { status: request.requestedStatus },
-          });
-        } else {
-          await prisma.attendance.create({
-            data: {
-              employeeId: employee.id,
-              officeId: employee.officeId || 1,
-              date: dateFormatted,
-              checkIn: request.attendanceDate,
-              status: request.requestedStatus,
-            },
-          });
-        }
-
-        await recalculatePayslipIfPresent(employee.id, request.attendanceDate);
-        await notifyEmployee(
-          employee.id,
-          'Attendance Correction Approved',
-          `✅ Attendance corrected for ${dateFormatted}.`,
-          'ATTENDANCE_CORRECTION_APPROVED',
-          { correctionId: String(request.id) }
-        );
-      } else if (status === 'REJECTED' && employee) {
+      if (employee) {
         const noteText = reviewNote ? `. Reason: ${reviewNote}` : '';
         await notifyEmployee(
           employee.id,
@@ -733,7 +896,7 @@ export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedReques
       await prisma.attendanceCorrectionRequest.update({
         where: { id: request.id },
         data: {
-          status,
+          status: 'REJECTED',
           reviewedBy: reviewerId,
           reviewedAt: new Date(),
           reviewNote: reviewNote || null,
