@@ -3,6 +3,7 @@ import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import payrollService, { payslipComponentData } from '../../services/payrollService';
 import { getIstMonthRange } from '../../utils/commissionHelper';
+import { numToWords } from '../../services/payrollAutomationService';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -94,6 +95,10 @@ export const getMyPayslips = async (
       const extraPayout = (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0);
       const grossSalary = Math.round((earnings.grossEarnings + extraPayout) * 100) / 100;
       const netSalary = Math.max(0, Math.round((grossSalary - cleanDeductions) * 100) / 100);
+      const totalTakeHomePay = Math.round((netSalary + (ps.commissionEarned || 0) + (ps.expenseReimbursement || 0)) * 100) / 100;
+      const payPeriod = new Date(ps.year, ps.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      const documentId = `HR-PAY-${ps.employeeCode}-${ps.year}${String(ps.month).padStart(2, '0')}`;
+      const netInWords = ps.netInWords || `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
 
       return {
         ...ps,
@@ -112,15 +117,21 @@ export const getMyPayslips = async (
         deductions: cleanDeductions,
         totalDeductions: cleanDeductions,
         netSalary,
+        totalTakeHomePay,
+        documentId,
+        payPeriod,
+        netInWords,
         presentDays: ps.presentDays || 0,
         absentDays: ps.absentDays || 0,
         advanceDeduction: ps.advanceDeduction || 0,
         advanceSalary: ps.advanceDeduction || 0,
         totalAdvanceSalary: ps.advanceDeduction || 0,
         expenseReimbursement: ps.expenseReimbursement || 0,
+        totalReimbursements: ps.expenseReimbursement || 0,
         approvedExpenses: ps.expenseReimbursement || 0,
         approvedExpenseAmount: ps.expenseReimbursement || 0,
         totalExpenses: ps.expenseReimbursement || 0,
+        commission: ps.commissionEarned || 0,
         commissionEarned: ps.commissionEarned || 0,
         halfDays: ps.halfDays || 0,
         paidLeaveDays: ps.paidLeaveDays || 0,
@@ -454,20 +465,21 @@ export const downloadPayslip = async (
       earningsItems.push({ name: 'Commission', amount: commissionEarned });
     }
 
+    const fmt = (n: number) => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
     // Build Deductions Items
     const deductionsItems: { name: string; amount: number }[] = [];
+    if (advanceDeduction > 0) {
+      deductionsItems.push({ name: 'Advance Salary', amount: advanceDeduction });
+    }
     if (pf > 0 || ss?.pfEnabled) deductionsItems.push({ name: 'Provident Fund (PF)', amount: pf });
     if (esic > 0 || ss?.esicEnabled) deductionsItems.push({ name: 'ESIC / Tax', amount: esic });
     if (absentDeduction > 0) deductionsItems.push({ name: `Absent (${payslip.absentDays} days)`, amount: absentDeduction });
     if (halfDayDeduction > 0) deductionsItems.push({ name: `Half Day (${payslip.halfDays} half days)`, amount: halfDayDeduction });
     if (leaveDeduction > 0) deductionsItems.push({ name: `Leave (${payslip.unpaidLeaveDays} unpaid leaves)`, amount: leaveDeduction });
-    if (advanceDeduction > 0) {
-      deductionsItems.push({ name: 'Advance Salary', amount: advanceDeduction });
-    }
     if (otherDeductions > 0) deductionsItems.push({ name: 'Other Deductions', amount: otherDeductions });
     if (deductionsItems.length === 0) {
       deductionsItems.push({ name: 'Advance Salary', amount: 0 });
-      deductionsItems.push({ name: 'Other Deductions', amount: 0 });
     }
 
     const maxRows = Math.max(earningsItems.length, deductionsItems.length);
@@ -477,9 +489,9 @@ export const downloadPayslip = async (
       const ded = deductionsItems[i];
       tableRows.push([
         { text: earn ? earn.name : '' },
-        { text: earn ? `Rs. ${earn.amount.toLocaleString('en-IN')}` : '', alignment: 'right' },
+        { text: earn ? `Rs. ${fmt(earn.amount)}` : '', alignment: 'right' },
         { text: ded ? ded.name : '' },
-        { text: ded ? `Rs. ${ded.amount.toLocaleString('en-IN')}` : '', alignment: 'right' },
+        { text: ded ? `Rs. ${fmt(ded.amount)}` : '', alignment: 'right' },
       ]);
     }
 
@@ -495,9 +507,9 @@ export const downloadPayslip = async (
       // Totals
       [
         { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
-        { text: `Rs. ${grossEarnings.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
+        { text: `Rs. ${fmt(grossEarnings)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
         { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
-        { text: `Rs. ${totalDeductions.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
+        { text: `Rs. ${fmt(totalDeductions)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
       ]
     ];
 
@@ -514,24 +526,24 @@ export const downloadPayslip = async (
       for (const [cat, amt] of catEntries) {
         reimbursementsTableBody.push([
           { text: `${cat} Expense` },
-          { text: `Rs. ${amt.toLocaleString('en-IN')}`, alignment: 'right' }
+          { text: `Rs. ${fmt(amt)}`, alignment: 'right' }
         ]);
       }
     } else if (expenseReimbursement > 0) {
       reimbursementsTableBody.push([
         { text: 'Approved Expenses' },
-        { text: `Rs. ${expenseReimbursement.toLocaleString('en-IN')}`, alignment: 'right' }
+        { text: `Rs. ${fmt(expenseReimbursement)}`, alignment: 'right' }
       ]);
     } else {
       reimbursementsTableBody.push([
         { text: 'No Expenses / Reimbursements', color: '#6b7280', italics: true },
-        { text: 'Rs. 0', alignment: 'right', color: '#6b7280' }
+        { text: `Rs. ${fmt(0)}`, alignment: 'right', color: '#6b7280' }
       ]);
     }
 
     reimbursementsTableBody.push([
       { text: 'Total Reimbursements', bold: true, fillColor: '#ecfdf5', color: '#047857' },
-      { text: `Rs. ${expenseReimbursement.toLocaleString('en-IN')}`, bold: true, alignment: 'right', fillColor: '#ecfdf5', color: '#047857' }
+      { text: `Rs. ${fmt(expenseReimbursement)}`, bold: true, alignment: 'right', fillColor: '#ecfdf5', color: '#047857' }
     ]);
 
     const docContent: any[] = [
@@ -606,11 +618,11 @@ export const downloadPayslip = async (
                 color: 'white',
                 text: [
                   { text: 'PAYABLE SUMMARY\n', fontSize: 10, bold: true },
-                  { text: `Gross Earnings: Rs. ${grossEarnings.toLocaleString('en-IN')}  |  Less Deductions: Rs. ${totalDeductions.toLocaleString('en-IN')}  |  Net Salary: Rs. ${netSalary.toLocaleString('en-IN')}\n`, fontSize: 9 },
-                  ...(commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${commissionEarned.toLocaleString('en-IN')}\n`, fontSize: 9, bold: true }] : []),
-                  ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${expenseReimbursement.toLocaleString('en-IN')}\n`, fontSize: 9, bold: true }] : []),
+                  { text: `Gross Earnings: Rs. ${fmt(grossEarnings)}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`, fontSize: 9 },
+                  ...(commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${fmt(commissionEarned)}\n`, fontSize: 9, bold: true }] : []),
+                  ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${fmt(expenseReimbursement)}\n`, fontSize: 9, bold: true }] : []),
                   { text: `\nTOTAL TAKE-HOME PAY\n`, fontSize: 11, bold: true },
-                  { text: `INR ${totalTakeHomePay.toLocaleString('en-IN')}/-\n`, fontSize: 18, bold: true },
+                  { text: `INR ${fmt(totalTakeHomePay)}/-\n`, fontSize: 18, bold: true },
                   { text: `In Words: ${payslip.netInWords || `${totalTakeHomePay.toLocaleString('en-IN')} Rupees Only`}`, fontSize: 9, italics: true }
                 ],
                 alignment: 'center',

@@ -5,6 +5,7 @@ import { getEffectiveUserPermissions, DEFAULT_EMPLOYEE_PERMISSIONS } from '../ut
 import { getIstMonthRange } from '../utils/commissionHelper';
 
 import payrollService from '../services/payrollService';
+import { numToWords } from '../services/payrollAutomationService';
 
 export const getSalarySlip = async (
   req: AuthenticatedRequest,
@@ -288,15 +289,15 @@ export const getSalarySlip = async (
     const monthName = monthNames[targetMonth - 1];
     const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
 
-    const grossTotal = baseSalary + allowance + (commissionEarned > 0 ? commissionEarned : 0) + (extraHolidayPayout + extraWeeklyOffPayout) + expenseReimbursement;
+    const extraPayout = (extraHolidayPayout || 0) + (extraWeeklyOffPayout || 0);
+    const grossEarnings = Math.round((baseSalary + allowance + extraPayout) * 100) / 100;
+    const grossTotal = grossEarnings;
 
-    // Always recalculate netSalary from corrected values.
-    // If dbPayslip.netSalary was saved alongside corrupted deductions, trusting it would
-    // repeat the error. Recalculate from grossTotal - deductions (which has been sanitised above).
-    const recalcNetSalary = Math.max(0, Math.round((grossTotal - deductions) * 100) / 100);
+    // Net Salary = Gross Earnings - Total Deductions
+    const recalcNetSalary = Math.max(0, Math.round((grossEarnings - deductions) * 100) / 100);
     const netSalary = (!isCurrentMonth && dbPayslip?.netSalary !== undefined && dbPayslip.netSalary > 0)
       ? (() => {
-          // Sanity-check: stored netSalary must roughly equal grossTotal - deductions (within ₹1)
+          // Sanity-check: stored netSalary must roughly equal grossEarnings - deductions (within ₹1)
           const storedNet = dbPayslip!.netSalary;
           const expectedNet = recalcNetSalary;
           if (Math.abs(storedNet - expectedNet) > 1) {
@@ -309,6 +310,13 @@ export const getSalarySlip = async (
         })()
       : (calcResult?.netSalary !== undefined ? Math.max(0, Math.round(calcResult.netSalary * 100) / 100) : recalcNetSalary);
 
+    const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + expenseReimbursement) * 100) / 100;
+    const netInWords = (dbPayslip?.netInWords && dbPayslip.netInWords.length > 0)
+      ? dbPayslip.netInWords
+      : `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
+    const documentId = `HR-PAY-${employee.employeeCode}-${targetYear}${String(targetMonth).padStart(2, '0')}`;
+    const payPeriod = `${monthName} ${targetYear}`;
+    const paymentStatus = dbPayslip?.status || 'Approved';
 
     const responsePayload = {
       employeeId: employee.id,
@@ -320,6 +328,10 @@ export const getSalarySlip = async (
       month: monthName,
       year: targetYear,
       monthStr: monthPrefix,
+      payPeriod,
+      documentId,
+      status: paymentStatus,
+      paymentStatus,
 
       baseSalary,
       basicSalary,
@@ -334,8 +346,10 @@ export const getSalarySlip = async (
       special,
       bonus,
       incentive,
-      grossSalary: grossTotal,
-      grossEarnings: grossTotal,
+      commission: commissionEarned,
+      commissionEarned,
+      grossSalary: grossEarnings,
+      grossEarnings: grossEarnings,
       advanceDeduction,
       advanceSalary: advanceDeduction,
       totalAdvanceSalary: advanceDeduction,
@@ -345,6 +359,7 @@ export const getSalarySlip = async (
       otherDeduction: otherDeductions,
       otherDeductions,
       expenseReimbursement,
+      totalReimbursements: expenseReimbursement,
       approvedExpenseAmount,
       approvedExpenses: expenseReimbursement,
       totalExpenses: expenseReimbursement,
@@ -354,6 +369,8 @@ export const getSalarySlip = async (
       deductionsTotal: deductions,
       totalDeductions: deductions,
       netSalary,
+      totalTakeHomePay,
+      netInWords,
 
       presentDays,
       absentDays,

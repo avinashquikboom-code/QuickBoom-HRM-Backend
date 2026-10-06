@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import payrollService from '../services/payrollService';
 import { prisma } from '../utils/db';
 import { getIstMonthRange } from '../utils/commissionHelper';
+import { numToWords } from '../services/payrollAutomationService';
 
 // ==========================================
 // Enhanced Payroll Controller
@@ -1059,6 +1060,10 @@ export const getAdminPayrollSlips = async (
 
       const extraPayout = (slip.extraHolidayPayout || 0) + (slip.extraWeeklyOffPayout || 0);
       const grossSalary = Math.round((baseMonthly + extraPayout) * 100) / 100;
+      const totalTakeHomePay = Math.round((cleanNetSalary + (slip.commissionEarned || 0) + (slip.expenseReimbursement || 0)) * 100) / 100;
+      const payPeriod = new Date(slip.year, slip.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      const documentId = `HR-PAY-${empCode}-${slip.year}${String(slip.month).padStart(2, '0')}`;
+      const netInWords = slip.netInWords || `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
 
       return {
         id: slip.id,
@@ -1073,6 +1078,10 @@ export const getAdminPayrollSlips = async (
         baseSalary: earnings.baseSalary,
         basicSalary: earnings.baseSalary,
         netSalary: cleanNetSalary,
+        totalTakeHomePay,
+        documentId,
+        payPeriod,
+        netInWords,
         allowance: earnings.allowance,
         hra: earnings.components.hra,
         medicalAllowance: earnings.components.medicalAllowance,
@@ -1112,6 +1121,7 @@ export const getAdminPayrollSlips = async (
         dailySalary: slip.dailySalary || 0,
         workingDays: schedWorkingDays,
         totalCalendarDays: slip.totalCalendarDays || new Date(slip.year, slip.month, 0).getDate(),
+        commission: slip.commissionEarned || 0,
         commissionEarned: slip.commissionEarned || 0,
         createdAt: slip.createdAt,
         updatedAt: slip.updatedAt,
