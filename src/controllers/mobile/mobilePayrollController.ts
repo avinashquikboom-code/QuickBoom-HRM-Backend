@@ -98,15 +98,19 @@ export const getMyPayslips = async (
       return {
         ...ps,
         baseSalary: earnings.baseSalary,
+        basicSalary: earnings.baseSalary,
         allowance: earnings.allowance,
         hra: earnings.components.hra,
         travelAllowance: earnings.components.travelAllowance,
         medicalAllowance: earnings.components.medicalAllowance,
+        travelMedicalAllowance: (earnings.components.travelAllowance || 0) + (earnings.components.medicalAllowance || 0),
         specialAllowance: earnings.components.specialAllowance,
         incentive: earnings.components.incentive,
         bonus: earnings.components.bonus,
         grossSalary,
+        grossEarnings: grossSalary,
         deductions: cleanDeductions,
+        totalDeductions: cleanDeductions,
         netSalary,
         presentDays: ps.presentDays || 0,
         absentDays: ps.absentDays || 0,
@@ -129,7 +133,26 @@ export const getMyPayslips = async (
         extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
         dailySalary: ps.dailySalary || 0,
         workingDays: schedWorkingDays,
-        totalCalendarDays: ps.totalCalendarDays || calendarDays
+        totalCalendarDays: ps.totalCalendarDays || calendarDays,
+        earnings: {
+          baseSalary: earnings.baseSalary,
+          basicSalary: earnings.baseSalary,
+          hra: earnings.components.hra,
+          medical: earnings.components.medicalAllowance,
+          medicalAllowance: earnings.components.medicalAllowance,
+          travel: earnings.components.travelAllowance,
+          travelAllowance: earnings.components.travelAllowance,
+          travelMedicalAllowance: (earnings.components.travelAllowance || 0) + (earnings.components.medicalAllowance || 0),
+          special: earnings.components.specialAllowance,
+          specialAllowance: earnings.components.specialAllowance,
+          bonus: earnings.components.bonus,
+          incentive: earnings.components.incentive,
+          grossSalary,
+          grossTotal: grossSalary,
+          grossEarnings: grossSalary,
+          commission: ps.commissionEarned || 0,
+          expenseReimbursement: ps.expenseReimbursement || 0,
+        }
       };
     };
 
@@ -295,7 +318,7 @@ export const downloadPayslip = async (
     // Earnings come from the shared backend resolver (same components as the admin payroll)
     const earnings = await payrollService.resolvePayslipEarnings(payslip);
     const basic = earnings.baseSalary;
-    const { hra, travelAllowance: ta, medicalAllowance: medical, specialAllowance: special } = earnings.components;
+    const { hra, travelAllowance: ta, medicalAllowance: medical, specialAllowance: special, bonus, incentive } = earnings.components;
     const finalSpecial = special;
 
     const totalDaysInMonth = new Date(payslip.year, payslip.month, 0).getDate();
@@ -402,16 +425,30 @@ export const downloadPayslip = async (
     const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + expenseReimbursement) * 100) / 100;
 
     // Build Earnings Items
+    const allowances = ta + medical;
     const earningsItems: { name: string; amount: number }[] = [
       { name: 'Basic Salary', amount: basic },
-      { name: 'House Rent Allowance (HRA)', amount: hra },
-      { name: 'Allowances (Travel/Medical)', amount: ta + medical },
     ];
+    if (hra > 0) {
+      earningsItems.push({ name: 'House Rent Allowance (HRA)', amount: hra });
+    }
+    if (allowances > 0) {
+      earningsItems.push({ name: 'Allowances (Travel/Medical)', amount: allowances });
+    }
     if (finalSpecial > 0) {
       earningsItems.push({ name: 'Special Allowance', amount: finalSpecial });
     }
+    if (bonus > 0) {
+      earningsItems.push({ name: 'Bonus', amount: bonus });
+    }
+    if (incentive > 0) {
+      earningsItems.push({ name: 'Incentive', amount: incentive });
+    }
     if (extraPayout > 0) {
       earningsItems.push({ name: 'Holiday / Weekly Off Payout', amount: extraPayout });
+    }
+    if (earningsItems.length === 1 && earnings.allowance > 0) {
+      earningsItems.push({ name: 'Allowances', amount: earnings.allowance });
     }
     if (commissionEarned > 0) {
       earningsItems.push({ name: 'Commission', amount: commissionEarned });

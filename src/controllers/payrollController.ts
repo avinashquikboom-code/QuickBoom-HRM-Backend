@@ -1018,7 +1018,7 @@ export const getAdminPayrollSlips = async (
     };
 
     // Transform to match frontend expectations safely
-    const transformedSlips = slips.map(slip => {
+    const transformedSlips = await Promise.all(slips.map(async (slip) => {
       const empName = slip.employee ? `${slip.employee.firstName} ${slip.employee.lastName}`.trim() : slip.employeeName || `Employee #${slip.employeeId}`;
       const empCode = slip.employee?.employeeCode || slip.employeeCode || `EMP-${slip.employeeId}`;
       const desig = slip.employee?.designation || slip.designation || 'Employee';
@@ -1026,7 +1026,8 @@ export const getAdminPayrollSlips = async (
       const off = slip.employee?.office?.name || slip.officeName || 'Main Office';
       const schedWorkingDays = slip.workingDays || calculateScheduledWorkingDays(slip.year, slip.month, slip.employee?.office);
 
-      const baseMonthly = (slip.baseSalary || 0) + (slip.allowance || 0);
+      const earnings = await payrollService.resolvePayslipEarnings(slip);
+      const baseMonthly = earnings.grossEarnings;
       const dSalary = slip.dailySalary || (schedWorkingDays > 0 ? Math.round((baseMonthly / schedWorkingDays) * 100) / 100 : 0);
       const absentDeduction = slip.absentDays ? Math.round((slip.absentDays * dSalary) * 100) / 100 : 0;
       const halfDayDeduction = slip.halfDays ? Math.round((slip.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
@@ -1056,8 +1057,12 @@ export const getAdminPayrollSlips = async (
         }).catch(err => console.warn(`[getAdminPayrollSlips] Failed to heal payslip #${slip.id}:`, err));
       }
 
+      const extraPayout = (slip.extraHolidayPayout || 0) + (slip.extraWeeklyOffPayout || 0);
+      const grossSalary = Math.round((baseMonthly + extraPayout) * 100) / 100;
+
       return {
-        id: slip.employeeId,
+        id: slip.id,
+        payslipId: slip.id,
         employeeId: slip.employeeId,
         employeeCode: empCode,
         name: empName,
@@ -1065,10 +1070,24 @@ export const getAdminPayrollSlips = async (
         designation: desig,
         department: dept,
         office: off,
-        baseSalary: slip.baseSalary || 0,
+        baseSalary: earnings.baseSalary,
+        basicSalary: earnings.baseSalary,
         netSalary: cleanNetSalary,
-        allowance: slip.allowance || 0,
+        allowance: earnings.allowance,
+        hra: earnings.components.hra,
+        medicalAllowance: earnings.components.medicalAllowance,
+        medical: earnings.components.medicalAllowance,
+        travelAllowance: earnings.components.travelAllowance,
+        travel: earnings.components.travelAllowance,
+        travelMedicalAllowance: (earnings.components.travelAllowance || 0) + (earnings.components.medicalAllowance || 0),
+        specialAllowance: earnings.components.specialAllowance,
+        special: earnings.components.specialAllowance,
+        bonus: earnings.components.bonus,
+        incentive: earnings.components.incentive,
+        grossSalary,
+        grossEarnings: grossSalary,
         deductions: cleanDeductions,
+        totalDeductions: cleanDeductions,
         advanceDeduction: slip.advanceDeduction || 0,
         advanceSalary: slip.advanceDeduction || 0,
         totalAdvanceSalary: slip.advanceDeduction || 0,
@@ -1096,8 +1115,27 @@ export const getAdminPayrollSlips = async (
         commissionEarned: slip.commissionEarned || 0,
         createdAt: slip.createdAt,
         updatedAt: slip.updatedAt,
+        earnings: {
+          baseSalary: earnings.baseSalary,
+          basicSalary: earnings.baseSalary,
+          hra: earnings.components.hra,
+          medical: earnings.components.medicalAllowance,
+          medicalAllowance: earnings.components.medicalAllowance,
+          travel: earnings.components.travelAllowance,
+          travelAllowance: earnings.components.travelAllowance,
+          travelMedicalAllowance: (earnings.components.travelAllowance || 0) + (earnings.components.medicalAllowance || 0),
+          special: earnings.components.specialAllowance,
+          specialAllowance: earnings.components.specialAllowance,
+          bonus: earnings.components.bonus,
+          incentive: earnings.components.incentive,
+          grossSalary,
+          grossTotal: grossSalary,
+          grossEarnings: grossSalary,
+          commission: slip.commissionEarned || 0,
+          expenseReimbursement: slip.expenseReimbursement || 0,
+        },
       };
-    });
+    }));
 
     res.json({
       success: true,

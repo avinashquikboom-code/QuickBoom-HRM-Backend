@@ -43,6 +43,8 @@ export const getSalarySlip = async (
       return;
     }
 
+    const ss = employee.salaryStructure;
+
     // Fetch permissions
     const perms = employee.userId ? await getEffectiveUserPermissions(employee.userId) : DEFAULT_EMPLOYEE_PERMISSIONS;
 
@@ -99,18 +101,24 @@ export const getSalarySlip = async (
       calcResult = null;
     }
 
-    const ss = employee.salaryStructure;
-    const baseSalary = (!isCurrentMonth && dbPayslip?.baseSalary && dbPayslip.baseSalary > 0)
-      ? dbPayslip.baseSalary
-      : (calcResult?.baseSalary && calcResult.baseSalary > 0)
-      ? calcResult.baseSalary
-      : (ss?.basicSalary || ss?.monthlySalary || 10000);
+    const resolvedEarnings = dbPayslip
+      ? await payrollService.resolvePayslipEarnings(dbPayslip)
+      : null;
 
-    const allowance = (!isCurrentMonth && dbPayslip?.allowance !== undefined)
-      ? dbPayslip.allowance
-      : (calcResult?.allowance ?? (
-          (ss?.hra || 0) + (ss?.medicalAllowance || 0) + (ss?.travelAllowance || 0) + (ss?.specialAllowance || 0)
-        ));
+    const baseSalary = resolvedEarnings?.baseSalary ??
+      (calcResult?.baseSalary && calcResult.baseSalary > 0 ? calcResult.baseSalary : (ss?.basicSalary || ss?.monthlySalary || 0));
+
+    const basicSalary = baseSalary;
+    const hra = resolvedEarnings?.components.hra ?? calcResult?.components?.hra ?? ss?.hra ?? 0;
+    const medical = resolvedEarnings?.components.medicalAllowance ?? calcResult?.components?.medicalAllowance ?? ss?.medicalAllowance ?? 0;
+    const travel = resolvedEarnings?.components.travelAllowance ?? calcResult?.components?.travelAllowance ?? ss?.travelAllowance ?? 0;
+    const special = resolvedEarnings?.components.specialAllowance ?? calcResult?.components?.specialAllowance ?? ss?.specialAllowance ?? 0;
+    const bonus = resolvedEarnings?.components.bonus ?? calcResult?.components?.bonus ?? ss?.bonus ?? 0;
+    const incentive = resolvedEarnings?.components.incentive ?? calcResult?.components?.incentive ?? ss?.incentive ?? 0;
+
+    const allowance = resolvedEarnings?.allowance ??
+      calcResult?.allowance ??
+      (hra + medical + travel + special + bonus + incentive);
 
     const commissionEarned = (calcResult?.commissionEarned !== undefined)
       ? calcResult.commissionEarned
@@ -144,13 +152,6 @@ export const getSalarySlip = async (
       ? calcResult.totalCalendarDays
       : (dbPayslip?.totalCalendarDays ?? new Date(targetYear, targetMonth, 0).getDate());
 
-    const basicSalary = ss?.basicSalary || baseSalary;
-    const hra = ss?.hra || 0;
-    const medical = ss?.medicalAllowance || 0;
-    const travel = ss?.travelAllowance || 0;
-    const special = ss?.specialAllowance || 0;
-    const bonus = ss?.bonus || 0;
-    const incentive = ss?.incentive || 0;
     const salaryAdvanceLimit = ss?.salaryAdvanceLimit !== undefined && ss?.salaryAdvanceLimit !== null
       ? ss.salaryAdvanceLimit
       : 25000;
@@ -321,8 +322,20 @@ export const getSalarySlip = async (
       monthStr: monthPrefix,
 
       baseSalary,
+      basicSalary,
       allowance,
+      hra,
+      medicalAllowance: medical,
+      medical,
+      travelAllowance: travel,
+      travel,
+      travelMedicalAllowance: travel + medical,
+      specialAllowance: special,
+      special,
+      bonus,
+      incentive,
       grossSalary: grossTotal,
+      grossEarnings: grossTotal,
       advanceDeduction,
       advanceSalary: advanceDeduction,
       totalAdvanceSalary: advanceDeduction,
@@ -339,6 +352,7 @@ export const getSalarySlip = async (
       expensesByCategory,
       expenseCategories,
       deductionsTotal: deductions,
+      totalDeductions: deductions,
       netSalary,
 
       presentDays,
@@ -361,8 +375,14 @@ export const getSalarySlip = async (
         basicSalary,
         hra,
         medical,
+        medicalAllowance: medical,
         travel,
+        travelAllowance: travel,
+        travelMedicalAllowance: travel + medical,
         special,
+        specialAllowance: special,
+        bonus,
+        incentive,
         commission: commissionEarned,
         expenseReimbursement,
         approvedExpenses: expenseReimbursement,
@@ -371,9 +391,9 @@ export const getSalarySlip = async (
         expensesByCategory,
         expenseCategories,
         extraPayout: extraHolidayPayout + extraWeeklyOffPayout,
-        bonus,
-        incentive,
         grossTotal,
+        grossSalary: grossTotal,
+        grossEarnings: grossTotal,
       },
 
       deductions: {
@@ -798,6 +818,32 @@ export const updateSalaryStructureById = async (
       });
     } catch (wErr) {
       console.warn('Wallet advanceLimit sync warning:', wErr);
+    }
+
+    // Re-calculate and update current month payslip so the updated salary takes effect immediately
+    try {
+      const now = new Date();
+      const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+      const istDate = new Date(istTime);
+      const curMonth = istDate.getUTCMonth() + 1;
+      const curYear = istDate.getUTCFullYear();
+
+      const existingSlip = await prisma.payslip.findUnique({
+        where: {
+          employeeId_month_year: {
+            employeeId: emp.id,
+            month: curMonth,
+            year: curYear
+          }
+        }
+      });
+      if (existingSlip) {
+        const calc = await payrollService.calculatePayroll(emp.id, curMonth, curYear);
+        await payrollService.savePayslip(calc);
+        console.log(`[SalaryStructure Update] Re-calculated and updated payslip for emp #${emp.id} for ${curMonth}/${curYear}`);
+      }
+    } catch (slipSyncErr) {
+      console.warn(`[SalaryStructure Update] Failed to sync current month payslip for emp #${emp.id}:`, slipSyncErr);
     }
 
     console.log(`[SalaryStructure Update] DB values after update:`, updatedStructure);

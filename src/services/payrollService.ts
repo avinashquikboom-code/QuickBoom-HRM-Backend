@@ -125,9 +125,14 @@ class PayrollService {
       const salaryStructure = await this.getSalaryStructure(employeeId, new Date(year, month - 1, 1));
 
       // Monthly & Base Salary
-      const monthlySalary = salaryStructure.monthlySalary || salaryStructure.grossSalary || (salaryStructure.baseSalary + salaryStructure.hra + salaryStructure.medical + salaryStructure.conveyance + salaryStructure.special) || salaryStructure.baseSalary || 12000;
-      const baseSalary = salaryStructure.baseSalary || monthlySalary;
-      const totalAllowance = (salaryStructure.hra || 0) + (salaryStructure.medical || 0) + (salaryStructure.conveyance || 0) + (salaryStructure.special || 0);
+      const totalAllowance = (salaryStructure.hra || 0) + 
+        (salaryStructure.medical || 0) + 
+        (salaryStructure.conveyance || 0) + 
+        (salaryStructure.special || 0) + 
+        (salaryStructure.incentive || 0) + 
+        (salaryStructure.bonus || 0);
+      const baseSalary = salaryStructure.baseSalary || 0;
+      const monthlySalary = salaryStructure.monthlySalary || salaryStructure.grossSalary || (baseSalary + totalAllowance) || 12000;
 
       // Get attendance breakdown data for the month
       const attendanceData = await this.getAttendanceData(employeeId, month, year, employee.office);
@@ -464,7 +469,7 @@ class PayrollService {
     bonus?: number | null;
   }): Promise<{ baseSalary: number; allowance: number; grossEarnings: number; components: PayslipSalaryComponents }> {
     const round2 = (n: number) => Math.round(n * 100) / 100;
-    const sumOf = (c: PayslipSalaryComponents) => round2(c.hra + c.travelAllowance + c.medicalAllowance + c.specialAllowance);
+    const sumOf = (c: PayslipSalaryComponents) => round2((c.hra || 0) + (c.travelAllowance || 0) + (c.medicalAllowance || 0) + (c.specialAllowance || 0) + (c.incentive || 0) + (c.bonus || 0));
 
     const hasSnapshot = ps.hra != null && ps.travelAllowance != null && ps.medicalAllowance != null && ps.specialAllowance != null;
     if (hasSnapshot) {
@@ -595,7 +600,9 @@ class PayrollService {
       const medicalAllowance = structureData.medical || 0;
       const travelAllowance = structureData.conveyance || 0;
       const specialAllowance = structureData.special || 0;
-      const grossSalary = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance;
+      const incentive = structureData.incentive || 0;
+      const bonus = structureData.bonus || 0;
+      const grossSalary = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus;
 
       const structure = await prisma.salaryStructure.upsert({
         where: { employeeId },
@@ -605,6 +612,8 @@ class PayrollService {
           medicalAllowance,
           travelAllowance,
           specialAllowance,
+          incentive,
+          bonus,
           grossSalary,
           monthlySalary: grossSalary,
           updatedAt: new Date()
@@ -1105,7 +1114,7 @@ class PayrollService {
     }
   }
 
-  private async savePayslip(calculation: PayrollCalculation): Promise<void> {
+  async savePayslip(calculation: PayrollCalculation): Promise<void> {
     try {
       const employee = await prisma.employee.findUnique({
         where: { id: calculation.employeeId },
