@@ -3,6 +3,7 @@ import {
   login,
   register,
   registerFcmToken,
+  unregisterFcmToken,
   employeeLogin,
   hrLogin,
   superAdminLogin,
@@ -242,6 +243,7 @@ router.post(
  *         description: Server error
  */
 router.post('/fcm-token', authMiddleware, registerFcmToken);
+router.delete('/fcm-token', authMiddleware, unregisterFcmToken);
 
 /**
  * @swagger

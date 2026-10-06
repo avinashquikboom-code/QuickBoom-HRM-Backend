@@ -59,6 +59,8 @@ async function recalculatePayslipIfPresent(employeeId: number, targetDate: Date)
   }
 }
 
+import { sendHRNotification, notifyEmployee as sendEmployeeNotification } from '../utils/hrNotificationHelper';
+
 // Helper: Send Notification to Employee
 async function notifyEmployee(
   employeeId: number,
@@ -68,76 +70,36 @@ async function notifyEmployee(
   extraData?: Record<string, string>
 ) {
   try {
-    await prisma.notification.create({
-      data: {
-        employeeId,
-        title,
-        body: message,
-        category: 'ATTENDANCE',
-        actionType: type,
-        isRead: false,
-      },
+    await sendEmployeeNotification({
+      employeeId,
+      title,
+      message,
+      category: 'ATTENDANCE',
+      actionType: type,
+      extraData,
     });
-
-    const emp = await prisma.employee.findUnique({
-      where: { id: employeeId },
-      select: { userId: true },
-    });
-
-    if (emp?.userId) {
-      try {
-        await firebaseNotificationService.sendNotificationToUser(emp.userId, title, message, {
-          type,
-          screen: '/attendance/corrections',
-          action: 'open_details',
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          ...extraData,
-        });
-      } catch (fcmErr) {
-        console.warn(`[notifyEmployee] FCM notification skipped or failed for user ${emp.userId}:`, fcmErr);
-      }
-    }
   } catch (error) {
     console.error('Error sending notification to employee:', error);
   }
 }
 
 // Helper: Send Notification to HR / Admin Team
-async function notifyHRTeam(title: string, message: string) {
+async function notifyHRTeam(
+  title: string,
+  message: string,
+  employeeId?: number,
+  actionId?: string,
+  actionType: string = 'ATTENDANCE_CORRECTION_REQUEST'
+) {
   try {
-    const hrEmployees = await prisma.employee.findMany({
-      where: {
-        user: {
-          role: { in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER'] },
-        },
-      },
-      select: { id: true, userId: true },
+    await sendHRNotification({
+      title,
+      message,
+      category: 'ATTENDANCE',
+      actionType,
+      actionId: actionId ? String(actionId) : undefined,
+      employeeId,
     });
-
-    for (const hr of hrEmployees) {
-      await prisma.notification.create({
-        data: {
-          employeeId: hr.id,
-          title,
-          body: message,
-          category: 'ATTENDANCE',
-          actionType: 'ATTENDANCE_CORRECTION_REQUEST',
-          isRead: false,
-        },
-      });
-    }
-
-    const hrRoles = ['HR', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
-    for (const role of hrRoles) {
-      try {
-        await firebaseNotificationService.sendNotificationToRole(role, title, message, {
-          type: 'ATTENDANCE_CORRECTION_REQUEST',
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        });
-      } catch (fcmErr) {
-        // Silently skip if no FCM tokens exist for the role
-      }
-    }
   } catch (error) {
     console.error('Error notifying HR team:', error);
   }
@@ -229,9 +191,23 @@ export const applyCorrectionRequest = async (req: AuthenticatedRequest, res: Res
 
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const dateFormatted = targetDate.toISOString().split('T')[0];
+
+    // 1. Notify Submitting Employee
+    await notifyEmployee(
+      employee.id,
+      'Attendance Correction Submitted',
+      `Your attendance correction request for ${dateFormatted} (${currentStatus} → ${requestedStatus}) has been submitted.`,
+      'ATTENDANCE_CORRECTION_SUBMITTED',
+      { requestId: requestRow.id.toString() }
+    );
+
+    // 2. Notify Authorized HR/Admin Team
     await notifyHRTeam(
-      `Attendance Correction Request: ${empName}`,
-      `Attendance correction request from ${empName} on ${dateFormatted}: ${currentStatus} → ${requestedStatus}`
+      'Attendance Correction Request',
+      `${empName} submitted an attendance correction request for ${dateFormatted}: ${currentStatus} → ${requestedStatus}.`,
+      employee.id,
+      requestRow.id.toString(),
+      'ATTENDANCE_CORRECTION_REQUEST'
     );
 
     return res.json({
@@ -341,10 +317,22 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const dateFormatted = original.attendanceDate.toISOString().split('T')[0];
     
-    // Step 7: Notify HR
+    // Step 7: Notify Submitting Employee
+    await notifyEmployee(
+      employee.id,
+      'Attendance Correction Resubmitted',
+      `Your attendance correction request for ${dateFormatted} (${original.currentStatus} → ${requestedStatus}) has been resubmitted.`,
+      'ATTENDANCE_CORRECTION_RESUBMITTED',
+      { requestId: newCorrection.id.toString() }
+    );
+
+    // Step 8: Notify HR / Admin Team
     await notifyHRTeam(
-      `Attendance Correction Resubmitted: ${empName}`,
-      `Attendance correction resubmitted by ${empName} for ${dateFormatted}: ${original.currentStatus} → ${requestedStatus}`
+      'Attendance Correction Resubmitted',
+      `${empName} resubmitted an attendance correction request for ${dateFormatted}: ${original.currentStatus} → ${requestedStatus}.`,
+      employee.id,
+      newCorrection.id.toString(),
+      'ATTENDANCE_CORRECTION_REQUEST'
     );
     
     return res.json({
@@ -630,6 +618,16 @@ export async function executeCorrectionApproval(
       'ATTENDANCE_CORRECTION_APPROVED',
       { correctionId: String(request.id) }
     );
+
+    // Notify HR team of approval
+    await sendHRNotification({
+      title: 'Attendance Correction Approved',
+      message: `Attendance correction approved for ${employee.firstName} ${employee.lastName} on ${dateFormatted}`,
+      category: 'ATTENDANCE',
+      actionType: 'ATTENDANCE_CORRECTION_APPROVED',
+      actionId: String(request.id),
+      employeeId: employee.id,
+    });
   }
 
   console.log(`🔒 [AUDIT LOG] HR ${reviewerId} reviewed AttendanceCorrectionRequest ${request.id}: status=APPROVED`);
@@ -691,6 +689,15 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
           'ATTENDANCE_CORRECTION_REJECTED',
           { correctionId: String(request.id) }
         );
+
+        await sendHRNotification({
+          title: 'Attendance Correction Rejected',
+          message: `Attendance correction rejected for ${employee.firstName} ${employee.lastName} on ${dateFormatted}${noteText}`,
+          category: 'ATTENDANCE',
+          actionType: 'ATTENDANCE_CORRECTION_REJECTED',
+          actionId: String(request.id),
+          employeeId: employee.id,
+        });
       }
 
       const updated = await prisma.attendanceCorrectionRequest.update({

@@ -6,6 +6,7 @@ import { firebaseNotificationService } from '../../services/firebaseNotification
 import { CommissionService } from '../../services/commissionService';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { getActiveApprovedLeaveForDate, cancelLeaveRequest } from '../../services/leaveCancellationService';
+import { sendHRNotification } from '../../utils/hrNotificationHelper';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -1947,15 +1948,14 @@ export const requestSalaryAdvance = async (
       return { advance, remainingLimit: newRemainingLimit };
     });
 
-    // Notify HR of new salary advance request (in-app & FCM push outside app)
-    firebaseNotificationService.sendAppNotification({
-      role: 'HR',
-      title: 'New Salary Advance Request',
-      body: `${employee.firstName} ${employee.lastName || ''} requested a salary advance of ₹${numAmount}.`,
-      category: 'advance',
-      screen: 'salary_advance',
-      type: 'salary_advance_request',
+    // Notify HR of new salary advance request (in-app & FCM push to HR)
+    sendHRNotification({
+      title: 'Advance Salary Request',
+      message: `${employee.firstName} ${employee.lastName || ''} requested a salary advance of ₹${numAmount.toLocaleString('en-IN')}.`.trim(),
+      category: 'PAYROLL',
+      actionType: 'ADVANCE_SALARY_REQUEST',
       actionId: result.advance.id.toString(),
+      employeeId: employee.id,
     }).catch(err => console.error('Advance request notification error:', err));
 
     res.json({

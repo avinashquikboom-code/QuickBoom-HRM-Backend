@@ -19,6 +19,7 @@ import {
   PROTECTED_SYSTEM_ACCOUNT_MESSAGES,
   ensureSuperAdminEmployee
 } from '../utils/protectedAccounts';
+import { sendHRNotification } from '../utils/hrNotificationHelper';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -1165,6 +1166,33 @@ export const updateEmployee = async (
       storeName: fullEmp.store?.name
     }).catch(err => console.error('[HopKid ERP Push] Notice:', err));
 
+    const oldStatus = (employee.status || '').toUpperCase();
+    const newStatus = (fullEmp.status || '').toUpperCase();
+    let notifTitle = 'Employee Updated';
+    let notifAction = 'EMPLOYEE_UPDATED';
+
+    if (oldStatus !== newStatus) {
+      if (newStatus === 'ACTIVE') {
+        notifTitle = 'Employee Activated';
+        notifAction = 'EMPLOYEE_ACTIVATED';
+      } else if (newStatus === 'INACTIVE') {
+        notifTitle = 'Employee Deactivated';
+        notifAction = 'EMPLOYEE_DEACTIVATED';
+      } else {
+        notifTitle = 'Employee Status Changed';
+        notifAction = 'EMPLOYEE_STATUS_CHANGED';
+      }
+    }
+
+    sendHRNotification({
+      title: notifTitle,
+      message: `Employee ${fullEmp.firstName} ${fullEmp.lastName} (${fullEmp.employeeCode}) status: ${fullEmp.status}.`,
+      category: 'EMPLOYEE',
+      actionType: notifAction,
+      actionId: fullEmp.id.toString(),
+      employeeId: fullEmp.id,
+    }).catch(err => console.error('[HR Notification] Update employee notice:', err));
+
     logActivity({
       actorId: req.user?.id,
       actorName: req.user?.email || 'Admin',
@@ -1647,6 +1675,15 @@ export const createEmployee = async (
       commissionPercentage: newEmployee.commissionPercentage,
       basicSalary: salaryStructure?.basicSalary ? parseFloat(String(salaryStructure.basicSalary)) : 0,
     }).catch(err => console.error('[HopKid ERP Push] Create notice:', err));
+
+    sendHRNotification({
+      title: 'New Employee Added',
+      message: `New employee ${newEmployee.firstName} ${newEmployee.lastName || ''} (${newEmployee.employeeCode}) was registered.`.trim(),
+      category: 'EMPLOYEE',
+      actionType: 'EMPLOYEE_CREATED',
+      actionId: newEmployee.id.toString(),
+      employeeId: newEmployee.id,
+    }).catch(err => console.error('[HR Notification] Create employee notice:', err));
 
     res.status(201).json({
       success: true,
@@ -4504,6 +4541,15 @@ export const updateAdminLeaveStatus = async (
       },
     });
 
+    sendHRNotification({
+      title: isApproved ? 'Leave Request Approved' : 'Leave Request Rejected',
+      message: `${existingLeave.employee.firstName} ${existingLeave.employee.lastName}'s leave request (${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()}) was ${status.toLowerCase()} by ${reviewerName}.`,
+      category: 'LEAVE',
+      actionType: isApproved ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
+      actionId: existingLeave.id.toString(),
+      employeeId: existingLeave.employeeId,
+    }).catch(err => console.error('[HR Notification] Leave review notice:', err));
+
     console.log(`✅ Admin Panel: Leave request ${existingLeave.id} ${status.toLowerCase()} and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     res.json({
@@ -5941,6 +5987,15 @@ export const approveSalarySlip = async (
 
     const payslip = await PayrollAutomationService.calculateAndSaveSalary(empIdInt, targetMonth, targetYear, 'Approved');
 
+    sendHRNotification({
+      title: 'Salary Slip Approved',
+      message: `Salary slip approved for employee ${payslip.employeeName || empIdInt} for ${targetMonth}/${targetYear}. Net salary: ₹${payslip.netSalary}`,
+      category: 'PAYROLL',
+      actionType: 'PAYROLL_PROCESSED',
+      actionId: String(payslip.id),
+      employeeId: empIdInt,
+    }).catch(err => console.error('[HR Notification] Slip approval notice:', err));
+
     res.json({
       success: true,
       message: 'Salary slip approved and generated successfully.',
@@ -6812,10 +6867,128 @@ export const fetchAdminNotifications = async (
       return;
     }
 
-    const notifications = await prisma.notification.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
+    const {
+      page = '1',
+      limit = '10',
+      status = 'all', // 'all' | 'unread' | 'read'
+      category = 'ALL',
+      type,
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+    const take = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 10));
+    const skip = (pageNum - 1) * take;
+
+    // Filter by user (targeted to this admin or broadcast/system with null userId)
+    const baseWhere: Prisma.NotificationWhereInput = {
+      OR: [{ userId }, { userId: null }],
+    };
+
+    const andConditions: Prisma.NotificationWhereInput[] = [baseWhere];
+
+    // Status filter
+    if (status === 'unread') {
+      andConditions.push({ isRead: false });
+    } else if (status === 'read') {
+      andConditions.push({ isRead: true });
+    }
+
+    // Category / Type filter
+    const activeCategory = (category !== 'ALL' && category !== 'All' && category !== 'all' ? category : type) as string | undefined;
+    if (activeCategory && activeCategory.toUpperCase() !== 'ALL') {
+      andConditions.push({
+        category: {
+          equals: activeCategory.toUpperCase(),
+          mode: 'insensitive',
+        },
+      });
+    }
+
+    const where: Prisma.NotificationWhereInput = {
+      AND: andConditions,
+    };
+
+    const [total, unreadCount, notifications] = await Promise.all([
+      prisma.notification.count({ where }),
+      prisma.notification.count({
+        where: {
+          OR: [{ userId }, { userId: null }],
+          isRead: false,
+        },
+      }),
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const mapped = notifications.map((n) => ({
+      id: n.id.toString(),
+      title: n.title,
+      message: n.body,
+      type: n.category.toLowerCase(),
+      category: n.category.toUpperCase(),
+      isRead: n.isRead,
+      actionId: n.actionId,
+      actionType: n.actionType,
+      createdAt: n.createdAt.toISOString(),
+      employee: n.employee
+        ? {
+            id: n.employee.id.toString(),
+            employeeCode: n.employee.employeeCode,
+            name: `${n.employee.firstName} ${n.employee.lastName}`.trim(),
+          }
+        : null,
+    }));
+
+    res.json({
+      success: true,
+      notifications: mapped,
+      total,
+      unreadCount,
+      page: pageNum,
+      limit: take,
+      totalPages: Math.ceil(total / take) || 1,
+    });
+  } catch (error) {
+    console.error('Fetch admin notifications error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load notifications.' });
+  }
+};
+
+export const fetchAdminNotificationById = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  const { id } = req.params;
+
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const notificationId = parseInt(id as string, 10);
+    if (isNaN(notificationId)) {
+      res.status(400).json({ success: false, message: 'Invalid notification ID' });
+      return;
+    }
+
+    const notif = await prisma.notification.findUnique({
+      where: { id: notificationId },
       include: {
         employee: {
           select: {
@@ -6828,26 +7001,44 @@ export const fetchAdminNotifications = async (
       },
     });
 
-    const mapped = notifications.map((n) => ({
-      id: n.id.toString(),
-      title: n.title,
-      message: n.body,
-      type: n.category,
-      isRead: n.isRead,
-      actionId: n.actionId,
-      actionType: n.actionType,
-      createdAt: n.createdAt.toISOString(),
-      employee: n.employee ? {
-        id: n.employee.id.toString(),
-        employeeCode: n.employee.employeeCode,
-        name: `${n.employee.firstName} ${n.employee.lastName}`,
-      } : null,
-    }));
+    if (!notif || (notif.userId && notif.userId !== userId)) {
+      res.status(404).json({ success: false, message: 'Notification not found or unauthorized.' });
+      return;
+    }
 
-    res.json({ success: true, notifications: mapped });
+    // Auto mark as read on open if currently unread
+    if (!notif.isRead) {
+      await prisma.notification.update({
+        where: { id: notificationId },
+        data: { isRead: true },
+      });
+      notif.isRead = true;
+    }
+
+    res.json({
+      success: true,
+      notification: {
+        id: notif.id.toString(),
+        title: notif.title,
+        message: notif.body,
+        type: notif.category.toLowerCase(),
+        category: notif.category.toUpperCase(),
+        isRead: notif.isRead,
+        actionId: notif.actionId,
+        actionType: notif.actionType,
+        createdAt: notif.createdAt.toISOString(),
+        employee: notif.employee
+          ? {
+              id: notif.employee.id.toString(),
+              employeeCode: notif.employee.employeeCode,
+              name: `${notif.employee.firstName} ${notif.employee.lastName}`.trim(),
+            }
+          : null,
+      },
+    });
   } catch (error) {
-    console.error('Fetch admin notifications error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load notifications.' });
+    console.error('Fetch admin notification by ID error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load notification.' });
   }
 };
 
@@ -6864,17 +7055,23 @@ export const markAdminNotificationRead = async (
       return;
     }
 
+    const notificationId = parseInt(id as string, 10);
+    if (isNaN(notificationId)) {
+      res.status(400).json({ success: false, message: 'Invalid notification ID' });
+      return;
+    }
+
     const notif = await prisma.notification.findUnique({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: notificationId },
     });
 
-    if (!notif || notif.userId !== userId) {
+    if (!notif || (notif.userId && notif.userId !== userId)) {
       res.status(404).json({ success: false, message: 'Notification not found or unauthorized.' });
       return;
     }
 
     const notification = await prisma.notification.update({
-      where: { id: parseInt(id as string, 10) },
+      where: { id: notificationId },
       data: { isRead: true },
     });
 
@@ -6897,7 +7094,10 @@ export const markAllAdminNotificationsRead = async (
     }
 
     await prisma.notification.updateMany({
-      where: { userId, isRead: false },
+      where: {
+        OR: [{ userId }, { userId: null }],
+        isRead: false,
+      },
       data: { isRead: true },
     });
 

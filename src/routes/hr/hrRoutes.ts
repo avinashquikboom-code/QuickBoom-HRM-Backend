@@ -33,6 +33,12 @@ import {
   sendNotification,
   broadcastAnnouncement,
 } from '../../controllers/hr/hrNotificationController';
+import {
+  fetchAdminNotifications,
+  fetchAdminNotificationById,
+  markAdminNotificationRead,
+  markAllAdminNotificationsRead,
+} from '../../controllers/adminController';
 import { fetchWorkModes } from '../../controllers/workModeController';
 import { bulkApproveHRAttendanceCorrections } from '../../controllers/attendanceCorrectionController';
 
@@ -274,6 +280,12 @@ router.post('/attendance-corrections/:id/reject', rejectAttendanceCorrection);
 router.post('/attendance-corrections/bulk-approve', roleMiddleware(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER']), bulkApproveHRAttendanceCorrections);
 
 // Notifications & Announcements
+router.get('/notifications', fetchAdminNotifications);
+router.get('/notifications/:id', fetchAdminNotificationById);
+router.put('/notifications/:id/read', markAdminNotificationRead);
+router.patch('/notifications/:id/read', markAdminNotificationRead);
+router.put('/notifications/read-all', markAllAdminNotificationsRead);
+router.patch('/notifications/read-all', markAllAdminNotificationsRead);
 router.post('/notifications/send', sendNotification);
 router.post('/announcements/broadcast', broadcastAnnouncement);
 

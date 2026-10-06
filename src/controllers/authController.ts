@@ -474,6 +474,35 @@ export const registerFcmToken = async (req: AuthenticatedRequest, res: Response)
   }
 };
 
+// Unregister / deactivate FCM device token for the current user
+export const unregisterFcmToken = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { token } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (token) {
+      await prisma.fCMToken.updateMany({
+        where: { userId, token },
+        data: { isActive: false },
+      });
+    } else {
+      await prisma.fCMToken.updateMany({
+        where: { userId },
+        data: { isActive: false },
+      });
+    }
+
+    res.json({ success: true, message: 'FCM Token unregistered successfully' });
+  } catch (error) {
+    console.error('Error unregistering FCM token:', error);
+    res.status(500).json({ error: 'Server error unregistering FCM token' });
+  }
+};
+
 // Helper function for role-specific login
 const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: Role[]): Promise<void> => {
   const { email, password } = req.body;

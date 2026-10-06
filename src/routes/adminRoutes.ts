@@ -63,6 +63,7 @@ import {
   fetchAttendanceReportDetails,
   downloadAttendanceReport,
   fetchAdminNotifications,
+  fetchAdminNotificationById,
   markAdminNotificationRead,
   markAllAdminNotificationsRead,
   fetchAdminSettings,
@@ -575,8 +576,11 @@ router.get('/reports/payroll-details', fetchPayrollReportDetails);
 
 // Notifications Management
 router.get('/notifications', fetchAdminNotifications);
+router.get('/notifications/:id', fetchAdminNotificationById);
 router.put('/notifications/:id/read', markAdminNotificationRead);
+router.patch('/notifications/:id/read', markAdminNotificationRead);
 router.put('/notifications/read-all', markAllAdminNotificationsRead);
+router.patch('/notifications/read-all', markAllAdminNotificationsRead);
 
 // Settings Management
 router.get('/settings', fetchAdminSettings);

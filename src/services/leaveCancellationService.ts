@@ -2,6 +2,7 @@ import { prisma } from '../utils/db';
 import leaveBalanceService from './leaveBalanceService';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
+import { sendHRNotification } from '../utils/hrNotificationHelper';
 
 export interface CancelLeaveUserContext {
   id: number;
@@ -222,51 +223,35 @@ export async function cancelLeaveRequest(
 
   // 4. Send notification
   try {
-    const notifyTitle = `${leave.type === 'WEEK_OFF' || leave.type === 'WEEKOFF' ? 'Week Off' : 'Leave'} Cancelled`;
-    const notifyBody = `${leave.employee.firstName} ${leave.employee.lastName} cancelled the ${leave.type} request from ${leave.fromDate.toISOString().split('T')[0]} to ${leave.toDate.toISOString().split('T')[0]}.`;
+    const isWeekOff = leave.type === 'WEEK_OFF' || leave.type === 'WEEKOFF';
+    const notifyTitle = `${isWeekOff ? 'Week-off' : 'Leave'} Cancellation Request`;
+    const notifyBody = `${leave.employee.firstName} ${leave.employee.lastName} cancelled the ${isWeekOff ? 'week-off' : `${leave.type} leave`} request from ${leave.fromDate.toISOString().split('T')[0]} to ${leave.toDate.toISOString().split('T')[0]}.`;
 
-    // Notify HR / Admins
-    const hrUsers = await prisma.user.findMany({
-      where: {
-        role: { in: ['HR', 'SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN'] },
-        isActive: true
-      }
+    // Notify HR / Admins (in-app + FCM push)
+    await sendHRNotification({
+      title: notifyTitle,
+      message: notifyBody,
+      category: 'LEAVE',
+      actionType: 'LEAVE_CANCELLED',
+      actionId: leave.id.toString(),
+      employeeId: leave.employeeId,
     });
 
-    const notifs = hrUsers.map(hr =>
-      prisma.notification.create({
+    // If admin cancelled on behalf of employee, also notify employee
+    if (isAdminOrHr && !isOwner && leave.employee.userId) {
+      await prisma.notification.create({
         data: {
-          userId: hr.id,
+          userId: leave.employee.userId,
           employeeId: leave.employeeId,
           title: notifyTitle,
-          body: notifyBody,
+          body: `Your ${leave.type} request was cancelled by ${user.email || 'HR'}.`,
           category: 'LEAVE',
           actionId: leave.id.toString(),
           actionType: 'LEAVE_CANCELLED',
-          isRead: false
-        }
-      })
-    );
-
-    // If admin cancelled on behalf of employee, also notify employee
-    if (isAdminOrHr && !isOwner) {
-      notifs.push(
-        prisma.notification.create({
-          data: {
-            userId: leave.employee.userId,
-            employeeId: leave.employeeId,
-            title: notifyTitle,
-            body: `Your ${leave.type} request was cancelled by ${user.email || 'HR'}.`,
-            category: 'LEAVE',
-            actionId: leave.id.toString(),
-            actionType: 'LEAVE_CANCELLED',
-            isRead: false
-          }
-        })
-      );
+          isRead: false,
+        },
+      });
     }
-
-    await Promise.all(notifs);
   } catch (notifErr) {
     console.error('Failed to send leave cancellation notifications:', notifErr);
   }

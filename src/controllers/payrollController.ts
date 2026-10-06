@@ -4,6 +4,7 @@ import payrollService from '../services/payrollService';
 import { prisma } from '../utils/db';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from '../services/payrollAutomationService';
+import { sendHRNotification } from '../utils/hrNotificationHelper';
 
 // ==========================================
 // Enhanced Payroll Controller
@@ -68,6 +69,14 @@ export const processPayrollRun = async (
       parseInt(year),
       runName
     );
+
+    sendHRNotification({
+      title: 'Salary Generated',
+      message: `Payroll run "${runName || `Payroll-${month}/${year}`}" processed for ${employeeIds.length} employee(s).`,
+      category: 'PAYROLL',
+      actionType: 'SALARY_GENERATED',
+      actionId: String(run?.id || `${month}-${year}`),
+    }).catch(err => console.error('[HR Notification] Salary generated notice error:', err));
 
     res.json({
       success: true,
@@ -773,6 +782,15 @@ export const approvePayslip = async (
       }
     });
 
+    sendHRNotification({
+      title: 'Salary Approved',
+      message: `Payslip #${payslip.id} for employee #${payslip.employeeId} (${payslip.month}/${payslip.year}) has been approved.`,
+      category: 'PAYROLL',
+      actionType: 'SALARY_APPROVED',
+      actionId: String(payslip.id),
+      employeeId: payslip.employeeId,
+    }).catch(err => console.error('[HR Notification] Payslip approve notice error:', err));
+
     res.json({
       success: true,
       message: 'Payslip approved successfully.',
@@ -1313,6 +1331,15 @@ export const approveAdminPayslip = async (
       return;
     }
 
+    sendHRNotification({
+      title: 'Salary Approved',
+      message: `Salary slip for employee #${employeeId} (${month}/${year}) has been approved.`,
+      category: 'PAYROLL',
+      actionType: 'SALARY_APPROVED',
+      actionId: `${employeeId}-${month}-${year}`,
+      employeeId: parseInt(employeeId),
+    }).catch(err => console.error('[HR Notification] Salary approve notice error:', err));
+
     res.json({
       success: true,
       message: 'Salary slip approved and generated successfully!'
@@ -1356,6 +1383,14 @@ export const bulkDisbursePayroll = async (
         updatedAt: new Date()
       }
     });
+
+    sendHRNotification({
+      title: 'Salary Paid',
+      message: `Salary disbursement completed for ${approvedPayslips.length} employee(s) for ${currentMonth}/${currentYear}.`,
+      category: 'PAYROLL',
+      actionType: 'SALARY_PAID',
+      actionId: `${currentMonth}-${currentYear}`,
+    }).catch(err => console.error('[HR Notification] Bulk disburse notice error:', err));
 
     res.json({
       success: true,
@@ -1409,6 +1444,15 @@ export const disburseAdminPayslip = async (
       });
       return;
     }
+
+    sendHRNotification({
+      title: 'Salary Paid',
+      message: `Salary marked as Paid for employee #${employeeId || payslipId} (${month || ''}/${year || ''}).`,
+      category: 'PAYROLL',
+      actionType: 'SALARY_PAID',
+      actionId: String(payslipId || employeeId),
+      employeeId: employeeId ? parseInt(employeeId) : undefined,
+    }).catch(err => console.error('[HR Notification] Disburse notice error:', err));
 
     res.json({
       success: true,

@@ -54,7 +54,7 @@ export class FirebaseNotificationService {
         ttl: options?.ttl ? options.ttl * 1000 : 3600000, // Convert to milliseconds
         notification: {
           sound: 'default',
-          clickAction: data?.click_action || 'FLUTTER_NOTIFICATION_CLICK',
+          clickAction: data?.click_action && !data.click_action.startsWith('/') ? data.click_action : 'FLUTTER_NOTIFICATION_CLICK',
           color: '#4CAF50',
         },
       },
@@ -72,6 +72,8 @@ export class FirebaseNotificationService {
       },
       webpush: {
         notification: {
+          title,
+          body,
           icon: '/favicon.svg',
           badge: '/favicon.svg',
           requireInteraction: true,
@@ -83,7 +85,7 @@ export class FirebaseNotificationService {
           ]
         },
         fcmOptions: {
-          link: data?.click_action || 'https://hrmportal.com'
+          link: (data?.web_url || (data?.click_action && data.click_action.startsWith('/') ? data.click_action : undefined)) || '/notifications'
         }
       }
     };
@@ -120,7 +122,7 @@ export class FirebaseNotificationService {
     }
   }
 
-  // Send notification to specific user by user ID
+  // Send notification to specific user by user ID (both mobile and web push)
   async sendNotificationToUser(
     userId: number,
     title: string,
@@ -128,19 +130,32 @@ export class FirebaseNotificationService {
     data?: Record<string, string>,
     options?: NotificationOptions
   ): Promise<admin.messaging.BatchResponse> {
-    const fcmTokens = await prisma.fCMToken.findMany({
-      where: { 
-        userId: userId,
-        isActive: true 
-      },
-      select: { token: true }
-    });
+    const [fcmTokens, deviceTokens] = await Promise.all([
+      prisma.fCMToken.findMany({
+        where: { 
+          userId: userId,
+          isActive: true 
+        },
+        select: { token: true }
+      }),
+      prisma.device.findMany({
+        where: { userId },
+        select: { fcmToken: true }
+      }),
+    ]);
 
-    if (!fcmTokens || fcmTokens.length === 0) {
-      throw new Error('User not found or has no active FCM tokens');
+    const allTokens = [
+      ...fcmTokens.map(t => t.token),
+      ...deviceTokens.map(d => d.fcmToken as string),
+    ].filter((t): t is string => Boolean(t && t.trim().length > 0));
+
+    const tokens = Array.from(new Set(allTokens));
+
+    if (tokens.length === 0) {
+      console.log(`ℹ️ [FirebaseNotificationService] User ${userId} has no active FCM/Device tokens.`);
+      return { responses: [], successCount: 0, failureCount: 0 };
     }
 
-    const tokens = fcmTokens.map(t => t.token);
     return this.sendNotificationToTokens(tokens, title, body, data, options);
   }
 

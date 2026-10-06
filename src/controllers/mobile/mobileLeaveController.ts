@@ -9,6 +9,7 @@ import leaveBalanceService from '../../services/leaveBalanceService';
 import { logActivity } from '../../utils/activityLogger';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { cancelLeaveRequest } from '../../services/leaveCancellationService';
+import { sendHRNotification, notifyEmployee } from '../../utils/hrNotificationHelper';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -217,46 +218,32 @@ export const applyLeave = async (
       },
     });
 
-    // Send real-time notifications to all HR users
+    // Send real-time notifications: Employee confirmation + Authorized HR/Admins
     try {
-      // Get all HR users
-      const hrUsers = await prisma.user.findMany({
-        where: {
-          role: { in: ['HR', 'SUPER_ADMIN', 'PLATFORM_ADMIN'] },
-          isActive: true
-        },
-        include: {
-          employee: true
-        }
+      const isWeekOff = type.toUpperCase() === 'WEEK_OFF' || type.toUpperCase() === 'WEEKOFF';
+      const notifTitle = isWeekOff ? 'New Week Off Request' : 'New Leave Request';
+      const notifBody = `${employee.firstName} ${employee.lastName || ''} requested ${isWeekOff ? 'week-off' : `${type.toLowerCase()} leave`} from ${fromDate} to ${toDate}.`.trim();
+
+      // 1. Notify Submitting Employee
+      await notifyEmployee({
+        employeeId: employee.id,
+        userId: employee.userId || undefined,
+        title: isWeekOff ? 'Week Off Request Submitted' : 'Leave Request Submitted',
+        message: `Your ${isWeekOff ? 'week off' : `${type.toLowerCase()} leave`} request from ${fromDate} to ${toDate} has been submitted successfully.`,
+        category: 'LEAVE',
+        actionType: isWeekOff ? 'WEEK_OFF_SUBMITTED' : 'LEAVE_SUBMITTED',
+        actionId: leaveRequest.id.toString(),
       });
 
-      // Create notifications for all HR users
-      const notificationPromises = hrUsers.map(hrUser => 
-        prisma.notification.create({
-          data: {
-            userId: hrUser.id,
-            title: 'New Leave Application',
-            body: `${employee.firstName} ${employee.lastName} requested for ${type.toLowerCase()} leave from ${fromDate} to ${toDate}`,
-            category: 'LEAVE',
-            actionId: leaveRequest.id.toString(),
-            actionType: 'LEAVE_APPLICATION',
-            isRead: false,
-          }
-        })
-      );
-
-      await Promise.all(notificationPromises);
-
-      // Send FCM Push notification to HR users (outside app)
-      firebaseNotificationService.sendAppNotification({
-        role: 'HR',
-        title: 'New Leave Application',
-        body: `${employee.firstName} ${employee.lastName || ''} requested ${type.toLowerCase()} leave from ${fromDate} to ${toDate}.`,
-        category: 'leave',
-        screen: 'leave_requests',
-        type: 'leave_request',
+      // 2. Notify Authorized HR/Admin Team
+      await sendHRNotification({
+        title: notifTitle,
+        message: notifBody,
+        category: 'LEAVE',
+        actionType: isWeekOff ? 'WEEK_OFF_REQUEST' : 'LEAVE_APPLICATION',
         actionId: leaveRequest.id.toString(),
-      }).catch(err => console.error('Leave HR push error:', err));
+        employeeId: employee.id,
+      });
 
       // Broadcast real-time WebSocket event to HR users
       try {
@@ -284,24 +271,6 @@ export const applyLeave = async (
         console.log(`✅ Real-time notification sent to HR users for leave application by ${employee.firstName} ${employee.lastName}`);
       } catch (wsError) {
         console.error('❌ Failed to broadcast WebSocket event:', wsError);
-      }
-
-      // Send Firebase Push Notifications to HR/Admin users
-      try {
-        const hrUserIds = hrUsers.map(u => u.id);
-        const pushTitle = 'New Leave Application';
-        const pushBody = `New leave request from ${employee.firstName} ${employee.lastName}`;
-        pushNotificationService.sendPush(
-          hrUserIds,
-          pushTitle,
-          pushBody,
-          {
-            screen: 'leave_requests',
-            id: leaveRequest.id.toString()
-          }
-        ).catch(err => console.error('Failed to send mobile HR push notification:', err));
-      } catch (pushError) {
-        console.error('Failed to send FCM push notifications for leave request:', pushError);
       }
     } catch (notificationError) {
       console.error('❌ Failed to send HR notifications:', notificationError);
@@ -748,46 +717,17 @@ export const approveLeaveRequest = async (
       await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
     }
 
-    // Send notification to employee
-    await prisma.notification.create({
-      data: {
-        employeeId: existingLeave.employee.id,
-        userId: existingLeave.employee.userId,
-        title: 'Leave Request Approved',
-        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
-        category: 'LEAVE',
-        actionId: leave.id.toString(),
-        actionType: 'LEAVE_APPROVED',
-        isRead: false,
-      },
+    // Send role-specific notification to employee (in-app + FCM push)
+    const isWeekOff = existingLeave.type === 'WEEK_OFF' || existingLeave.type === 'WEEKOFF';
+    await notifyEmployee({
+      employeeId: existingLeave.employee.id,
+      userId: existingLeave.employee.userId || undefined,
+      title: isWeekOff ? 'Week Off Approved' : 'Leave Approved',
+      message: `Your ${isWeekOff ? 'week off' : `${existingLeave.type.toLowerCase()} leave`} request from ${leave.fromDate.toISOString().split('T')[0]} to ${leave.toDate.toISOString().split('T')[0]} has been approved.`,
+      category: 'LEAVE',
+      actionType: isWeekOff ? 'WEEK_OFF_APPROVED' : 'LEAVE_APPROVED',
+      actionId: leave.id.toString(),
     });
-
-    // Send Firebase Push Notification to Employee
-    if (existingLeave.employee.userId) {
-      try {
-        pushNotificationService.sendPush(
-          [existingLeave.employee.userId],
-          'Leave Request Approved',
-          `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved.`,
-          {
-            screen: 'leave',
-            id: leave.id.toString()
-          }
-        ).catch(err => console.error('Failed to send leave approved push:', err));
-
-        firebaseNotificationService.sendAppNotification({
-          userId: existingLeave.employee.userId,
-          title: 'Leave Request Approved',
-          body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved.`,
-          category: 'leave',
-          screen: 'leave',
-          type: 'leave_approved',
-          actionId: leave.id.toString(),
-        }).catch(err => console.error('Leave approved FCM push error:', err));
-      } catch (pushError) {
-        console.error('Failed to send FCM push notification to employee on leave approval:', pushError);
-      }
-    }
 
     // Deduct leave balance & sync attendance
     const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -921,46 +861,17 @@ export const rejectLeaveRequest = async (
       await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, -days).catch(err => console.error('Update used leave error:', err));
     }
 
-    // Send notification to employee
-    await prisma.notification.create({
-      data: {
-        employeeId: existingLeave.employee.id,
-        userId: existingLeave.employee.userId,
-        title: 'Leave Request Rejected',
-        body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. Reason: ${reviewNote}`,
-        category: 'LEAVE',
-        actionId: leave.id.toString(),
-        actionType: 'LEAVE_REJECTED',
-        isRead: false,
-      },
+    // Send role-specific notification to employee (in-app + FCM push)
+    const isWeekOff = existingLeave.type === 'WEEK_OFF' || existingLeave.type === 'WEEKOFF';
+    await notifyEmployee({
+      employeeId: existingLeave.employee.id,
+      userId: existingLeave.employee.userId || undefined,
+      title: isWeekOff ? 'Week Off Rejected' : 'Leave Rejected',
+      message: `Your ${isWeekOff ? 'week off' : `${existingLeave.type.toLowerCase()} leave`} request from ${leave.fromDate.toISOString().split('T')[0]} to ${leave.toDate.toISOString().split('T')[0]} has been rejected.${reviewNote ? ` Reason: ${reviewNote}` : ''}`,
+      category: 'LEAVE',
+      actionType: isWeekOff ? 'WEEK_OFF_REJECTED' : 'LEAVE_REJECTED',
+      actionId: leave.id.toString(),
     });
-
-    // Send Firebase Push Notification to Employee
-    if (existingLeave.employee.userId) {
-      try {
-        pushNotificationService.sendPush(
-          [existingLeave.employee.userId],
-          'Leave Request Rejected',
-          `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected. Reason: ${reviewNote}`,
-          {
-            screen: 'leave',
-            id: leave.id.toString()
-          }
-        ).catch(err => console.error('Failed to send leave rejected push:', err));
-
-        firebaseNotificationService.sendAppNotification({
-          userId: existingLeave.employee.userId,
-          title: 'Leave Request Rejected',
-          body: `Your leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} was rejected. Reason: ${reviewNote}`,
-          category: 'leave',
-          screen: 'leave',
-          type: 'leave_rejected',
-          actionId: leave.id.toString(),
-        }).catch(err => console.error('Leave rejected FCM push error:', err));
-      } catch (pushError) {
-        console.error('Failed to send FCM push notification to employee on leave rejection:', pushError);
-      }
-    }
 
     console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
