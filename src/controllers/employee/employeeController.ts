@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma, ensureBankEditTable } from '../../utils/db';
 import { pushNotificationService } from '../../services/pushNotificationService';
@@ -6,7 +7,7 @@ import { firebaseNotificationService } from '../../services/firebaseNotification
 import { CommissionService } from '../../services/commissionService';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { getActiveApprovedLeaveForDate, cancelLeaveRequest } from '../../services/leaveCancellationService';
-import { sendHRNotification } from '../../utils/hrNotificationHelper';
+import { sendHRNotification, notifyEmployee } from '../../utils/hrNotificationHelper';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -801,80 +802,38 @@ export const applyEmployeeLeave = async (
       },
     });
 
-    // Notify HR and Admin users asynchronously
+    // Notify employee confirmation and HR/Admin users asynchronously
     (async () => {
       try {
-        const adminUsers = await prisma.user.findMany({
-          where: {
-            role: {
-              in: ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN']
-            },
-            isActive: true
-          }
+        const employeeName = `${employee.firstName} ${employee.lastName}`;
+        const fromStr = new Date(fromDate).toLocaleDateString();
+        const toStr = new Date(toDate).toLocaleDateString();
+        const isWeekOff = type.toUpperCase() === 'WEEK_OFF' || type.toUpperCase() === 'WEEKOFF';
+
+        // 1. Employee confirmation
+        await notifyEmployee({
+          targetUserId: employee.userId,
+          targetEmployeeId: employee.id,
+          title: isWeekOff ? 'Week Off Request Submitted' : 'Leave Request Submitted',
+          body: isWeekOff
+            ? `Your week off request from ${fromStr} to ${toStr} has been submitted successfully.`
+            : `Your leave request for ${fromStr} to ${toStr} has been submitted successfully.`,
+          category: 'LEAVE',
+          actionId: leave.id,
+          actionType: isWeekOff ? 'week_off_request' : 'leave_request',
         });
 
-        if (adminUsers.length > 0) {
-          const employeeName = `${employee.firstName} ${employee.lastName}`;
-          const title = `New Leave Request`;
-          const body = `${employeeName} has applied for ${leave.type.toLowerCase()} leave from ${new Date(fromDate).toLocaleDateString()} to ${new Date(toDate).toLocaleDateString()}.`;
-
-          // 1. Create database notifications
-          try {
-            await Promise.all(
-              adminUsers.map(user =>
-                prisma.notification.create({
-                  data: {
-                    title,
-                    body,
-                    category: 'LEAVE',
-                    userId: user.id,
-                    actionId: leave.id.toString(),
-                    actionType: 'leave_request'
-                  }
-                })
-              )
-            );
-          } catch (dbNotifyError) {
-            console.error('Database leave notifications creation error:', dbNotifyError);
-          }
-
-          // 2. Broadcast WebSockets for live updates
-          try {
-            const { getWebSocketInstance } = require('../../utils/websocketSingleton');
-            const wsInstance = getWebSocketInstance();
-            if (wsInstance) {
-              wsInstance.getServer().emit('newNotification', {
-                title,
-                body,
-                type: 'LEAVE',
-                category: 'LEAVE',
-                actionId: leave.id.toString(),
-                actionType: 'leave_request',
-                createdAt: new Date().toISOString()
-              });
-            }
-          } catch (wsError) {
-            console.error('Failed to broadcast leave websocket notification:', wsError);
-          }
-
-          // 3. Send Firebase Push Notifications
-          try {
-            const adminUserIds = adminUsers.map(u => u.id);
-            const pushTitle = 'New Leave Application';
-            const pushBody = `New leave request from ${employeeName}`;
-            pushNotificationService.sendPush(
-              adminUserIds,
-              pushTitle,
-              pushBody,
-              {
-                screen: 'leave_requests',
-                id: leave.id.toString()
-              }
-            ).catch(err => console.error('Failed to send leave submit push notification:', err));
-          } catch (pushError) {
-            console.error('Failed to send FCM push notifications for leave request:', pushError);
-          }
-        }
+        // 2. HR & Admin notification (permission-aware)
+        await sendHRNotification({
+          title: isWeekOff ? 'New Week Off Request' : 'New Leave Request',
+          body: `${employeeName} submitted a ${isWeekOff ? 'week-off' : 'leave'} request for ${fromStr} to ${toStr}.`,
+          category: 'LEAVE',
+          actionId: leave.id,
+          actionType: isWeekOff ? 'week_off_request' : 'leave_request',
+          employeeId: employee.id,
+          employeeName,
+          requiredModuleId: 'pa-leave',
+        });
       } catch (bgError) {
         console.error('Background leave request notification error:', bgError);
       }
@@ -1250,13 +1209,31 @@ export const fetchEmployeeNotifications = async (
       return;
     }
 
-    const notifications = await prisma.notification.findMany({
-      where: { employeeId: employee.id },
-      orderBy: { createdAt: 'desc' },
-    });
+    const userId = req.user?.id;
+    // Strict isolation: only fetch notifications for this user (or legacy employee records)
+    const where: Prisma.NotificationWhereInput = {
+      OR: [
+        ...(userId ? [{ userId }] : []),
+        { employeeId: employee.id, userId: null },
+      ],
+    };
+
+    const [notifications, unreadCount] = await Promise.all([
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.notification.count({
+        where: {
+          ...where,
+          isRead: false,
+        },
+      }),
+    ]);
 
     res.json({
       success: true,
+      unreadCount,
       notifications: notifications.map((n) => ({
         id: n.id.toString(),
         title: n.title,
@@ -1293,11 +1270,17 @@ export const markEmployeeNotificationRead = async (
       return;
     }
 
+    const userId = req.user?.id;
     const notification = await prisma.notification.findUnique({
       where: { id: notifIdInt },
     });
 
-    if (!notification || notification.employeeId !== employee.id) {
+    const isOwner =
+      notification &&
+      ((userId && notification.userId === userId) ||
+        (!notification.userId && notification.employeeId === employee.id));
+
+    if (!notification || !isOwner) {
       res.status(404).json({ success: false, message: 'Notification not found.' });
       return;
     }
@@ -1328,8 +1311,17 @@ export const markAllEmployeeNotificationsRead = async (
       return;
     }
 
+    const userId = req.user?.id;
+    const where: Prisma.NotificationWhereInput = {
+      OR: [
+        ...(userId ? [{ userId }] : []),
+        { employeeId: employee.id, userId: null },
+      ],
+      isRead: false,
+    };
+
     await prisma.notification.updateMany({
-      where: { employeeId: employee.id, isRead: false },
+      where,
       data: { isRead: true },
     });
 
@@ -1948,7 +1940,18 @@ export const requestSalaryAdvance = async (
       return { advance, remainingLimit: newRemainingLimit };
     });
 
-    // Notify HR of new salary advance request (in-app & FCM push to HR)
+    // 1. Notify Submitting Employee
+    notifyEmployee({
+      employeeId: employee.id,
+      userId: employee.userId || undefined,
+      title: 'Advance Salary Request Submitted',
+      message: `Your salary advance request of ₹${numAmount.toLocaleString('en-IN')} has been submitted.`,
+      category: 'PAYROLL',
+      actionType: 'ADVANCE_SALARY_REQUEST',
+      actionId: result.advance.id.toString(),
+    }).catch(err => console.error('Advance request employee notice error:', err));
+
+    // 2. Notify Authorized HR/Admin Team
     sendHRNotification({
       title: 'Advance Salary Request',
       message: `${employee.firstName} ${employee.lastName || ''} requested a salary advance of ₹${numAmount.toLocaleString('en-IN')}.`.trim(),
@@ -1956,6 +1959,7 @@ export const requestSalaryAdvance = async (
       actionType: 'ADVANCE_SALARY_REQUEST',
       actionId: result.advance.id.toString(),
       employeeId: employee.id,
+      requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('Advance request notification error:', err));
 
     res.json({

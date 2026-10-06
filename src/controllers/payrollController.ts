@@ -4,7 +4,7 @@ import payrollService from '../services/payrollService';
 import { prisma } from '../utils/db';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from '../services/payrollAutomationService';
-import { sendHRNotification } from '../utils/hrNotificationHelper';
+import { sendHRNotification, notifyEmployee } from '../utils/hrNotificationHelper';
 
 // ==========================================
 // Enhanced Payroll Controller
@@ -70,12 +70,26 @@ export const processPayrollRun = async (
       runName
     );
 
+    // 1. Notify each affected employee (strictly isolated to their own account)
+    for (const empId of employeeIds) {
+      notifyEmployee({
+        employeeId: parseInt(empId),
+        title: 'Salary Slip Available',
+        message: `Your salary slip for ${month}/${year} is now available.`,
+        category: 'PAYROLL',
+        actionType: 'SALARY_GENERATED',
+        actionId: `${empId}-${month}-${year}`,
+      }).catch(() => {});
+    }
+
+    // 2. Notify Authorized HR/Admin Team
     sendHRNotification({
       title: 'Salary Generated',
       message: `Payroll run "${runName || `Payroll-${month}/${year}`}" processed for ${employeeIds.length} employee(s).`,
       category: 'PAYROLL',
       actionType: 'SALARY_GENERATED',
       actionId: String(run?.id || `${month}-${year}`),
+      requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Salary generated notice error:', err));
 
     res.json({
@@ -782,6 +796,17 @@ export const approvePayslip = async (
       }
     });
 
+    // 1. Notify Employee
+    notifyEmployee({
+      employeeId: payslip.employeeId,
+      title: 'Salary Approved',
+      message: `Your salary for ${payslip.month}/${payslip.year} has been approved.`,
+      category: 'PAYROLL',
+      actionType: 'SALARY_APPROVED',
+      actionId: String(payslip.id),
+    }).catch(() => {});
+
+    // 2. Notify Authorized HR/Admin Team
     sendHRNotification({
       title: 'Salary Approved',
       message: `Payslip #${payslip.id} for employee #${payslip.employeeId} (${payslip.month}/${payslip.year}) has been approved.`,
@@ -789,6 +814,7 @@ export const approvePayslip = async (
       actionType: 'SALARY_APPROVED',
       actionId: String(payslip.id),
       employeeId: payslip.employeeId,
+      requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Payslip approve notice error:', err));
 
     res.json({
@@ -1331,6 +1357,17 @@ export const approveAdminPayslip = async (
       return;
     }
 
+    // 1. Notify Affected Employee
+    notifyEmployee({
+      employeeId: parseInt(employeeId),
+      title: 'Salary Approved',
+      message: `Your salary for ${month}/${year} has been approved.`,
+      category: 'PAYROLL',
+      actionType: 'SALARY_APPROVED',
+      actionId: `${employeeId}-${month}-${year}`,
+    }).catch(() => {});
+
+    // 2. Notify Authorized HR/Admin Team
     sendHRNotification({
       title: 'Salary Approved',
       message: `Salary slip for employee #${employeeId} (${month}/${year}) has been approved.`,
@@ -1338,6 +1375,7 @@ export const approveAdminPayslip = async (
       actionType: 'SALARY_APPROVED',
       actionId: `${employeeId}-${month}-${year}`,
       employeeId: parseInt(employeeId),
+      requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Salary approve notice error:', err));
 
     res.json({
@@ -1384,12 +1422,26 @@ export const bulkDisbursePayroll = async (
       }
     });
 
+    // 1. Notify Each Affected Employee
+    for (const p of approvedPayslips) {
+      notifyEmployee({
+        employeeId: p.employeeId,
+        title: 'Salary Paid',
+        message: `Your salary for ${p.month}/${p.year} has been marked as paid.`,
+        category: 'PAYROLL',
+        actionType: 'SALARY_PAID',
+        actionId: String(p.id),
+      }).catch(() => {});
+    }
+
+    // 2. Notify Authorized HR/Admin Team
     sendHRNotification({
       title: 'Salary Paid',
       message: `Salary disbursement completed for ${approvedPayslips.length} employee(s) for ${currentMonth}/${currentYear}.`,
       category: 'PAYROLL',
       actionType: 'SALARY_PAID',
       actionId: `${currentMonth}-${currentYear}`,
+      requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Bulk disburse notice error:', err));
 
     res.json({
@@ -1445,6 +1497,19 @@ export const disburseAdminPayslip = async (
       return;
     }
 
+    // 1. Notify Affected Employee
+    if (employeeId) {
+      notifyEmployee({
+        employeeId: parseInt(employeeId),
+        title: 'Salary Paid',
+        message: `Your salary for ${month || ''}/${year || ''} has been marked as paid.`,
+        category: 'PAYROLL',
+        actionType: 'SALARY_PAID',
+        actionId: String(payslipId || employeeId),
+      }).catch(() => {});
+    }
+
+    // 2. Notify Authorized HR/Admin Team
     sendHRNotification({
       title: 'Salary Paid',
       message: `Salary marked as Paid for employee #${employeeId || payslipId} (${month || ''}/${year || ''}).`,
@@ -1452,6 +1517,7 @@ export const disburseAdminPayslip = async (
       actionType: 'SALARY_PAID',
       actionId: String(payslipId || employeeId),
       employeeId: employeeId ? parseInt(employeeId) : undefined,
+      requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Disburse notice error:', err));
 
     res.json({

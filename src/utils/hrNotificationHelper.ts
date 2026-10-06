@@ -5,22 +5,27 @@ import { getWebSocketInstance } from './websocketSingleton';
 
 export interface SendHRNotificationParams {
   title: string;
-  message: string;
-  category: 'ATTENDANCE' | 'LEAVE' | 'PAYROLL' | 'EMPLOYEE' | 'GENERAL';
+  message?: string;
+  body?: string;
+  category: 'ATTENDANCE' | 'LEAVE' | 'PAYROLL' | 'EMPLOYEE' | 'COMMISSION' | 'GENERAL' | string;
   actionType?: string;
-  actionId?: string;
-  employeeId?: number; // The subject employee who requested or was affected
+  actionId?: string | number;
+  employeeId?: number | null; // The subject employee who requested or was affected
+  employeeName?: string;
   requiredModuleId?: string;
 }
 
 export interface SendEmployeeNotificationParams {
-  employeeId?: number;
-  userId?: number;
+  employeeId?: number | null;
+  targetEmployeeId?: number | null;
+  userId?: number | null;
+  targetUserId?: number | null;
   title: string;
-  message: string;
-  category: 'ATTENDANCE' | 'LEAVE' | 'PAYROLL' | 'EMPLOYEE' | 'GENERAL';
+  message?: string;
+  body?: string;
+  category: 'ATTENDANCE' | 'LEAVE' | 'PAYROLL' | 'EMPLOYEE' | 'COMMISSION' | 'GENERAL' | string;
   actionType?: string;
-  actionId?: string;
+  actionId?: string | number;
   screen?: string;
   clickRoute?: string;
   extraData?: Record<string, string>;
@@ -95,11 +100,13 @@ export function getModuleIdForCategory(category: string, actionType?: string): s
  * Other employees receive NOTHING.
  */
 export async function notifyEmployee(params: SendEmployeeNotificationParams): Promise<void> {
-  const { employeeId, userId, title, message, category, actionType, actionId, screen, clickRoute, extraData } = params;
+  const { category = 'GENERAL', actionType, actionId, screen, clickRoute, extraData } = params;
+  const title = params.title;
+  const message = params.body || params.message || '';
 
   try {
-    let targetUserId = userId;
-    let targetEmployeeId = employeeId;
+    let targetUserId = params.targetUserId ?? params.userId;
+    let targetEmployeeId = params.targetEmployeeId ?? params.employeeId;
 
     if (!targetUserId && targetEmployeeId) {
       const emp = await prisma.employee.findUnique({
@@ -116,7 +123,7 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
     }
 
     if (!targetUserId) {
-      console.warn(`[notifyEmployee] No valid userId found for employeeId=${employeeId}. Skipping notification.`);
+      console.warn(`[notifyEmployee] No valid userId found for employeeId=${targetEmployeeId}. Skipping notification.`);
       return;
     }
 
@@ -189,7 +196,9 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
  * Standard employees receive NOTHING.
  */
 export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promise<void> {
-  const { title, message, category, actionType, actionId, employeeId, requiredModuleId } = params;
+  const { category = 'GENERAL', actionType, actionId, employeeId, requiredModuleId } = params;
+  const title = params.title;
+  const message = params.body || params.message || '';
 
   try {
     const candidateRoles: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.HR, Role.PLATFORM_ADMIN];

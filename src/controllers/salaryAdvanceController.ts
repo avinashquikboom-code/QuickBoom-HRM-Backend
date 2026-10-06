@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from '../services/firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
+import { notifyEmployee } from '../utils/hrNotificationHelper';
 
 /**
  * GET /api/payroll/admin/advances
@@ -177,14 +178,14 @@ export const reviewSalaryAdvance = async (
       });
 
       // Notify Employee (in-app & FCM push outside app)
-      if (advance.wallet?.employee?.userId) {
-        firebaseNotificationService.sendAppNotification({
-          userId: advance.wallet.employee.userId,
-          title: 'Salary Advance Rejected',
+      if (advance.wallet?.employee) {
+        notifyEmployee({
+          targetUserId: advance.wallet.employee.userId,
+          targetEmployeeId: advance.wallet.employee.id,
+          title: 'Advance Salary Rejected',
           body: `Your salary advance request of ₹${advance.amount} was rejected. Reason: ${reviewNote || 'No remark'}`,
-          category: 'advance',
-          screen: 'salary_advance',
-          type: 'salary_advance_rejected',
+          category: 'PAYROLL',
+          actionType: 'salary_advance_rejected',
           actionId: advance.id.toString(),
         }).catch(err => console.error('Advance reject notification error:', err));
       }
@@ -272,14 +273,14 @@ export const reviewSalaryAdvance = async (
       });
 
       // Notify Employee (in-app & FCM push outside app)
-      if (advance.wallet?.employee?.userId) {
-        firebaseNotificationService.sendAppNotification({
-          userId: advance.wallet.employee.userId,
-          title: 'Salary Advance Approved',
-          body: `Your salary advance request of ₹${advance.amount} has been approved by HR with ${result.finalMonths} EMIs.`,
-          category: 'advance',
-          screen: 'salary_advance',
-          type: 'salary_advance_approved',
+      if (advance.wallet?.employee) {
+        notifyEmployee({
+          targetUserId: advance.wallet.employee.userId,
+          targetEmployeeId: advance.wallet.employee.id,
+          title: 'Advance Salary Approved',
+          body: `Your salary advance request of ₹${advance.amount} has been approved with ${result.finalMonths} EMIs.`,
+          category: 'PAYROLL',
+          actionType: 'salary_advance_approved',
           actionId: advance.id.toString(),
         }).catch(err => console.error('Advance approve notification error:', err));
       }

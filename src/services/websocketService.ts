@@ -146,6 +146,11 @@ class WebSocketService {
     this.io.to(`role_${role}`).emit('newNotification', data);
   }
 
+  // Send real-time notification to specific user
+  sendToUser(userId: number, data: any): void {
+    this.io.to(`user_${userId}`).emit('newNotification', data);
+  }
+
   // Real-time leave balance updates
   async broadcastLeaveBalanceUpdate(employeeId: number, data: any): Promise<void> {
     this.io.to(`employee_${employeeId}`).emit('leaveBalanceUpdate', data);

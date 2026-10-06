@@ -19,7 +19,7 @@ import {
   PROTECTED_SYSTEM_ACCOUNT_MESSAGES,
   ensureSuperAdminEmployee
 } from '../utils/protectedAccounts';
-import { sendHRNotification } from '../utils/hrNotificationHelper';
+import { sendHRNotification, notifyEmployee } from '../utils/hrNotificationHelper';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -1191,7 +1191,20 @@ export const updateEmployee = async (
       actionType: notifAction,
       actionId: fullEmp.id.toString(),
       employeeId: fullEmp.id,
+      requiredModuleId: 'pa-employees',
     }).catch(err => console.error('[HR Notification] Update employee notice:', err));
+
+    if (fullEmp.user?.id && oldStatus !== newStatus) {
+      notifyEmployee({
+        employeeId: fullEmp.id,
+        userId: fullEmp.user.id,
+        title: `Profile ${newStatus === 'ACTIVE' ? 'Activated' : newStatus === 'INACTIVE' ? 'Deactivated' : 'Status Updated'}`,
+        message: `Your employee profile status has been updated to ${fullEmp.status}.`,
+        category: 'EMPLOYEE',
+        actionType: notifAction,
+        actionId: fullEmp.id.toString(),
+      }).catch(err => console.error('[Employee Notification] Status change notice:', err));
+    }
 
     logActivity({
       actorId: req.user?.id,
@@ -6879,9 +6892,9 @@ export const fetchAdminNotifications = async (
     const take = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 10));
     const skip = (pageNum - 1) * take;
 
-    // Filter by user (targeted to this admin or broadcast/system with null userId)
+    // Filter by user (strictly targeted to this authenticated admin/HR user)
     const baseWhere: Prisma.NotificationWhereInput = {
-      OR: [{ userId }, { userId: null }],
+      userId,
     };
 
     const andConditions: Prisma.NotificationWhereInput[] = [baseWhere];
@@ -6912,7 +6925,7 @@ export const fetchAdminNotifications = async (
       prisma.notification.count({ where }),
       prisma.notification.count({
         where: {
-          OR: [{ userId }, { userId: null }],
+          userId,
           isRead: false,
         },
       }),
@@ -6987,8 +7000,11 @@ export const fetchAdminNotificationById = async (
       return;
     }
 
-    const notif = await prisma.notification.findUnique({
-      where: { id: notificationId },
+    const notif = await prisma.notification.findFirst({
+      where: {
+        id: notificationId,
+        userId,
+      },
       include: {
         employee: {
           select: {
@@ -7001,7 +7017,7 @@ export const fetchAdminNotificationById = async (
       },
     });
 
-    if (!notif || (notif.userId && notif.userId !== userId)) {
+    if (!notif) {
       res.status(404).json({ success: false, message: 'Notification not found or unauthorized.' });
       return;
     }
@@ -7061,11 +7077,14 @@ export const markAdminNotificationRead = async (
       return;
     }
 
-    const notif = await prisma.notification.findUnique({
-      where: { id: notificationId },
+    const notif = await prisma.notification.findFirst({
+      where: {
+        id: notificationId,
+        userId,
+      },
     });
 
-    if (!notif || (notif.userId && notif.userId !== userId)) {
+    if (!notif) {
       res.status(404).json({ success: false, message: 'Notification not found or unauthorized.' });
       return;
     }
@@ -7095,7 +7114,7 @@ export const markAllAdminNotificationsRead = async (
 
     await prisma.notification.updateMany({
       where: {
-        OR: [{ userId }, { userId: null }],
+        userId,
         isRead: false,
       },
       data: { isRead: true },

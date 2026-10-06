@@ -15,6 +15,7 @@ import {
   resolveBillAndCommissionReconciliation
 } from '../utils/commissionHelper';
 import { deduplicateCommissionTransactions } from '../utils/commissionDeduplicator';
+import { notifyEmployee, sendHRNotification } from '../utils/hrNotificationHelper';
 
 // Commission Dashboard Stats
 export const getCommissionDashboard = async (
@@ -872,6 +873,41 @@ export const createCommissionSettlement = async (
         status: 'PAID',
       },
     });
+
+    // Notify employee and HR asynchronously
+    (async () => {
+      try {
+        const emp = await prisma.employee.findUnique({
+          where: { id: parseInt(employeeId) },
+          select: { id: true, userId: true, firstName: true, lastName: true },
+        });
+        if (emp) {
+          const empName = `${emp.firstName} ${emp.lastName}`.trim();
+          await notifyEmployee({
+            targetUserId: emp.userId,
+            targetEmployeeId: emp.id,
+            title: 'Commission Settlement Generated',
+            body: `Your commission settlement of ₹${totalCommission.toLocaleString('en-IN')} has been generated.`,
+            category: 'COMMISSION',
+            actionId: settlement.id,
+            actionType: 'commission_settlement',
+          });
+
+          await sendHRNotification({
+            title: 'Commission Settlement Created',
+            body: `Commission settlement of ₹${totalCommission.toLocaleString('en-IN')} generated for ${empName}.`,
+            category: 'COMMISSION',
+            actionId: settlement.id,
+            actionType: 'commission_settlement',
+            employeeId: emp.id,
+            employeeName: empName,
+            requiredModuleId: 'pa-commission',
+          });
+        }
+      } catch (err) {
+        console.error('Commission settlement notification error:', err);
+      }
+    })();
 
     res.status(201).json({
       success: true,
