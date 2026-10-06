@@ -372,6 +372,7 @@ export const generatePayslipPDF = async (
     const monthLabel  = `${MONTH_NAMES[monthNum - 1]} ${yearNum}`;
     const statusColor = payslip.status === 'PAID' ? '#059669' : payslip.status === 'PENDING' ? '#D97706' : '#6B7280';
     const fmt = (n: number) => `\u20b9${(Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const fmtDed = (n: number) => `-\u20b9${(Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     const totalDaysInMonth = new Date(yearNum, monthNum, 0).getDate();
 
@@ -573,11 +574,11 @@ export const generatePayslipPDF = async (
     if (deductionsTableBody.length === 1) {
       deductionsTableBody.push([
         { text: 'Advance Salary', fontSize: 9, color: '#6B7280' },
-        { text: fmt(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
+        { text: fmtDed(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
       ]);
       deductionsTableBody.push([
         { text: 'Other Deductions', fontSize: 9, color: '#6B7280' },
-        { text: fmt(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
+        { text: fmtDed(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
       ]);
     }
 
@@ -607,7 +608,7 @@ export const generatePayslipPDF = async (
     } else {
       reimbursementsTableBody.push([
         { text: 'No Expenses / Reimbursements', fontSize: 9, color: '#6B7280', italics: true },
-        { text: fmt(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
+        { text: fmtDed(0), fontSize: 9, alignment: 'right', color: '#6B7280' }
       ]);
     }
 
@@ -1123,183 +1124,7 @@ export const getAdminPayrollSlips = async (
 
     // Transform to match frontend expectations safely
     const transformedSlips = await Promise.all(slips.map(async (slip) => {
-      const empName = slip.employee ? `${slip.employee.firstName} ${slip.employee.lastName}`.trim() : slip.employeeName || `Employee #${slip.employeeId}`;
-      const empCode = slip.employee?.employeeCode || slip.employeeCode || `EMP-${slip.employeeId}`;
-      const desig = slip.employee?.designation || slip.designation || 'Employee';
-      const dept = slip.employee?.department?.name || slip.department || 'General';
-      const off = slip.employee?.office?.name || slip.officeName || 'Main Office';
-      const schedWorkingDays = slip.workingDays || calculateScheduledWorkingDays(slip.year, slip.month, slip.employee?.office);
-
-      const earnings = await payrollService.resolvePayslipEarnings(slip);
-      const baseMonthly = earnings.grossEarnings;
-      const dSalary = slip.dailySalary || (schedWorkingDays > 0 ? Math.round((baseMonthly / schedWorkingDays) * 100) / 100 : 0);
-      const absentDeduction = slip.absentDays ? Math.round((slip.absentDays * dSalary) * 100) / 100 : 0;
-      const halfDayDeduction = slip.halfDays ? Math.round((slip.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
-      const leaveDeduction = slip.unpaidLeaveDays ? Math.round((slip.unpaidLeaveDays * dSalary) * 100) / 100 : 0;
-      let advanceDeduction = slip.advanceDeduction || 0;
-      if (advanceDeduction === 0) {
-        const monthEnd = new Date(slip.year, slip.month, 0, 23, 59, 59, 999);
-        const activeAdvances = await prisma.salaryAdvance.findMany({
-          where: {
-            wallet: { employeeId: slip.employeeId },
-            status: 'APPROVED',
-            remainingAmount: { gt: 0 },
-            OR: [
-              { approvedAt: { lte: monthEnd } },
-              { approvedAt: null, requestedOn: { lte: monthEnd } },
-              { approvedAt: null, createdAt: { lte: monthEnd } }
-            ]
-          },
-          orderBy: { approvedAt: 'asc' }
-        });
-        for (const adv of activeAdvances) {
-          const standardEmi = adv.monthlyEmi > 0 
-            ? adv.monthlyEmi 
-            : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
-          const remaining = adv.remainingAmount > 0 ? adv.remainingAmount : Math.max(0, adv.amount - (adv.paidAmount || 0));
-          advanceDeduction += Math.min(standardEmi, remaining);
-        }
-        advanceDeduction = Math.round(advanceDeduction * 100) / 100;
-      }
-
-      const extraPayout = (slip.extraHolidayPayout || 0) + (slip.extraWeeklyOffPayout || 0);
-      const grossSalary = Math.round((baseMonthly + extraPayout) * 100) / 100;
-
-      const ss = slip.employee?.salaryStructure;
-      const pf = ss?.pfEnabled ? Math.round(earnings.baseSalary * (ss.employeePfRate / 100)) : 0;
-      const esic = ss?.esicEnabled ? Math.round(grossSalary * (ss.employeeEsicRate / 100)) : 0;
-
-      const itemizedDeductions = pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
-
-      let cleanDeductions = slip.deductions || 0;
-      const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
-
-      if (cleanDeductions === 0 || isCorrupted) {
-        cleanDeductions = itemizedDeductions;
-      }
-
-      const cleanNetSalary = Math.max(0, Math.round((grossSalary - cleanDeductions) * 100) / 100);
-      const totalTakeHomePay = Math.round((cleanNetSalary + (slip.commissionEarned || 0) + (slip.expenseReimbursement || 0)) * 100) / 100;
-      const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
-
-      if (isCorrupted || slip.netSalary !== cleanNetSalary || slip.deductions !== cleanDeductions || (slip.advanceDeduction || 0) !== advanceDeduction) {
-        prisma.payslip.update({
-          where: { id: slip.id },
-          data: {
-            deductions: cleanDeductions,
-            netSalary: cleanNetSalary,
-            advanceDeduction,
-            netInWords: `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`
-          }
-        }).catch(err => console.warn(`[getAdminPayrollSlips] Failed to sync payslip #${slip.id}:`, err));
-      }
-
-      const payPeriod = new Date(slip.year, slip.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-      const documentId = `HR-PAY-${empCode}-${slip.year}${String(slip.month).padStart(2, '0')}`;
-      const netInWords = slip.netInWords || `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
-      const isPaid = slip.status?.toUpperCase() === 'PAID';
-      const paymentStatus = isPaid ? 'PAID' : 'PENDING';
-
-      return {
-        id: slip.id,
-        payslipId: slip.id,
-        employeeId: slip.employeeId,
-        employeeCode: empCode,
-        name: empName,
-        employeeName: empName,
-        designation: desig,
-        department: dept,
-        office: off,
-        baseSalary: earnings.baseSalary,
-        basicSalary: earnings.baseSalary,
-        netSalary: cleanNetSalary,
-        totalTakeHomePay,
-        documentId,
-        payPeriod,
-        netInWords,
-        allowance: earnings.allowance,
-        hra: earnings.components.hra,
-        medicalAllowance: earnings.components.medicalAllowance,
-        medical: earnings.components.medicalAllowance,
-        travelAllowance: earnings.components.travelAllowance,
-        travel: earnings.components.travelAllowance,
-        travelMedicalAllowance: (earnings.components.travelAllowance || 0) + (earnings.components.medicalAllowance || 0),
-        specialAllowance: earnings.components.specialAllowance,
-        special: earnings.components.specialAllowance,
-        bonus: earnings.components.bonus,
-        incentive: earnings.components.incentive,
-        grossSalary,
-        grossEarnings: grossSalary,
-        deductions: cleanDeductions,
-        totalDeductions: cleanDeductions,
-        advanceDeduction,
-        advanceSalary: advanceDeduction,
-        totalAdvanceSalary: advanceDeduction,
-        pf,
-        esic,
-        absentDeduction,
-        halfDayDeduction,
-        leaveDeduction,
-        otherDeductions,
-        otherDeduction: otherDeductions,
-        deductionsObj: {
-          deductions: cleanDeductions,
-          totalDeductions: cleanDeductions,
-          advanceDeduction,
-          advanceSalary: advanceDeduction,
-          pf,
-          esic,
-          absentDeduction,
-          halfDayDeduction,
-          leaveDeduction,
-          otherDeductions
-        },
-        expenseReimbursement: slip.expenseReimbursement || 0,
-        approvedExpenses: slip.expenseReimbursement || 0,
-        approvedExpenseAmount: slip.expenseReimbursement || 0,
-        totalExpenses: slip.expenseReimbursement || 0,
-        status: slip.status || 'Pending Approval',
-        paymentStatus,
-        month: slip.month,
-        year: slip.year,
-        presentDays: slip.presentDays || 0,
-        absentDays: slip.absentDays || 0,
-        halfDays: slip.halfDays || 0,
-        paidLeaveDays: slip.paidLeaveDays || 0,
-        unpaidLeaveDays: slip.unpaidLeaveDays || 0,
-        holidayCount: slip.holidayCount || 0,
-        weeklyOffCount: slip.weeklyOffCount || 0,
-        holidayWorkedCount: slip.holidayWorkedCount || 0,
-        weeklyOffWorkedCount: slip.weeklyOffWorkedCount || 0,
-        extraHolidayPayout: slip.extraHolidayPayout || 0,
-        extraWeeklyOffPayout: slip.extraWeeklyOffPayout || 0,
-        dailySalary: slip.dailySalary || 0,
-        workingDays: schedWorkingDays,
-        totalCalendarDays: slip.totalCalendarDays || new Date(slip.year, slip.month, 0).getDate(),
-        commission: slip.commissionEarned || 0,
-        commissionEarned: slip.commissionEarned || 0,
-        createdAt: slip.createdAt,
-        updatedAt: slip.updatedAt,
-        earnings: {
-          baseSalary: earnings.baseSalary,
-          basicSalary: earnings.baseSalary,
-          hra: earnings.components.hra,
-          medical: earnings.components.medicalAllowance,
-          medicalAllowance: earnings.components.medicalAllowance,
-          travel: earnings.components.travelAllowance,
-          travelAllowance: earnings.components.travelAllowance,
-          travelMedicalAllowance: (earnings.components.travelAllowance || 0) + (earnings.components.medicalAllowance || 0),
-          special: earnings.components.specialAllowance,
-          specialAllowance: earnings.components.specialAllowance,
-          bonus: earnings.components.bonus,
-          incentive: earnings.components.incentive,
-          grossSalary,
-          grossTotal: grossSalary,
-          grossEarnings: grossSalary,
-          commission: slip.commissionEarned || 0,
-          expenseReimbursement: slip.expenseReimbursement || 0,
-        },
-      };
+      return await payrollService.resolveFullPayslipView(slip, slip.employee);
     }));
 
     res.json({
