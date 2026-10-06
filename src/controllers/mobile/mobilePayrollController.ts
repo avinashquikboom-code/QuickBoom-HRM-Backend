@@ -99,9 +99,14 @@ export const getMyPayslips = async (
       const payPeriod = new Date(ps.year, ps.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
       const documentId = `HR-PAY-${ps.employeeCode}-${ps.year}${String(ps.month).padStart(2, '0')}`;
       const netInWords = ps.netInWords || `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
+      const isPaid = ps.status?.toUpperCase() === 'PAID';
+      const paymentStatus = isPaid ? 'PAID' : 'PENDING';
 
       return {
         ...ps,
+        status: paymentStatus,
+        paymentStatus,
+        payrollStatus: ps.status || 'PENDING',
         baseSalary: earnings.baseSalary,
         basicSalary: earnings.baseSalary,
         allowance: earnings.allowance,
@@ -434,6 +439,8 @@ export const downloadPayslip = async (
 
     // Total Take-Home Pay = Net Salary + Commission + Reimbursements
     const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + expenseReimbursement) * 100) / 100;
+    const isPaid = payslip?.status?.toUpperCase() === 'PAID';
+    const paymentStatus = isPaid ? 'PAID' : 'PENDING';
 
     // Build Earnings Items
     const allowances = ta + medical;
@@ -575,7 +582,7 @@ export const downloadPayslip = async (
                   { text: 'Pay Period:          ', bold: true }, periodLabel, '\n',
                   { text: 'Total Days of Month: ', bold: true }, `${totalDaysInMonth} Days`, '\n',
                   { text: 'Document ID:         ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
-                  { text: 'Status:              ', bold: true }, 'PAID'
+                  { text: 'Status:              ', bold: true }, paymentStatus
                 ],
                 margin: [5, 5, 5, 5]
               }

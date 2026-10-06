@@ -18,6 +18,7 @@ import {
   getAdminPayrollSlips,
   approveAdminPayslip,
   bulkDisbursePayroll,
+  disburseAdminPayslip,
 } from '../controllers/payrollController';
 
 import {
@@ -57,6 +58,7 @@ router.get('/admin/stats', getAdminPayrollStats);
 router.get('/admin/runs', getAdminPayrollRuns);
 router.get('/admin/slips', getAdminPayrollSlips);
 router.post('/admin/slips/approve', approveAdminPayslip);
+router.post('/admin/slips/disburse', disburseAdminPayslip);
 router.post('/admin/disburse', bulkDisbursePayroll);
 
 // Salary Advance management endpoints

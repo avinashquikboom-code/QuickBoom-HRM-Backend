@@ -1064,6 +1064,8 @@ export const getAdminPayrollSlips = async (
       const payPeriod = new Date(slip.year, slip.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
       const documentId = `HR-PAY-${empCode}-${slip.year}${String(slip.month).padStart(2, '0')}`;
       const netInWords = slip.netInWords || `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
+      const isPaid = slip.status?.toUpperCase() === 'PAID';
+      const paymentStatus = isPaid ? 'PAID' : 'PENDING';
 
       return {
         id: slip.id,
@@ -1104,7 +1106,8 @@ export const getAdminPayrollSlips = async (
         approvedExpenses: slip.expenseReimbursement || 0,
         approvedExpenseAmount: slip.expenseReimbursement || 0,
         totalExpenses: slip.expenseReimbursement || 0,
-        status: slip.status || 'Approved',
+        status: slip.status || 'Pending Approval',
+        paymentStatus,
         month: slip.month,
         year: slip.year,
         presentDays: slip.presentDays || 0,
@@ -1221,15 +1224,15 @@ export const bulkDisbursePayroll = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Get all approved payslips for current month
-    const currentMonth = new Date().getMonth() + 1;
-    const currentYear = new Date().getFullYear();
+    const { month, year } = req.body || {};
+    const currentMonth = month ? parseInt(month) : new Date().getMonth() + 1;
+    const currentYear = year ? parseInt(year) : new Date().getFullYear();
 
     const approvedPayslips = await prisma.payslip.findMany({
       where: {
         month: currentMonth,
         year: currentYear,
-        status: 'Approved'
+        status: { in: ['Approved', 'APPROVED'] }
       }
     });
 
@@ -1238,7 +1241,7 @@ export const bulkDisbursePayroll = async (
       where: {
         month: currentMonth,
         year: currentYear,
-        status: 'Approved'
+        status: { in: ['Approved', 'APPROVED'] }
       },
       data: {
         status: 'Paid',
@@ -1256,6 +1259,59 @@ export const bulkDisbursePayroll = async (
       success: false,
       message: 'Failed to process bulk disbursement.',
       errorCode: 'BULK_DISBURSE_PAYROLL_ERROR'
+    });
+  }
+};
+
+export const disburseAdminPayslip = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { payslipId, employeeId, month, year } = req.body || {};
+    let whereClause: any = {};
+    if (payslipId) {
+      whereClause.id = parseInt(payslipId);
+    } else if (employeeId && month && year) {
+      whereClause.employeeId = parseInt(employeeId);
+      whereClause.month = parseInt(month);
+      whereClause.year = parseInt(year);
+    } else {
+      res.status(400).json({
+        success: false,
+        message: 'Payslip ID or (employeeId, month, year) are required.',
+        errorCode: 'MISSING_REQUIRED_FIELDS'
+      });
+      return;
+    }
+
+    const updateRes = await prisma.payslip.updateMany({
+      where: whereClause,
+      data: {
+        status: 'Paid',
+        updatedAt: new Date()
+      }
+    });
+
+    if (updateRes.count === 0) {
+      res.status(404).json({
+        success: false,
+        message: 'No matching payslip found to disburse.',
+        errorCode: 'PAYSLIP_NOT_FOUND'
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: 'Salary marked as Paid and disbursed successfully!'
+    });
+  } catch (error) {
+    console.error('Disburse admin payslip error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to disburse salary.',
+      errorCode: 'DISBURSE_ADMIN_PAYSLIP_ERROR'
     });
   }
 };

@@ -316,7 +316,8 @@ export const getSalarySlip = async (
       : `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
     const documentId = `HR-PAY-${employee.employeeCode}-${targetYear}${String(targetMonth).padStart(2, '0')}`;
     const payPeriod = `${monthName} ${targetYear}`;
-    const paymentStatus = dbPayslip?.status || 'Approved';
+    const isPaid = dbPayslip?.status?.toUpperCase() === 'PAID';
+    const paymentStatus = isPaid ? 'PAID' : 'PENDING';
 
     const responsePayload = {
       employeeId: employee.id,
@@ -332,6 +333,7 @@ export const getSalarySlip = async (
       documentId,
       status: paymentStatus,
       paymentStatus,
+      payrollStatus: dbPayslip?.status || 'PENDING',
 
       baseSalary,
       basicSalary,
