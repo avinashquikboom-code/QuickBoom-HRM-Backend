@@ -1,11 +1,11 @@
-import * as admin from 'firebase-admin';
+import { Messaging, BatchResponse } from 'firebase-admin/messaging';
 import { prisma } from '../utils/db';
 import { getMessaging } from '../config/firebase';
 
 export class PushNotificationService {
-  private messaging: admin.messaging.Messaging | null = null;
+  private messaging: Messaging | null = null;
 
-  private getMessagingInstance(): admin.messaging.Messaging | null {
+  private getMessagingInstance(): Messaging | null {
     try {
       if (!this.messaging) {
         this.messaging = getMessaging();

@@ -1,4 +1,4 @@
-import * as admin from 'firebase-admin';
+import { Messaging, BatchResponse } from 'firebase-admin/messaging';
 import { prisma } from '../utils/db';
 import { getMessaging, FirebaseMessagePayload, FirebaseUserTarget, NotificationOptions } from '../config/firebase';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -8,7 +8,7 @@ export class FirebaseNotificationService {
     throw new Error('Method not implemented.');
   }
 
-  private getMessagingInstance(): admin.messaging.Messaging | null {
+  private getMessagingInstance(): Messaging | null {
     try {
       return getMessaging();
     } catch (e) {
@@ -24,7 +24,7 @@ export class FirebaseNotificationService {
     body: string,
     data?: Record<string, string>,
     options?: NotificationOptions
-  ): Promise<admin.messaging.BatchResponse> {
+  ): Promise<BatchResponse> {
     if (!tokens || tokens.length === 0) {
       throw new Error('No FCM tokens provided');
     }
@@ -129,7 +129,7 @@ export class FirebaseNotificationService {
     body: string,
     data?: Record<string, string>,
     options?: NotificationOptions
-  ): Promise<admin.messaging.BatchResponse> {
+  ): Promise<BatchResponse> {
     const [fcmTokens, deviceTokens] = await Promise.all([
       prisma.fCMToken.findMany({
         where: { 
@@ -166,7 +166,7 @@ export class FirebaseNotificationService {
     body: string,
     data?: Record<string, string>,
     options?: NotificationOptions
-  ): Promise<admin.messaging.BatchResponse> {
+  ): Promise<BatchResponse> {
     const roleUpper = role.toUpperCase();
     const fcmTokens = await prisma.fCMToken.findMany({
       where: { 
@@ -209,7 +209,7 @@ export class FirebaseNotificationService {
     body: string,
     data?: Record<string, string>,
     options?: NotificationOptions
-  ): Promise<admin.messaging.BatchResponse> {
+  ): Promise<BatchResponse> {
     const fcmTokens = await prisma.fCMToken.findMany({
       where: {
         isActive: true,
@@ -238,7 +238,7 @@ export class FirebaseNotificationService {
     body: string,
     data?: Record<string, string>,
     options?: NotificationOptions
-  ): Promise<admin.messaging.BatchResponse> {
+  ): Promise<BatchResponse> {
     const fcmTokens = await prisma.fCMToken.findMany({
       where: {
         isActive: true,
