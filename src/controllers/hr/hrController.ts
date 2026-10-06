@@ -9,6 +9,7 @@ import { pushNotificationService } from '../../services/pushNotificationService'
 import securityService from '../../services/securityService';
 import { expenseReceiptService } from '../../services/expenseReceiptService';
 import leaveBalanceService from '../../services/leaveBalanceService';
+import { cancelLeaveRequest } from '../../services/leaveCancellationService';
 import userSessionService from '../../services/userSessionService';
 import { getIstMonthRange } from '../../utils/commissionHelper';
 import {
@@ -1258,6 +1259,30 @@ export const rejectLeave = async (
   } catch (error) {
     console.error('Reject leave error:', error);
     res.status(500).json({ success: false, message: 'Failed to reject leave.' });
+  }
+};
+
+export const cancelLeaveHr = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const leaveId = parseInt(id as string, 10);
+    if (isNaN(leaveId)) {
+      res.status(400).json({ success: false, message: 'Invalid leave request ID.' });
+      return;
+    }
+    const updatedLeave = await cancelLeaveRequest(leaveId, {
+      id: req.user!.id,
+      email: req.user?.email,
+      role: req.user?.role
+    }, reason);
+    res.json({
+      success: true,
+      message: 'Leave request cancelled successfully. Date is now available for attendance.',
+      leave: updatedLeave
+    });
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message || 'Failed to cancel leave.' });
   }
 };
 

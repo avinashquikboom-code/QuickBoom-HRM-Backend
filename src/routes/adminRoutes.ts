@@ -227,6 +227,7 @@ router.get('/location/logs', roleMiddleware(storeManagerAllowedRoles), fetchLive
 router.get('/leaves', roleMiddleware(storeManagerAllowedRoles), fetchAdminLeaves);
 router.get('/leaves/:id/availability-check', roleMiddleware(storeManagerAllowedRoles), fetchLeaveAvailabilityCheck);
 router.put('/leaves/:id', roleMiddleware(storeManagerAllowedRoles), updateAdminLeaveStatus);
+router.post('/leaves/:id/cancel', roleMiddleware(storeManagerAllowedRoles), updateAdminLeaveStatus);
 router.get('/reports', roleMiddleware(storeManagerAllowedRoles), fetchAdminReports);
 router.post('/reports/generate', roleMiddleware(storeManagerAllowedRoles), generateAdminReport);
 router.get('/reports/attendance-details', roleMiddleware(storeManagerAllowedRoles), fetchAttendanceReportDetails);

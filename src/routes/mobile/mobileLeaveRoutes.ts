@@ -6,6 +6,7 @@ import { Role } from '@prisma/client';
 import {
   fetchMyLeaves,
   applyLeave,
+  cancelLeave,
   downloadMyLeaveReport,
   downloadLeaveReport,
   fetchHRLeaveRequests,
@@ -23,6 +24,10 @@ router.get('/my-leaves', requireAnyPermission(['canViewLeaveBalance', 'canViewLe
 
 // POST /api/mobile/leave/apply - Apply for leave
 router.post('/apply', requirePermission('canApplyLeave'), applyLeave);
+
+// POST /api/mobile/leave/:id/cancel - Cancel leave request (PENDING or APPROVED)
+router.post('/:id/cancel', cancelLeave);
+router.post('/my-leaves/:id/cancel', cancelLeave);
 
 /**
  * @swagger

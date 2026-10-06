@@ -8,6 +8,7 @@ import { getWebSocketInstance } from '../../utils/websocketSingleton';
 import leaveBalanceService from '../../services/leaveBalanceService';
 import { logActivity } from '../../utils/activityLogger';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
+import { cancelLeaveRequest } from '../../services/leaveCancellationService';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -997,3 +998,52 @@ export const rejectLeaveRequest = async (
     res.status(500).json({ success: false, message: 'Failed to reject leave request' });
   }
 };
+
+/**
+ * Cancel a Leave or Week Off request (PENDING or APPROVED).
+ * Allows the employee to cancel an approved leave/week-off and punch in/out on that date.
+ */
+export const cancelLeave = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const leaveId = parseInt(id as string, 10);
+
+    if (isNaN(leaveId)) {
+      res.status(400).json({ success: false, message: 'Invalid leave request ID.' });
+      return;
+    }
+
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Authentication required.' });
+      return;
+    }
+
+    const updatedLeave = await cancelLeaveRequest(leaveId, {
+      id: req.user.id,
+      email: req.user.email,
+      role: req.user.role
+    }, reason);
+
+    res.json({
+      success: true,
+      message: 'Leave request cancelled successfully. You can now punch in/out on that date.',
+      data: {
+        id: updatedLeave.id.toString(),
+        status: updatedLeave.status,
+        reviewedAt: updatedLeave.reviewedAt,
+        reviewNote: updatedLeave.reviewNote
+      }
+    });
+  } catch (error: any) {
+    console.error('Mobile cancel leave error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to cancel leave request.'
+    });
+  }
+};
+

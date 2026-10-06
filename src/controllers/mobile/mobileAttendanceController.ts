@@ -9,6 +9,7 @@ import { getIstMonthRange } from '../../utils/commissionHelper';
 const PdfPrinter = require('pdfmake');
 import auditLogService from '../../services/auditLogService';
 import { logActivity } from '../../utils/activityLogger';
+import { getActiveApprovedLeaveForDate } from '../../services/leaveCancellationService';
 
 // Primary color for all PDF reports
 const PRIMARY_COLOR = '#3BA38B';
@@ -210,6 +211,27 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
     const profileTimezone = employee.user?.profile?.timezone || 'Asia/Kolkata';
     const userTimezone = resolveTimezone(timezone as string, profileTimezone);
     const today = getLocalDateString(userTimezone, punchInTime);
+
+    // Check if employee has an active approved Leave or Week Off for today.
+    // NOTE: Cancelled Leave/Week Off requests (status === 'CANCELLED') do NOT block punch-in.
+    const activeApprovedLeave = await getActiveApprovedLeaveForDate(employee.id, today, userTimezone);
+    if (activeApprovedLeave) {
+      const leaveTypeLabel = ['WEEK_OFF', 'WEEKOFF'].includes(activeApprovedLeave.type.toUpperCase())
+        ? 'Week Off'
+        : 'Leave';
+      res.status(400).json({
+        success: false,
+        message: `You have an approved ${leaveTypeLabel} for today. Cancel it first to punch in.`,
+        errorCode: 'ACTIVE_LEAVE_RESTRICTION',
+        data: {
+          leaveId: activeApprovedLeave.id,
+          leaveType: activeApprovedLeave.type,
+          status: activeApprovedLeave.status
+        }
+      });
+      return;
+    }
+
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
         employeeId: employee.id,
@@ -1264,18 +1286,31 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
       });
     }
 
+    // Check if employee has an active approved Leave/Week Off for today.
+    // CANCELLED leaves do NOT block punch-in.
+    const activeApprovedLeave = await getActiveApprovedLeaveForDate(employee.id, today, userTimezone);
+    const hasActiveApprovedLeave = Boolean(activeApprovedLeave);
+
+    // Determine displayed status:
+    // If there is an active approved leave and no check-in, display LEAVE.
+    // If leave was cancelled and no check-in, display ABSENT (available for attendance).
+    let displayStatus = attendance?.status || (hasActiveApprovedLeave ? 'LEAVE' : 'ABSENT');
+    if (!attendance?.checkIn && !hasActiveApprovedLeave && ['LEAVE', 'WEEK_OFF', 'WEEKEND'].includes(displayStatus)) {
+      displayStatus = 'ABSENT';
+    }
+
     const response = {
       id: attendance?.id || null,
       employeeId: employee.id,
       date: today,
-      status: attendance?.status || 'ABSENT',
+      status: displayStatus,
       checkIn: attendance?.checkIn || null,
       checkOut: attendance?.checkOut || null,
       isOnBreak: attendance?.isOnBreak || false,
       breakStartTime: attendance?.breakStartTime || null,
       totalBreakSeconds: attendance?.totalBreakSeconds || 0,
       breakRecords: attendance?.breakRecords || [],
-      notes: attendance?.notes || '',
+      notes: attendance?.notes || (hasActiveApprovedLeave ? `Approved ${activeApprovedLeave?.type}` : ''),
       location: attendance?.latitude && attendance?.longitude ? {
         latitude: attendance.latitude,
         longitude: attendance.longitude
@@ -1287,7 +1322,7 @@ export const getTodayAttendance = async (req: AuthenticatedRequest, res: Respons
         longitude: employee.office.longitude,
         maxRadius: employee.office.maxPunchRadiusMeters
       } : null,
-      canPunchIn: !attendance || (!attendance.checkIn && !attendance.checkOut),
+      canPunchIn: !hasActiveApprovedLeave && (!attendance || (!attendance.checkIn && !attendance.checkOut)),
       canPunchOut: Boolean(attendance && attendance.checkIn && !attendance.checkOut && !attendance.isOnBreak),
       canStartBreak: Boolean(attendance && attendance.checkIn && !attendance.checkOut && !attendance.isOnBreak),
       canEndBreak: Boolean(attendance && attendance.isOnBreak)

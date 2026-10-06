@@ -5,6 +5,7 @@ import { pushNotificationService } from '../../services/pushNotificationService'
 import { firebaseNotificationService } from '../../services/firebaseNotificationService';
 import { CommissionService } from '../../services/commissionService';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
+import { getActiveApprovedLeaveForDate, cancelLeaveRequest } from '../../services/leaveCancellationService';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -386,6 +387,26 @@ export const employeeCheckIn = async (
     }
 
     console.log(`Check-in attempt: Employee ID ${employee.id}, Date: ${todayStr}`);
+
+    // Check if employee has an active approved Leave/Week Off for today.
+    // CANCELLED leaves do NOT block check-in.
+    const activeApprovedLeave = await getActiveApprovedLeaveForDate(employee.id, todayStr);
+    if (activeApprovedLeave) {
+      const leaveTypeLabel = ['WEEK_OFF', 'WEEKOFF'].includes(activeApprovedLeave.type.toUpperCase())
+        ? 'Week Off'
+        : 'Leave';
+      res.status(400).json({
+        success: false,
+        message: `You have an approved ${leaveTypeLabel} for today. Cancel it first to check in.`,
+        errorCode: 'ACTIVE_LEAVE_RESTRICTION',
+        data: {
+          leaveId: activeApprovedLeave.id,
+          leaveType: activeApprovedLeave.type,
+          status: activeApprovedLeave.status
+        }
+      });
+      return;
+    }
 
     // Check if check-in already exists for today
     const existing = await prisma.attendance.findFirst({
@@ -2296,3 +2317,44 @@ export const repaySalaryAdvance = async (
     res.status(500).json({ success: false, message: 'Failed to process repayment.' });
   }
 };
+
+/**
+ * Cancel an employee's own Leave / Week Off request (PENDING or APPROVED).
+ * Cancelling frees up that date so the employee can punch in and out.
+ */
+export const cancelEmployeeLeave = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const leaveId = parseInt(id as string, 10);
+
+    if (isNaN(leaveId)) {
+      res.status(400).json({ success: false, message: 'Invalid leave request ID.' });
+      return;
+    }
+
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Authentication required.' });
+      return;
+    }
+
+    const updatedLeave = await cancelLeaveRequest(leaveId, {
+      id: req.user.id,
+      email: req.user.email,
+      role: req.user.role
+    }, reason);
+
+    res.json({
+      success: true,
+      message: 'Leave request cancelled successfully. You can now punch in/out on that date.',
+      leave: updatedLeave
+    });
+  } catch (error: any) {
+    console.error('Cancel employee leave error:', error);
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to cancel leave request.'
+    });
+  }
+};
+

@@ -15,6 +15,7 @@ import {
   rejectExpense,
   approveLeave,
   rejectLeave,
+  cancelLeaveHr,
   fetchHRTasks,
   createHRTask,
   fetchHRPayrollStats,
@@ -256,6 +257,7 @@ router.patch('/expenses/:id/reject', rejectExpense);
 // Leave Review
 router.post('/leaves/:id/approve', approveLeave);
 router.post('/leaves/:id/reject', rejectLeave);
+router.post('/leaves/:id/cancel', cancelLeaveHr);
 
 // Task Management
 router.get('/tasks', fetchHRTasks);

@@ -15,6 +15,7 @@ import {
   endEmployeeBreak,
   fetchLeavesAndBalances,
   applyEmployeeLeave,
+  cancelEmployeeLeave,
   fetchEmployeeShift,
   fetchEmployeeExpenses,
   createEmployeeExpense,
@@ -376,6 +377,7 @@ router.post('/attendance/debug', async (req, res) => {
 // Leaves Management
 router.get('/leaves', fetchLeavesAndBalances);
 router.post('/leaves', applyEmployeeLeave);
+router.post('/leaves/:id/cancel', cancelEmployeeLeave);
 
 // Holidays
 router.get('/holidays', fetchEmployeeHolidays);

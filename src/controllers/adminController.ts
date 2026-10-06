@@ -10,6 +10,7 @@ import PayrollAutomationService from '../services/payrollAutomationService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 import { clearIntegrationCache } from '../utils/configService';
 import leaveBalanceService from '../services/leaveBalanceService';
+import { cancelLeaveRequest } from '../services/leaveCancellationService';
 import userSessionService from '../services/userSessionService';
 import { logActivity } from '../utils/activityLogger';
 import {
@@ -4411,6 +4412,20 @@ export const updateAdminLeaveStatus = async (
       include: { profile: true },
     });
     const reviewerName = user?.profile?.fullName || 'HR Manager';
+
+    if (status.toUpperCase() === 'CANCELLED') {
+      const updated = await cancelLeaveRequest(leaveIdInt, {
+        id: req.user!.id,
+        email: req.user?.email,
+        role: req.user?.role
+      }, reviewNote);
+      res.json({
+        success: true,
+        message: 'Leave request cancelled successfully. Date is now available for attendance.',
+        leave: updated
+      });
+      return;
+    }
 
     const isApproved = status.toUpperCase() === 'APPROVED';
 
