@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs';
 import { pushNotificationService } from '../services/pushNotificationService';
 import { syncHopkidEmployees, pushEmployeeToHopkidERP } from '../utils/employeeSync';
 import PayrollAutomationService from '../services/payrollAutomationService';
+import payrollService from '../services/payrollService';
 import { generateEmployeeCode, generateOfficeCode } from '../utils/idGenerator';
 import { clearIntegrationCache } from '../utils/configService';
 import leaveBalanceService from '../services/leaveBalanceService';
@@ -5941,26 +5942,35 @@ export const fetchSalarySlips = async (
       },
     }) as any[];
 
-    const slips = existingPayslips.map((dbPayslip: any) => ({
-      id: dbPayslip.employeeId,
-      payslipId: dbPayslip.id,
-      employeeCode: dbPayslip.employeeCode,
-      firstName: dbPayslip.employeeName?.split(' ')[0] || '',
-      lastName: dbPayslip.employeeName?.split(' ').slice(1).join(' ') || '',
-      name: dbPayslip.employeeName,
-      designation: dbPayslip.designation,
-      department: dbPayslip.department,
-      office: dbPayslip.officeName,
-      baseSalary: dbPayslip.baseSalary,
-      allowance: dbPayslip.allowance,
-      deductions: dbPayslip.deductions,
-      netSalary: dbPayslip.netSalary,
-      status: dbPayslip.status,
+    const transformedSlips = await Promise.all(existingPayslips.map(async (dbPayslip: any) => {
+      const view = await payrollService.resolveFullPayslipView(dbPayslip);
+      return {
+        id: dbPayslip.employeeId,
+        payslipId: dbPayslip.id,
+        employeeCode: view.employeeCode || dbPayslip.employeeCode,
+        firstName: view.employeeName?.split(' ')[0] || '',
+        lastName: view.employeeName?.split(' ').slice(1).join(' ') || '',
+        name: view.employeeName,
+        employeeName: view.employeeName,
+        designation: view.designation,
+        department: view.department,
+        office: view.officeName,
+        officeName: view.officeName,
+        baseSalary: view.baseSalary,
+        basicSalary: view.basicSalary,
+        allowance: view.allowance,
+        grossSalary: view.grossSalary,
+        grossEarnings: view.grossEarnings,
+        deductions: view.totalDeductions,
+        totalDeductions: view.totalDeductions,
+        netSalary: view.netSalary,
+        status: view.paymentStatus || dbPayslip.status,
+      };
     }));
 
     res.json({
       success: true,
-      slips,
+      slips: transformedSlips,
     });
   } catch (error) {
     console.error('Fetch salary slips error:', error);

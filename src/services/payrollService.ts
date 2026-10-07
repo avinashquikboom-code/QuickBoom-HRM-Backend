@@ -1224,11 +1224,262 @@ class PayrollService {
   }
 
   
+  /**
+   * Map calculatePayroll — the only salary formula — onto the payslip view
+   * consumed by admin, mobile wallet, and PDF.
+   */
+  private async viewFromPayrollCalculation(
+    ps: {
+      id?: number;
+      employeeId: number;
+      month: number;
+      year: number;
+      status?: string | null;
+      employeeCode?: string | null;
+      employeeName?: string | null;
+      designation?: string | null;
+      department?: string | null;
+      officeName?: string | null;
+      deductions?: number | null;
+      netSalary?: number | null;
+      advanceDeduction?: number | null;
+      halfDays?: number | null;
+      absentDays?: number | null;
+      presentDays?: number | null;
+      unpaidLeaveDays?: number | null;
+      paidLeaveDays?: number | null;
+      extraHolidayPayout?: number | null;
+      extraWeeklyOffPayout?: number | null;
+      commissionEarned?: number | null;
+      expenseReimbursement?: number | null;
+      dailySalary?: number | null;
+      workingDays?: number | null;
+      netInWords?: string | null;
+      baseSalary?: number | null;
+      allowance?: number | null;
+      hra?: number | null;
+      travelAllowance?: number | null;
+      medicalAllowance?: number | null;
+      specialAllowance?: number | null;
+      bonus?: number | null;
+      incentive?: number | null;
+    },
+    employee: {
+      firstName?: string | null;
+      lastName?: string | null;
+      employeeCode?: string | null;
+      designation?: string | null;
+      department?: { name?: string | null } | null;
+      office?: { name?: string | null } | null;
+    } | null,
+    calc: PayrollCalculation,
+  ) {
+    const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+    const structure = await this.getSalaryStructure(ps.employeeId, new Date(ps.year, ps.month - 1, 1));
+    const pf = round2(structure.pf || 0);
+    const esic = round2(structure.esi || 0);
+    const advanceDeduction = round2(calc.advanceDeduction);
+    const halfDayDeduction = round2(calc.halfDayDeduction);
+    const leaveDeduction = round2(calc.leaveDeduction);
+    const absentDeduction = round2(calc.absentDeduction);
+    const totalDeductions = round2(calc.deductions);
+    const itemized = round2(pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction);
+    const otherDeductions = round2(Math.max(0, totalDeductions - itemized));
+    const grossEarnings = round2(calc.grossEarnings ?? calc.grossSalary);
+    const netSalary = round2(calc.netSalary);
+    const commissionEarned = round2(calc.commissionEarned);
+    const expenseReimbursement = round2(calc.expenseReimbursement);
+    const totalTakeHomePay = round2(
+      calc.totalTakeHomePay ?? (netSalary + commissionEarned + expenseReimbursement),
+    );
+    const extraHolidayPayout = round2(calc.extraHolidayPayout);
+    const extraWeeklyOffPayout = round2(calc.extraWeeklyOffPayout);
+    const components = calc.components;
+    const travelMedicalAllowance = round2((components.travelAllowance || 0) + (components.medicalAllowance || 0));
+    const expenseCategories = calc.expenseCategories || {};
+    const expensesByCategory = calc.expensesByCategory || Object.entries(expenseCategories).map(([category, amount]) => ({
+      category,
+      amount: round2(amount),
+    }));
+
+    const payPeriod = new Date(ps.year, ps.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    const employeeCode = ps.employeeCode || employee?.employeeCode || '';
+    const documentId = `HR-PAY-${employeeCode}-${ps.year}${String(ps.month).padStart(2, '0')}`;
+    const netInWords = `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
+    const isPaid = String(ps.status || '').toUpperCase() === 'PAID';
+    const paymentStatus = isPaid ? 'PAID' : 'PENDING';
+
+    const empName = ps.employeeName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim();
+    const offName = ps.officeName || employee?.office?.name || '';
+    const deptName = ps.department || employee?.department?.name || '';
+    const desigName = ps.designation || employee?.designation || '';
+
+    if (ps.id) {
+      const patch: any = {};
+      if ((ps.deductions || 0) !== totalDeductions) patch.deductions = totalDeductions;
+      if ((ps.netSalary || 0) !== netSalary) patch.netSalary = netSalary;
+      if ((ps.advanceDeduction || 0) !== advanceDeduction) patch.advanceDeduction = advanceDeduction;
+      if ((ps.halfDays || 0) !== calc.halfDays) patch.halfDays = calc.halfDays;
+      if ((ps.absentDays || 0) !== calc.absentDays) patch.absentDays = calc.absentDays;
+      if ((ps.presentDays || 0) !== calc.presentDays) patch.presentDays = calc.presentDays;
+      if ((ps.unpaidLeaveDays || 0) !== calc.unpaidLeaveDays) patch.unpaidLeaveDays = calc.unpaidLeaveDays;
+      if ((ps.paidLeaveDays || 0) !== calc.paidLeaveDays) patch.paidLeaveDays = calc.paidLeaveDays;
+      if ((ps.extraHolidayPayout || 0) !== extraHolidayPayout) patch.extraHolidayPayout = extraHolidayPayout;
+      if ((ps.extraWeeklyOffPayout || 0) !== extraWeeklyOffPayout) patch.extraWeeklyOffPayout = extraWeeklyOffPayout;
+      if ((ps.commissionEarned || 0) !== commissionEarned) patch.commissionEarned = commissionEarned;
+      if ((ps.expenseReimbursement || 0) !== expenseReimbursement) patch.expenseReimbursement = expenseReimbursement;
+      if ((ps.dailySalary || 0) !== calc.dailySalary) patch.dailySalary = calc.dailySalary;
+      if ((ps.workingDays || 0) !== calc.workingDays) patch.workingDays = calc.workingDays;
+      if (ps.baseSalary !== calc.baseSalary) patch.baseSalary = calc.baseSalary;
+      if (ps.allowance !== calc.allowance) patch.allowance = calc.allowance;
+      if (components.hra !== undefined && ps.hra !== components.hra) patch.hra = components.hra;
+      if (components.travelAllowance !== undefined && ps.travelAllowance !== components.travelAllowance) patch.travelAllowance = components.travelAllowance;
+      if (components.medicalAllowance !== undefined && ps.medicalAllowance !== components.medicalAllowance) patch.medicalAllowance = components.medicalAllowance;
+      if (components.specialAllowance !== undefined && ps.specialAllowance !== components.specialAllowance) patch.specialAllowance = components.specialAllowance;
+      if (components.bonus !== undefined && ps.bonus !== components.bonus) patch.bonus = components.bonus;
+      if (components.incentive !== undefined && ps.incentive !== components.incentive) patch.incentive = components.incentive;
+      if (!ps.employeeName && empName) patch.employeeName = empName;
+      if (!ps.officeName && offName) patch.officeName = offName;
+      if (!ps.department && deptName) patch.department = deptName;
+      if (!ps.designation && desigName) patch.designation = desigName;
+
+      if (Object.keys(patch).length > 0) {
+        patch.netInWords = netInWords;
+        await prisma.payslip.update({ where: { id: ps.id }, data: patch }).catch((err) =>
+          console.warn(`[viewFromPayrollCalculation] Failed to sync payslip #${ps.id}:`, err),
+        );
+      }
+    }
+
+    const earnings = {
+      baseSalary: calc.baseSalary,
+      basicSalary: calc.baseSalary,
+      hra: components.hra,
+      medical: components.medicalAllowance,
+      medicalAllowance: components.medicalAllowance,
+      travel: components.travelAllowance,
+      travelAllowance: components.travelAllowance,
+      travelMedicalAllowance,
+      special: components.specialAllowance,
+      specialAllowance: components.specialAllowance,
+      bonus: components.bonus,
+      incentive: components.incentive,
+      extraHolidayPayout,
+      extraWeeklyOffPayout,
+      extraPayout: round2(extraHolidayPayout + extraWeeklyOffPayout),
+      grossSalary: grossEarnings,
+      grossTotal: grossEarnings,
+      grossEarnings,
+      commission: commissionEarned,
+      expenseReimbursement,
+      expenses: expensesByCategory,
+      expensesByCategory,
+      expenseCategories,
+    };
+
+    return {
+      ...ps,
+      employeeCode,
+      employeeName: empName,
+      name: empName,
+      designation: desigName,
+      department: deptName,
+      departmentName: deptName,
+      office: offName,
+      officeName: offName,
+      status: paymentStatus,
+      paymentStatus,
+      payrollStatus: ps.status || 'PENDING',
+      baseSalary: calc.baseSalary,
+      basicSalary: calc.baseSalary,
+      allowance: calc.allowance,
+      hra: components.hra,
+      travelAllowance: components.travelAllowance,
+      medicalAllowance: components.medicalAllowance,
+      travelMedicalAllowance,
+      specialAllowance: components.specialAllowance,
+      incentive: components.incentive,
+      bonus: components.bonus,
+      grossSalary: grossEarnings,
+      grossEarnings,
+      deductions: totalDeductions,
+      totalDeductions,
+      advanceDeduction,
+      advanceSalary: advanceDeduction,
+      totalAdvanceSalary: advanceDeduction,
+      pf,
+      esic,
+      absentDeduction,
+      halfDayDeduction,
+      leaveDeduction,
+      otherDeductions,
+      otherDeduction: otherDeductions,
+      netSalary,
+      totalTakeHomePay,
+      documentId,
+      payPeriod,
+      netInWords,
+      presentDays: calc.presentDays,
+      absentDays: calc.absentDays,
+      expenseReimbursement,
+      totalReimbursements: expenseReimbursement,
+      approvedExpenses: expenseReimbursement,
+      approvedExpenseAmount: expenseReimbursement,
+      totalExpenses: expenseReimbursement,
+      expenses: expensesByCategory,
+      expensesByCategory,
+      commission: commissionEarned,
+      commissionEarned,
+      deductionsObj: {
+        deductions: totalDeductions,
+        totalDeductions,
+        advanceDeduction,
+        advanceSalary: advanceDeduction,
+        pf,
+        esic,
+        absentDeduction,
+        halfDayDeduction,
+        leaveDeduction,
+        otherDeductions,
+      },
+      halfDays: calc.halfDays,
+      paidLeaveDays: calc.paidLeaveDays,
+      unpaidLeaveDays: calc.unpaidLeaveDays,
+      holidayCount: calc.holidayCount,
+      weeklyOffCount: calc.weeklyOffCount,
+      holidayWorkedCount: calc.holidayWorkedCount,
+      weeklyOffWorkedCount: calc.weeklyOffWorkedCount,
+      extraHolidayPayout,
+      extraWeeklyOffPayout,
+      dailySalary: calc.dailySalary,
+      workingDays: calc.workingDays,
+      totalCalendarDays: calc.totalCalendarDays,
+      expenseCategories,
+      earnings,
+      summary: {
+        grossEarnings,
+        totalDeductions,
+        netSalary,
+        totalTakeHomePay,
+        commission: commissionEarned,
+        expenseReimbursement,
+        netInWords,
+      },
+    };
+  }
+
   async resolveFullPayslipView(ps: any, employeeParam?: any) {
     const employee = employeeParam || await prisma.employee.findUnique({
       where: { id: ps.employeeId },
       include: { office: true, salaryStructure: true, department: true }
     });
+
+    try {
+      const calc = await this.calculatePayroll(ps.employeeId, ps.month, ps.year);
+      return await this.viewFromPayrollCalculation(ps, employee, calc);
+    } catch (err) {
+      console.warn(`[resolveFullPayslipView] calculatePayroll failed for payslip #${ps?.id}, using stored row:`, err);
+    }
 
     const calculateScheduledWorkingDays = (year: number, month: number, office: any): number => {
       const calendarDays = new Date(year, month, 0).getDate();
@@ -1291,7 +1542,7 @@ class PayrollService {
     let cleanDeductions = ps.deductions || 0;
     const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
 
-    if (cleanDeductions === 0 || isCorrupted) {
+    if (cleanDeductions === 0 || isCorrupted || cleanDeductions < itemizedDeductions) {
       cleanDeductions = itemizedDeductions;
     }
 
@@ -1299,8 +1550,13 @@ class PayrollService {
     const totalTakeHomePay = Math.round((netSalary + (ps.commissionEarned || 0) + (ps.expenseReimbursement || 0)) * 100) / 100;
     const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
 
+    const empName = ps.employeeName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim();
+    const offName = ps.officeName || employee?.office?.name || '';
+    const deptName = ps.department || employee?.department?.name || '';
+    const desigName = ps.designation || employee?.designation || '';
+
     if (ps.id && (isCorrupted || ps.netSalary !== netSalary || ps.deductions !== cleanDeductions || (ps.advanceDeduction || 0) !== advanceDeduction)) {
-      prisma.payslip.update({
+      await prisma.payslip.update({
         where: { id: ps.id },
         data: {
           deductions: cleanDeductions,
@@ -1336,6 +1592,13 @@ class PayrollService {
 
     return {
       ...ps,
+      employeeName: empName,
+      name: empName,
+      office: offName,
+      officeName: offName,
+      department: deptName,
+      departmentName: deptName,
+      designation: desigName,
       status: paymentStatus,
       paymentStatus,
       payrollStatus: ps.status || 'PENDING',

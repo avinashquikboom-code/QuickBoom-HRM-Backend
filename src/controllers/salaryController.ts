@@ -2,10 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { getEffectiveUserPermissions, DEFAULT_EMPLOYEE_PERMISSIONS } from '../utils/permissionHelper';
-import { getIstMonthRange } from '../utils/commissionHelper';
-
 import payrollService from '../services/payrollService';
-import { numToWords } from '../services/payrollAutomationService';
 
 export const getSalarySlip = async (
   req: AuthenticatedRequest,
@@ -76,93 +73,49 @@ export const getSalarySlip = async (
       }
     }
 
-    const isCurrentMonth = (targetYear === istDate.getUTCFullYear() && targetMonth === (istDate.getUTCMonth() + 1));
-    const monthRange = getIstMonthRange(targetYear, targetMonth);
-    const monthStart = monthRange.monthStart;
-    const monthEnd = monthRange.monthEnd;
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    const monthName = monthNames[targetMonth - 1];
+    const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
 
-    // Use persistent database Payslip record or calculate via PayrollService
     let dbPayslip = await prisma.payslip.findFirst({
       where: {
         employeeId: targetEmployeeId,
         month: targetMonth,
-        year: targetYear
-      }
+        year: targetYear,
+      },
     });
 
-    // Always compute a fresh calcResult so we have correct deductions to fall back to.
-    // For past months with a stored payslip we still recalculate to detect/correct corrupted
-    // deduction values (e.g. where stored deductions ≈ gross salary due to mis-applied PF/ESIC).
-    let calcResult: any = null;
-    try {
-      calcResult = await payrollService.calculatePayroll(targetEmployeeId, targetMonth, targetYear);
-    } catch (calcErr) {
-      // If calculation fails (e.g. no attendance data), fall back gracefully to stored payslip.
-      console.warn(`[SalarySlip] calculatePayroll failed for emp=${targetEmployeeId} ${targetMonth}/${targetYear}:`, calcErr);
-      calcResult = null;
-    }
+    const employeeName = `${employee.firstName} ${employee.lastName}`.trim();
+    const slipSource = dbPayslip ?? {
+      employeeId: targetEmployeeId,
+      month: targetMonth,
+      year: targetYear,
+      status: 'PENDING',
+      employeeCode: employee.employeeCode,
+      employeeName,
+      designation: employee.designation || 'Staff',
+      department: employee.department?.name || 'General',
+      officeName: employee.office?.name || 'Main Office',
+      baseSalary: 0,
+      allowance: 0,
+      deductions: 0,
+      netSalary: 0,
+    };
 
-    const resolvedEarnings = dbPayslip
-      ? await payrollService.resolvePayslipEarnings(dbPayslip)
-      : null;
-
-    const baseSalary = resolvedEarnings?.baseSalary ??
-      (calcResult?.baseSalary && calcResult.baseSalary > 0 ? calcResult.baseSalary : (ss?.basicSalary || ss?.monthlySalary || 0));
-
-    const basicSalary = baseSalary;
-    const hra = resolvedEarnings?.components.hra ?? calcResult?.components?.hra ?? ss?.hra ?? 0;
-    const medical = resolvedEarnings?.components.medicalAllowance ?? calcResult?.components?.medicalAllowance ?? ss?.medicalAllowance ?? 0;
-    const travel = resolvedEarnings?.components.travelAllowance ?? calcResult?.components?.travelAllowance ?? ss?.travelAllowance ?? 0;
-    const special = resolvedEarnings?.components.specialAllowance ?? calcResult?.components?.specialAllowance ?? ss?.specialAllowance ?? 0;
-    const bonus = resolvedEarnings?.components.bonus ?? calcResult?.components?.bonus ?? ss?.bonus ?? 0;
-    const incentive = resolvedEarnings?.components.incentive ?? calcResult?.components?.incentive ?? ss?.incentive ?? 0;
-
-    const allowance = resolvedEarnings?.allowance ??
-      calcResult?.allowance ??
-      (hra + medical + travel + special + bonus + incentive);
-
-    const commissionEarned = (calcResult?.commissionEarned !== undefined)
-      ? calcResult.commissionEarned
-      : (dbPayslip?.commissionEarned ?? 0);
-
-    const presentDays = (calcResult?.presentDays !== undefined) ? calcResult.presentDays : (dbPayslip?.presentDays ?? 0);
-    const absentDays = (calcResult?.absentDays !== undefined) ? calcResult.absentDays : (dbPayslip?.absentDays ?? 0);
-    const halfDays = (calcResult?.halfDays !== undefined) ? calcResult.halfDays : (dbPayslip?.halfDays ?? 0);
-    const paidLeaveDays = (calcResult?.paidLeaveDays !== undefined) ? calcResult.paidLeaveDays : (dbPayslip?.paidLeaveDays ?? 0);
-    const unpaidLeaveDays = (calcResult?.unpaidLeaveDays !== undefined) ? calcResult.unpaidLeaveDays : (dbPayslip?.unpaidLeaveDays ?? 0);
-    const holidayCount = (calcResult?.holidayCount !== undefined) ? calcResult.holidayCount : (dbPayslip?.holidayCount ?? 0);
-    const weeklyOffCount = (calcResult?.weeklyOffCount !== undefined) ? calcResult.weeklyOffCount : (dbPayslip?.weeklyOffCount ?? 0);
-    const holidayWorkedCount = (calcResult?.holidayWorkedCount !== undefined) ? calcResult.holidayWorkedCount : (dbPayslip?.holidayWorkedCount ?? 0);
-    const weeklyOffWorkedCount = (calcResult?.weeklyOffWorkedCount !== undefined) ? calcResult.weeklyOffWorkedCount : (dbPayslip?.weeklyOffWorkedCount ?? 0);
-    const extraHolidayPayout = (calcResult?.extraHolidayPayout !== undefined) ? calcResult.extraHolidayPayout : (dbPayslip?.extraHolidayPayout ?? 0);
-    const extraWeeklyOffPayout = (calcResult?.extraWeeklyOffPayout !== undefined) ? calcResult.extraWeeklyOffPayout : (dbPayslip?.extraWeeklyOffPayout ?? 0);
-
-    const workingDays = (calcResult?.workingDays && calcResult.workingDays > 0)
-      ? calcResult.workingDays
-      : (dbPayslip?.workingDays && dbPayslip.workingDays > 0)
-      ? dbPayslip.workingDays
-      : 26;
-
-    const dailySalary = (calcResult?.dailySalary && calcResult.dailySalary > 0)
-      ? calcResult.dailySalary
-      : (dbPayslip?.dailySalary && dbPayslip.dailySalary > 0)
-      ? dbPayslip.dailySalary
-      : Math.round(((baseSalary + allowance) / workingDays) * 100) / 100;
-
-    const totalCalendarDays = (calcResult?.totalCalendarDays)
-      ? calcResult.totalCalendarDays
-      : (dbPayslip?.totalCalendarDays ?? new Date(targetYear, targetMonth, 0).getDate());
+    const view = await payrollService.resolveFullPayslipView(slipSource, employee);
 
     const salaryAdvanceLimit = ss?.salaryAdvanceLimit !== undefined && ss?.salaryAdvanceLimit !== null
       ? ss.salaryAdvanceLimit
       : 25000;
 
-    // Fetch active salary advances for employee
     const activeAdvances = await prisma.salaryAdvance.findMany({
       where: {
         wallet: { employeeId: targetEmployeeId },
         status: { in: ['PENDING', 'APPROVED'] },
-      }
+      },
     });
     const pendingAdvance = activeAdvances
       .filter((a) => a.status === 'PENDING')
@@ -173,285 +126,40 @@ export const getSalarySlip = async (
     const salaryAdvanceUsed = pendingAdvance + approvedAdvanceRemaining;
     const salaryAdvanceRemaining = Math.max(0, salaryAdvanceLimit - salaryAdvanceUsed);
 
-    let advanceDeduction = dbPayslip?.advanceDeduction ?? calcResult?.advanceDeduction ?? 0;
-    if (advanceDeduction === 0) {
-      const scheduledAdvances = activeAdvances.filter((a) => {
-        if (a.status !== 'APPROVED' || a.remainingAmount <= 0) return false;
-        const appDate = a.approvedAt || a.requestedOn || a.createdAt;
-        return appDate <= monthEnd;
-      });
-      for (const adv of scheduledAdvances) {
-        const installment = adv.monthlyEmi > 0 ? Math.min(adv.monthlyEmi, adv.remainingAmount) : adv.remainingAmount;
-        advanceDeduction += installment;
-      }
-      advanceDeduction = Math.round(advanceDeduction * 100) / 100;
-    }
-
-    const approvedExpenseRecords = await prisma.expense.findMany({
-      where: {
-        employeeId: targetEmployeeId,
-        status: 'APPROVED',
-        date: { gte: monthStart, lte: monthEnd },
-      },
-      orderBy: { date: 'asc' },
-    });
-    const catMap: Record<string, number> = {};
-    let totalApprovedExpenses = 0;
-    for (const exp of approvedExpenseRecords) {
-      const cat = exp.category || 'Other';
-      const amt = exp.amount || 0;
-      totalApprovedExpenses += amt;
-      catMap[cat] = Math.round(((catMap[cat] || 0) + amt) * 100) / 100;
-    }
-    const expenseCategories = catMap;
-    const expensesByCategory = Object.entries(catMap).map(([category, amount]) => ({
-      category,
-      amount,
-    }));
-
-    const expenseReimbursement = (dbPayslip?.expenseReimbursement && dbPayslip.expenseReimbursement > 0)
-      ? dbPayslip.expenseReimbursement
-      : (calcResult?.expenseReimbursement && calcResult.expenseReimbursement > 0)
-      ? calcResult.expenseReimbursement
-      : Math.round(totalApprovedExpenses * 100) / 100;
-    const approvedExpenseAmount = expenseReimbursement;
-
-    const halfDayDeduction = dbPayslip?.halfDays ? Math.round((dbPayslip.halfDays * 0.5 * dailySalary) * 100) / 100 : (calcResult?.halfDayDeduction ?? Math.round((halfDays * 0.5 * dailySalary) * 100) / 100);
-    const leaveDeduction = dbPayslip?.unpaidLeaveDays ? Math.round((dbPayslip.unpaidLeaveDays * dailySalary) * 100) / 100 : (calcResult?.leaveDeduction ?? Math.round((unpaidLeaveDays * dailySalary) * 100) / 100);
-    const absentDeduction = dbPayslip?.absentDays ? Math.round((dbPayslip.absentDays * dailySalary) * 100) / 100 : (calcResult?.absentDeduction ?? Math.round((absentDays * dailySalary) * 100) / 100);
-    const pf = ss?.pfEnabled ? Math.round(baseSalary * (ss.employeePfRate / 100)) : 0;
-    const esic = ss?.esicEnabled ? Math.round((baseSalary + allowance) * (ss.employeeEsicRate / 100)) : 0;
-    const itemizedDeductions = pf + esic + halfDayDeduction + leaveDeduction + absentDeduction + advanceDeduction;
-
-    // itemizedDeductions = attendance-based + advance (always re-derived fresh from live data).
-    //
-    // DEDUCTION SELECTION LOGIC:
-    // 1. For the CURRENT month: always use calcResult (live recalculation).
-    // 2. For PAST months: use the stored dbPayslip.deductions ONLY when it is plausible.
-    //    A stored value is treated as CORRUPTED if it exceeds the fresh calcResult.deductions
-    //    by more than ₹500, OR if it exceeds itemizedDeductions by more than ₹5,000.
-    //    This catches cases where PF/ESIC was incorrectly applied to the entire gross salary.
-
-    let deductions: number;
-
-    if (isCurrentMonth || dbPayslip?.deductions === undefined || dbPayslip?.deductions === null) {
-      // Always use fresh calc for current month, or if no stored value exists.
-      deductions = calcResult?.deductions !== undefined
-        ? Math.round(calcResult.deductions * 100) / 100
-        : Math.round(itemizedDeductions * 100) / 100;
-    } else {
-      const rawStored = dbPayslip.deductions;
-      const freshCalc = calcResult?.deductions !== undefined
-        ? Math.round(calcResult.deductions * 100) / 100
-        : null;
-
-      // Sanity check 1: stored deductions must not exceed fresh calc by more than ₹500
-      const calcMismatch = freshCalc !== null && (rawStored - freshCalc) > 500;
-      // Sanity check 2: stored deductions must not exceed itemized by more than ₹5,000
-      //   (catches PF/ESIC being applied to full gross salary as a single deduction block)
-      const itemizedExcess = rawStored - itemizedDeductions;
-      const itemizedCorrupted = itemizedExcess > 5000;
-
-      if (calcMismatch || itemizedCorrupted) {
-        // Stored deductions look corrupted — prefer fresh calcResult, else itemized
-        deductions = freshCalc !== null
-          ? freshCalc
-          : Math.round(itemizedDeductions * 100) / 100;
-        console.warn(
-          `[SalarySlip] CORRUPTED stored deductions detected for emp=${targetEmployeeId} ${targetMonth}/${targetYear}:`,
-          { rawStored, freshCalc, itemizedDeductions, calcMismatch, itemizedCorrupted, using: deductions }
-        );
-
-        // Auto-heal the database payslip record asynchronously
-        if (dbPayslip) {
-          const healedNet = Math.max(0, Math.round(((baseSalary + allowance + (extraHolidayPayout + extraWeeklyOffPayout)) - deductions) * 100) / 100);
-          prisma.payslip.update({
-            where: { id: dbPayslip.id },
-            data: {
-              deductions,
-              netSalary: healedNet,
-              absentDays: calcResult?.absentDays ?? 0,
-              presentDays: calcResult?.presentDays ?? (dbPayslip.workingDays || 26),
-            }
-          }).catch(err => console.warn(`[SalarySlip] Failed to repair dbPayslip #${dbPayslip.id}:`, err));
-        }
-      } else {
-        // Stored value looks trustworthy
-        deductions = rawStored;
-      }
-    }
-
-    const otherDeductions = Math.max(0, Math.round((deductions - itemizedDeductions) * 100) / 100);
-
-
-    const monthNames = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    const monthName = monthNames[targetMonth - 1];
-    const monthPrefix = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
-
-    const extraPayout = (extraHolidayPayout || 0) + (extraWeeklyOffPayout || 0);
-    const grossEarnings = Math.round((baseSalary + allowance + extraPayout) * 100) / 100;
-    const grossTotal = grossEarnings;
-
-    // Net Salary = Gross Earnings - Total Deductions
-    const recalcNetSalary = Math.max(0, Math.round((grossEarnings - deductions) * 100) / 100);
-    const netSalary = (!isCurrentMonth && dbPayslip?.netSalary !== undefined && dbPayslip.netSalary > 0)
-      ? (() => {
-          // Sanity-check: stored netSalary must roughly equal grossEarnings - deductions (within ₹1)
-          const storedNet = dbPayslip!.netSalary;
-          const expectedNet = recalcNetSalary;
-          if (Math.abs(storedNet - expectedNet) > 1) {
-            console.warn(
-              `[SalarySlip] netSalary mismatch: stored=${storedNet}, recalculated=${expectedNet} — using recalculated value`
-            );
-            return expectedNet;
-          }
-          return storedNet;
-        })()
-      : (calcResult?.netSalary !== undefined ? Math.max(0, Math.round(calcResult.netSalary * 100) / 100) : recalcNetSalary);
-
-    const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + expenseReimbursement) * 100) / 100;
-    const netInWords = (dbPayslip?.netInWords && dbPayslip.netInWords.length > 0)
-      ? dbPayslip.netInWords
-      : `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`;
-    const documentId = `HR-PAY-${employee.employeeCode}-${targetYear}${String(targetMonth).padStart(2, '0')}`;
-    const payPeriod = `${monthName} ${targetYear}`;
-    const isPaid = dbPayslip?.status?.toUpperCase() === 'PAID';
-    const paymentStatus = isPaid ? 'PAID' : 'PENDING';
-
     const responsePayload = {
+      ...view,
       employeeId: employee.id,
       employeeCode: employee.employeeCode,
-      employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
-      designation: employee.designation || 'Staff',
-      officeName: employee.office?.name || 'Main Office',
-      departmentName: employee.department?.name || 'General',
+      employeeName,
+      designation: employee.designation || view.designation || 'Staff',
+      officeName: employee.office?.name || view.officeName || 'Main Office',
+      departmentName: employee.department?.name || view.department || 'General',
+      department: employee.department?.name || view.department || 'General',
       month: monthName,
       year: targetYear,
       monthStr: monthPrefix,
-      payPeriod,
-      documentId,
-      status: paymentStatus,
-      paymentStatus,
-      payrollStatus: dbPayslip?.status || 'PENDING',
-
-      baseSalary,
-      basicSalary,
-      allowance,
-      hra,
-      medicalAllowance: medical,
-      medical,
-      travelAllowance: travel,
-      travel,
-      travelMedicalAllowance: travel + medical,
-      specialAllowance: special,
-      special,
-      bonus,
-      incentive,
-      commission: commissionEarned,
-      commissionEarned,
-      grossSalary: grossEarnings,
-      grossEarnings: grossEarnings,
-      advanceDeduction,
-      advanceSalary: advanceDeduction,
-      totalAdvanceSalary: advanceDeduction,
-      pf,
-      esic,
-      halfDayDeduction,
-      leaveDeduction,
-      absentDeduction,
-      otherDeduction: otherDeductions,
-      otherDeductions,
-      expenseReimbursement,
-      totalReimbursements: expenseReimbursement,
-      approvedExpenseAmount,
-      approvedExpenses: expenseReimbursement,
-      totalExpenses: expenseReimbursement,
-      expenses: expensesByCategory,
-      expensesByCategory,
-      expenseCategories,
-      deductionsTotal: deductions,
-      totalDeductions: deductions,
-      netSalary,
-      totalTakeHomePay,
-      netInWords,
-
-      presentDays,
-      absentDays,
-      halfDays,
-      paidLeaveDays,
-      unpaidLeaveDays,
-      holidayCount,
-      weeklyOffCount,
-      holidayWorkedCount,
-      weeklyOffWorkedCount,
-      extraHolidayPayout,
-      extraWeeklyOffPayout,
-      dailySalary,
-      workingDays,
-      totalCalendarDays,
-
-      earnings: {
-        baseSalary,
-        basicSalary,
-        hra,
-        medical,
-        medicalAllowance: medical,
-        travel,
-        travelAllowance: travel,
-        travelMedicalAllowance: travel + medical,
-        special,
-        specialAllowance: special,
-        bonus,
-        incentive,
-        commission: commissionEarned,
-        expenseReimbursement,
-        approvedExpenses: expenseReimbursement,
-        approvedExpenseAmount: expenseReimbursement,
-        expenses: expensesByCategory,
-        expensesByCategory,
-        expenseCategories,
-        extraPayout: extraHolidayPayout + extraWeeklyOffPayout,
-        grossTotal,
-        grossSalary: grossTotal,
-        grossEarnings: grossTotal,
-      },
-
-      deductions: {
-        deductions,
-        halfDayDeduction,
-        leaveDeduction,
-        absentDeduction,
-        advanceDeduction,
-        pf,
-        esic,
-        otherDeduction: otherDeductions,
-        otherDeductions,
-        totalDeductions: deductions,
-      },
-
+      payPeriod: view.payPeriod || `${monthName} ${targetYear}`,
       details: {
-        presentDays,
-        absentDays,
-        halfDays,
-        paidLeaveDays,
-        unpaidLeaveDays,
-        holidayCount,
-        weeklyOffCount,
-        holidayWorkedCount,
-        weeklyOffWorkedCount,
-        workingDays,
-        totalCalendarDays,
-        dailySalary,
+        presentDays: view.presentDays,
+        absentDays: view.absentDays,
+        halfDays: view.halfDays,
+        paidLeaveDays: view.paidLeaveDays,
+        unpaidLeaveDays: view.unpaidLeaveDays,
+        holidayCount: view.holidayCount,
+        weeklyOffCount: view.weeklyOffCount,
+        holidayWorkedCount: view.holidayWorkedCount,
+        weeklyOffWorkedCount: view.weeklyOffWorkedCount,
+        workingDays: view.workingDays,
+        totalCalendarDays: view.totalCalendarDays,
+        dailySalary: view.dailySalary,
         commissionRate: employee.commissionPercentage || 1.0,
         salaryAdvanceLimit,
         salaryAdvanceUsed,
         salaryAdvanceRemaining,
-        advanceDeduction,
-      }
+        advanceDeduction: view.advanceDeduction,
+      },
     };
+
 
     res.json({
       success: true,

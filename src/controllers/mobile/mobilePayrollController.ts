@@ -274,7 +274,7 @@ export const downloadPayslip = async (
         { text: earn ? earn.name : '' },
         { text: earn ? `Rs. ${fmt(earn.amount)}` : '', alignment: 'right' },
         { text: ded ? ded.name : '' },
-        { text: ded ? (ded.amount < 0 ? `-Rs. ${fmt(Math.abs(ded.amount))}` : `Rs. ${fmt(ded.amount)}`) : '', alignment: 'right' },
+        { text: ded ? (ded.amount > 0 ? `-Rs. ${fmt(ded.amount)}` : `Rs. ${fmt(0)}`) : '', alignment: 'right' },
       ]);
     }
 
@@ -290,7 +290,7 @@ export const downloadPayslip = async (
         { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
         { text: `Rs. ${fmt(grossEarnings)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
         { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
-        { text: `Rs. ${fmt(totalDeductions)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
+        { text: totalDeductions > 0 ? `-Rs. ${fmt(totalDeductions)}` : `Rs. ${fmt(0)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
       ]
     ];
 
@@ -342,19 +342,19 @@ export const downloadPayslip = async (
             [
               {
                 text: [
-                  { text: 'Employee Name: ', bold: true }, payslip.employeeName, '\n',
-                  { text: 'Employee Code: ', bold: true }, payslip.employeeCode, '\n',
-                  { text: 'Designation:   ', bold: true }, payslip.designation, '\n',
-                  { text: 'Department:    ', bold: true }, payslip.department
+                  { text: 'Employee Name: ', bold: true }, view.employeeName || payslip.employeeName, '\n',
+                  { text: 'Employee Code: ', bold: true }, view.employeeCode || payslip.employeeCode, '\n',
+                  { text: 'Designation:   ', bold: true }, view.designation || payslip.designation || '\u2014', '\n',
+                  { text: 'Department:    ', bold: true }, view.department || payslip.department || '\u2014'
                 ],
                 margin: [5, 5, 5, 5]
               },
               {
                 text: [
-                  { text: 'Office / Branch:     ', bold: true }, payslip.officeName, '\n',
+                  { text: 'Office / Branch:     ', bold: true }, view.officeName || payslip.officeName || '\u2014', '\n',
                   { text: 'Pay Period:          ', bold: true }, periodLabel, '\n',
                   { text: 'Total Days of Month: ', bold: true }, `${totalDaysInMonth} Days`, '\n',
-                  { text: 'Document ID:         ', bold: true }, `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
+                  { text: 'Document ID:         ', bold: true }, view.documentId || `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
                   { text: 'Status:              ', bold: true }, paymentStatus
                 ],
                 margin: [5, 5, 5, 5]
