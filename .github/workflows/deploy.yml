@@ -9,8 +9,8 @@ on:
 
 env:
   # Hardcoded ECR target (no secrets needed for region/repo).
-  AWS_REGION: ap-south-1
-  IMAGE_URI: 546941058055.dkr.ecr.ap-south-1.amazonaws.com/hrm-backend
+  AWS_REGION: ap-southeast-2
+  IMAGE_URI: 211107604014.dkr.ecr.ap-southeast-2.amazonaws.com/hrm-backend
 
 jobs:
   build-and-push:
