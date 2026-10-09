@@ -25,6 +25,9 @@ import {
   getAdminSalaryAdvances,
   reviewSalaryAdvance,
 } from '../controllers/salaryAdvanceController';
+import { exportPayrollGovernance } from '../controllers/payrollGovernanceExportController';
+import { roleMiddleware } from '../middlewares/roleMiddleware';
+import { PAYROLL_EXPORT_ROLES } from '../utils/payrollGovernanceExport';
 
 const router = Router();
 
@@ -54,6 +57,7 @@ router.put('/payslip/:payslipId/approve', approvePayslip);
 router.put('/payslip/:payslipId/reject', rejectPayslip);
 
 // Admin-specific endpoints for frontend
+router.get('/admin/export', roleMiddleware([...PAYROLL_EXPORT_ROLES]), exportPayrollGovernance);
 router.get('/admin/stats', getAdminPayrollStats);
 router.get('/admin/runs', getAdminPayrollRuns);
 router.get('/admin/slips', getAdminPayrollSlips);
