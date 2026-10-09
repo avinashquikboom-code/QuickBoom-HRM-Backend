@@ -1143,6 +1143,24 @@ class PayrollService {
       const totalTakeHome = Math.round((calculation.netSalary + (calculation.commissionEarned || 0) + (calculation.expenseReimbursement || 0)) * 100) / 100;
       const netInWords = `${numToWords(Math.round(totalTakeHome))} Rupees Only`;
 
+      const existingSlip = await prisma.payslip.findUnique({
+        where: {
+          employeeId_month_year: {
+            employeeId: calculation.employeeId,
+            month: calculation.month,
+            year: calculation.year,
+          },
+        },
+      });
+
+      // Preserve status if already finalized ('Paid')
+      if (existingSlip && String(existingSlip.status).toUpperCase() === 'PAID') {
+        console.log(`[savePayslip] Payslip for emp #${calculation.employeeId} (${calculation.month}/${calculation.year}) is already PAID. Preserving finalized record.`);
+        return;
+      }
+
+      const preservedStatus = existingSlip?.status || 'Approved';
+
       await prisma.payslip.upsert({
         where: {
           employeeId_month_year: {
@@ -1180,7 +1198,7 @@ class PayrollService {
           expenseReimbursement: calculation.expenseReimbursement,
           ...payslipComponentData(calculation),
           netInWords,
-          status: 'Approved',
+          status: preservedStatus,
           updatedAt: new Date()
         },
         create: {
@@ -1316,7 +1334,7 @@ class PayrollService {
     const deptName = ps.department || employee?.department?.name || '';
     const desigName = ps.designation || employee?.designation || '';
 
-    if (ps.id) {
+    if (ps.id && !isPaid) {
       const patch: any = {};
       if ((ps.deductions || 0) !== totalDeductions) patch.deductions = totalDeductions;
       if ((ps.netSalary || 0) !== netSalary) patch.netSalary = netSalary;
@@ -1389,7 +1407,7 @@ class PayrollService {
       departmentName: deptName,
       office: offName,
       officeName: offName,
-      status: paymentStatus,
+      status: ps.status || (isPaid ? 'Paid' : 'Approved'),
       paymentStatus,
       payrollStatus: ps.status || 'PENDING',
       baseSalary: calc.baseSalary,
@@ -1476,11 +1494,14 @@ class PayrollService {
       include: { office: true, salaryStructure: true, department: true }
     });
 
-    try {
-      const calc = await this.calculatePayroll(ps.employeeId, ps.month, ps.year);
-      return await this.viewFromPayrollCalculation(ps, employee, calc);
-    } catch (err) {
-      console.warn(`[resolveFullPayslipView] calculatePayroll failed for payslip #${ps?.id}, using stored row:`, err);
+    const isFinalized = String(ps.status || '').toUpperCase() === 'PAID';
+    if (!isFinalized) {
+      try {
+        const calc = await this.calculatePayroll(ps.employeeId, ps.month, ps.year);
+        return await this.viewFromPayrollCalculation(ps, employee, calc);
+      } catch (err) {
+        console.warn(`[resolveFullPayslipView] calculatePayroll failed for payslip #${ps?.id}, using stored row:`, err);
+      }
     }
 
     const calculateScheduledWorkingDays = (year: number, month: number, office: any): number => {
