@@ -1,0 +1,80 @@
+import assert from 'assert';
+import { computeGrossSalary, mapStructureGrossFields } from '../src/utils/salaryGross';
+
+function run() {
+  let passed = 0;
+  let total = 0;
+  const check = (desc: string, cond: boolean) => {
+    total += 1;
+    if (!cond) throw new Error(`FAIL: ${desc}`);
+    passed += 1;
+    console.log(`PASS ${desc}`);
+  };
+
+  const sixComponents = {
+    basicSalary: 15000,
+    hra: 1000,
+    medicalAllowance: 1000,
+    travelAllowance: 1500,
+    specialAllowance: 1000,
+    bonus: 1000,
+  };
+
+  check('six displayed components total 20500', computeGrossSalary(sixComponents) === 20500);
+
+  const listGross = computeGrossSalary(sixComponents);
+  const modalGross = computeGrossSalary({ ...sixComponents, incentive: 0, fixedBonus: 1000 });
+  check('list and modal use the same 20500 total', listGross === 20500 && modalGross === 20500);
+
+  check(
+    'incentive is counted once when present',
+    computeGrossSalary({ ...sixComponents, incentive: 1000 }) === 21500
+  );
+
+  check(
+    'bonus / fixedBonus / performanceBonus are not double-counted',
+    computeGrossSalary({ ...sixComponents, fixedBonus: 1000, performanceBonus: 1000 }) === 20500
+  );
+
+  check(
+    'advance limit is excluded from gross',
+    computeGrossSalary({ ...sixComponents, salaryAdvanceLimit: 25000 }) === 20500
+  );
+
+  const staleStored = mapStructureGrossFields({
+    ...sixComponents,
+    incentive: 0,
+    salaryAdvanceLimit: 5000,
+  });
+  check('GET mapping ignores stale stored totals by recomputing 20500', staleStored.grossSalary === 20500);
+  check('grossTotal matches grossSalary', staleStored.grossTotal === staleStored.grossSalary);
+  check('monthlySalary matches recomputed gross', staleStored.monthlySalary === 20500);
+  check('advance is preserved and not added to gross', staleStored.salaryAdvanceLimit === 5000);
+
+  const savePayload = {
+    basicSalary: 15000,
+    hra: 1000,
+    medicalAllowance: 1000,
+    travelAllowance: 1500,
+    specialAllowance: 1000,
+    incentive: 0,
+    bonus: 1000,
+  };
+  const persisted = mapStructureGrossFields(savePayload);
+  check('save/update persists component-sum gross 20500', persisted.grossSalary === 20500);
+  check('payroll monthlySalary syncs to the same saved gross', persisted.monthlySalary === persisted.grossSalary);
+
+  const payrollFromStaleRow = mapStructureGrossFields({
+    ...savePayload,
+  });
+  check(
+    'payroll generation uses component sum, not a stale 19500/21500 row',
+    payrollFromStaleRow.monthlySalary === 20500
+  );
+
+  check('empty components yield 0', computeGrossSalary({}) === 0);
+
+  console.log(`salaryGross tests: ${passed}/${total} passed`);
+}
+
+run();

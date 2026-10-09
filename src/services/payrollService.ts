@@ -2,6 +2,7 @@ import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from './payrollAutomationService';
+import { computeGrossSalary, mapStructureGrossFields } from '../utils/salaryGross';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -128,14 +129,17 @@ class PayrollService {
       const salaryStructure = await this.getSalaryStructure(employeeId, new Date(year, month - 1, 1));
 
       // Monthly & Base Salary
-      const totalAllowance = (salaryStructure.hra || 0) + 
-        (salaryStructure.medical || 0) + 
-        (salaryStructure.conveyance || 0) + 
-        (salaryStructure.special || 0) + 
-        (salaryStructure.incentive || 0) + 
-        (salaryStructure.bonus || 0);
       const baseSalary = salaryStructure.baseSalary || 0;
-      const monthlySalary = salaryStructure.monthlySalary || salaryStructure.grossSalary || (baseSalary + totalAllowance) || 12000;
+      const monthlySalary =
+        computeGrossSalary({
+          basicSalary: salaryStructure.baseSalary,
+          hra: salaryStructure.hra,
+          medicalAllowance: salaryStructure.medical,
+          travelAllowance: salaryStructure.conveyance,
+          specialAllowance: salaryStructure.special,
+          incentive: salaryStructure.incentive,
+          bonus: salaryStructure.bonus,
+        }) || 12000;
 
       // Get attendance breakdown data for the month
       const attendanceData = await this.getAttendanceData(employeeId, month, year, employee.office);
@@ -550,8 +554,9 @@ class PayrollService {
         });
       }
 
-      const basic = structure.basicSalary || structure.monthlySalary || 0;
-      const gross = structure.grossSalary || structure.monthlySalary || basic;
+      const mapped = mapStructureGrossFields(structure);
+      const basic = mapped.basicSalary || mapped.monthlySalary;
+      const gross = mapped.grossSalary;
       const pf = structure.pfEnabled ? basic * (structure.employeePfRate / 100) : 0;
       const esi = structure.esicEnabled ? gross * (structure.employeeEsicRate / 100) : 0;
 
@@ -559,15 +564,15 @@ class PayrollService {
         id: structure.id,
         employeeId: structure.employeeId,
         baseSalary: basic,
-        monthlySalary: structure.monthlySalary || gross,
+        monthlySalary: mapped.monthlySalary,
         grossSalary: gross,
-        hra: structure.hra || 0,
+        hra: mapped.hra,
         da: 0,
-        conveyance: structure.travelAllowance || 0,
-        medical: structure.medicalAllowance || 0,
-        special: structure.specialAllowance || 0,
-        incentive: structure.incentive || 0,
-        bonus: structure.bonus || 0,
+        conveyance: mapped.travelAllowance,
+        medical: mapped.medicalAllowance,
+        special: mapped.specialAllowance,
+        incentive: mapped.incentive,
+        bonus: mapped.bonus,
         pf,
         esi,
         professionalTax: 0,
@@ -588,6 +593,8 @@ class PayrollService {
         conveyance: 0,
         medical: 0,
         special: 0,
+        incentive: 0,
+        bonus: 0,
         pf: 0,
         esi: 0,
         professionalTax: 0,
@@ -610,7 +617,15 @@ class PayrollService {
       const specialAllowance = structureData.special || 0;
       const incentive = structureData.incentive || 0;
       const bonus = structureData.bonus || 0;
-      const grossSalary = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus;
+      const grossSalary = computeGrossSalary({
+        basicSalary,
+        hra,
+        medicalAllowance,
+        travelAllowance,
+        specialAllowance,
+        incentive,
+        bonus,
+      });
 
       const structure = await prisma.salaryStructure.upsert({
         where: { employeeId },

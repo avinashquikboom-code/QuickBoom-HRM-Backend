@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { getEffectiveUserPermissions, DEFAULT_EMPLOYEE_PERMISSIONS } from '../utils/permissionHelper';
 import payrollService from '../services/payrollService';
+import { computeGrossSalary, mapStructureGrossFields } from '../utils/salaryGross';
 
 export const getSalarySlip = async (
   req: AuthenticatedRequest,
@@ -203,15 +204,7 @@ export const getSalaryStructureList = async (
 
     const structures = employees.map(emp => {
       const ss = emp.salaryStructure;
-      const basic = ss?.basicSalary ?? 0;
-      const hra = ss?.hra ?? 0;
-      const medical = ss?.medicalAllowance ?? 0;
-      const travel = ss?.travelAllowance ?? 0;
-      const special = ss?.specialAllowance ?? 0;
-      const incentive = ss?.incentive ?? 0;
-      const bonus = ss?.bonus ?? 0;
-      const calcSum = basic + hra + medical + travel + special + incentive + bonus;
-      const grossTotal = ss?.grossSalary && ss.grossSalary > 0 ? ss.grossSalary : (calcSum === 0 && basic > 0 ? basic : calcSum);
+      const mapped = mapStructureGrossFields(ss ?? {});
 
       return {
         id: ss?.id || emp.id,
@@ -221,17 +214,7 @@ export const getSalaryStructureList = async (
         designation: emp.designation || 'Staff',
         officeName: emp.office?.name || 'N/A',
         departmentName: emp.department?.name || 'N/A',
-        monthlySalary: ss?.monthlySalary || grossTotal,
-        grossSalary: ss?.grossSalary || grossTotal,
-        basicSalary: basic,
-        hra: hra,
-        medicalAllowance: medical,
-        travelAllowance: travel,
-        specialAllowance: special,
-        salaryAdvanceLimit: ss?.salaryAdvanceLimit ?? 0,
-        grossTotal: grossTotal,
-        incentive: incentive,
-        bonus: bonus,
+        ...mapped,
         pfEnabled: ss?.pfEnabled ?? false,
         esicEnabled: ss?.esicEnabled ?? false,
         updatedAt: ss?.updatedAt || emp.updatedAt,
@@ -289,58 +272,38 @@ export const getMySalaryStructure = async (
       });
     }
 
-    const basicSalary = ss.basicSalary || 0;
-    const hra = ss.hra || 0;
-    const medical = ss.medicalAllowance || 0;
-    const travel = ss.travelAllowance || 0;
-    const special = ss.specialAllowance || 0;
-    const incentive = ss.incentive || 0;
-    const bonus = ss.bonus || 0;
-    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 0;
-    const calculatedSum = basicSalary + hra + medical + travel + special + incentive + bonus;
-    const grossTotal = ss.grossSalary || (calculatedSum > 0 ? calculatedSum : basicSalary);
-
+    const mapped = mapStructureGrossFields(ss);
     const payload = {
       id: ss.id,
       employeeId: emp.id,
       employeeCode: emp.employeeCode,
       employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-      basicSalary,
-      hra,
-      medical,
-      medicalAllowance: medical,
-      travel,
-      travelAllowance: travel,
-      special,
-      specialAllowance: special,
-      incentive,
-      bonus,
+      ...mapped,
+      medical: mapped.medicalAllowance,
+      travel: mapped.travelAllowance,
+      special: mapped.specialAllowance,
       pfEnabled: ss.pfEnabled,
       employeePfRate: ss.employeePfRate,
       employerPfRate: ss.employerPfRate,
       esicEnabled: ss.esicEnabled,
       employeeEsicRate: ss.employeeEsicRate,
       employerEsicRate: ss.employerEsicRate,
-      salaryAdvanceLimit,
-      grossTotal,
-      monthlySalary: ss.monthlySalary || grossTotal,
-      grossSalary: ss.grossSalary || grossTotal,
       updatedAt: ss.updatedAt,
     };
 
     res.json({
       success: true,
       data: payload,
-      basicSalary,
-      hra,
-      medical,
-      travel,
-      special,
-      incentive,
-      bonus,
-      salaryAdvanceLimit,
-      grossTotal,
-      structure: ss
+      basicSalary: mapped.basicSalary,
+      hra: mapped.hra,
+      medical: mapped.medicalAllowance,
+      travel: mapped.travelAllowance,
+      special: mapped.specialAllowance,
+      incentive: mapped.incentive,
+      bonus: mapped.bonus,
+      salaryAdvanceLimit: mapped.salaryAdvanceLimit,
+      grossTotal: mapped.grossTotal,
+      structure: payload,
     });
   } catch (error) {
     console.error('Get my salary structure error:', error);
@@ -392,57 +355,37 @@ export const getSalaryStructureByEmployeeId = async (
       });
     }
 
-    const basicSalary = ss.basicSalary || 0;
-    const hra = ss.hra || 0;
-    const medical = ss.medicalAllowance || 0;
-    const travel = ss.travelAllowance || 0;
-    const special = ss.specialAllowance || 0;
-    const incentive = ss.incentive || 0;
-    const bonus = ss.bonus || 0;
-    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 0;
-    const calculatedSum = basicSalary + hra + medical + travel + special + incentive + bonus;
-    const grossTotal = ss.grossSalary || (calculatedSum > 0 ? calculatedSum : basicSalary);
-
+    const mapped = mapStructureGrossFields(ss);
     const payload = {
       id: ss.id,
       employeeId: emp.id,
       employeeCode: emp.employeeCode,
       employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-      basicSalary,
-      hra,
-      medical,
-      medicalAllowance: medical,
-      travel,
-      travelAllowance: travel,
-      special,
-      specialAllowance: special,
-      incentive,
-      bonus,
+      ...mapped,
+      medical: mapped.medicalAllowance,
+      travel: mapped.travelAllowance,
+      special: mapped.specialAllowance,
       pfEnabled: ss.pfEnabled,
       employeePfRate: ss.employeePfRate,
       employerPfRate: ss.employerPfRate,
       esicEnabled: ss.esicEnabled,
       employeeEsicRate: ss.employeeEsicRate,
       employerEsicRate: ss.employerEsicRate,
-      salaryAdvanceLimit,
-      grossTotal,
-      monthlySalary: ss.monthlySalary || grossTotal,
-      grossSalary: ss.grossSalary || grossTotal,
       updatedAt: ss.updatedAt,
     };
 
     res.json({
       success: true,
       data: payload,
-      basicSalary,
-      hra,
-      medical,
-      travel,
-      special,
-      incentive,
-      bonus,
-      salaryAdvanceLimit,
-      grossTotal,
+      basicSalary: mapped.basicSalary,
+      hra: mapped.hra,
+      medical: mapped.medicalAllowance,
+      travel: mapped.travelAllowance,
+      special: mapped.specialAllowance,
+      incentive: mapped.incentive,
+      bonus: mapped.bonus,
+      salaryAdvanceLimit: mapped.salaryAdvanceLimit,
+      grossTotal: mapped.grossTotal,
       structure: payload,
     });
   } catch (error) {
@@ -540,10 +483,17 @@ export const updateSalaryStructureById = async (
       ? (Number.isFinite(parseFloat(salaryAdvanceLimit)) ? parseFloat(salaryAdvanceLimit) : 0)
       : (currentSS?.salaryAdvanceLimit ?? 0);
 
-    const calcTotal = newBasic + newHra + newMedical + newTravel + newSpecial + newIncentive + newBonus;
-    const grossTotal = calcTotal > 0 ? calcTotal : (newBasic > 0 ? newBasic : 0);
+    const grossTotal = computeGrossSalary({
+      basicSalary: newBasic,
+      hra: newHra,
+      medicalAllowance: newMedical,
+      travelAllowance: newTravel,
+      specialAllowance: newSpecial,
+      incentive: newIncentive,
+      bonus: newBonus,
+    });
 
-    console.log(`[SalaryStructure Update] Component sum: Basic(${newBasic}) + HRA(${newHra}) + Med(${newMedical}) + Trv(${newTravel}) + Spc(${newSpecial}) + Inc(${newIncentive}) + Bns(${newBonus}) = ₹${calcTotal}`);
+    console.log(`[SalaryStructure Update] Component sum: Basic(${newBasic}) + HRA(${newHra}) + Med(${newMedical}) + Trv(${newTravel}) + Spc(${newSpecial}) + Inc(${newIncentive}) + Bns(${newBonus}) = ₹${grossTotal}`);
     console.log(`[SalaryStructure Update] Calculated Gross Total: ₹${grossTotal}`);
 
     const dataToUpdate: any = {
@@ -632,21 +582,18 @@ export const updateSalaryStructureById = async (
       travel: updatedStructure.travelAllowance,
       special: updatedStructure.specialAllowance,
       salaryAdvanceLimit: updatedStructure.salaryAdvanceLimit,
+      incentive: updatedStructure.incentive,
+      bonus: updatedStructure.bonus,
       grossTotal: updatedStructure.grossSalary,
       structure: {
         id: updatedStructure.id,
         employeeId: emp.id,
         employeeCode: emp.employeeCode,
         employeeName: `${emp.firstName} ${emp.lastName}`.trim(),
-        basicSalary: updatedStructure.basicSalary,
-        hra: updatedStructure.hra,
+        ...mapStructureGrossFields(updatedStructure),
         medical: updatedStructure.medicalAllowance,
         travel: updatedStructure.travelAllowance,
         special: updatedStructure.specialAllowance,
-        salaryAdvanceLimit: updatedStructure.salaryAdvanceLimit,
-        grossTotal: updatedStructure.grossSalary,
-        monthlySalary: updatedStructure.monthlySalary,
-        grossSalary: updatedStructure.grossSalary,
         updatedAt: updatedStructure.updatedAt,
       },
     });
