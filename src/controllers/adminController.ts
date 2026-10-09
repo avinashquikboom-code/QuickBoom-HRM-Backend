@@ -989,7 +989,12 @@ export const updateEmployee = async (
           : (ssInput.salaryAdvanceLimit !== undefined ? parseFloat(String(ssInput.salaryAdvanceLimit)) : (currentSS?.salaryAdvanceLimit || 25000));
 
         const pfEnabledVal = ssInput.pfEnabled !== undefined ? Boolean(ssInput.pfEnabled) : (currentSS?.pfEnabled ?? false);
+        const employeePfRateVal = ssInput.employeePfRate !== undefined ? parseFloat(String(ssInput.employeePfRate)) : (currentSS?.employeePfRate ?? 12.0);
+        const employerPfRateVal = ssInput.employerPfRate !== undefined ? parseFloat(String(ssInput.employerPfRate)) : (currentSS?.employerPfRate ?? 12.0);
+
         const esicEnabledVal = ssInput.esicEnabled !== undefined ? Boolean(ssInput.esicEnabled) : (currentSS?.esicEnabled ?? false);
+        const employeeEsicRateVal = ssInput.employeeEsicRate !== undefined ? parseFloat(String(ssInput.employeeEsicRate)) : (currentSS?.employeeEsicRate ?? 0.75);
+        const employerEsicRateVal = ssInput.employerEsicRate !== undefined ? parseFloat(String(ssInput.employerEsicRate)) : (currentSS?.employerEsicRate ?? 3.25);
 
         const savedSS = await prisma.salaryStructure.upsert({
           where: { employeeId },
@@ -1005,7 +1010,11 @@ export const updateEmployee = async (
             monthlySalary: grossVal,
             salaryAdvanceLimit: advanceLimitVal,
             pfEnabled: pfEnabledVal,
+            employeePfRate: employeePfRateVal,
+            employerPfRate: employerPfRateVal,
             esicEnabled: esicEnabledVal,
+            employeeEsicRate: employeeEsicRateVal,
+            employerEsicRate: employerEsicRateVal,
             updatedAt: new Date(),
           },
           create: {
@@ -1021,9 +1030,49 @@ export const updateEmployee = async (
             monthlySalary: grossVal,
             salaryAdvanceLimit: advanceLimitVal,
             pfEnabled: pfEnabledVal,
+            employeePfRate: employeePfRateVal,
+            employerPfRate: employerPfRateVal,
             esicEnabled: esicEnabledVal,
+            employeeEsicRate: employeeEsicRateVal,
+            employerEsicRate: employerEsicRateVal,
           },
         });
+
+        // Sync wallet advanceLimit
+        try {
+          await prisma.wallet.updateMany({
+            where: { employeeId },
+            data: { advanceLimit: advanceLimitVal },
+          });
+        } catch (wErr) {
+          console.warn('Wallet advanceLimit sync warning:', wErr);
+        }
+
+        // Re-calculate and update current month payslip so updated salary takes effect immediately
+        try {
+          const now = new Date();
+          const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+          const istDate = new Date(istTime);
+          const curMonth = istDate.getUTCMonth() + 1;
+          const curYear = istDate.getUTCFullYear();
+
+          const existingSlip = await prisma.payslip.findUnique({
+            where: {
+              employeeId_month_year: {
+                employeeId,
+                month: curMonth,
+                year: curYear,
+              },
+            },
+          });
+          if (existingSlip) {
+            const calc = await payrollService.calculatePayroll(employeeId, curMonth, curYear);
+            await payrollService.savePayslip(calc);
+            console.log(`[updateEmployee] Re-calculated payslip for employee #${employeeId} (${curMonth}/${curYear})`);
+          }
+        } catch (slipSyncErr) {
+          console.warn(`[updateEmployee] Failed to sync current month payslip for emp #${employeeId}:`, slipSyncErr);
+        }
 
         console.log(`[Edit Employee Salary] Updated salary structure for employee ${employeeId}:`, savedSS);
       } catch (ssErr) {
@@ -1649,13 +1698,34 @@ export const createEmployee = async (
       const esicEnabled = ssInput.esicEnabled === true;
       const employeeEsicRate = ssInput.employeeEsicRate !== undefined ? Number(ssInput.employeeEsicRate) : 0.75;
       const employerEsicRate = ssInput.employerEsicRate !== undefined ? Number(ssInput.employerEsicRate) : 3.25;
+      const salaryAdvanceLimit = ssInput.salaryAdvanceLimit !== undefined ? Number(ssInput.salaryAdvanceLimit) : 25000;
 
-      const calcMonthly = basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus;
-      const grossSalary = (calcMonthly === 0 && basicSalary > 0) ? basicSalary : calcMonthly;
+      const calcMonthly = Math.round((basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus) * 100) / 100;
+      const grossSalary = calcMonthly;
       const monthlySalary = grossSalary;
 
-      await prisma.salaryStructure.create({
-        data: {
+      await prisma.salaryStructure.upsert({
+        where: { employeeId: newEmployee.id },
+        update: {
+          monthlySalary,
+          grossSalary,
+          basicSalary,
+          hra,
+          medicalAllowance,
+          travelAllowance,
+          specialAllowance,
+          incentive,
+          bonus,
+          salaryAdvanceLimit,
+          pfEnabled,
+          employeePfRate,
+          employerPfRate,
+          esicEnabled,
+          employeeEsicRate,
+          employerEsicRate,
+          updatedAt: new Date(),
+        },
+        create: {
           employeeId: newEmployee.id,
           monthlySalary,
           grossSalary,
@@ -1666,17 +1736,62 @@ export const createEmployee = async (
           specialAllowance,
           incentive,
           bonus,
+          salaryAdvanceLimit,
           pfEnabled,
           employeePfRate,
           employerPfRate,
           esicEnabled,
           employeeEsicRate,
-          employerEsicRate
-        }
+          employerEsicRate,
+        },
       });
-      console.log(`✅ Salary structure created for employee ${newEmployee.id}`);
+
+      // Sync wallet advanceLimit
+      try {
+        await prisma.wallet.upsert({
+          where: { employeeId: newEmployee.id },
+          update: { advanceLimit: salaryAdvanceLimit },
+          create: {
+            employeeId: newEmployee.id,
+            advanceLimit: salaryAdvanceLimit,
+            availableBalance: 0,
+            pendingClaims: 0,
+            cardNumber: `HK-${newEmployee.employeeCode}-${(newEmployee.mobileNumber || '').slice(-4) || '0000'}`,
+          },
+        });
+      } catch (wErr) {
+        console.warn('Wallet advanceLimit sync warning on create:', wErr);
+      }
+
+      // Re-calculate and update current month payslip if exists
+      try {
+        const now = new Date();
+        const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+        const istDate = new Date(istTime);
+        const curMonth = istDate.getUTCMonth() + 1;
+        const curYear = istDate.getUTCFullYear();
+
+        const existingSlip = await prisma.payslip.findUnique({
+          where: {
+            employeeId_month_year: {
+              employeeId: newEmployee.id,
+              month: curMonth,
+              year: curYear,
+            },
+          },
+        });
+        if (existingSlip) {
+          const calc = await payrollService.calculatePayroll(newEmployee.id, curMonth, curYear);
+          await payrollService.savePayslip(calc);
+          console.log(`[createEmployee] Re-calculated payslip for employee #${newEmployee.id} (${curMonth}/${curYear})`);
+        }
+      } catch (slipSyncErr) {
+        console.warn(`[createEmployee] Failed to sync current month payslip for emp #${newEmployee.id}:`, slipSyncErr);
+      }
+
+      console.log(`✅ Salary structure upserted for employee ${newEmployee.id}`);
     } catch (salaryError) {
-      console.error('Failed to create salary structure for employee:', salaryError);
+      console.error('Failed to create/update salary structure for employee:', salaryError);
     }
 
     pushEmployeeToHopkidERP({

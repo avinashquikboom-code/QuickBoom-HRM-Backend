@@ -18,6 +18,7 @@ import {
   PROTECTED_SYSTEM_ACCOUNT_MESSAGES,
   ensureSuperAdminEmployee
 } from '../../utils/protectedAccounts';
+import payrollService from '../../services/payrollService';
 
 // ==========================================
 // HR Dashboard Stats
@@ -493,6 +494,25 @@ export const fetchHREmployees = async (
         esicEnabled: emp.salaryStructure?.esicEnabled || false,
         employeeEsicRate: emp.salaryStructure?.employeeEsicRate || 0.75,
         employerEsicRate: emp.salaryStructure?.employerEsicRate || 3.25,
+        salaryStructure: emp.salaryStructure ? {
+          id: emp.salaryStructure.id,
+          basicSalary: emp.salaryStructure.basicSalary,
+          grossSalary: emp.salaryStructure.grossSalary,
+          monthlySalary: emp.salaryStructure.monthlySalary,
+          hra: emp.salaryStructure.hra,
+          medicalAllowance: emp.salaryStructure.medicalAllowance,
+          travelAllowance: emp.salaryStructure.travelAllowance,
+          specialAllowance: emp.salaryStructure.specialAllowance,
+          incentive: emp.salaryStructure.incentive,
+          bonus: emp.salaryStructure.bonus,
+          salaryAdvanceLimit: emp.salaryStructure.salaryAdvanceLimit,
+          pfEnabled: emp.salaryStructure.pfEnabled,
+          employeePfRate: emp.salaryStructure.employeePfRate,
+          employerPfRate: emp.salaryStructure.employerPfRate,
+          esicEnabled: emp.salaryStructure.esicEnabled,
+          employeeEsicRate: emp.salaryStructure.employeeEsicRate,
+          employerEsicRate: emp.salaryStructure.employerEsicRate,
+        } : null,
         isActive: emp.user?.isActive ?? true,
         leaveCount: emp._count.leaveRequests,
         taskCount: emp._count.assignedTasks,
@@ -1854,27 +1874,112 @@ export const createHREmployee = async (
 
     // Auto-create initial SalaryStructure for the new employee
     try {
-      const basic = req.body.basicSalary ? parseFloat(req.body.basicSalary) : 10000;
-      const hra = req.body.hra ? parseFloat(req.body.hra) : 2000;
-      const med = req.body.medicalAllowance || req.body.medical ? parseFloat(req.body.medicalAllowance || req.body.medical) : 500;
-      const trav = req.body.travelAllowance || req.body.travel ? parseFloat(req.body.travelAllowance || req.body.travel) : 1000;
-      const spec = req.body.specialAllowance || req.body.special ? parseFloat(req.body.specialAllowance || req.body.special) : 0;
-      const gross = req.body.grossSalary ? parseFloat(req.body.grossSalary) : (basic + hra + med + trav + spec);
-      const advLimit = req.body.salaryAdvanceLimit ? parseFloat(req.body.salaryAdvanceLimit) : 25000;
+      const basic = req.body.basicSalary !== undefined ? parseFloat(String(req.body.basicSalary)) || 0 : 0;
+      const hra = req.body.hra !== undefined ? parseFloat(String(req.body.hra)) || 0 : 0;
+      const med = req.body.medicalAllowance !== undefined 
+        ? parseFloat(String(req.body.medicalAllowance)) || 0 
+        : (req.body.medical !== undefined ? parseFloat(String(req.body.medical)) || 0 : 0);
+      const trav = req.body.travelAllowance !== undefined 
+        ? parseFloat(String(req.body.travelAllowance)) || 0 
+        : (req.body.travel !== undefined ? parseFloat(String(req.body.travel)) || 0 : 0);
+      const spec = req.body.specialAllowance !== undefined 
+        ? parseFloat(String(req.body.specialAllowance)) || 0 
+        : (req.body.special !== undefined ? parseFloat(String(req.body.special)) || 0 : 0);
+      const inc = req.body.incentive !== undefined ? parseFloat(String(req.body.incentive)) || 0 : 0;
+      const bns = req.body.bonus !== undefined ? parseFloat(String(req.body.bonus)) || 0 : 0;
+      const gross = Math.round((basic + hra + med + trav + spec + inc + bns) * 100) / 100;
+      const advLimit = req.body.salaryAdvanceLimit ? parseFloat(String(req.body.salaryAdvanceLimit)) || 25000 : 25000;
+      const pfEnabled = req.body.pfEnabled === true;
+      const employeePfRate = req.body.employeePfRate ? parseFloat(String(req.body.employeePfRate)) || 12.0 : 12.0;
+      const employerPfRate = req.body.employerPfRate ? parseFloat(String(req.body.employerPfRate)) || 12.0 : 12.0;
+      const esicEnabled = req.body.esicEnabled === true;
+      const employeeEsicRate = req.body.employeeEsicRate ? parseFloat(String(req.body.employeeEsicRate)) || 0.75 : 0.75;
+      const employerEsicRate = req.body.employerEsicRate ? parseFloat(String(req.body.employerEsicRate)) || 3.25 : 3.25;
 
-      await prisma.salaryStructure.create({
-        data: {
+      await prisma.salaryStructure.upsert({
+        where: { employeeId: newEmployee.id },
+        update: {
+          basicSalary: basic,
+          hra,
+          medicalAllowance: med,
+          travelAllowance: trav,
+          specialAllowance: spec,
+          incentive: inc,
+          bonus: bns,
+          monthlySalary: gross,
+          grossSalary: gross,
+          salaryAdvanceLimit: advLimit,
+          pfEnabled,
+          employeePfRate,
+          employerPfRate,
+          esicEnabled,
+          employeeEsicRate,
+          employerEsicRate,
+          updatedAt: new Date(),
+        },
+        create: {
           employeeId: newEmployee.id,
           basicSalary: basic,
           hra,
           medicalAllowance: med,
           travelAllowance: trav,
           specialAllowance: spec,
+          incentive: inc,
+          bonus: bns,
           monthlySalary: gross,
           grossSalary: gross,
           salaryAdvanceLimit: advLimit,
+          pfEnabled,
+          employeePfRate,
+          employerPfRate,
+          esicEnabled,
+          employeeEsicRate,
+          employerEsicRate,
         }
       });
+
+      // Sync wallet advanceLimit
+      try {
+        await prisma.wallet.upsert({
+          where: { employeeId: newEmployee.id },
+          update: { advanceLimit: advLimit },
+          create: {
+            employeeId: newEmployee.id,
+            advanceLimit: advLimit,
+            availableBalance: 0,
+            pendingClaims: 0,
+            cardNumber: `HK-${newEmployee.employeeCode}-${(newEmployee.mobileNumber || '').slice(-4) || '0000'}`,
+          },
+        });
+      } catch (wErr) {
+        console.warn('Wallet advanceLimit sync warning on create:', wErr);
+      }
+
+      // Re-calculate and update current month payslip if exists
+      try {
+        const now = new Date();
+        const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+        const istDate = new Date(istTime);
+        const curMonth = istDate.getUTCMonth() + 1;
+        const curYear = istDate.getUTCFullYear();
+
+        const existingSlip = await prisma.payslip.findUnique({
+          where: {
+            employeeId_month_year: {
+              employeeId: newEmployee.id,
+              month: curMonth,
+              year: curYear,
+            },
+          },
+        });
+        if (existingSlip) {
+          const calc = await payrollService.calculatePayroll(newEmployee.id, curMonth, curYear);
+          await payrollService.savePayslip(calc);
+          console.log(`[createHREmployee] Re-calculated payslip for employee #${newEmployee.id} (${curMonth}/${curYear})`);
+        }
+      } catch (slipSyncErr) {
+        console.warn(`[createHREmployee] Failed to sync current month payslip for emp #${newEmployee.id}:`, slipSyncErr);
+      }
     } catch (sErr) {
       console.warn('[CREATE_EMPLOYEE] SalaryStructure creation warning (non-fatal):', sErr);
     }
@@ -2073,54 +2178,109 @@ export const updateHREmployee = async (
     }
 
     // Upsert Salary Structure if salary values are provided
-    if (basicSalary !== undefined || grossSalary !== undefined || hra !== undefined) {
-      const parsedBasic = basicSalary ? parseFloat(basicSalary) : 0;
-      const parsedGross = grossSalary ? parseFloat(grossSalary) : 0;
-      const parsedHra = hra ? parseFloat(hra) : 0;
-      const parsedMedical = medicalAllowance ? parseFloat(medicalAllowance) : 0;
-      const parsedTravel = travelAllowance ? parseFloat(travelAllowance) : 0;
-      const parsedSpecial = specialAllowance ? parseFloat(specialAllowance) : 0;
-      const parsedIncentive = incentive ? parseFloat(incentive) : 0;
-      const parsedBonus = bonus ? parseFloat(bonus) : 0;
+    const ssData = req.body.salaryStructure || {};
+    const hasSalaryUpdate = 
+      basicSalary !== undefined || 
+      grossSalary !== undefined || 
+      hra !== undefined || 
+      medicalAllowance !== undefined || 
+      travelAllowance !== undefined || 
+      specialAllowance !== undefined || 
+      incentive !== undefined || 
+      bonus !== undefined || 
+      pfEnabled !== undefined || 
+      esicEnabled !== undefined || 
+      req.body.salaryStructure !== undefined;
 
-      await prisma.salaryStructure.upsert({
-        where: { employeeId: employeeId },
-        update: {
-          basicSalary: parsedBasic,
-          grossSalary: parsedGross,
-          hra: parsedHra,
-          medicalAllowance: parsedMedical,
-          travelAllowance: parsedTravel,
-          specialAllowance: parsedSpecial,
-          incentive: parsedIncentive,
-          bonus: parsedBonus,
-          monthlySalary: parsedGross || parsedBasic,
-          pfEnabled: pfEnabled !== undefined ? Boolean(pfEnabled) : false,
-          employeePfRate: employeePfRate ? parseFloat(employeePfRate) : 12.0,
-          employerPfRate: employerPfRate ? parseFloat(employerPfRate) : 12.0,
-          esicEnabled: esicEnabled !== undefined ? Boolean(esicEnabled) : false,
-          employeeEsicRate: employeeEsicRate ? parseFloat(employeeEsicRate) : 0.75,
-          employerEsicRate: employerEsicRate ? parseFloat(employerEsicRate) : 3.25,
-        },
-        create: {
-          employeeId: employeeId,
-          basicSalary: parsedBasic,
-          grossSalary: parsedGross,
-          hra: parsedHra,
-          medicalAllowance: parsedMedical,
-          travelAllowance: parsedTravel,
-          specialAllowance: parsedSpecial,
-          incentive: parsedIncentive,
-          bonus: parsedBonus,
-          monthlySalary: parsedGross || parsedBasic,
-          pfEnabled: pfEnabled !== undefined ? Boolean(pfEnabled) : false,
-          employeePfRate: employeePfRate ? parseFloat(employeePfRate) : 12.0,
-          employerPfRate: employerPfRate ? parseFloat(employerPfRate) : 12.0,
-          esicEnabled: esicEnabled !== undefined ? Boolean(esicEnabled) : false,
-          employeeEsicRate: employeeEsicRate ? parseFloat(employeeEsicRate) : 0.75,
-          employerEsicRate: employerEsicRate ? parseFloat(employerEsicRate) : 3.25,
+    if (hasSalaryUpdate) {
+      try {
+        const currentSS = await prisma.salaryStructure.findUnique({
+          where: { employeeId: employeeId }
+        });
+
+        const parsedBasic = basicSalary !== undefined ? (parseFloat(basicSalary) || 0) : (ssData.basicSalary !== undefined ? (parseFloat(ssData.basicSalary) || 0) : (currentSS?.basicSalary ?? 0));
+        const parsedHra = hra !== undefined ? (parseFloat(hra) || 0) : (ssData.hra !== undefined ? (parseFloat(ssData.hra) || 0) : (currentSS?.hra ?? 0));
+        const parsedMedical = medicalAllowance !== undefined ? (parseFloat(medicalAllowance) || 0) : (ssData.medicalAllowance !== undefined ? (parseFloat(ssData.medicalAllowance) || 0) : (currentSS?.medicalAllowance ?? 0));
+        const parsedTravel = travelAllowance !== undefined ? (parseFloat(travelAllowance) || 0) : (ssData.travelAllowance !== undefined ? (parseFloat(ssData.travelAllowance) || 0) : (currentSS?.travelAllowance ?? 0));
+        const parsedSpecial = specialAllowance !== undefined ? (parseFloat(specialAllowance) || 0) : (ssData.specialAllowance !== undefined ? (parseFloat(ssData.specialAllowance) || 0) : (currentSS?.specialAllowance ?? 0));
+        const parsedIncentive = incentive !== undefined ? (parseFloat(incentive) || 0) : (ssData.incentive !== undefined ? (parseFloat(ssData.incentive) || 0) : (currentSS?.incentive ?? 0));
+        const parsedBonus = bonus !== undefined ? (parseFloat(bonus) || 0) : (ssData.bonus !== undefined ? (parseFloat(ssData.bonus) || 0) : (currentSS?.bonus ?? 0));
+
+        const calculatedGross = Number((parsedBasic + parsedHra + parsedMedical + parsedTravel + parsedSpecial + parsedIncentive + parsedBonus).toFixed(2));
+        const parsedGross = grossSalary !== undefined ? (parseFloat(grossSalary) || calculatedGross) : (ssData.grossSalary !== undefined ? (parseFloat(ssData.grossSalary) || calculatedGross) : (calculatedGross || currentSS?.grossSalary || 0));
+
+        const resolvedPfEnabled = pfEnabled !== undefined ? Boolean(pfEnabled) : (ssData.pfEnabled !== undefined ? Boolean(ssData.pfEnabled) : (currentSS?.pfEnabled ?? false));
+        const resolvedEmployeePfRate = employeePfRate !== undefined ? (parseFloat(employeePfRate) || 0) : (ssData.employeePfRate !== undefined ? (parseFloat(ssData.employeePfRate) || 0) : (currentSS?.employeePfRate ?? 12.0));
+        const resolvedEmployerPfRate = employerPfRate !== undefined ? (parseFloat(employerPfRate) || 0) : (ssData.employerPfRate !== undefined ? (parseFloat(ssData.employerPfRate) || 0) : (currentSS?.employerPfRate ?? 12.0));
+
+        const resolvedEsicEnabled = esicEnabled !== undefined ? Boolean(esicEnabled) : (ssData.esicEnabled !== undefined ? Boolean(ssData.esicEnabled) : (currentSS?.esicEnabled ?? false));
+        const resolvedEmployeeEsicRate = employeeEsicRate !== undefined ? (parseFloat(employeeEsicRate) || 0) : (ssData.employeeEsicRate !== undefined ? (parseFloat(ssData.employeeEsicRate) || 0) : (currentSS?.employeeEsicRate ?? 0.75));
+        const resolvedEmployerEsicRate = employerEsicRate !== undefined ? (parseFloat(employerEsicRate) || 0) : (ssData.employerEsicRate !== undefined ? (parseFloat(ssData.employerEsicRate) || 0) : (currentSS?.employerEsicRate ?? 3.25));
+
+        await prisma.salaryStructure.upsert({
+          where: { employeeId: employeeId },
+          update: {
+            basicSalary: parsedBasic,
+            grossSalary: parsedGross,
+            hra: parsedHra,
+            medicalAllowance: parsedMedical,
+            travelAllowance: parsedTravel,
+            specialAllowance: parsedSpecial,
+            incentive: parsedIncentive,
+            bonus: parsedBonus,
+            monthlySalary: parsedGross || parsedBasic,
+            pfEnabled: resolvedPfEnabled,
+            employeePfRate: resolvedEmployeePfRate,
+            employerPfRate: resolvedEmployerPfRate,
+            esicEnabled: resolvedEsicEnabled,
+            employeeEsicRate: resolvedEmployeeEsicRate,
+            employerEsicRate: resolvedEmployerEsicRate,
+          },
+          create: {
+            employeeId: employeeId,
+            basicSalary: parsedBasic,
+            grossSalary: parsedGross,
+            hra: parsedHra,
+            medicalAllowance: parsedMedical,
+            travelAllowance: parsedTravel,
+            specialAllowance: parsedSpecial,
+            incentive: parsedIncentive,
+            bonus: parsedBonus,
+            monthlySalary: parsedGross || parsedBasic,
+            pfEnabled: resolvedPfEnabled,
+            employeePfRate: resolvedEmployeePfRate,
+            employerPfRate: resolvedEmployerPfRate,
+            esicEnabled: resolvedEsicEnabled,
+            employeeEsicRate: resolvedEmployeeEsicRate,
+            employerEsicRate: resolvedEmployerEsicRate,
+          }
+        });
+
+        // Re-sync current month's payslip if one exists
+        try {
+          const now = new Date();
+          const curMonth = now.getMonth() + 1;
+          const curYear = now.getFullYear();
+          const existingSlip = await prisma.payslip.findUnique({
+            where: {
+              employeeId_month_year: {
+                employeeId,
+                month: curMonth,
+                year: curYear,
+              },
+            },
+          });
+          if (existingSlip) {
+            const calc = await payrollService.calculatePayroll(employeeId, curMonth, curYear);
+            await payrollService.savePayslip(calc);
+            console.log(`[updateHREmployee] Re-calculated payslip for employee #${employeeId} (${curMonth}/${curYear})`);
+          }
+        } catch (slipSyncErr) {
+          console.warn(`[updateHREmployee] Failed to sync current month payslip for emp #${employeeId}:`, slipSyncErr);
         }
-      });
+      } catch (ssErr) {
+        console.error('Failed to update salary structure in updateHREmployee:', ssErr);
+      }
     }
 
     // Update profile & user with new fields

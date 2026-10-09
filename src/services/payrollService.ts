@@ -633,6 +633,8 @@ class PayrollService {
           medicalAllowance,
           travelAllowance,
           specialAllowance,
+          incentive,
+          bonus,
           grossSalary,
           monthlySalary: grossSalary,
         }

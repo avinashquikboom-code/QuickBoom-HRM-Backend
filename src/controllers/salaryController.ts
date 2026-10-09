@@ -289,13 +289,16 @@ export const getMySalaryStructure = async (
       });
     }
 
-    const basicSalary = ss.basicSalary;
-    const hra = ss.hra;
-    const medical = ss.medicalAllowance;
-    const travel = ss.travelAllowance;
-    const special = ss.specialAllowance;
-    const salaryAdvanceLimit = ss.salaryAdvanceLimit;
-    const grossTotal = ss.grossSalary || (basicSalary + hra + medical + travel + special);
+    const basicSalary = ss.basicSalary || 0;
+    const hra = ss.hra || 0;
+    const medical = ss.medicalAllowance || 0;
+    const travel = ss.travelAllowance || 0;
+    const special = ss.specialAllowance || 0;
+    const incentive = ss.incentive || 0;
+    const bonus = ss.bonus || 0;
+    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 25000;
+    const calculatedSum = basicSalary + hra + medical + travel + special + incentive + bonus;
+    const grossTotal = ss.grossSalary || (calculatedSum > 0 ? calculatedSum : basicSalary);
 
     const payload = {
       id: ss.id,
@@ -310,6 +313,14 @@ export const getMySalaryStructure = async (
       travelAllowance: travel,
       special,
       specialAllowance: special,
+      incentive,
+      bonus,
+      pfEnabled: ss.pfEnabled,
+      employeePfRate: ss.employeePfRate,
+      employerPfRate: ss.employerPfRate,
+      esicEnabled: ss.esicEnabled,
+      employeeEsicRate: ss.employeeEsicRate,
+      employerEsicRate: ss.employerEsicRate,
       salaryAdvanceLimit,
       grossTotal,
       monthlySalary: ss.monthlySalary || grossTotal,
@@ -325,6 +336,8 @@ export const getMySalaryStructure = async (
       medical,
       travel,
       special,
+      incentive,
+      bonus,
       salaryAdvanceLimit,
       grossTotal,
       structure: ss
@@ -379,13 +392,16 @@ export const getSalaryStructureByEmployeeId = async (
       });
     }
 
-    const basicSalary = ss.basicSalary;
-    const hra = ss.hra;
-    const medical = ss.medicalAllowance;
-    const travel = ss.travelAllowance;
-    const special = ss.specialAllowance;
-    const salaryAdvanceLimit = ss.salaryAdvanceLimit;
-    const grossTotal = ss.grossSalary || (basicSalary + hra + medical + travel + special);
+    const basicSalary = ss.basicSalary || 0;
+    const hra = ss.hra || 0;
+    const medical = ss.medicalAllowance || 0;
+    const travel = ss.travelAllowance || 0;
+    const special = ss.specialAllowance || 0;
+    const incentive = ss.incentive || 0;
+    const bonus = ss.bonus || 0;
+    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 25000;
+    const calculatedSum = basicSalary + hra + medical + travel + special + incentive + bonus;
+    const grossTotal = ss.grossSalary || (calculatedSum > 0 ? calculatedSum : basicSalary);
 
     const payload = {
       id: ss.id,
@@ -400,6 +416,14 @@ export const getSalaryStructureByEmployeeId = async (
       travelAllowance: travel,
       special,
       specialAllowance: special,
+      incentive,
+      bonus,
+      pfEnabled: ss.pfEnabled,
+      employeePfRate: ss.employeePfRate,
+      employerPfRate: ss.employerPfRate,
+      esicEnabled: ss.esicEnabled,
+      employeeEsicRate: ss.employeeEsicRate,
+      employerEsicRate: ss.employerEsicRate,
       salaryAdvanceLimit,
       grossTotal,
       monthlySalary: ss.monthlySalary || grossTotal,
@@ -415,6 +439,8 @@ export const getSalaryStructureByEmployeeId = async (
       medical,
       travel,
       special,
+      incentive,
+      bonus,
       salaryAdvanceLimit,
       grossTotal,
       structure: payload,
