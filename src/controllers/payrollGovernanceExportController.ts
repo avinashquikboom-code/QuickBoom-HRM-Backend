@@ -23,11 +23,11 @@ export const exportPayrollGovernance = async (
       return;
     }
 
-    const formatRaw = String(req.query.format || 'xlsx').toLowerCase();
+    const formatRaw = String(req.query.format || 'pdf').toLowerCase();
     if (!isPayrollExportFormat(formatRaw)) {
       res.status(400).json({
         success: false,
-        message: 'Invalid format. Use xlsx, csv, or pdf.',
+        message: 'Invalid format. Payroll governance export is available as PDF only.',
       });
       return;
     }
@@ -36,10 +36,7 @@ export const exportPayrollGovernance = async (
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
     const advanceStatus = typeof req.query.advanceStatus === 'string' ? req.query.advanceStatus : undefined;
 
-    const file = await generatePayrollGovernanceFile(
-      { month, search, advanceStatus },
-      formatRaw
-    );
+    const file = await generatePayrollGovernanceFile({ month, search, advanceStatus });
 
     res.setHeader('Content-Type', file.contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);

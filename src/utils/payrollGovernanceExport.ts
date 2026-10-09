@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs';
 import { prisma } from './db';
 import { getIstMonthRange } from './commissionHelper';
 import { mapStructureGrossFields } from './salaryGross';
@@ -7,7 +6,8 @@ import payrollService from '../services/payrollService';
 const PdfPrinter = require('pdfmake');
 
 export const PAYROLL_EXPORT_ROLES = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'] as const;
-export const PAYROLL_EXPORT_FORMATS = ['xlsx', 'csv', 'pdf'] as const;
+export const PAYROLL_EXPORT_FORMATS = ['pdf'] as const;
+export const COMPANY_NAME = 'HopKid';
 
 export type PayrollExportFormat = (typeof PAYROLL_EXPORT_FORMATS)[number];
 
@@ -31,6 +31,7 @@ type TableSheet = { name: string; headers: string[]; rows: Array<Array<string | 
 
 export type PayrollGovernanceExportData = {
   cycle: PayrollCycle;
+  generatedOn: string;
   filenameBase: string;
   summary: SummaryRow[];
   structures: TableSheet;
@@ -38,8 +39,6 @@ export type PayrollGovernanceExportData = {
   advances: TableSheet;
   expenses: TableSheet;
 };
-
-const INR_EXCEL_FORMAT = '"₹"#,##0.00';
 
 export function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -84,7 +83,7 @@ export function parsePayrollCycle(monthQuery?: string): PayrollCycle {
   };
 }
 
-export function payrollExportFilename(cycle: PayrollCycle, format: PayrollExportFormat): string {
+export function payrollExportFilename(cycle: PayrollCycle, format: PayrollExportFormat = 'pdf'): string {
   const stamp = cycle.monthLabel.replace(/\s+/g, '_');
   return `Payroll_Governance_${stamp}.${format}`;
 }
@@ -116,43 +115,6 @@ export function formatExportDate(value: Date | string | null | undefined): strin
   return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function csvEscape(value: string | number): string {
-  const text = String(value ?? '');
-  if (/[",\n\r]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
-export function buildCsvDocument(data: PayrollGovernanceExportData): string {
-  const sections: string[] = [];
-
-  const pushSheet = (title: string, sheet: TableSheet) => {
-    const lines = [title, sheet.headers.map(csvEscape).join(',')];
-    if (sheet.rows.length === 0) {
-      lines.push('No records for this payroll cycle and filter.');
-    } else {
-      for (const row of sheet.rows) {
-        lines.push(row.map(csvEscape).join(','));
-      }
-    }
-    sections.push(lines.join('\r\n'));
-  };
-
-  const summaryLines = [
-    'Payroll Summary',
-    ['Metric', 'Value'].map(csvEscape).join(','),
-    ...data.summary.map((row) => [row.metric, row.value].map(csvEscape).join(',')),
-  ];
-  sections.push(summaryLines.join('\r\n'));
-  pushSheet('Salary Structure & Components', data.structures);
-  pushSheet('Employee Payslips', data.payslips);
-  pushSheet('Salary Advances & EMI Governance', data.advances);
-  pushSheet('Expense Claims & History', data.expenses);
-
-  return `\uFEFF${sections.join('\r\n\r\n')}`;
-}
-
 export function buildPayrollSummary(input: {
   cycleLabel: string;
   employeeCount: number;
@@ -162,22 +124,15 @@ export function buildPayrollSummary(input: {
   totalDisbursed: number;
   pendingCount: number;
   pendingAmount: number;
-  advanceCount: number;
-  advanceRequested: number;
-  advanceOutstanding: number;
 }): SummaryRow[] {
   return [
-    { metric: 'Payroll cycle', value: input.cycleLabel },
+    { metric: 'Payroll month', value: input.cycleLabel },
     { metric: 'Total employees', value: String(input.employeeCount) },
-    { metric: 'Total gross salary', value: formatInr(input.totalGross) },
+    { metric: 'Gross salary', value: formatInr(input.totalGross) },
     { metric: 'Total deductions', value: formatInr(input.totalDeductions) },
-    { metric: 'Total net salary', value: formatInr(input.totalNet) },
+    { metric: 'Net salary', value: formatInr(input.totalNet) },
     { metric: 'Total disbursed', value: formatInr(input.totalDisbursed) },
-    { metric: 'Pending salary payments (count)', value: String(input.pendingCount) },
-    { metric: 'Pending salary payments (amount)', value: formatInr(input.pendingAmount) },
-    { metric: 'Salary advances (count)', value: String(input.advanceCount) },
-    { metric: 'Salary advances requested', value: formatInr(input.advanceRequested) },
-    { metric: 'Salary advances outstanding', value: formatInr(input.advanceOutstanding) },
+    { metric: 'Pending payments', value: `${input.pendingCount} (${formatInr(input.pendingAmount)})` },
   ];
 }
 
@@ -227,58 +182,35 @@ export async function loadPayrollGovernanceExportData(
   for (const view of filteredViews) {
     const slip = slips.find((s) => s.employeeId === view.employeeId);
     const ss = slip?.employee?.salaryStructure;
-    if (!ss) continue;
-    const mapped = mapStructureGrossFields(ss);
-    const pfAmount = ss.pfEnabled ? round2(mapped.basicSalary * (ss.employeePfRate / 100)) : 0;
-    const esicAmount = ss.esicEnabled ? round2(mapped.grossSalary * (ss.employeeEsicRate / 100)) : 0;
+    const mapped = ss ? mapStructureGrossFields(ss) : null;
+    const bonus = mapped ? mapped.incentive + mapped.bonus : num(view.incentive) + num(view.bonus);
+    const gross = mapped ? mapped.grossSalary : num(view.grossEarnings ?? view.grossSalary);
+    const deductions = num(view.totalDeductions ?? view.deductions);
+    const net = num(view.netSalary);
     structureRows.push([
       slip?.employee?.employeeCode || view.employeeCode || '',
       view.employeeName || '',
-      view.designation || slip?.employee?.designation || '',
-      mapped.basicSalary,
-      mapped.hra,
-      mapped.medicalAllowance,
-      mapped.travelAllowance,
-      mapped.specialAllowance,
-      mapped.incentive,
-      mapped.bonus,
-      mapped.grossSalary,
-      ss.pfEnabled ? pfAmount : 'Not applicable',
-      ss.esicEnabled ? esicAmount : 'Not applicable',
-      mapped.salaryAdvanceLimit,
+      mapped ? mapped.basicSalary : num(view.basicSalary ?? view.baseSalary),
+      mapped ? mapped.hra : num(view.hra),
+      mapped ? mapped.medicalAllowance : num(view.medicalAllowance),
+      mapped ? mapped.travelAllowance : num(view.travelAllowance),
+      mapped ? mapped.specialAllowance : num(view.specialAllowance),
+      bonus,
+      gross,
+      deductions,
+      net,
     ]);
   }
 
-  const payslipRows: Array<Array<string | number>> = filteredViews.map((view) => {
-    const extraPayout = num(view.extraHolidayPayout) + num(view.extraWeeklyOffPayout);
-    return [
-      view.employeeCode || '',
-      view.employeeName || '',
-      view.designation || '',
-      view.payPeriod || cycle.monthLabel,
-      num(view.basicSalary ?? view.baseSalary),
-      num(view.hra),
-      num(view.medicalAllowance),
-      num(view.travelAllowance),
-      num(view.specialAllowance),
-      num(view.incentive),
-      num(view.bonus),
-      extraPayout,
-      num(view.commissionEarned ?? view.commission),
-      num(view.grossEarnings ?? view.grossSalary),
-      num(view.pf),
-      num(view.esic),
-      num(view.advanceDeduction),
-      num(view.absentDeduction),
-      num(view.halfDayDeduction),
-      num(view.leaveDeduction),
-      num(view.otherDeductions),
-      num(view.totalDeductions ?? view.deductions),
-      num(view.netSalary),
-      view.paymentStatus || view.status || '',
-      '',
-    ];
-  });
+  const payslipRows: Array<Array<string | number>> = filteredViews.map((view) => [
+    view.employeeCode || '',
+    view.employeeName || '',
+    view.payPeriod || cycle.monthLabel,
+    num(view.grossEarnings ?? view.grossSalary),
+    num(view.totalDeductions ?? view.deductions),
+    num(view.netSalary),
+    view.paymentStatus || view.status || '',
+  ]);
 
   const advanceWhere: {
     requestedOn: { gte: Date; lte: Date };
@@ -409,9 +341,6 @@ export async function loadPayrollGovernanceExportData(
     }
   }
 
-  const advanceRequested = filteredAdvances.reduce((sum, adv) => sum + adv.amount, 0);
-  const advanceOutstanding = filteredAdvances.reduce((sum, adv) => sum + adv.remainingAmount, 0);
-
   const summary = buildPayrollSummary({
     cycleLabel: cycle.monthLabel,
     employeeCount: employeeIds.length || filteredViews.length,
@@ -421,75 +350,52 @@ export async function loadPayrollGovernanceExportData(
     totalDisbursed: round2(totalDisbursed),
     pendingCount,
     pendingAmount: round2(pendingAmount),
-    advanceCount: filteredAdvances.length,
-    advanceRequested: round2(advanceRequested),
-    advanceOutstanding: round2(advanceOutstanding),
+  });
+
+  const generatedOn = new Date().toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 
   return {
     cycle,
-    filenameBase: payrollExportFilename(cycle, 'xlsx').replace(/\.xlsx$/, ''),
+    generatedOn,
+    filenameBase: payrollExportFilename(cycle, 'pdf').replace(/\.pdf$/, ''),
     summary,
     structures: {
-      name: 'Salary Structure',
+      name: 'Employee Salary Structures',
       headers: [
-        'Employee Code',
+        'Code',
         'Employee Name',
-        'Designation',
-        'Basic Salary (₹)',
-        'HRA (₹)',
-        'Medical Allowance (₹)',
-        'Travel Allowance (₹)',
-        'Special Allowance (₹)',
-        'Incentive (₹)',
-        'Bonus (₹)',
-        'Gross Salary (₹)',
-        'PF (₹)',
-        'ESIC (₹)',
-        'Advance Limit (₹)',
+        'Basic',
+        'HRA',
+        'Medical',
+        'Travel',
+        'Special',
+        'Bonus',
+        'Gross',
+        'Deductions',
+        'Net',
       ],
       rows: structureRows,
     },
     payslips: {
-      name: 'Employee Payslips',
-      headers: [
-        'Employee Code',
-        'Employee Name',
-        'Designation',
-        'Pay Period',
-        'Basic Salary (₹)',
-        'HRA (₹)',
-        'Medical Allowance (₹)',
-        'Travel Allowance (₹)',
-        'Special Allowance (₹)',
-        'Incentive (₹)',
-        'Bonus (₹)',
-        'Extra Holiday/WO Payout (₹)',
-        'Commission (₹)',
-        'Gross Salary (₹)',
-        'PF (₹)',
-        'ESIC (₹)',
-        'Advance Deduction (₹)',
-        'Absent Deduction (₹)',
-        'Half Day Deduction (₹)',
-        'Leave Deduction (₹)',
-        'Other Deductions (₹)',
-        'Total Deductions (₹)',
-        'Net Salary (₹)',
-        'Payment Status',
-        'Disbursement Date',
-      ],
+      name: 'Payslip & Payment Status',
+      headers: ['Code', 'Employee Name', 'Pay Period', 'Gross', 'Deductions', 'Net', 'Payment Status'],
       rows: payslipRows,
     },
     advances: {
       name: 'Salary Advances',
       headers: [
-        'Employee Code',
+        'Code',
         'Employee',
-        'Advance Amount (₹)',
-        'Approved Amount (₹)',
-        'Outstanding Balance (₹)',
-        'EMI Amount (₹)',
+        'Advance Amount',
+        'Approved Amount',
+        'Outstanding',
+        'EMI',
         'Status',
         'Requested On',
       ],
@@ -497,69 +403,84 @@ export async function loadPayrollGovernanceExportData(
     },
     expenses: {
       name: 'Expense Claims',
-      headers: [
-        'Claim Reference',
-        'Employee Code',
-        'Employee',
-        'Amount (₹)',
-        'Approval Status',
-        'Payment Status',
-        'Claim Date',
-      ],
+      headers: ['Claim Ref', 'Code', 'Employee', 'Amount', 'Approval', 'Payment', 'Claim Date'],
       rows: expenseRows,
     },
   };
 }
 
-function addSheet(workbook: ExcelJS.Workbook, sheet: TableSheet, currencyCols: number[]): void {
-  const worksheet = workbook.addWorksheet(sheet.name);
-  worksheet.addRow(sheet.headers);
-  const header = worksheet.getRow(1);
-  header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D9488' } };
-  header.alignment = { vertical: 'middle', wrapText: true };
-
-  if (sheet.rows.length === 0) {
-    worksheet.addRow(['No records for this payroll cycle and filter.']);
-  } else {
-    for (const row of sheet.rows) {
-      const added = worksheet.addRow(row);
-      for (const col of currencyCols) {
-        const cell = added.getCell(col);
-        if (typeof cell.value === 'number') {
-          cell.numFmt = INR_EXCEL_FORMAT;
-        }
-      }
-    }
-  }
-
-  worksheet.columns.forEach((col, index) => {
-    const headerText = String(sheet.headers[index] || '');
-    col.width = Math.min(Math.max(headerText.length + 4, 14), 28);
-  });
+function headerCell(text: string) {
+  return {
+    text,
+    bold: true,
+    color: '#FFFFFF',
+    fontSize: 7,
+    alignment: 'center' as const,
+  };
 }
 
-export async function buildXlsxBuffer(data: PayrollGovernanceExportData): Promise<Buffer> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'HopKid HRM';
-  const summarySheet = workbook.addWorksheet('Payroll Summary');
-  summarySheet.addRow(['Metric', 'Value']);
-  const header = summarySheet.getRow(1);
-  header.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D9488' } };
-  for (const row of data.summary) {
-    summarySheet.addRow([row.metric, row.value]);
-  }
-  summarySheet.getColumn(1).width = 40;
-  summarySheet.getColumn(2).width = 28;
+function bodyCell(value: string | number, alignRight: boolean) {
+  const isMoney = typeof value === 'number';
+  return {
+    text: isMoney ? formatInr(value) : String(value ?? ''),
+    fontSize: 7,
+    alignment: (alignRight || isMoney ? 'right' : 'left') as 'left' | 'right',
+    noWrap: false,
+  };
+}
 
-  addSheet(workbook, data.structures, [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
-  addSheet(workbook, data.payslips, [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
-  addSheet(workbook, data.advances, [3, 4, 5, 6]);
-  addSheet(workbook, data.expenses, [4]);
+function tableLayout() {
+  return {
+    hLineWidth: () => 0.4,
+    vLineWidth: () => 0.25,
+    hLineColor: () => '#CBD5E1',
+    vLineColor: () => '#E2E8F0',
+    paddingLeft: () => 4,
+    paddingRight: () => 4,
+    paddingTop: () => 4,
+    paddingBottom: () => 4,
+    fillColor: (rowIndex: number) => {
+      if (rowIndex === 0) return '#0D9488';
+      return rowIndex % 2 === 0 ? '#F8FAFC' : null;
+    },
+  };
+}
 
-  const buffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(buffer);
+function buildSectionTable(sheet: TableSheet, moneyStartIndex: number) {
+  const header = sheet.headers.map(headerCell);
+  const body =
+    sheet.rows.length === 0
+      ? [
+          header,
+          [
+            {
+              text: 'No records for this payroll cycle and filter.',
+              colSpan: sheet.headers.length,
+              italics: true,
+              fontSize: 8,
+              color: '#64748B',
+              margin: [4, 8, 4, 8],
+            },
+            ...sheet.headers.slice(1).map(() => ({ text: '' })),
+          ],
+        ]
+      : [
+          header,
+          ...sheet.rows.map((row) =>
+            row.map((cell, index) => bodyCell(cell, index >= moneyStartIndex))
+          ),
+        ];
+
+  return {
+    table: {
+      headerRows: 1,
+      keepWithHeaderRows: 1,
+      dontBreakRows: true,
+      widths: sheet.headers.map(() => '*'),
+      body,
+    },
+    layout: tableLayout(),
+  };
 }
 
 export async function buildPdfBuffer(data: PayrollGovernanceExportData): Promise<Buffer> {
@@ -572,48 +493,104 @@ export async function buildPdfBuffer(data: PayrollGovernanceExportData): Promise
     },
   };
 
-  const table = (title: string, sheet: TableSheet) => {
-    const emptyRow = sheet.headers.map((_, index) =>
-      index === 0 ? 'No records for this payroll cycle and filter.' : ''
-    );
-    const body =
-      sheet.rows.length === 0
-        ? [sheet.headers, emptyRow]
-        : [sheet.headers, ...sheet.rows.map((row) => row.map((cell) => String(cell)))];
-    return [
-      { text: title, style: 'section', margin: [0, 12, 0, 6] },
-      {
-        table: { headerRows: 1, body },
-        layout: 'lightHorizontalLines',
-        fontSize: 7,
+  const summaryPairs: string[][] = [];
+  for (let i = 0; i < data.summary.length; i += 2) {
+    const left = data.summary[i];
+    const right = data.summary[i + 1];
+    summaryPairs.push([
+      `${left.metric}: ${left.value}`,
+      right ? `${right.metric}: ${right.value}` : '',
+    ]);
+  }
+
+  const content: object[] = [
+    {
+      columns: [
+        {
+          stack: [
+            { text: COMPANY_NAME, style: 'company' },
+            { text: 'Payroll Governance Report', style: 'header' },
+            { text: `Payroll cycle: ${data.cycle.monthLabel}`, style: 'sub' },
+          ],
+        },
+        {
+          stack: [
+            { text: 'Confidential', alignment: 'right', fontSize: 8, color: '#0F766E', bold: true },
+            { text: `Generated: ${data.generatedOn}`, alignment: 'right', style: 'sub' },
+            { text: 'Amounts in INR (₹)', alignment: 'right', style: 'sub' },
+          ],
+        },
+      ],
+      margin: [0, 0, 0, 10],
+    },
+    {
+      canvas: [{ type: 'line', x1: 0, y1: 0, x2: 760, y2: 0, lineWidth: 1.5, lineColor: '#0D9488' }],
+      margin: [0, 0, 0, 12],
+    },
+    { text: 'Payroll Summary', style: 'section', margin: [0, 0, 0, 6] },
+    {
+      table: {
+        widths: ['*', '*'],
+        body: summaryPairs.map((pair) => [
+          { text: pair[0], fontSize: 8, fillColor: '#F0FDFA', margin: [6, 5, 6, 5] },
+          { text: pair[1], fontSize: 8, fillColor: '#F0FDFA', margin: [6, 5, 6, 5] },
+        ]),
       },
-    ];
-  };
+      layout: 'noBorders',
+      margin: [0, 0, 0, 10],
+    },
+    { text: 'Employee Salary Structures', style: 'section', margin: [0, 8, 0, 6] },
+    buildSectionTable(data.structures, 2),
+    { text: 'Payslip & Payment Status', style: 'section', margin: [0, 14, 0, 6], pageBreak: 'before' as const },
+    buildSectionTable(data.payslips, 3),
+  ];
+
+  if (data.advances.rows.length > 0) {
+    content.push(
+      { text: 'Salary Advances & EMI', style: 'section', margin: [0, 14, 0, 6], pageBreak: 'before' as const },
+      buildSectionTable(data.advances, 2)
+    );
+  }
+  if (data.expenses.rows.length > 0) {
+    content.push(
+      { text: 'Expense Claims', style: 'section', margin: [0, 14, 0, 6], pageBreak: 'before' as const },
+      buildSectionTable(data.expenses, 3)
+    );
+  }
 
   const docDefinition = {
     pageOrientation: 'landscape' as const,
     pageSize: 'A4' as const,
-    content: [
-      { text: `Payroll Governance — ${data.cycle.monthLabel}`, style: 'header' },
-      { text: 'Generated from persisted payroll records. Amounts in INR (₹).', style: 'sub', margin: [0, 0, 0, 8] },
-      { text: 'Payroll Summary', style: 'section', margin: [0, 4, 0, 6] },
-      {
-        table: {
-          headerRows: 1,
-          widths: ['*', '*'],
-          body: [['Metric', 'Value'], ...data.summary.map((row) => [row.metric, row.value])],
+    pageMargins: [28, 36, 28, 42],
+    info: {
+      title: 'Payroll Governance Report',
+      author: COMPANY_NAME,
+      subject: `Payroll cycle ${data.cycle.monthLabel}`,
+      creator: `${COMPANY_NAME} HRM`,
+    },
+    footer: (currentPage: number, pageCount: number) => ({
+      columns: [
+        {
+          text: `${COMPANY_NAME}  •  Payroll Governance Report  •  ${data.cycle.monthLabel}`,
+          fontSize: 8,
+          color: '#64748B',
+          alignment: 'left' as const,
         },
-        layout: 'lightHorizontalLines',
-      },
-      ...table('Salary Structure & Components', data.structures),
-      ...table('Employee Payslips', data.payslips),
-      ...table('Salary Advances & EMI Governance', data.advances),
-      ...table('Expense Claims & History', data.expenses),
-    ],
+        {
+          text: `Page ${currentPage} of ${pageCount}`,
+          fontSize: 8,
+          color: '#64748B',
+          alignment: 'right' as const,
+        },
+      ],
+      margin: [28, 8, 28, 0],
+    }),
+    content,
     styles: {
-      header: { fontSize: 16, bold: true, color: '#0f766e' },
-      sub: { fontSize: 9, color: '#475569' },
-      section: { fontSize: 11, bold: true, color: '#0f766e' },
+      company: { fontSize: 11, bold: true, color: '#0F766E', characterSpacing: 1.2 },
+      header: { fontSize: 16, bold: true, color: '#0F172A', margin: [0, 2, 0, 2] },
+      sub: { fontSize: 8, color: '#475569' },
+      section: { fontSize: 11, bold: true, color: '#0F766E' },
     },
     defaultStyle: { fontSize: 8 },
   };
@@ -630,28 +607,11 @@ export async function buildPdfBuffer(data: PayrollGovernanceExportData): Promise
 }
 
 export async function generatePayrollGovernanceFile(
-  query: PayrollExportQuery,
-  format: PayrollExportFormat
+  query: PayrollExportQuery
 ): Promise<{ filename: string; contentType: string; buffer: Buffer }> {
   const data = await loadPayrollGovernanceExportData(query);
-  const filename = payrollExportFilename(data.cycle, format);
-
-  if (format === 'xlsx') {
-    return {
-      filename,
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      buffer: await buildXlsxBuffer(data),
-    };
-  }
-  if (format === 'csv') {
-    return {
-      filename,
-      contentType: 'text/csv; charset=utf-8',
-      buffer: Buffer.from(buildCsvDocument(data), 'utf8'),
-    };
-  }
   return {
-    filename,
+    filename: payrollExportFilename(data.cycle, 'pdf'),
     contentType: 'application/pdf',
     buffer: await buildPdfBuffer(data),
   };
