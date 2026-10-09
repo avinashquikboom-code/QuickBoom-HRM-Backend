@@ -109,7 +109,7 @@ export const getSalarySlip = async (
 
     const salaryAdvanceLimit = ss?.salaryAdvanceLimit !== undefined && ss?.salaryAdvanceLimit !== null
       ? ss.salaryAdvanceLimit
-      : 25000;
+      : 0;
 
     const activeAdvances = await prisma.salaryAdvance.findMany({
       where: {
@@ -228,7 +228,7 @@ export const getSalaryStructureList = async (
         medicalAllowance: medical,
         travelAllowance: travel,
         specialAllowance: special,
-        salaryAdvanceLimit: ss?.salaryAdvanceLimit ?? 25000,
+        salaryAdvanceLimit: ss?.salaryAdvanceLimit ?? 0,
         grossTotal: grossTotal,
         incentive: incentive,
         bonus: bonus,
@@ -284,7 +284,7 @@ export const getMySalaryStructure = async (
           specialAllowance: 0,
           monthlySalary: 13500,
           grossSalary: 13500,
-          salaryAdvanceLimit: 25000,
+          salaryAdvanceLimit: 0,
         }
       });
     }
@@ -296,7 +296,7 @@ export const getMySalaryStructure = async (
     const special = ss.specialAllowance || 0;
     const incentive = ss.incentive || 0;
     const bonus = ss.bonus || 0;
-    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 25000;
+    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 0;
     const calculatedSum = basicSalary + hra + medical + travel + special + incentive + bonus;
     const grossTotal = ss.grossSalary || (calculatedSum > 0 ? calculatedSum : basicSalary);
 
@@ -387,7 +387,7 @@ export const getSalaryStructureByEmployeeId = async (
           specialAllowance: 0,
           monthlySalary: 13500,
           grossSalary: 13500,
-          salaryAdvanceLimit: 25000,
+          salaryAdvanceLimit: 0,
         }
       });
     }
@@ -399,7 +399,7 @@ export const getSalaryStructureByEmployeeId = async (
     const special = ss.specialAllowance || 0;
     const incentive = ss.incentive || 0;
     const bonus = ss.bonus || 0;
-    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 25000;
+    const salaryAdvanceLimit = ss.salaryAdvanceLimit ?? 0;
     const calculatedSum = basicSalary + hra + medical + travel + special + incentive + bonus;
     const grossTotal = ss.grossSalary || (calculatedSum > 0 ? calculatedSum : basicSalary);
 
@@ -536,7 +536,9 @@ export const updateSalaryStructureById = async (
     const newSpecial = (special !== undefined ? parseFloat(special) : undefined) ?? (specialAllowance !== undefined ? parseFloat(specialAllowance) : (currentSS?.specialAllowance || 0));
     const newIncentive = incentive !== undefined ? parseFloat(incentive) : (currentSS?.incentive || 0);
     const newBonus = bonus !== undefined ? parseFloat(bonus) : (currentSS?.bonus || 0);
-    const newAdvanceLimit = salaryAdvanceLimit !== undefined ? parseFloat(salaryAdvanceLimit) : (currentSS?.salaryAdvanceLimit || 25000);
+    const newAdvanceLimit = salaryAdvanceLimit !== undefined && salaryAdvanceLimit !== null && salaryAdvanceLimit !== ''
+      ? (Number.isFinite(parseFloat(salaryAdvanceLimit)) ? parseFloat(salaryAdvanceLimit) : 0)
+      : (currentSS?.salaryAdvanceLimit ?? 0);
 
     const calcTotal = newBasic + newHra + newMedical + newTravel + newSpecial + newIncentive + newBonus;
     const grossTotal = calcTotal > 0 ? calcTotal : (newBasic > 0 ? newBasic : 0);

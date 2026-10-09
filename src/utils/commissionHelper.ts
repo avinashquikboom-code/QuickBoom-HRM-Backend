@@ -1713,7 +1713,7 @@ export async function updateEmployeeWalletCommission(
         data: {
           employeeId,
           availableBalance: 0,
-          advanceLimit: 25000,
+          advanceLimit: 0,
           pendingClaims: 0,
           cardNumber: `QB-${empCode.replace(/\D/g, '')}-XXXX`,
           isActive: true

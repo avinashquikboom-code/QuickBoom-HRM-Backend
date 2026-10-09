@@ -545,7 +545,7 @@ class PayrollService {
             specialAllowance: 0,
             monthlySalary: 13500,
             grossSalary: 13500,
-            salaryAdvanceLimit: 25000,
+            salaryAdvanceLimit: 0,
           }
         });
       }

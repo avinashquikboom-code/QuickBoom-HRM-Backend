@@ -31,7 +31,7 @@ async function fix() {
           data: {
             employeeId: emp.id,
             availableBalance: 0,
-            advanceLimit: 25000,
+            advanceLimit: 0,
             pendingClaims: 0,
             cardNumber: `QB-${emp.employeeCode.replace(/\D/g, '')}-XXXX`,
             isActive: true,

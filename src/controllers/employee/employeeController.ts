@@ -1623,7 +1623,7 @@ export const fetchEmployeeWallet = async (
 
     const defaultLimit = salaryStructure?.salaryAdvanceLimit !== undefined && salaryStructure?.salaryAdvanceLimit !== null
       ? salaryStructure.salaryAdvanceLimit
-      : 25000;
+      : 0;
 
     // If wallet doesn't exist, create one
     if (!wallet) {

@@ -1356,7 +1356,7 @@ export const mobileRegister = async (req: Request, res: Response): Promise<void>
           specialAllowance: 0,
           monthlySalary: 13500,
           grossSalary: 13500,
-          salaryAdvanceLimit: 25000,
+          salaryAdvanceLimit: 0,
         }
       });
     } catch (sErr) {

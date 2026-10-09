@@ -59,7 +59,7 @@ async function fixWallets() {
           data: {
             employeeId: employee.id,
             availableBalance: 0,
-            advanceLimit: 25000,
+            advanceLimit: 0,
             pendingClaims: 0,
             cardNumber: `QB-${employee.employeeCode.replace(/\D/g, '')}-XXXX`,
             isActive: true,

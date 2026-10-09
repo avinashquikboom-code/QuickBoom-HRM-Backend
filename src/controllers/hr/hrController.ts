@@ -1888,7 +1888,11 @@ export const createHREmployee = async (
       const inc = req.body.incentive !== undefined ? parseFloat(String(req.body.incentive)) || 0 : 0;
       const bns = req.body.bonus !== undefined ? parseFloat(String(req.body.bonus)) || 0 : 0;
       const gross = Math.round((basic + hra + med + trav + spec + inc + bns) * 100) / 100;
-      const advLimit = req.body.salaryAdvanceLimit ? parseFloat(String(req.body.salaryAdvanceLimit)) || 25000 : 25000;
+      const advLimitRaw = req.body.salaryAdvanceLimit ?? req.body.advanceLimit;
+      const advLimit =
+        advLimitRaw === undefined || advLimitRaw === null || advLimitRaw === ''
+          ? 0
+          : (Number.isFinite(Number(advLimitRaw)) ? Number(advLimitRaw) : 0);
       const pfEnabled = req.body.pfEnabled === true;
       const employeePfRate = req.body.employeePfRate ? parseFloat(String(req.body.employeePfRate)) || 12.0 : 12.0;
       const employerPfRate = req.body.employerPfRate ? parseFloat(String(req.body.employerPfRate)) || 12.0 : 12.0;

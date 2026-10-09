@@ -984,9 +984,17 @@ export const updateEmployee = async (
         const totalCalc = basicVal + hraVal + medicalVal + travelVal + specialVal + incentiveVal + bonusVal;
         const grossVal = totalCalc > 0 ? totalCalc : (basicVal > 0 ? basicVal : 0);
 
-        const advanceLimitVal = (advanceLimit !== undefined && advanceLimit !== null && advanceLimit !== '')
-          ? parseFloat(String(advanceLimit))
-          : (ssInput.salaryAdvanceLimit !== undefined ? parseFloat(String(ssInput.salaryAdvanceLimit)) : (currentSS?.salaryAdvanceLimit || 25000));
+        const parseAdvanceLimit = (raw: unknown): number | undefined => {
+          if (raw === undefined || raw === null || raw === '') return undefined;
+          const n = Number(raw);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const parsedFromBody = parseAdvanceLimit(advanceLimit);
+        const parsedFromStructure = parseAdvanceLimit(ssInput.salaryAdvanceLimit);
+        const limitProvided = advanceLimit !== undefined || ssInput.salaryAdvanceLimit !== undefined;
+        const advanceLimitVal = limitProvided
+          ? (parsedFromBody ?? parsedFromStructure ?? 0)
+          : (currentSS?.salaryAdvanceLimit ?? 0);
 
         const pfEnabledVal = ssInput.pfEnabled !== undefined ? Boolean(ssInput.pfEnabled) : (currentSS?.pfEnabled ?? false);
         const employeePfRateVal = ssInput.employeePfRate !== undefined ? parseFloat(String(ssInput.employeePfRate)) : (currentSS?.employeePfRate ?? 12.0);
@@ -1698,7 +1706,11 @@ export const createEmployee = async (
       const esicEnabled = ssInput.esicEnabled === true;
       const employeeEsicRate = ssInput.employeeEsicRate !== undefined ? Number(ssInput.employeeEsicRate) : 0.75;
       const employerEsicRate = ssInput.employerEsicRate !== undefined ? Number(ssInput.employerEsicRate) : 3.25;
-      const salaryAdvanceLimit = ssInput.salaryAdvanceLimit !== undefined ? Number(ssInput.salaryAdvanceLimit) : 25000;
+      const salaryAdvanceLimitRaw = ssInput.salaryAdvanceLimit ?? req.body.advanceLimit;
+      const salaryAdvanceLimit =
+        salaryAdvanceLimitRaw === undefined || salaryAdvanceLimitRaw === null || salaryAdvanceLimitRaw === ''
+          ? 0
+          : (Number.isFinite(Number(salaryAdvanceLimitRaw)) ? Number(salaryAdvanceLimitRaw) : 0);
 
       const calcMonthly = Math.round((basicSalary + hra + medicalAllowance + travelAllowance + specialAllowance + incentive + bonus) * 100) / 100;
       const grossSalary = calcMonthly;
