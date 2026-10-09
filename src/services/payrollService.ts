@@ -130,6 +130,15 @@ class PayrollService {
 
       // Monthly & Base Salary
       const baseSalary = salaryStructure.baseSalary || 0;
+      const totalAllowance = Math.round((
+        (salaryStructure.hra || 0) +
+        (salaryStructure.medical || 0) +
+        (salaryStructure.conveyance || 0) +
+        (salaryStructure.special || 0) +
+        (salaryStructure.incentive || 0) +
+        (salaryStructure.bonus || 0)
+      ) * 100) / 100;
+
       const monthlySalary =
         computeGrossSalary({
           basicSalary: salaryStructure.baseSalary,
@@ -139,7 +148,7 @@ class PayrollService {
           specialAllowance: salaryStructure.special,
           incentive: salaryStructure.incentive,
           bonus: salaryStructure.bonus,
-        }) || 12000;
+        }) || (baseSalary + totalAllowance) || 12000;
 
       // Get attendance breakdown data for the month
       const attendanceData = await this.getAttendanceData(employeeId, month, year, employee.office);
