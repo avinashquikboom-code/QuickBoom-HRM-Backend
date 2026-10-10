@@ -127,8 +127,8 @@ function run() {
     reimbursements: 200,
     commissionEarned: 500,
   });
-  check('reimbursements stay outside net salary', withReimb.netSalary === 14636.36);
-  check('take-home adds commission and reimbursements once', withReimb.totalTakeHomePay === 15336.36);
+  check('approved reimbursements are included in net once', withReimb.netSalary === 14836.36);
+  check('take-home is net plus commission only', withReimb.totalTakeHomePay === 15336.36);
 
   console.log(`salaryGross tests: ${passed}/${total} passed`);
 }

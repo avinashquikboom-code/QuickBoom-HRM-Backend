@@ -9,6 +9,7 @@
     "build": "node -e \"require('fs').rmSync('dist', {recursive: true, force: true})\" && tsc",
     "postinstall": "prisma generate",
     "test:salary-gross": "npx ts-node --transpile-only scripts/test_salary_gross.ts",
+    "test:payroll-settlement": "npx ts-node --transpile-only scripts/test_payroll_settlement.ts",
     "test:salary-sync": "npx ts-node --transpile-only scripts/test_salary_sync_e2e.ts",
     "test:payroll-export": "npx ts-node --transpile-only scripts/test_payroll_governance_export.ts"
   },

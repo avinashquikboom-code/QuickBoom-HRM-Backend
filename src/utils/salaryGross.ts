@@ -55,8 +55,16 @@ export function resolveApplicableGross(c: SalaryGrossComponents & {
   return stored;
 }
 
+export function money(value: number | null | undefined): number {
+  return Math.round(n(value) * 100) / 100;
+}
+
+export function normalizeDeduction(value: number | null | undefined): number {
+  return Math.abs(money(value));
+}
+
 export function netSalaryFromGross(gross: number, totalDeductions: number): number {
-  const net = Math.round((n(gross) - n(totalDeductions)) * 100) / 100;
+  const net = money(money(gross) - normalizeDeduction(totalDeductions));
   return net > 0 ? net : 0;
 }
 
@@ -79,7 +87,8 @@ export type PayrollSettlement = {
  * Holiday / weekly-off payout is additional (stored separately) and is
  * added once into totalEarnings / net. It is not added if the caller
  * already folded it into baseGrossEarnings.
- * Commission and reimbursements stay outside net and apply to take-home.
+ * Approved reimbursements are part of net payable. Commission stays on
+ * take-home only (existing sales/Hopkid rule).
  */
 export function computePayrollSettlement(input: {
   baseGrossEarnings: number;
@@ -90,20 +99,17 @@ export function computePayrollSettlement(input: {
   reimbursements?: number | null;
   commissionEarned?: number | null;
 }): PayrollSettlement {
-  const baseGrossEarnings = Math.round(n(input.baseGrossEarnings) * 100) / 100;
-  const holidayWeeklyOffPay = Math.round(n(input.holidayWeeklyOffPay) * 100) / 100;
-  const additionalEarnings = Math.round(
-    (holidayWeeklyOffPay + n(input.overtime) + n(input.periodBonus)) * 100
-  ) / 100;
-  const totalEarnings = Math.round((baseGrossEarnings + additionalEarnings) * 100) / 100;
-  const totalDeductions = Math.round(n(input.totalDeductions) * 100) / 100;
-  const reimbursements = Math.round(n(input.reimbursements) * 100) / 100;
-  const commissionEarned = Math.round(n(input.commissionEarned) * 100) / 100;
-  const netSalary = Math.max(0, Math.round((totalEarnings - totalDeductions) * 100) / 100);
-  const totalTakeHomePay = Math.max(
-    0,
-    Math.round((netSalary + commissionEarned + reimbursements) * 100) / 100
+  const baseGrossEarnings = money(input.baseGrossEarnings);
+  const holidayWeeklyOffPay = money(input.holidayWeeklyOffPay);
+  const additionalEarnings = money(
+    holidayWeeklyOffPay + n(input.overtime) + n(input.periodBonus)
   );
+  const totalEarnings = money(baseGrossEarnings + additionalEarnings);
+  const totalDeductions = normalizeDeduction(input.totalDeductions);
+  const reimbursements = money(input.reimbursements);
+  const commissionEarned = money(input.commissionEarned);
+  const netSalary = Math.max(0, money(totalEarnings + reimbursements - totalDeductions));
+  const totalTakeHomePay = Math.max(0, money(netSalary + commissionEarned));
   return {
     baseGrossEarnings,
     holidayWeeklyOffPay,

@@ -1784,7 +1784,9 @@ class PayrollService {
     const netSalary = isFinalized && storedNet > 0 && !storedExcludesHoliday
       ? storedNet
       : settlement.netSalary;
-    const totalTakeHomePay = settlement.totalTakeHomePay;
+    const totalTakeHomePay = netSalary === settlement.netSalary
+      ? settlement.totalTakeHomePay
+      : Math.round((netSalary + commissionEarned) * 100) / 100;
     const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
 
     const empName = ps.employeeName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim();
