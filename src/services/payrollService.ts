@@ -2,7 +2,7 @@ import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from './payrollAutomationService';
-import { computeGrossSalary, mapStructureGrossFields, isCommissionEligibleEmployee, netSalaryFromGross } from '../utils/salaryGross';
+import { computeGrossSalary, mapStructureGrossFields, isCommissionEligibleEmployee, computePayrollSettlement } from '../utils/salaryGross';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -45,6 +45,9 @@ export interface PayrollCalculation {
   expenseCategories?: Record<string, number>;
   extraHolidayPayout: number;
   extraWeeklyOffPayout: number;
+  additionalEarnings?: number;
+  totalEarnings?: number;
+  holidayWeeklyOffPay?: number;
   commissionEarned: number;
   isCommissionEligible?: boolean;
   overtimeHours: number;
@@ -263,10 +266,15 @@ class PayrollService {
       // Total Deductions
       const totalDeductions = Math.round((statutoryDeductions + policyDeductions + absentDeduction + halfDayDeduction + unpaidLeaveDeduction + advanceDeduction) * 100) / 100;
 
-      const netSalary = netSalaryFromGross(grossSalary, totalDeductions);
-
-      // Total Take-Home Pay = Net Salary + Commission + Reimbursements
-      const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + approvedExpenses) * 100) / 100;
+      const settlement = computePayrollSettlement({
+        baseGrossEarnings: monthlySalary,
+        holidayWeeklyOffPay: extraHolidayPayout + extraWeeklyOffPayout,
+        totalDeductions,
+        reimbursements: approvedExpenses,
+        commissionEarned,
+      });
+      const netSalary = settlement.netSalary;
+      const totalTakeHomePay = settlement.totalTakeHomePay;
 
       const calculation: PayrollCalculation = {
         employeeId,
@@ -308,6 +316,9 @@ class PayrollService {
         expenseCategories,
         extraHolidayPayout,
         extraWeeklyOffPayout,
+        holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
+        additionalEarnings: settlement.additionalEarnings,
+        totalEarnings: settlement.totalEarnings,
         commissionEarned,
         isCommissionEligible,
         overtimeHours: attendanceData.overtimeHours,
@@ -1293,7 +1304,7 @@ class PayrollService {
       const deptName = employee?.department?.name || '';
       const offName = employee?.office?.name || '';
 
-      const totalTakeHome = Math.round((calculation.netSalary + (calculation.commissionEarned || 0) + (calculation.expenseReimbursement || 0)) * 100) / 100;
+      const totalTakeHome = calculation.totalTakeHomePay ?? Math.round((calculation.netSalary + (calculation.commissionEarned || 0) + (calculation.expenseReimbursement || 0)) * 100) / 100;
       const netInWords = `${numToWords(Math.round(totalTakeHome))} Rupees Only`;
 
       const existingSlip = await prisma.payslip.findUnique({
@@ -1458,18 +1469,23 @@ class PayrollService {
     const totalDeductions = round2(calc.deductions);
     const itemized = round2(pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction);
     const otherDeductions = round2(Math.max(0, totalDeductions - itemized));
-    const grossEarnings = round2(calc.fixedGrossSalary || calc.monthlySalary || calc.grossEarnings || calc.grossSalary);
-    const netSalary = round2(calc.netSalary);
+    const extraHolidayPayout = round2(calc.extraHolidayPayout);
+    const extraWeeklyOffPayout = round2(calc.extraWeeklyOffPayout);
     const isCommissionEligible = calc.isCommissionEligible !== undefined
       ? calc.isCommissionEligible
       : isCommissionEligibleEmployee(employee);
     const commissionEarned = isCommissionEligible ? round2(calc.commissionEarned) : 0;
     const expenseReimbursement = round2(calc.expenseReimbursement);
-    const totalTakeHomePay = round2(
-      calc.totalTakeHomePay ?? (netSalary + commissionEarned + expenseReimbursement),
-    );
-    const extraHolidayPayout = round2(calc.extraHolidayPayout);
-    const extraWeeklyOffPayout = round2(calc.extraWeeklyOffPayout);
+    const settlement = computePayrollSettlement({
+      baseGrossEarnings: calc.fixedGrossSalary || calc.monthlySalary || calc.grossEarnings || calc.grossSalary,
+      holidayWeeklyOffPay: extraHolidayPayout + extraWeeklyOffPayout,
+      totalDeductions,
+      reimbursements: expenseReimbursement,
+      commissionEarned,
+    });
+    const grossEarnings = settlement.baseGrossEarnings;
+    const netSalary = settlement.netSalary;
+    const totalTakeHomePay = settlement.totalTakeHomePay;
     const components = calc.components;
     const travelMedicalAllowance = round2((components.travelAllowance || 0) + (components.medicalAllowance || 0));
     const expenseCategories = calc.expenseCategories || {};
@@ -1546,7 +1562,10 @@ class PayrollService {
       incentive: components.incentive,
       extraHolidayPayout,
       extraWeeklyOffPayout,
-      extraPayout: round2(extraHolidayPayout + extraWeeklyOffPayout),
+      extraPayout: settlement.holidayWeeklyOffPay,
+      additionalEarnings: settlement.additionalEarnings,
+      totalEarnings: settlement.totalEarnings,
+      holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
       grossSalary: grossEarnings,
       grossTotal: grossEarnings,
       grossEarnings,
@@ -1634,6 +1653,9 @@ class PayrollService {
       weeklyOffWorkedCount: calc.weeklyOffWorkedCount,
       extraHolidayPayout,
       extraWeeklyOffPayout,
+      additionalEarnings: settlement.additionalEarnings,
+      totalEarnings: settlement.totalEarnings,
+      holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
       dailySalary: calc.dailySalary,
       workingDays: calc.workingDays,
       totalCalendarDays: calc.totalCalendarDays,
@@ -1644,6 +1666,9 @@ class PayrollService {
         monthlySalary: fixedGrossSalary,
         grossSalary: grossEarnings,
         grossEarnings,
+        additionalEarnings: settlement.additionalEarnings,
+        totalEarnings: settlement.totalEarnings,
+        holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
         totalDeductions,
         netSalary,
         totalTakeHomePay,
@@ -1740,10 +1765,26 @@ class PayrollService {
       cleanDeductions = itemizedDeductions;
     }
 
-    const netSalary = netSalaryFromGross(grossSalary, cleanDeductions);
+    const extraHolidayPayout = ps.extraHolidayPayout || 0;
+    const extraWeeklyOffPayout = ps.extraWeeklyOffPayout || 0;
     const isCommissionEligible = isCommissionEligibleEmployee(employee);
     const commissionEarned = isCommissionEligible ? (ps.commissionEarned || 0) : 0;
-    const totalTakeHomePay = Math.round((netSalary + commissionEarned + (ps.expenseReimbursement || 0)) * 100) / 100;
+    const settlement = computePayrollSettlement({
+      baseGrossEarnings: grossSalary,
+      holidayWeeklyOffPay: extraHolidayPayout + extraWeeklyOffPayout,
+      totalDeductions: cleanDeductions,
+      reimbursements: ps.expenseReimbursement || 0,
+      commissionEarned,
+    });
+    // Approved/PAID snapshots keep their stored payable amounts.
+    const netSalary = isFinalized && (ps.netSalary || 0) > 0
+      ? Math.round((ps.netSalary || 0) * 100) / 100
+      : settlement.netSalary;
+    const totalTakeHomePay = isFinalized && (ps.totalTakeHomePay || 0) > 0
+      ? Math.round((ps.totalTakeHomePay || 0) * 100) / 100
+      : isFinalized && (ps.netSalary || 0) > 0
+        ? Math.round((netSalary + commissionEarned + (ps.expenseReimbursement || 0)) * 100) / 100
+        : settlement.totalTakeHomePay;
     const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
 
     const empName = ps.employeeName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim();
@@ -1751,7 +1792,7 @@ class PayrollService {
     const deptName = ps.department || employee?.department?.name || '';
     const desigName = ps.designation || employee?.designation || '';
 
-    if (ps.id && (isCorrupted || ps.netSalary !== netSalary || ps.deductions !== cleanDeductions || (ps.advanceDeduction || 0) !== advanceDeduction)) {
+    if (!isFinalized && ps.id && (isCorrupted || ps.netSalary !== netSalary || ps.deductions !== cleanDeductions || (ps.advanceDeduction || 0) !== advanceDeduction)) {
       await prisma.payslip.update({
         where: { id: ps.id },
         data: {
@@ -1858,8 +1899,11 @@ class PayrollService {
       weeklyOffCount: ps.weeklyOffCount || 0,
       holidayWorkedCount: ps.holidayWorkedCount || 0,
       weeklyOffWorkedCount: ps.weeklyOffWorkedCount || 0,
-      extraHolidayPayout: ps.extraHolidayPayout || 0,
-      extraWeeklyOffPayout: ps.extraWeeklyOffPayout || 0,
+      extraHolidayPayout,
+      extraWeeklyOffPayout,
+      additionalEarnings: settlement.additionalEarnings,
+      totalEarnings: settlement.totalEarnings,
+      holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
       dailySalary: ps.dailySalary || 0,
       workingDays: schedWorkingDays,
       totalCalendarDays: ps.totalCalendarDays || calendarDays,
@@ -1879,6 +1923,12 @@ class PayrollService {
         specialAllowance: earnings.components.specialAllowance,
         bonus: earnings.components.bonus,
         incentive: earnings.components.incentive,
+        extraHolidayPayout,
+        extraWeeklyOffPayout,
+        extraPayout: settlement.holidayWeeklyOffPay,
+        additionalEarnings: settlement.additionalEarnings,
+        totalEarnings: settlement.totalEarnings,
+        holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
         grossSalary,
         grossTotal: grossSalary,
         grossEarnings: grossSalary,
@@ -1890,6 +1940,9 @@ class PayrollService {
         monthlySalary: fixedGrossSalary,
         grossSalary,
         grossEarnings: grossSalary,
+        additionalEarnings: settlement.additionalEarnings,
+        totalEarnings: settlement.totalEarnings,
+        holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
         totalDeductions: cleanDeductions,
         netSalary,
         totalTakeHomePay,

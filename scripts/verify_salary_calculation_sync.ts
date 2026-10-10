@@ -266,11 +266,15 @@ async function runTests() {
     // TEST 8: Deductions and Net Salary Isolation
     // -------------------------------------------------------------
     console.log('\n--- TEST 8: Deductions and Net Salary Isolation ---');
+    const expectedNet = Math.max(
+      0,
+      Number((payrollCalc.grossSalary - payrollCalc.deductions).toFixed(2)),
+    );
     assertTest(
-      'Net Salary equals Gross minus Deductions',
-      payrollCalc.netSalary === Math.max(0, Number((payrollCalc.grossSalary - payrollCalc.deductions).toFixed(2))),
+      'Net Salary equals Gross minus Deductions (holiday payout not added again)',
+      payrollCalc.netSalary === expectedNet,
       true,
-      payrollCalc.netSalary === Math.max(0, Number((payrollCalc.grossSalary - payrollCalc.deductions).toFixed(2))),
+      payrollCalc.netSalary === expectedNet,
       `Gross: ${payrollCalc.grossSalary}, Deductions: ${payrollCalc.deductions}, Net: ${payrollCalc.netSalary}`
     );
 

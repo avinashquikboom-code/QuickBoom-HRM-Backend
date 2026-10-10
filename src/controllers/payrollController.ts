@@ -449,7 +449,6 @@ export const generatePayslipPDF = async (
         { text: fmt(extraPayout), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
     }
-
     earningsTableBody.push([
       { text: 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
       { text: fmt(grossEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#059669', fillColor: '#ECFDF5' }

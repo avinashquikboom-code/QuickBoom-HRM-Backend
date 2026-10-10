@@ -60,6 +60,63 @@ export function netSalaryFromGross(gross: number, totalDeductions: number): numb
   return net > 0 ? net : 0;
 }
 
+export type PayrollSettlement = {
+  baseGrossEarnings: number;
+  holidayWeeklyOffPay: number;
+  additionalEarnings: number;
+  totalEarnings: number;
+  totalDeductions: number;
+  reimbursements: number;
+  commissionEarned: number;
+  netSalary: number;
+  totalTakeHomePay: number;
+};
+
+/**
+ * Single payable formula for admin, mobile, PDF, and payroll APIs.
+ *
+ * Finalized Gross Earnings already covers the calendar month. Holiday /
+ * weekly-off payout is an attendance breakdown field only — it must not
+ * be added again into totalEarnings, net, or take-home.
+ * Overtime / period bonus stay additional only when they are not already
+ * inside structure gross. Commission and reimbursements stay outside net.
+ */
+export function computePayrollSettlement(input: {
+  baseGrossEarnings: number;
+  holidayWeeklyOffPay?: number | null;
+  overtime?: number | null;
+  periodBonus?: number | null;
+  totalDeductions?: number | null;
+  reimbursements?: number | null;
+  commissionEarned?: number | null;
+}): PayrollSettlement {
+  const baseGrossEarnings = Math.round(n(input.baseGrossEarnings) * 100) / 100;
+  const holidayWeeklyOffPay = Math.round(n(input.holidayWeeklyOffPay) * 100) / 100;
+  const additionalEarnings = Math.round(
+    (n(input.overtime) + n(input.periodBonus)) * 100
+  ) / 100;
+  const totalEarnings = Math.round((baseGrossEarnings + additionalEarnings) * 100) / 100;
+  const totalDeductions = Math.round(n(input.totalDeductions) * 100) / 100;
+  const reimbursements = Math.round(n(input.reimbursements) * 100) / 100;
+  const commissionEarned = Math.round(n(input.commissionEarned) * 100) / 100;
+  const netSalary = Math.max(0, Math.round((totalEarnings - totalDeductions) * 100) / 100);
+  const totalTakeHomePay = Math.max(
+    0,
+    Math.round((netSalary + commissionEarned + reimbursements) * 100) / 100
+  );
+  return {
+    baseGrossEarnings,
+    holidayWeeklyOffPay,
+    additionalEarnings,
+    totalEarnings,
+    totalDeductions,
+    reimbursements,
+    commissionEarned,
+    netSalary,
+    totalTakeHomePay,
+  };
+}
+
 export function mapStructureGrossFields(ss: {
   basicSalary?: number | null;
   hra?: number | null;

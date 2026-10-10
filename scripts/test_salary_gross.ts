@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { computeGrossSalary, mapStructureGrossFields, netSalaryFromGross, resolveApplicableGross } from '../src/utils/salaryGross';
+import { computeGrossSalary, mapStructureGrossFields, netSalaryFromGross, resolveApplicableGross, computePayrollSettlement } from '../src/utils/salaryGross';
 
 function run() {
   let passed = 0;
@@ -102,6 +102,26 @@ function run() {
     }) === 14000
   );
   check('deductions are subtracted only once', netSalaryFromGross(14000, halfDay + 0) === 13363.64);
+
+  const settled = computePayrollSettlement({
+    baseGrossEarnings: 14000,
+    holidayWeeklyOffPay: 1272.72,
+    totalDeductions: halfDay,
+  });
+  check('holiday payout is recorded but not added to total earnings', settled.holidayWeeklyOffPay === 1272.72 && settled.totalEarnings === 14000);
+  check('finalized net is 14000 - 636.36', settled.netSalary === 13363.64);
+  check('take-home matches net when no commission or reimbursements', settled.totalTakeHomePay === 13363.64);
+  check('displayed gross stays 14000', settled.baseGrossEarnings === 14000);
+
+  const withReimb = computePayrollSettlement({
+    baseGrossEarnings: 14000,
+    holidayWeeklyOffPay: 1272.72,
+    totalDeductions: halfDay,
+    reimbursements: 200,
+    commissionEarned: 500,
+  });
+  check('reimbursements stay outside net salary', withReimb.netSalary === 13363.64);
+  check('take-home adds commission and reimbursements once', withReimb.totalTakeHomePay === 14063.64);
 
   console.log(`salaryGross tests: ${passed}/${total} passed`);
 }
