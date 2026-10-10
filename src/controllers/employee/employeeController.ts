@@ -8,6 +8,7 @@ import { CommissionService } from '../../services/commissionService';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { getActiveApprovedLeaveForDate, cancelLeaveRequest } from '../../services/leaveCancellationService';
 import { sendHRNotification, notifyEmployee } from '../../utils/hrNotificationHelper';
+import { computeGrossSalary, isCommissionEligibleEmployee } from '../../utils/salaryGross';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -1655,7 +1656,7 @@ export const fetchEmployeeWallet = async (
     });
 
     const registeredSalary = salaryStructure
-      ? (salaryStructure.grossSalary || salaryStructure.monthlySalary || salaryStructure.basicSalary || 0)
+      ? computeGrossSalary(salaryStructure)
       : 0;
 
     let estimatedNetSalary = 0;
@@ -1672,8 +1673,12 @@ export const fetchEmployeeWallet = async (
     const currentYear = now.getFullYear();
 
     // Calculate current month commission for this employee using the unified source of truth (CommissionService)
-    const monthMetrics = await CommissionService.getMonthlyMetrics(employee.id);
-    const currentCommission = Math.round(monthMetrics.commission || 0);
+    const isCommissionEligible = isCommissionEligibleEmployee(employee);
+    let currentCommission = 0;
+    if (isCommissionEligible) {
+      const monthMetrics = await CommissionService.getMonthlyMetrics(employee.id);
+      currentCommission = Math.round(monthMetrics.commission || 0);
+    }
 
     const isCurrentMonthPayslip = latestPayslip && latestPayslip.month === currentMonth && latestPayslip.year === currentYear;
 
@@ -1739,8 +1744,11 @@ export const fetchEmployeeWallet = async (
         cardNumber: wallet.cardNumber,
         isActive: wallet.isActive,
         registeredSalary,
+        fixedGrossSalary: registeredSalary,
+        monthlySalary: registeredSalary,
         upcomingSalary: upcomingSalaryWithCommission,
         baseUpcomingSalary: upcomingSalary,
+        isCommissionEligible,
         commissionAmount: currentCommission,
         grossSalary: registeredSalary,
         netSalary: upcomingSalaryWithCommission,

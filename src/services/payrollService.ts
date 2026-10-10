@@ -2,7 +2,7 @@ import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from './payrollAutomationService';
-import { computeGrossSalary, mapStructureGrossFields } from '../utils/salaryGross';
+import { computeGrossSalary, mapStructureGrossFields, isCommissionEligibleEmployee } from '../utils/salaryGross';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -11,6 +11,7 @@ export interface PayrollCalculation {
   year: number;
   baseSalary: number;
   monthlySalary: number;
+  fixedGrossSalary?: number;
   dailySalary: number;
   allowance: number;
   deductions: number;
@@ -45,6 +46,7 @@ export interface PayrollCalculation {
   extraHolidayPayout: number;
   extraWeeklyOffPayout: number;
   commissionEarned: number;
+  isCommissionEligible?: boolean;
   overtimeHours: number;
   components: PayslipSalaryComponents;
 }
@@ -88,15 +90,22 @@ export interface SalaryStructure {
   id: number;
   employeeId: number;
   baseSalary: number;
+  basicSalary?: number;
   monthlySalary: number;
   grossSalary: number;
   hra: number;
   da: number;
   conveyance: number;
+  travelAllowance?: number;
   medical: number;
+  medicalAllowance?: number;
   special: number;
+  specialAllowance?: number;
   incentive?: number;
   bonus?: number;
+  salaryAdvanceLimit?: number;
+  pfEnabled?: boolean;
+  esicEnabled?: boolean;
   pf: number;
   esi: number;
   professionalTax: number;
@@ -117,7 +126,8 @@ class PayrollService {
         where: { id: employeeId },
         include: {
           department: true,
-          office: true
+          office: true,
+          user: true
         }
       });
 
@@ -177,15 +187,19 @@ class PayrollService {
       const monthStart = monthRange.monthStart;
       const monthEnd = monthRange.monthEnd;
 
-      const commAggregate = await prisma.commissionTransaction.aggregate({
-        where: {
-          employeeId,
-          createdAt: { gte: monthStart, lte: monthEnd },
-          status: { in: ['PENDING', 'APPROVED', 'PAID'] }
-        },
-        _sum: { commissionAmount: true }
-      });
-      const commissionEarned = commAggregate._sum?.commissionAmount || 0;
+      const isCommissionEligible = isCommissionEligibleEmployee(employee);
+      let commissionEarned = 0;
+      if (isCommissionEligible) {
+        const commAggregate = await prisma.commissionTransaction.aggregate({
+          where: {
+            employeeId,
+            createdAt: { gte: monthStart, lte: monthEnd },
+            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
+          },
+          _sum: { commissionAmount: true }
+        });
+        commissionEarned = commAggregate._sum?.commissionAmount || 0;
+      }
 
       // Fetch approved expenses for this month
       const approvedExpenseRecords = await prisma.expense.findMany({
@@ -258,6 +272,7 @@ class PayrollService {
         year,
         baseSalary,
         monthlySalary,
+        fixedGrossSalary: monthlySalary,
         dailySalary,
         allowance: totalAllowance,
         deductions: totalDeductions,
@@ -292,6 +307,7 @@ class PayrollService {
         extraHolidayPayout,
         extraWeeklyOffPayout,
         commissionEarned,
+        isCommissionEligible,
         overtimeHours: attendanceData.overtimeHours,
         components: {
           hra: salaryStructure.hra || 0,
@@ -573,15 +589,22 @@ class PayrollService {
         id: structure.id,
         employeeId: structure.employeeId,
         baseSalary: basic,
+        basicSalary: basic,
         monthlySalary: mapped.monthlySalary,
         grossSalary: gross,
         hra: mapped.hra,
         da: 0,
         conveyance: mapped.travelAllowance,
+        travelAllowance: mapped.travelAllowance,
         medical: mapped.medicalAllowance,
+        medicalAllowance: mapped.medicalAllowance,
         special: mapped.specialAllowance,
+        specialAllowance: mapped.specialAllowance,
         incentive: mapped.incentive,
         bonus: mapped.bonus,
+        salaryAdvanceLimit: structure.salaryAdvanceLimit ?? 0,
+        pfEnabled: structure.pfEnabled,
+        esicEnabled: structure.esicEnabled,
         pf,
         esi,
         professionalTax: 0,
@@ -617,15 +640,50 @@ class PayrollService {
   /**
    * Update salary structure
    */
-  async updateSalaryStructure(employeeId: number, structureData: Partial<SalaryStructure>): Promise<SalaryStructure> {
+  async updateSalaryStructure(employeeId: number, structureData: Partial<SalaryStructure> & any): Promise<SalaryStructure> {
     try {
-      const basicSalary = structureData.baseSalary || 0;
-      const hra = structureData.hra || 0;
-      const medicalAllowance = structureData.medical || 0;
-      const travelAllowance = structureData.conveyance || 0;
-      const specialAllowance = structureData.special || 0;
-      const incentive = structureData.incentive || 0;
-      const bonus = structureData.bonus || 0;
+      const currentSS = await prisma.salaryStructure.findUnique({ where: { employeeId } });
+
+      const basicSalary = structureData.basicSalary !== undefined
+        ? Number(structureData.basicSalary)
+        : (structureData.baseSalary !== undefined ? Number(structureData.baseSalary) : (currentSS?.basicSalary || 0));
+
+      const hra = structureData.hra !== undefined
+        ? Number(structureData.hra)
+        : (currentSS?.hra || 0);
+
+      const medicalAllowance = structureData.medicalAllowance !== undefined
+        ? Number(structureData.medicalAllowance)
+        : (structureData.medical !== undefined ? Number(structureData.medical) : (currentSS?.medicalAllowance || 0));
+
+      const travelAllowance = structureData.travelAllowance !== undefined
+        ? Number(structureData.travelAllowance)
+        : (structureData.travel !== undefined ? Number(structureData.travel) : (structureData.conveyance !== undefined ? Number(structureData.conveyance) : (currentSS?.travelAllowance || 0)));
+
+      const specialAllowance = structureData.specialAllowance !== undefined
+        ? Number(structureData.specialAllowance)
+        : (structureData.special !== undefined ? Number(structureData.special) : (currentSS?.specialAllowance || 0));
+
+      const incentive = structureData.incentive !== undefined
+        ? Number(structureData.incentive)
+        : (currentSS?.incentive || 0);
+
+      const bonus = structureData.bonus !== undefined
+        ? Number(structureData.bonus)
+        : (structureData.fixedBonus !== undefined ? Number(structureData.fixedBonus) : (currentSS?.bonus || 0));
+
+      const salaryAdvanceLimit = structureData.salaryAdvanceLimit !== undefined && structureData.salaryAdvanceLimit !== null && structureData.salaryAdvanceLimit !== ''
+        ? (Number.isFinite(Number(structureData.salaryAdvanceLimit)) ? Number(structureData.salaryAdvanceLimit) : 0)
+        : (currentSS?.salaryAdvanceLimit ?? 0);
+
+      const pfEnabled = structureData.pfEnabled !== undefined ? Boolean(structureData.pfEnabled) : (currentSS?.pfEnabled ?? false);
+      const employeePfRate = structureData.employeePfRate !== undefined ? Number(structureData.employeePfRate) : (currentSS?.employeePfRate ?? 12.0);
+      const employerPfRate = structureData.employerPfRate !== undefined ? Number(structureData.employerPfRate) : (currentSS?.employerPfRate ?? 12.0);
+
+      const esicEnabled = structureData.esicEnabled !== undefined ? Boolean(structureData.esicEnabled) : (currentSS?.esicEnabled ?? false);
+      const employeeEsicRate = structureData.employeeEsicRate !== undefined ? Number(structureData.employeeEsicRate) : (currentSS?.employeeEsicRate ?? 0.75);
+      const employerEsicRate = structureData.employerEsicRate !== undefined ? Number(structureData.employerEsicRate) : (currentSS?.employerEsicRate ?? 3.25);
+
       const grossSalary = computeGrossSalary({
         basicSalary,
         hra,
@@ -648,6 +706,13 @@ class PayrollService {
           bonus,
           grossSalary,
           monthlySalary: grossSalary,
+          salaryAdvanceLimit,
+          pfEnabled,
+          employeePfRate,
+          employerPfRate,
+          esicEnabled,
+          employeeEsicRate,
+          employerEsicRate,
           updatedAt: new Date()
         },
         create: {
@@ -661,8 +726,50 @@ class PayrollService {
           bonus,
           grossSalary,
           monthlySalary: grossSalary,
+          salaryAdvanceLimit,
+          pfEnabled,
+          employeePfRate,
+          employerPfRate,
+          esicEnabled,
+          employeeEsicRate,
+          employerEsicRate,
         }
       });
+
+      // Synchronize wallet advanceLimit
+      try {
+        await prisma.wallet.updateMany({
+          where: { employeeId },
+          data: { advanceLimit: salaryAdvanceLimit },
+        });
+      } catch (wErr) {
+        console.warn('Wallet advanceLimit sync warning:', wErr);
+      }
+
+      // Re-calculate and update draft/unfinalized current month payslips
+      try {
+        const now = new Date();
+        const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+        const istDate = new Date(istTime);
+        const curMonth = istDate.getUTCMonth() + 1;
+        const curYear = istDate.getUTCFullYear();
+
+        const unfinalizedSlips = await prisma.payslip.findMany({
+          where: {
+            employeeId,
+            month: curMonth,
+            year: curYear,
+            status: { notIn: ['PAID', 'paid', 'Paid'] }
+          }
+        });
+        for (const slip of unfinalizedSlips) {
+          const calc = await this.calculatePayroll(employeeId, slip.month, slip.year);
+          await this.savePayslip(calc);
+          console.log(`[updateSalaryStructure] Re-calculated payslip for emp #${employeeId} (${slip.month}/${slip.year})`);
+        }
+      } catch (syncErr) {
+        console.warn(`[updateSalaryStructure] Failed to sync payslip for emp #${employeeId}:`, syncErr);
+      }
 
       const pf = structure.pfEnabled ? basicSalary * (structure.employeePfRate / 100) : 0;
       const esi = structure.esicEnabled ? grossSalary * (structure.employeeEsicRate / 100) : 0;
@@ -671,13 +778,22 @@ class PayrollService {
         id: structure.id,
         employeeId: structure.employeeId,
         baseSalary: basicSalary,
+        basicSalary: basicSalary,
         monthlySalary: structure.monthlySalary || grossSalary,
         grossSalary,
         hra,
         da: 0,
         conveyance: travelAllowance,
+        travelAllowance,
         medical: medicalAllowance,
+        medicalAllowance,
         special: specialAllowance,
+        specialAllowance,
+        incentive,
+        bonus,
+        salaryAdvanceLimit: structure.salaryAdvanceLimit ?? 0,
+        pfEnabled: structure.pfEnabled,
+        esicEnabled: structure.esicEnabled,
         pf,
         esi,
         professionalTax: 0,
@@ -720,20 +836,29 @@ class PayrollService {
       let total_deductions = 0;
       let approved_payslips = 0;
       let pending_payslips = 0;
+      let disbursed_amount = 0;
+      let pending_amount = 0;
 
       const deptMap = new Map<string, { department: string; employee_count: number; total_salary: number }>();
 
       for (const p of payslips) {
-        total_net_salary += p.netSalary || 0;
+        const net = p.netSalary || 0;
+        total_net_salary += net;
         total_base_salary += p.baseSalary || 0;
         total_allowance += p.allowance || 0;
         total_deductions += p.deductions || 0;
 
         const st = p.status?.toLowerCase() || '';
-        if (st === 'approved' || st === 'paid') {
+        if (st === 'paid') {
           approved_payslips++;
-        } else if (st === 'pending') {
-          pending_payslips++;
+          disbursed_amount += net;
+        } else {
+          if (st === 'approved') {
+            approved_payslips++;
+          } else {
+            pending_payslips++;
+          }
+          pending_amount += net;
         }
 
         const deptName = p.employee?.department?.name || p.department || 'Unassigned';
@@ -759,7 +884,9 @@ class PayrollService {
           total_deductions,
           avg_net_salary,
           approved_payslips,
-          pending_payslips
+          pending_payslips,
+          disbursed_amount,
+          pending_amount
         },
         departmentStats,
         month: targetMonth,
@@ -1331,7 +1458,10 @@ class PayrollService {
     const otherDeductions = round2(Math.max(0, totalDeductions - itemized));
     const grossEarnings = round2(calc.grossEarnings ?? calc.grossSalary);
     const netSalary = round2(calc.netSalary);
-    const commissionEarned = round2(calc.commissionEarned);
+    const isCommissionEligible = calc.isCommissionEligible !== undefined
+      ? calc.isCommissionEligible
+      : isCommissionEligibleEmployee(employee);
+    const commissionEarned = isCommissionEligible ? round2(calc.commissionEarned) : 0;
     const expenseReimbursement = round2(calc.expenseReimbursement);
     const totalTakeHomePay = round2(
       calc.totalTakeHomePay ?? (netSalary + commissionEarned + expenseReimbursement),
@@ -1395,9 +1525,13 @@ class PayrollService {
       }
     }
 
+    const fixedGrossSalary = round2(calc.fixedGrossSalary || calc.monthlySalary || (calc.baseSalary + (components.hra || 0) + (components.medicalAllowance || 0) + (components.travelAllowance || 0) + (components.specialAllowance || 0)));
+
     const earnings = {
       baseSalary: calc.baseSalary,
       basicSalary: calc.baseSalary,
+      fixedGrossSalary,
+      monthlySalary: fixedGrossSalary,
       hra: components.hra,
       medical: components.medicalAllowance,
       medicalAllowance: components.medicalAllowance,
@@ -1434,6 +1568,8 @@ class PayrollService {
       status: ps.status || (isPaid ? 'Paid' : 'Approved'),
       paymentStatus,
       payrollStatus: ps.status || 'PENDING',
+      fixedGrossSalary,
+      monthlySalary: fixedGrossSalary,
       baseSalary: calc.baseSalary,
       basicSalary: calc.baseSalary,
       allowance: calc.allowance,
@@ -1472,6 +1608,7 @@ class PayrollService {
       totalExpenses: expenseReimbursement,
       expenses: expensesByCategory,
       expensesByCategory,
+      isCommissionEligible,
       commission: commissionEarned,
       commissionEarned,
       deductionsObj: {
@@ -1501,10 +1638,14 @@ class PayrollService {
       expenseCategories,
       earnings,
       summary: {
+        fixedGrossSalary,
+        monthlySalary: fixedGrossSalary,
+        grossSalary: grossEarnings,
         grossEarnings,
         totalDeductions,
         netSalary,
         totalTakeHomePay,
+        isCommissionEligible,
         commission: commissionEarned,
         expenseReimbursement,
         netInWords,
@@ -1515,7 +1656,7 @@ class PayrollService {
   async resolveFullPayslipView(ps: any, employeeParam?: any) {
     const employee = employeeParam || await prisma.employee.findUnique({
       where: { id: ps.employeeId },
-      include: { office: true, salaryStructure: true, department: true }
+      include: { office: true, salaryStructure: true, department: true, user: true }
     });
 
     const isFinalized = String(ps.status || '').toUpperCase() === 'PAID';
@@ -1530,7 +1671,7 @@ class PayrollService {
 
     const calculateScheduledWorkingDays = (year: number, month: number, office: any): number => {
       const calendarDays = new Date(year, month, 0).getDate();
-      const officeDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const officeDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Friday", "Saturday"];
       let count = 0;
       for (let d = 1; d <= calendarDays; d++) {
         const dayName = new Date(year, month - 1, d).toLocaleDateString('en-US', { weekday: 'long' });
@@ -1544,6 +1685,7 @@ class PayrollService {
 
     // Earnings come from the shared backend resolver
     const earnings = await this.resolvePayslipEarnings(ps);
+    const fixedGrossSalary = earnings.grossEarnings;
     const baseMonthly = earnings.grossEarnings;
     const dSalary = ps.dailySalary || (schedWorkingDays > 0 ? Math.round((baseMonthly / schedWorkingDays) * 100) / 100 : 0);
     const absentDeduction = ps.absentDays ? Math.round((ps.absentDays * dSalary) * 100) / 100 : 0;
@@ -1578,7 +1720,7 @@ class PayrollService {
 
     // Gross excludes commission; net = gross - deductions.
     const extraPayout = (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0);
-    const grossSalary = Math.round((earnings.grossEarnings + extraPayout) * 100) / 100;
+    const grossSalary = Math.round((fixedGrossSalary + extraPayout) * 100) / 100;
 
     const ss = employee?.salaryStructure;
     const pf = ss?.pfEnabled ? Math.round(earnings.baseSalary * (ss.employeePfRate / 100)) : 0;
@@ -1594,7 +1736,9 @@ class PayrollService {
     }
 
     const netSalary = Math.max(0, Math.round((grossSalary - cleanDeductions) * 100) / 100);
-    const totalTakeHomePay = Math.round((netSalary + (ps.commissionEarned || 0) + (ps.expenseReimbursement || 0)) * 100) / 100;
+    const isCommissionEligible = isCommissionEligibleEmployee(employee);
+    const commissionEarned = isCommissionEligible ? (ps.commissionEarned || 0) : 0;
+    const totalTakeHomePay = Math.round((netSalary + commissionEarned + (ps.expenseReimbursement || 0)) * 100) / 100;
     const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
 
     const empName = ps.employeeName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim();
@@ -1649,6 +1793,8 @@ class PayrollService {
       status: paymentStatus,
       paymentStatus,
       payrollStatus: ps.status || 'PENDING',
+      fixedGrossSalary,
+      monthlySalary: fixedGrossSalary,
       baseSalary: earnings.baseSalary,
       basicSalary: earnings.baseSalary,
       allowance: earnings.allowance,
@@ -1685,8 +1831,9 @@ class PayrollService {
       approvedExpenses: ps.expenseReimbursement || 0,
       approvedExpenseAmount: ps.expenseReimbursement || 0,
       totalExpenses: ps.expenseReimbursement || 0,
-      commission: ps.commissionEarned || 0,
-      commissionEarned: ps.commissionEarned || 0,
+      isCommissionEligible,
+      commission: commissionEarned,
+      commissionEarned,
       deductionsObj: {
         deductions: cleanDeductions,
         totalDeductions: cleanDeductions,
@@ -1715,6 +1862,8 @@ class PayrollService {
       earnings: {
         baseSalary: earnings.baseSalary,
         basicSalary: earnings.baseSalary,
+        fixedGrossSalary,
+        monthlySalary: fixedGrossSalary,
         hra: earnings.components.hra,
         medical: earnings.components.medicalAllowance,
         medicalAllowance: earnings.components.medicalAllowance,
@@ -1728,8 +1877,21 @@ class PayrollService {
         grossSalary,
         grossTotal: grossSalary,
         grossEarnings: grossSalary,
-        commission: ps.commissionEarned || 0,
+        commission: commissionEarned,
         expenseReimbursement: ps.expenseReimbursement || 0,
+      },
+      summary: {
+        fixedGrossSalary,
+        monthlySalary: fixedGrossSalary,
+        grossSalary,
+        grossEarnings: grossSalary,
+        totalDeductions: cleanDeductions,
+        netSalary,
+        totalTakeHomePay,
+        isCommissionEligible,
+        commission: commissionEarned,
+        expenseReimbursement: ps.expenseReimbursement || 0,
+        netInWords,
       }
     };
   }

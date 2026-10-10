@@ -21,6 +21,7 @@ import {
   ensureSuperAdminEmployee
 } from '../utils/protectedAccounts';
 import { sendHRNotification, notifyEmployee } from '../utils/hrNotificationHelper';
+import { computeGrossSalary } from '../utils/salaryGross';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -981,8 +982,15 @@ export const updateEmployee = async (
           ? parseFloat(String(ssInput.bonus))
           : (currentSS?.bonus || 0);
 
-        const totalCalc = basicVal + hraVal + medicalVal + travelVal + specialVal + incentiveVal + bonusVal;
-        const grossVal = totalCalc > 0 ? totalCalc : (basicVal > 0 ? basicVal : 0);
+        const grossVal = computeGrossSalary({
+          basicSalary: basicVal,
+          hra: hraVal,
+          medicalAllowance: medicalVal,
+          travelAllowance: travelVal,
+          specialAllowance: specialVal,
+          incentive: incentiveVal,
+          bonus: bonusVal,
+        });
 
         const parseAdvanceLimit = (raw: unknown): number | undefined => {
           if (raw === undefined || raw === null || raw === '') return undefined;
@@ -1073,7 +1081,7 @@ export const updateEmployee = async (
               },
             },
           });
-          if (existingSlip) {
+          if (existingSlip && String(existingSlip.status || '').toUpperCase() !== 'PAID') {
             const calc = await payrollService.calculatePayroll(employeeId, curMonth, curYear);
             await payrollService.savePayslip(calc);
             console.log(`[updateEmployee] Re-calculated payslip for employee #${employeeId} (${curMonth}/${curYear})`);

@@ -219,7 +219,7 @@ export const downloadPayslip = async (
     // Fetch employee salary structure for reference if needed
     const employeeWithSalary = await prisma.employee.findUnique({
       where: { id: payslip.employeeId },
-      include: { salaryStructure: true, office: true, department: true }
+      include: { salaryStructure: true, office: true, department: true, user: true }
     });
 
     // SINGLE SOURCE OF TRUTH: Get the fully resolved view object
@@ -229,7 +229,8 @@ export const downloadPayslip = async (
     const totalDeductions = view.totalDeductions;
     const netSalary = view.netSalary;
     const totalTakeHomePay = view.totalTakeHomePay;
-    const commissionEarned = view.commissionEarned;
+    const isCommissionEligible = Boolean(view.isCommissionEligible);
+    const commissionEarned = isCommissionEligible ? (view.commissionEarned || 0) : 0;
     const expenseReimbursement = view.expenseReimbursement;
     const paymentStatus = view.paymentStatus;
     const totalDaysInMonth = view.totalCalendarDays;
@@ -241,13 +242,21 @@ export const downloadPayslip = async (
       { name: 'Basic Salary', amount: view.earnings.baseSalary },
     ];
     if (view.earnings.hra > 0) earningsItems.push({ name: 'House Rent Allowance (HRA)', amount: view.earnings.hra });
-    if (view.earnings.travelMedicalAllowance > 0) earningsItems.push({ name: 'Allowances (Travel/Medical)', amount: view.earnings.travelMedicalAllowance });
+    if ((view.earnings.medicalAllowance || view.earnings.medical || 0) > 0) {
+      earningsItems.push({ name: 'Medical Allowance', amount: (view.earnings.medicalAllowance || view.earnings.medical || 0) });
+    }
+    if ((view.earnings.travelAllowance || view.earnings.travel || 0) > 0) {
+      earningsItems.push({ name: 'Travel Allowance', amount: (view.earnings.travelAllowance || view.earnings.travel || 0) });
+    }
+    const fallbackAllowances = (!view.earnings.medicalAllowance && !view.earnings.travelAllowance) ? (view.earnings.travelMedicalAllowance || 0) : 0;
+    if (fallbackAllowances > 0) {
+      earningsItems.push({ name: 'Allowances (Travel/Medical)', amount: fallbackAllowances });
+    }
     if (view.earnings.specialAllowance > 0) earningsItems.push({ name: 'Special Allowance', amount: view.earnings.specialAllowance });
     if (view.earnings.bonus > 0) earningsItems.push({ name: 'Bonus', amount: view.earnings.bonus });
     if (view.earnings.incentive > 0) earningsItems.push({ name: 'Incentive', amount: view.earnings.incentive });
     const extraPayout = view.extraHolidayPayout + view.extraWeeklyOffPayout;
     if (extraPayout > 0) earningsItems.push({ name: 'Holiday / Weekly Off Payout', amount: extraPayout });
-    if (commissionEarned > 0) earningsItems.push({ name: 'Commission', amount: commissionEarned });
     if (earningsItems.length === 1 && view.allowance > 0) {
       earningsItems.push({ name: 'Allowances', amount: view.allowance });
     }
@@ -399,7 +408,7 @@ export const downloadPayslip = async (
                 text: [
                   { text: 'PAYABLE SUMMARY\n', fontSize: 10, bold: true },
                   { text: `Gross Earnings: Rs. ${fmt(grossEarnings)}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`, fontSize: 9 },
-                  ...(commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${fmt(commissionEarned)}\n`, fontSize: 9, bold: true }] : []),
+                  ...(isCommissionEligible && commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${fmt(commissionEarned)}\n`, fontSize: 9, bold: true }] : []),
                   ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${fmt(expenseReimbursement)}\n`, fontSize: 9, bold: true }] : []),
                   { text: `\nTOTAL TAKE-HOME PAY\n`, fontSize: 11, bold: true },
                   { text: `INR ${fmt(totalTakeHomePay)}/-\n`, fontSize: 18, bold: true },

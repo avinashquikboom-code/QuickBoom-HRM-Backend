@@ -62,3 +62,45 @@ export function mapStructureGrossFields(ss: {
     grossTotal: grossSalary,
   };
 }
+
+/**
+ * Determines whether an employee is eligible for commission.
+ * Keeps commission exclusively for Hopkid employees and sales-related staff;
+ * removes commission for all other employees.
+ */
+export function isCommissionEligibleEmployee(emp: {
+  source?: string | null;
+  employeeCode?: string | null;
+  employeeID?: string | null;
+  designation?: string | null;
+  department?: { name?: string | null } | string | null;
+  user?: { role?: string | null } | null;
+  role?: string | null;
+  commissionPercentage?: number | null;
+} | null | undefined): boolean {
+  if (!emp) return false;
+
+  // 1. Hopkid employee check
+  const source = String(emp.source || '').toUpperCase();
+  if (source === 'HOPKID') return true;
+
+  const empCode = String(emp.employeeCode || '').toUpperCase();
+  if (empCode.startsWith('HK')) return true;
+
+  const empId = String(emp.employeeID || '').toUpperCase();
+  if (empId.startsWith('HK') || empId.includes('HOPKID')) return true;
+
+  // 2. Sales related check
+  const designation = String(emp.designation || '').toLowerCase();
+  if (designation.includes('sales')) return true;
+
+  const deptName = typeof emp.department === 'string'
+    ? emp.department.toLowerCase()
+    : String(emp.department?.name || '').toLowerCase();
+  if (deptName.includes('sales')) return true;
+
+  const userRole = String(emp.user?.role || emp.role || '').toUpperCase();
+  if (userRole === 'SALESMAN' || userRole.includes('SALES')) return true;
+
+  return false;
+}

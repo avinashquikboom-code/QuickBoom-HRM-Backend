@@ -377,7 +377,8 @@ export const generatePayslipPDF = async (
     const fmtDed = (n: number) => `-\u20b9${(Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
     const totalDaysInMonth = view.totalCalendarDays || new Date(yearNum, monthNum, 0).getDate();
-    const commissionEarned = view.commissionEarned || 0;
+    const isCommissionEligible = Boolean(view.isCommissionEligible);
+    const commissionEarned = isCommissionEligible ? (view.commissionEarned || 0) : 0;
     const advanceDeduction = view.advanceDeduction || 0;
     const pf = view.pf || 0;
     const esic = view.esic || 0;
@@ -403,11 +404,25 @@ export const generatePayslipPDF = async (
         { text: fmt(earnings.hra), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
     }
-    const allowances = earnings.travelMedicalAllowance || ((earnings.travelAllowance || 0) + (earnings.medicalAllowance || 0));
-    if (allowances > 0) {
+    if ((earnings.medicalAllowance || 0) > 0) {
+      earningsTableBody.push([
+        { text: 'Medical Allowance', fontSize: 9, color: '#111827' },
+        { text: fmt(earnings.medicalAllowance), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
+    if ((earnings.travelAllowance || 0) > 0) {
+      earningsTableBody.push([
+        { text: 'Travel Allowance', fontSize: 9, color: '#111827' },
+        { text: fmt(earnings.travelAllowance), fontSize: 9, alignment: 'right', color: '#111827' }
+      ]);
+    }
+    const fallbackAllowances = (!earnings.medicalAllowance && !earnings.travelAllowance)
+      ? (earnings.travelMedicalAllowance || 0)
+      : 0;
+    if (fallbackAllowances > 0) {
       earningsTableBody.push([
         { text: 'Allowances (Travel/Medical)', fontSize: 9, color: '#111827' },
-        { text: fmt(allowances), fontSize: 9, alignment: 'right', color: '#111827' }
+        { text: fmt(fallbackAllowances), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
     }
     if ((earnings.specialAllowance || 0) > 0) {
@@ -432,12 +447,6 @@ export const generatePayslipPDF = async (
       earningsTableBody.push([
         { text: 'Holiday / Weekly Off Payout', fontSize: 9, color: '#111827' },
         { text: fmt(extraPayout), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
-    if (commissionEarned > 0) {
-      earningsTableBody.push([
-        { text: 'Commission', fontSize: 9, color: '#111827' },
-        { text: fmt(commissionEarned), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
     }
 
@@ -895,8 +904,12 @@ export const getAdminPayrollStats = async (
     // Transform to match frontend expectations
     const transformedStats = {
       mtdVolume: stats.summary?.total_net_salary || 0,
-      disbursed: stats.summary?.total_net_salary || 0,
-      pending: stats.summary?.total_net_salary || 0,
+      disbursed: stats.summary?.disbursed_amount || 0,
+      pending: stats.summary?.pending_amount !== undefined ? stats.summary?.pending_amount : (stats.summary?.total_net_salary || 0),
+      totalGrossSalary: stats.summary?.total_gross_salary || 0,
+      totalDeductions: stats.summary?.total_deductions || 0,
+      paidCount: stats.summary?.paid_count || 0,
+      pendingCount: stats.summary?.pending_count || 0,
       errors: 0
     };
 

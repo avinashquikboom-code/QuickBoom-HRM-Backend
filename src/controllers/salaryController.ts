@@ -444,16 +444,23 @@ export const updateSalaryStructureById = async (
       }
     }
 
+    // Prioritize exact employeeCode or employeeID before falling back to numeric internal id
     let emp = await prisma.employee.findFirst({
       where: {
         OR: [
-          { id: isNaN(targetIdInt) ? undefined : targetIdInt },
           { employeeCode: String(targetParam) },
           { employeeID: String(targetParam) },
         ],
       },
       include: { salaryStructure: true },
     });
+
+    if (!emp && !isNaN(targetIdInt)) {
+      emp = await prisma.employee.findUnique({
+        where: { id: targetIdInt },
+        include: { salaryStructure: true },
+      });
+    }
 
     if (!emp && !isNaN(targetIdInt)) {
       const ss = await prisma.salaryStructure.findUnique({ where: { id: targetIdInt } });
@@ -531,7 +538,7 @@ export const updateSalaryStructureById = async (
       console.warn('Wallet advanceLimit sync warning:', wErr);
     }
 
-    // Re-calculate and update current month payslip so the updated salary takes effect immediately
+    // Re-calculate and update current month payslip (only if unfinalized/not PAID)
     try {
       const now = new Date();
       const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
@@ -548,7 +555,7 @@ export const updateSalaryStructureById = async (
           }
         }
       });
-      if (existingSlip) {
+      if (existingSlip && String(existingSlip.status || '').toUpperCase() !== 'PAID') {
         const calc = await payrollService.calculatePayroll(emp.id, curMonth, curYear);
         await payrollService.savePayslip(calc);
         console.log(`[SalaryStructure Update] Re-calculated and updated payslip for emp #${emp.id} for ${curMonth}/${curYear}`);
