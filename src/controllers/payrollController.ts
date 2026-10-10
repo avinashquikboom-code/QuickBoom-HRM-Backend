@@ -641,7 +641,7 @@ export const generatePayslipPDF = async (
         },
         // Earnings
         { text: 'Earnings', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
-        { table: { headerRows: 1, widths: ['*', 120],
+        { table: { headerRows: 1, dontBreakRows: true, widths: ['*', 120],
             body: earningsTableBody,
           },
           layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
@@ -649,7 +649,7 @@ export const generatePayslipPDF = async (
         },
         // Deductions
         { text: 'Deductions', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
-        { table: { headerRows: 1, widths: ['*', 120],
+        { table: { headerRows: 1, dontBreakRows: true, widths: ['*', 120],
             body: deductionsTableBody,
           },
           layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
@@ -657,7 +657,7 @@ export const generatePayslipPDF = async (
         },
         // Reimbursements / Expenses
         { text: 'Reimbursements / Expenses', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
-        { table: { headerRows: 1, widths: ['*', 120],
+        { table: { headerRows: 1, dontBreakRows: true, widths: ['*', 120],
             body: reimbursementsTableBody,
           },
           layout: { hLineWidth: (i: number) => i <= 1 ? 1.5 : 0.5, vLineWidth: () => 0, hLineColor: (i: number) => i <= 1 ? PRIMARY : '#F3F4F6', paddingLeft: () => 8, paddingRight: () => 8, paddingTop: () => 6, paddingBottom: () => 6 },
