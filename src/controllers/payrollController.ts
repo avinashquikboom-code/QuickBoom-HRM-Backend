@@ -5,6 +5,7 @@ import { prisma } from '../utils/db';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from '../services/payrollAutomationService';
 import { sendHRNotification, notifyEmployee } from '../utils/hrNotificationHelper';
+import { buildPayslipEarningLines } from '../utils/salaryGross';
 
 // ==========================================
 // Enhanced Payroll Controller
@@ -368,7 +369,6 @@ export const generatePayslipPDF = async (
     const view = await payrollService.resolveFullPayslipView(payslip, payslip.employee);
     const earnings = view.earnings;
     const extraPayout = (view.extraHolidayPayout || 0) + (view.extraWeeklyOffPayout || 0);
-    const grossEarnings = view.grossEarnings || 0;
     const generatedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
     const monthLabel  = `${MONTH_NAMES[monthNum - 1]} ${yearNum}`;
     const paymentStatus = view.paymentStatus || 'PENDING';
@@ -393,71 +393,33 @@ export const generatePayslipPDF = async (
     const totalTakeHomePay = view.totalTakeHomePay || 0;
     const dailySalary = view.dailySalary || 0;
 
+    const earningBreakdown = buildPayslipEarningLines({
+      basicSalary: earnings.baseSalary ?? earnings.basicSalary,
+      hra: earnings.hra,
+      medicalAllowance: earnings.medicalAllowance || earnings.medical,
+      travelAllowance: earnings.travelAllowance || earnings.travel,
+      specialAllowance: earnings.specialAllowance,
+      incentive: earnings.incentive,
+      bonus: earnings.bonus,
+      travelMedicalAllowance: earnings.travelMedicalAllowance,
+      extraHolidayPayout: view.extraHolidayPayout,
+      extraWeeklyOffPayout: view.extraWeeklyOffPayout,
+    });
+    const displayedGrossEarnings = earningBreakdown.displayedGrossEarnings;
+
     const earningsTableBody: any[] = [
       [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }],
-      [{ text: 'Basic Salary', fontSize: 9, color: '#111827', fillColor: '#F9FAFB' }, { text: fmt(earnings.baseSalary), fontSize: 9, alignment: 'right', color: '#111827', fillColor: '#F9FAFB' }],
     ];
-
-    if ((earnings.hra || 0) > 0) {
+    earningBreakdown.lines.forEach((line, index) => {
       earningsTableBody.push([
-        { text: 'House Rent Allowance (HRA)', fontSize: 9, color: '#111827' },
-        { text: fmt(earnings.hra), fontSize: 9, alignment: 'right', color: '#111827' }
+        { text: line.name, fontSize: 9, color: '#111827', fillColor: index === 0 ? '#F9FAFB' : undefined },
+        { text: fmt(line.amount), fontSize: 9, alignment: 'right', color: '#111827', fillColor: index === 0 ? '#F9FAFB' : undefined }
       ]);
-    }
-    if ((earnings.medicalAllowance || 0) > 0) {
-      earningsTableBody.push([
-        { text: 'Medical Allowance', fontSize: 9, color: '#111827' },
-        { text: fmt(earnings.medicalAllowance), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
-    if ((earnings.travelAllowance || 0) > 0) {
-      earningsTableBody.push([
-        { text: 'Travel Allowance', fontSize: 9, color: '#111827' },
-        { text: fmt(earnings.travelAllowance), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
-    const fallbackAllowances = (!earnings.medicalAllowance && !earnings.travelAllowance)
-      ? (earnings.travelMedicalAllowance || 0)
-      : 0;
-    if (fallbackAllowances > 0) {
-      earningsTableBody.push([
-        { text: 'Allowances (Travel/Medical)', fontSize: 9, color: '#111827' },
-        { text: fmt(fallbackAllowances), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
-    if ((earnings.specialAllowance || 0) > 0) {
-      earningsTableBody.push([
-        { text: 'Special Allowance', fontSize: 9, color: '#111827' },
-        { text: fmt(earnings.specialAllowance), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
-    if ((earnings.bonus || 0) > 0) {
-      earningsTableBody.push([
-        { text: 'Bonus', fontSize: 9, color: '#111827' },
-        { text: fmt(earnings.bonus), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
-    if ((earnings.incentive || 0) > 0) {
-      earningsTableBody.push([
-        { text: 'Incentive', fontSize: 9, color: '#111827' },
-        { text: fmt(earnings.incentive), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-    }
+    });
     earningsTableBody.push([
-      { text: extraPayout > 0 ? 'Base Gross Salary' : 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
-      { text: fmt(grossEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#059669', fillColor: '#ECFDF5' }
+      { text: 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
+      { text: fmt(displayedGrossEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#059669', fillColor: '#ECFDF5' }
     ]);
-    if (extraPayout > 0) {
-      earningsTableBody.push([
-        { text: 'Holiday / Weekly Off Payout', fontSize: 9, color: '#111827' },
-        { text: fmt(extraPayout), fontSize: 9, alignment: 'right', color: '#111827' }
-      ]);
-      const totalEarnings = view.totalEarnings || Math.round((grossEarnings + extraPayout) * 100) / 100;
-      earningsTableBody.push([
-        { text: 'Total Earnings', fontSize: 9, bold: true, color: '#047857', fillColor: '#ECFDF5' },
-        { text: fmt(totalEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#047857', fillColor: '#ECFDF5' }
-      ]);
-    }
 
     const deductionsTableBody: any[] = [
       [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }]
@@ -578,7 +540,7 @@ export const generatePayslipPDF = async (
         ], margin: [0, 0, 0, 20] },
         // Stat cards
         { columns: [
-          { stack: [{ text: fmt(extraPayout > 0 ? (view.totalEarnings || Math.round((grossEarnings + extraPayout) * 100) / 100) : grossEarnings), fontSize: 14, bold: true, color: PRIMARY, alignment: 'center' }, { text: extraPayout > 0 ? 'TOTAL GROSS EARNINGS' : 'GROSS EARNINGS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
+          { stack: [{ text: fmt(displayedGrossEarnings), fontSize: 14, bold: true, color: PRIMARY, alignment: 'center' }, { text: 'GROSS EARNINGS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
           { stack: [{ text: fmt(deductions),  fontSize: 14, bold: true, color: '#DC2626', alignment: 'center' }, { text: 'DEDUCTIONS',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
           { stack: [{ text: fmt(netSalary),   fontSize: 14, bold: true, color: '#059669', alignment: 'center' }, { text: 'NET SALARY',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
           ...(commissionEarned > 0 ? [{ stack: [{ text: fmt(commissionEarned), fontSize: 14, bold: true, color: '#0F766E', alignment: 'center' }, { text: 'COMMISSION', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] }] : []),

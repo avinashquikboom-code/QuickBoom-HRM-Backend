@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import payrollService, { payslipComponentData } from '../../services/payrollService';
 import { getIstMonthRange } from '../../utils/commissionHelper';
 import { numToWords } from '../../services/payrollAutomationService';
+import { buildPayslipEarningLines } from '../../utils/salaryGross';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -225,7 +226,6 @@ export const downloadPayslip = async (
     // SINGLE SOURCE OF TRUTH: Get the fully resolved view object
     const view = await payrollService.resolveFullPayslipView(payslip, employeeWithSalary);
 
-    const grossEarnings = view.grossEarnings;
     const totalDeductions = view.totalDeductions;
     const netSalary = view.netSalary;
     const totalTakeHomePay = view.totalTakeHomePay;
@@ -237,26 +237,21 @@ export const downloadPayslip = async (
 
     const fmt = (n: number) => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-    // Build Earnings Items
-    const earningsItems: { name: string; amount: number }[] = [
-      { name: 'Basic Salary', amount: view.earnings.baseSalary },
-    ];
-    if (view.earnings.hra > 0) earningsItems.push({ name: 'House Rent Allowance (HRA)', amount: view.earnings.hra });
-    if ((view.earnings.medicalAllowance || view.earnings.medical || 0) > 0) {
-      earningsItems.push({ name: 'Medical Allowance', amount: (view.earnings.medicalAllowance || view.earnings.medical || 0) });
-    }
-    if ((view.earnings.travelAllowance || view.earnings.travel || 0) > 0) {
-      earningsItems.push({ name: 'Travel Allowance', amount: (view.earnings.travelAllowance || view.earnings.travel || 0) });
-    }
-    const fallbackAllowances = (!view.earnings.medicalAllowance && !view.earnings.travelAllowance) ? (view.earnings.travelMedicalAllowance || 0) : 0;
-    if (fallbackAllowances > 0) {
-      earningsItems.push({ name: 'Allowances (Travel/Medical)', amount: fallbackAllowances });
-    }
-    if (view.earnings.specialAllowance > 0) earningsItems.push({ name: 'Special Allowance', amount: view.earnings.specialAllowance });
-    if (view.earnings.bonus > 0) earningsItems.push({ name: 'Bonus', amount: view.earnings.bonus });
-    if (view.earnings.incentive > 0) earningsItems.push({ name: 'Incentive', amount: view.earnings.incentive });
-    const extraPayout = view.extraHolidayPayout + view.extraWeeklyOffPayout;
-    if (extraPayout > 0) earningsItems.push({ name: 'Holiday / Weekly Off Payout', amount: extraPayout });
+    const earningBreakdown = buildPayslipEarningLines({
+      basicSalary: view.earnings.baseSalary ?? view.earnings.basicSalary,
+      hra: view.earnings.hra,
+      medicalAllowance: view.earnings.medicalAllowance || view.earnings.medical,
+      travelAllowance: view.earnings.travelAllowance || view.earnings.travel,
+      specialAllowance: view.earnings.specialAllowance,
+      incentive: view.earnings.incentive,
+      bonus: view.earnings.bonus,
+      travelMedicalAllowance: view.earnings.travelMedicalAllowance,
+      extraHolidayPayout: view.extraHolidayPayout,
+      extraWeeklyOffPayout: view.extraWeeklyOffPayout,
+    });
+    const earningsItems = earningBreakdown.lines;
+    const extraPayout = earningBreakdown.extraPayout;
+    const displayedGrossEarnings = earningBreakdown.displayedGrossEarnings;
     if (earningsItems.length === 1 && view.allowance > 0) {
       earningsItems.push({ name: 'Allowances', amount: view.allowance });
     }
@@ -297,7 +292,7 @@ export const downloadPayslip = async (
       ...tableRows,
       [
         { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
-        { text: `Rs. ${fmt(grossEarnings)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
+        { text: `Rs. ${fmt(displayedGrossEarnings)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
         { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
         { text: totalDeductions > 0 ? `-Rs. ${fmt(totalDeductions)}` : `Rs. ${fmt(0)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
       ]
@@ -407,9 +402,7 @@ export const downloadPayslip = async (
                 color: 'white',
                 text: [
                   { text: 'PAYABLE SUMMARY\n', fontSize: 10, bold: true },
-                  { text: extraPayout > 0
-                    ? `Total Gross Earnings: Rs. ${fmt(view.totalEarnings || (grossEarnings + extraPayout))}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`
-                    : `Gross Earnings: Rs. ${fmt(grossEarnings)}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`, fontSize: 9 },
+                  { text: `Gross Earnings: Rs. ${fmt(displayedGrossEarnings)}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`, fontSize: 9 },
                   ...(isCommissionEligible && commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${fmt(commissionEarned)}\n`, fontSize: 9, bold: true }] : []),
                   ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${fmt(expenseReimbursement)}\n`, fontSize: 9, bold: true }] : []),
                   { text: `\nTOTAL TAKE-HOME PAY\n`, fontSize: 11, bold: true },

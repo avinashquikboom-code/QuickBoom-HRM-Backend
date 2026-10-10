@@ -4,6 +4,7 @@ import {
   computePayrollSettlement,
   normalizeDeduction,
   money,
+  reconcileOfficialPayslipDisplay,
 } from '../src/utils/salaryGross';
 
 function check(desc: string, cond: boolean) {
@@ -109,6 +110,37 @@ function run() {
     totalDeductions: halfDay,
   });
   check('holiday already in gross: net 13363.64', noHoliday.netSalary === 13363.64);
+
+  const official = reconcileOfficialPayslipDisplay({
+    basicSalary: 7000,
+    hra: 2800,
+    medicalAllowance: 1250,
+    travelAllowance: 1600,
+    specialAllowance: 1350,
+    extraHolidayPayout: holiday,
+    totalDeductions: halfDay,
+  });
+  const displayedSum = money(official.lines.reduce((sum, line) => sum + line.amount, 0));
+  check('official PDF lists holiday as an additional earning', official.extraPayout === 1272.72);
+  check('displayed earning components sum to 15272.72', displayedSum === 15272.72);
+  check('reported Gross Earnings equals component sum', official.displayedGrossEarnings === 15272.72);
+  check('component sum matches settlement total earnings', official.componentSumMatchesGross === true);
+  check('official PDF total deductions 636.36', official.totalDeductions === 636.36);
+  check('official PDF net 14636.36', official.netSalary === 14636.36);
+  check('official PDF take-home 14636.36', official.totalTakeHomePay === 14636.36);
+  check('net reconciles with earnings and deductions', official.netReconciles === true);
+
+  const noExtraDisplay = reconcileOfficialPayslipDisplay({
+    basicSalary: 7000,
+    hra: 2800,
+    medicalAllowance: 1250,
+    travelAllowance: 1600,
+    specialAllowance: 1350,
+    totalDeductions: halfDay,
+  });
+  check('without holiday, Gross Earnings stays 14000', noExtraDisplay.displayedGrossEarnings === 14000);
+  check('without holiday, net is 13363.64', noExtraDisplay.netSalary === 13363.64);
+  check('without holiday, lines still sum to reported gross', noExtraDisplay.componentSumMatchesGross === true);
 
   console.log('payroll settlement regression: all passed');
 }

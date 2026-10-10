@@ -123,6 +123,89 @@ export function computePayrollSettlement(input: {
   };
 }
 
+export type PayslipEarningLine = { name: string; amount: number };
+
+/**
+ * Official payslip earning lines. Holiday / weekly-off payout is additional
+ * to structure components and is listed once. Displayed Gross Earnings is
+ * the sum of those lines (totalEarnings), not structure gross alone.
+ */
+export function buildPayslipEarningLines(input: {
+  basicSalary?: number | null;
+  hra?: number | null;
+  medicalAllowance?: number | null;
+  travelAllowance?: number | null;
+  specialAllowance?: number | null;
+  incentive?: number | null;
+  bonus?: number | null;
+  travelMedicalAllowance?: number | null;
+  extraHolidayPayout?: number | null;
+  extraWeeklyOffPayout?: number | null;
+}): { lines: PayslipEarningLine[]; extraPayout: number; displayedGrossEarnings: number } {
+  const lines: PayslipEarningLine[] = [];
+  const push = (name: string, amount: number | null | undefined, always = false) => {
+    const value = money(amount);
+    if (always || value > 0) lines.push({ name, amount: value });
+  };
+  push('Basic Salary', input.basicSalary, true);
+  push('House Rent Allowance (HRA)', input.hra);
+  const medical = money(input.medicalAllowance);
+  const travel = money(input.travelAllowance);
+  push('Medical Allowance', medical);
+  push('Travel Allowance', travel);
+  if (medical <= 0 && travel <= 0) {
+    push('Allowances (Travel/Medical)', input.travelMedicalAllowance);
+  }
+  push('Special Allowance', input.specialAllowance);
+  push('Bonus', input.bonus);
+  push('Incentive', input.incentive);
+  const extraPayout = money(n(input.extraHolidayPayout) + n(input.extraWeeklyOffPayout));
+  if (extraPayout > 0) {
+    push('Holiday / Weekly Off Payout', extraPayout);
+  }
+  const displayedGrossEarnings = money(lines.reduce((sum, line) => sum + line.amount, 0));
+  return { lines, extraPayout, displayedGrossEarnings };
+}
+
+export function reconcileOfficialPayslipDisplay(input: {
+  basicSalary?: number | null;
+  hra?: number | null;
+  medicalAllowance?: number | null;
+  travelAllowance?: number | null;
+  specialAllowance?: number | null;
+  incentive?: number | null;
+  bonus?: number | null;
+  travelMedicalAllowance?: number | null;
+  extraHolidayPayout?: number | null;
+  extraWeeklyOffPayout?: number | null;
+  totalDeductions?: number | null;
+  reimbursements?: number | null;
+  commissionEarned?: number | null;
+}) {
+  const breakdown = buildPayslipEarningLines(input);
+  const settlement = computePayrollSettlement({
+    baseGrossEarnings: money(breakdown.displayedGrossEarnings - breakdown.extraPayout),
+    holidayWeeklyOffPay: breakdown.extraPayout,
+    totalDeductions: input.totalDeductions,
+    reimbursements: input.reimbursements,
+    commissionEarned: input.commissionEarned,
+  });
+  return {
+    lines: breakdown.lines,
+    extraPayout: breakdown.extraPayout,
+    displayedGrossEarnings: breakdown.displayedGrossEarnings,
+    totalDeductions: settlement.totalDeductions,
+    netSalary: settlement.netSalary,
+    totalTakeHomePay: settlement.totalTakeHomePay,
+    componentSumMatchesGross: Math.abs(breakdown.displayedGrossEarnings - settlement.totalEarnings) < 0.02,
+    netReconciles:
+      Math.abs(settlement.netSalary - money(
+        breakdown.displayedGrossEarnings + money(input.reimbursements) - settlement.totalDeductions
+      )) < 0.02,
+    settlement,
+  };
+}
+
 export function mapStructureGrossFields(ss: {
   basicSalary?: number | null;
   hra?: number | null;
