@@ -111,6 +111,8 @@ async function testSalarySync() {
       absentDays: 0,
       halfDays: 1,
       deductions: 636.36,
+      extraHolidayPayout: 0,
+      extraWeeklyOffPayout: 0,
       netSalary: 13363.64,
     },
   });

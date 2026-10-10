@@ -75,11 +75,11 @@ export type PayrollSettlement = {
 /**
  * Single payable formula for admin, mobile, PDF, and payroll APIs.
  *
- * Finalized Gross Earnings already covers the calendar month. Holiday /
- * weekly-off payout is an attendance breakdown field only — it must not
- * be added again into totalEarnings, net, or take-home.
- * Overtime / period bonus stay additional only when they are not already
- * inside structure gross. Commission and reimbursements stay outside net.
+ * Gross Earnings is the salary-structure component sum only.
+ * Holiday / weekly-off payout is additional (stored separately) and is
+ * added once into totalEarnings / net. It is not added if the caller
+ * already folded it into baseGrossEarnings.
+ * Commission and reimbursements stay outside net and apply to take-home.
  */
 export function computePayrollSettlement(input: {
   baseGrossEarnings: number;
@@ -93,7 +93,7 @@ export function computePayrollSettlement(input: {
   const baseGrossEarnings = Math.round(n(input.baseGrossEarnings) * 100) / 100;
   const holidayWeeklyOffPay = Math.round(n(input.holidayWeeklyOffPay) * 100) / 100;
   const additionalEarnings = Math.round(
-    (n(input.overtime) + n(input.periodBonus)) * 100
+    (holidayWeeklyOffPay + n(input.overtime) + n(input.periodBonus)) * 100
   ) / 100;
   const totalEarnings = Math.round((baseGrossEarnings + additionalEarnings) * 100) / 100;
   const totalDeductions = Math.round(n(input.totalDeductions) * 100) / 100;

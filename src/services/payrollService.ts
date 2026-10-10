@@ -1776,15 +1776,15 @@ class PayrollService {
       reimbursements: ps.expenseReimbursement || 0,
       commissionEarned,
     });
-    // Approved/PAID snapshots keep their stored payable amounts.
-    const netSalary = isFinalized && (ps.netSalary || 0) > 0
-      ? Math.round((ps.netSalary || 0) * 100) / 100
+    const extraPay = extraHolidayPayout + extraWeeklyOffPayout;
+    const storedNet = Math.round((ps.netSalary || 0) * 100) / 100;
+    const storedExcludesHoliday = extraPay > 0 && storedNet > 0
+      && Math.abs(storedNet - Math.round((grossSalary - cleanDeductions) * 100) / 100) < 0.02;
+    // Keep true historical PAID nets unless they omitted additional holiday pay.
+    const netSalary = isFinalized && storedNet > 0 && !storedExcludesHoliday
+      ? storedNet
       : settlement.netSalary;
-    const totalTakeHomePay = isFinalized && (ps.totalTakeHomePay || 0) > 0
-      ? Math.round((ps.totalTakeHomePay || 0) * 100) / 100
-      : isFinalized && (ps.netSalary || 0) > 0
-        ? Math.round((netSalary + commissionEarned + (ps.expenseReimbursement || 0)) * 100) / 100
-        : settlement.totalTakeHomePay;
+    const totalTakeHomePay = settlement.totalTakeHomePay;
     const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
 
     const empName = ps.employeeName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim();

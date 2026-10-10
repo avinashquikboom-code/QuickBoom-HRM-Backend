@@ -266,16 +266,18 @@ async function runTests() {
     // TEST 8: Deductions and Net Salary Isolation
     // -------------------------------------------------------------
     console.log('\n--- TEST 8: Deductions and Net Salary Isolation ---');
+    const extraHolidayWeekly =
+      Number(payrollCalc.extraHolidayPayout || 0) + Number(payrollCalc.extraWeeklyOffPayout || 0);
     const expectedNet = Math.max(
       0,
-      Number((payrollCalc.grossSalary - payrollCalc.deductions).toFixed(2)),
+      Number((payrollCalc.grossSalary + extraHolidayWeekly - payrollCalc.deductions).toFixed(2)),
     );
     assertTest(
-      'Net Salary equals Gross minus Deductions (holiday payout not added again)',
+      'Net Salary equals Gross + holiday/weekly-off extra minus Deductions',
       payrollCalc.netSalary === expectedNet,
       true,
       payrollCalc.netSalary === expectedNet,
-      `Gross: ${payrollCalc.grossSalary}, Deductions: ${payrollCalc.deductions}, Net: ${payrollCalc.netSalary}`
+      `Gross: ${payrollCalc.grossSalary}, Extra: ${extraHolidayWeekly}, Deductions: ${payrollCalc.deductions}, Net: ${payrollCalc.netSalary}`
     );
 
     // -------------------------------------------------------------

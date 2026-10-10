@@ -443,16 +443,21 @@ export const generatePayslipPDF = async (
         { text: fmt(earnings.incentive), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
     }
+    earningsTableBody.push([
+      { text: 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
+      { text: fmt(grossEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#059669', fillColor: '#ECFDF5' }
+    ]);
     if (extraPayout > 0) {
       earningsTableBody.push([
         { text: 'Holiday / Weekly Off Payout', fontSize: 9, color: '#111827' },
         { text: fmt(extraPayout), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
+      const totalEarnings = view.totalEarnings || Math.round((grossEarnings + extraPayout) * 100) / 100;
+      earningsTableBody.push([
+        { text: 'Total Earnings', fontSize: 9, bold: true, color: '#047857', fillColor: '#ECFDF5' },
+        { text: fmt(totalEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#047857', fillColor: '#ECFDF5' }
+      ]);
     }
-    earningsTableBody.push([
-      { text: 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
-      { text: fmt(grossEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#059669', fillColor: '#ECFDF5' }
-    ]);
 
     const deductionsTableBody: any[] = [
       [{ text: 'Description', style: 'colHeader' }, { text: 'Amount (\u20b9)', style: 'colHeader', alignment: 'right' }]
