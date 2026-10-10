@@ -444,7 +444,7 @@ export const generatePayslipPDF = async (
       ]);
     }
     earningsTableBody.push([
-      { text: 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
+      { text: extraPayout > 0 ? 'Base Gross Salary' : 'Gross Earnings', fontSize: 9, bold: true, color: '#059669', fillColor: '#ECFDF5' },
       { text: fmt(grossEarnings), fontSize: 9, bold: true, alignment: 'right', color: '#059669', fillColor: '#ECFDF5' }
     ]);
     if (extraPayout > 0) {
@@ -578,7 +578,7 @@ export const generatePayslipPDF = async (
         ], margin: [0, 0, 0, 20] },
         // Stat cards
         { columns: [
-          { stack: [{ text: fmt(grossEarnings), fontSize: 14, bold: true, color: PRIMARY, alignment: 'center' }, { text: 'GROSS EARNINGS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
+          { stack: [{ text: fmt(extraPayout > 0 ? (view.totalEarnings || Math.round((grossEarnings + extraPayout) * 100) / 100) : grossEarnings), fontSize: 14, bold: true, color: PRIMARY, alignment: 'center' }, { text: extraPayout > 0 ? 'TOTAL GROSS EARNINGS' : 'GROSS EARNINGS', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
           { stack: [{ text: fmt(deductions),  fontSize: 14, bold: true, color: '#DC2626', alignment: 'center' }, { text: 'DEDUCTIONS',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
           { stack: [{ text: fmt(netSalary),   fontSize: 14, bold: true, color: '#059669', alignment: 'center' }, { text: 'NET SALARY',  fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] },
           ...(commissionEarned > 0 ? [{ stack: [{ text: fmt(commissionEarned), fontSize: 14, bold: true, color: '#0F766E', alignment: 'center' }, { text: 'COMMISSION', fontSize: 7, bold: true, color: '#6B7280', alignment: 'center', margin: [0,2,0,0] }], margin: [0,0,6,0] }] : []),

@@ -407,7 +407,9 @@ export const downloadPayslip = async (
                 color: 'white',
                 text: [
                   { text: 'PAYABLE SUMMARY\n', fontSize: 10, bold: true },
-                  { text: `Gross Earnings: Rs. ${fmt(grossEarnings)}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`, fontSize: 9 },
+                  { text: extraPayout > 0
+                    ? `Total Gross Earnings: Rs. ${fmt(view.totalEarnings || (grossEarnings + extraPayout))}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`
+                    : `Gross Earnings: Rs. ${fmt(grossEarnings)}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`, fontSize: 9 },
                   ...(isCommissionEligible && commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${fmt(commissionEarned)}\n`, fontSize: 9, bold: true }] : []),
                   ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${fmt(expenseReimbursement)}\n`, fontSize: 9, bold: true }] : []),
                   { text: `\nTOTAL TAKE-HOME PAY\n`, fontSize: 11, bold: true },
