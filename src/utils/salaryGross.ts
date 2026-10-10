@@ -37,6 +37,29 @@ export function computeGrossSalary(c: SalaryGrossComponents): number {
   return Math.round(sum * 100) / 100;
 }
 
+/**
+ * Applicable monthly gross is the salary-structure component sum.
+ * Holiday / weekly-off extra days are recorded separately and must not
+ * be added into Gross Earnings — monthly salary already covers the month.
+ */
+export function resolveApplicableGross(c: SalaryGrossComponents & {
+  extraHolidayPayout?: number | null;
+  extraWeeklyOffPayout?: number | null;
+  storedGross?: number | null;
+}): number {
+  const structure = computeGrossSalary(c);
+  if (structure > 0) return structure;
+  const extra = n(c.extraHolidayPayout) + n(c.extraWeeklyOffPayout);
+  const stored = n(c.storedGross);
+  if (stored > extra) return Math.round((stored - extra) * 100) / 100;
+  return stored;
+}
+
+export function netSalaryFromGross(gross: number, totalDeductions: number): number {
+  const net = Math.round((n(gross) - n(totalDeductions)) * 100) / 100;
+  return net > 0 ? net : 0;
+}
+
 export function mapStructureGrossFields(ss: {
   basicSalary?: number | null;
   hra?: number | null;

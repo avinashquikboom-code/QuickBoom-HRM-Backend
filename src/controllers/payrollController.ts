@@ -297,7 +297,7 @@ export const getEmployeePayrollHistory = async (
       take: limitNum
     });
     const transformedHistory = payslips.map(ps => {
-      const grossSalary = Math.round((ps.baseSalary + ps.allowance + (ps.commissionEarned || 0) + (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0)) * 100) / 100;
+      const grossSalary = Math.round((ps.baseSalary + ps.allowance) * 100) / 100;
       return {
         ...ps,
         grossSalary,

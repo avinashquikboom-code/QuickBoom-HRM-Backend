@@ -2,7 +2,7 @@ import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from './payrollAutomationService';
-import { computeGrossSalary, mapStructureGrossFields, isCommissionEligibleEmployee } from '../utils/salaryGross';
+import { computeGrossSalary, mapStructureGrossFields, isCommissionEligibleEmployee, netSalaryFromGross } from '../utils/salaryGross';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -223,8 +223,11 @@ class PayrollService {
         amount,
       }));
 
-      // Gross Salary: Regular Monthly Salary + Extra Payouts + Bonus + Overtime (commission & expenses remain separate take-home additions)
-      const grossSalary = Math.round((monthlySalary + extraHolidayPayout + extraWeeklyOffPayout + bonus + overtime) * 100) / 100;
+      // Applicable Gross = salary-structure monthly total only.
+      // Extra holiday/weekly-off payouts are kept as separate audit fields and
+      // are not added here: a monthly salary already covers the calendar month,
+      // so adding a daily amount (e.g. 14000/11 = 1272.72) inflates Gross Earnings.
+      const grossSalary = monthlySalary;
 
       // Calculate statutory deductions
       const statutoryDeductions = this.calculateDeductions(grossSalary, salaryStructure);
@@ -260,8 +263,7 @@ class PayrollService {
       // Total Deductions
       const totalDeductions = Math.round((statutoryDeductions + policyDeductions + absentDeduction + halfDayDeduction + unpaidLeaveDeduction + advanceDeduction) * 100) / 100;
 
-      // Net Salary = Gross Salary - Total Deductions
-      const netSalary = Math.max(0, Math.round((grossSalary - totalDeductions) * 100) / 100);
+      const netSalary = netSalaryFromGross(grossSalary, totalDeductions);
 
       // Total Take-Home Pay = Net Salary + Commission + Reimbursements
       const totalTakeHomePay = Math.round((netSalary + (commissionEarned > 0 ? commissionEarned : 0) + approvedExpenses) * 100) / 100;
@@ -1456,7 +1458,7 @@ class PayrollService {
     const totalDeductions = round2(calc.deductions);
     const itemized = round2(pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction);
     const otherDeductions = round2(Math.max(0, totalDeductions - itemized));
-    const grossEarnings = round2(calc.grossEarnings ?? calc.grossSalary);
+    const grossEarnings = round2(calc.fixedGrossSalary || calc.monthlySalary || calc.grossEarnings || calc.grossSalary);
     const netSalary = round2(calc.netSalary);
     const isCommissionEligible = calc.isCommissionEligible !== undefined
       ? calc.isCommissionEligible
@@ -1719,8 +1721,11 @@ class PayrollService {
     }
 
     // Gross excludes commission; net = gross - deductions.
-    const extraPayout = (ps.extraHolidayPayout || 0) + (ps.extraWeeklyOffPayout || 0);
-    const grossSalary = Math.round((fixedGrossSalary + extraPayout) * 100) / 100;
+    const structureGross = employee?.salaryStructure
+      ? mapStructureGrossFields(employee.salaryStructure).grossSalary
+      : 0;
+    const applicableGross = structureGross > 0 ? structureGross : fixedGrossSalary;
+    const grossSalary = applicableGross;
 
     const ss = employee?.salaryStructure;
     const pf = ss?.pfEnabled ? Math.round(earnings.baseSalary * (ss.employeePfRate / 100)) : 0;
@@ -1735,7 +1740,7 @@ class PayrollService {
       cleanDeductions = itemizedDeductions;
     }
 
-    const netSalary = Math.max(0, Math.round((grossSalary - cleanDeductions) * 100) / 100);
+    const netSalary = netSalaryFromGross(grossSalary, cleanDeductions);
     const isCommissionEligible = isCommissionEligibleEmployee(employee);
     const commissionEarned = isCommissionEligible ? (ps.commissionEarned || 0) : 0;
     const totalTakeHomePay = Math.round((netSalary + commissionEarned + (ps.expenseReimbursement || 0)) * 100) / 100;

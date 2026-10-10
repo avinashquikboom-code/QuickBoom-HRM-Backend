@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { computeGrossSalary, mapStructureGrossFields } from '../src/utils/salaryGross';
+import { computeGrossSalary, mapStructureGrossFields, netSalaryFromGross, resolveApplicableGross } from '../src/utils/salaryGross';
 
 function run() {
   let passed = 0;
@@ -73,6 +73,35 @@ function run() {
   );
 
   check('empty components yield 0', computeGrossSalary({}) === 0);
+
+  const applicable14000 = resolveApplicableGross({
+    basicSalary: 14000,
+    extraHolidayPayout: 1272.72,
+    extraWeeklyOffPayout: 0,
+    storedGross: 15272.72,
+  });
+  check('applicable gross stays 14000 when extra holiday day is present', applicable14000 === 14000);
+  check(
+    'inflated 15272.72 is structure + one daily (14000/11)',
+    Math.round((15272.72 - 14000) * 100) / 100 === 1272.72
+  );
+  const halfDay = 636.36;
+  check(
+    'net = 14000 - 636.36 half-day - 0 advance',
+    netSalaryFromGross(14000, halfDay) === 13363.64
+  );
+  check(
+    'inflated net 14636.36 is 15272.72 minus the same half-day',
+    netSalaryFromGross(15272.72, halfDay) === 14636.36
+  );
+  check(
+    'stored inflated gross without structure falls back by removing extra day',
+    resolveApplicableGross({
+      extraHolidayPayout: 1272.72,
+      storedGross: 15272.72,
+    }) === 14000
+  );
+  check('deductions are subtracted only once', netSalaryFromGross(14000, halfDay + 0) === 13363.64);
 
   console.log(`salaryGross tests: ${passed}/${total} passed`);
 }
