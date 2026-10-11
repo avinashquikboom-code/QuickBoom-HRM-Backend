@@ -403,7 +403,6 @@ function withRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummary {
 export function attendanceSummaryRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummaryRow[] {
   const rows: AttendanceSummaryRow[] = [
     { label: 'Total Calendar Days', value: String(s.totalCalendarDays) },
-    { label: 'Total Working Days', value: String(s.totalWorkingDays) },
     { label: 'Present Days', value: String(s.presentDays) },
     { label: 'Absent Days', value: String(s.absentDays) },
     { label: 'Half Days', value: String(s.halfDays) },

@@ -314,13 +314,12 @@ function run() {
     check('randomized: 400 scenarios match pre-change payroll counts and reconcile', mismatches === 0);
   }
 
-  // 12. 12 attendance fields are present in exact order
+  // 12. 11 attendance fields are present in exact order
   {
     const feb = classify({ year: 2026, month: 2 });
     const s = attendanceSummaryFromClassification(feb);
     const expectedLabels = [
       'Total Calendar Days',
-      'Total Working Days',
       'Present Days',
       'Absent Days',
       'Half Days',
@@ -332,7 +331,8 @@ function run() {
       'Working Days Before Joining',
       'Remaining Working Days',
     ];
-    check('attendance summary has exactly 12 rows', s.rows.length === 12);
+    check('attendance summary has exactly 11 rows', s.rows.length === 11);
+    check('attendance summary has no Total Working Days row', !s.rows.some((r) => r.label === 'Total Working Days'));
     for (let i = 0; i < expectedLabels.length; i++) {
       check(`attendance row ${i + 1} is ${expectedLabels[i]}`, s.rows[i].label === expectedLabels[i]);
     }
