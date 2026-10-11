@@ -982,7 +982,7 @@ class PayrollService {
     joiningDate?: Date | string | null,
   ): Promise<AttendanceClassification> {
     const monthRange = getIstMonthRange(year, month);
-    const [attendanceRecords, holidays, approvedLeaves, shiftAssignments] = await Promise.all([
+    const [attendanceRecords, holidays, allLeaves, shiftAssignments] = await Promise.all([
       prisma.attendance.findMany({
         where: { employeeId, date: { gte: monthRange.startDateStr, lte: monthRange.endDateStr } },
       }),
@@ -992,7 +992,6 @@ class PayrollService {
       prisma.leaveRequest.findMany({
         where: {
           employeeId,
-          status: 'APPROVED',
           fromDate: { lte: monthRange.monthEnd },
           toDate: { gte: monthRange.monthStart },
         },
@@ -1028,11 +1027,12 @@ class PayrollService {
       workingDayNames: configuredWorkingDays,
       holidayYmds: holidays.map((h) => toIstYmd(h.date)),
       records: attendanceRecords,
-      leaves: approvedLeaves.map((l) => ({
+      leaves: allLeaves.map((l) => ({
         fromYmd: toIstYmd(l.fromDate),
         toYmd: toIstYmd(l.toDate),
         type: l.type,
         leaveCategory: l.leaveCategory,
+        status: l.status,
       })),
       todayYmd,
       joiningYmd: joiningDate ? toIstYmd(joiningDate) : null,

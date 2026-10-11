@@ -1,4 +1,3 @@
-import assert from 'assert';
 import {
   AttendanceClassification,
   AttendanceClassificationInput,
@@ -15,7 +14,9 @@ import { absentDeductionLabel } from '../src/utils/attendanceSummaryPdf';
 import { computePayrollSettlement } from '../src/utils/salaryGross';
 
 function check(desc: string, cond: boolean) {
-  assert.ok(cond, desc);
+  if (!cond) {
+    throw new Error(`Assertion failed: ${desc}`);
+  }
   console.log(`PASS ${desc}`);
 }
 
@@ -348,28 +349,67 @@ function run() {
     check('randomized: 400 scenarios match pre-change payroll counts and reconcile', mismatches === 0);
   }
 
-  // 12. All 12 attendance fields are present in exact specified order
+  // 12. All 13 attendance fields are present in exact specified order
   {
     const feb = classify({ year: 2026, month: 2 });
     const s = attendanceSummaryFromClassification(feb);
     const expectedLabels = [
       'Total Calendar Days',
-      'Total Working Days',
+      'Total Scheduled Working Days',
+      'Weekly Off Days',
+      'Holidays',
+      'Working Days Before Joining',
+      'Eligible Working Days After Joining',
       'Present Days',
       'Absent Days',
       'Half Days',
       'Paid Leave Days',
       'Unpaid Leave Days',
-      'Weekly Off Days',
-      'Holidays',
-      'Overtime Hours',
-      'Working Days Before Joining',
       'Remaining Working Days',
+      'Overtime Hours',
     ];
-    check('attendance summary has exactly 12 rows', s.rows.length === 12);
+    check('attendance summary has exactly 13 rows', s.rows.length === 13);
     for (let i = 0; i < expectedLabels.length; i++) {
       check(`attendance row ${i + 1} is ${expectedLabels[i]}`, s.rows[i].label === expectedLabels[i]);
     }
+  }
+
+  // 13. Pending and rejected leave requests are NEVER treated as approved leave
+  {
+    const leaves: ApprovedLeaveSpan[] = [
+      { fromYmd: '2026-03-09', toYmd: '2026-03-09', type: 'CASUAL', status: 'PENDING' },
+      { fromYmd: '2026-03-10', toYmd: '2026-03-10', type: 'SICK', status: 'REJECTED' },
+      { fromYmd: '2026-03-11', toYmd: '2026-03-11', type: 'CASUAL', status: 'APPROVED' },
+    ];
+    const c = classify({ year: Y, month: M, leaves, todayYmd: '2026-03-31' });
+    check('pending/rejected leaves: approved leave (day 11) is paid leave', c.paidLeaveDays === 1);
+    check('pending/rejected leaves: pending (day 9) and rejected (day 10) are treated as absent, not leave',
+      c.absentDays === 25 && c.paidLeaveDays === 1 && c.unpaidLeaveDays === 0);
+  }
+
+  // 14. October 9, 2026 joiner exact specification
+  {
+    const c = classify({
+      year: 2026,
+      month: 10,
+      joiningYmd: '2026-10-09',
+      todayYmd: '2026-10-31',
+    });
+    check('Oct 9 joiner: 31 Total Calendar Days', c.totalCalendarDays === 31);
+    check('Oct 9 joiner: 4 Weekly Off Days in month', c.weeklyOffCount + c.notJoinedWeeklyOffDays === 4);
+    check('Oct 9 joiner: 7 Working Days Before Joining (Oct 1-8 weekdays)', c.notJoinedDays === 7);
+    check('Oct 9 joiner: 1 Sunday before joining (Oct 4)', c.notJoinedWeeklyOffDays === 1);
+    check('Oct 9 joiner: 20 Eligible Working Days (Oct 9-31 weekdays)', c.scheduledWorkingDays === 20);
+    check('Oct 9 joiner: 3 Sundays after joining (Oct 11, 18, 25)', c.weeklyOffCount === 3);
+    check('Oct 9 joiner: 27 Total Scheduled Working Days in month', c.monthWorkingDays === 27);
+    check('Oct 9 joiner: 7 + 20 + 4 = 31 total calendar days reconcile',
+      c.notJoinedDays + c.scheduledWorkingDays + (c.weeklyOffCount + c.notJoinedWeeklyOffDays) === 31);
+
+    const s = attendanceSummaryFromClassification(c);
+    check('Oct 9 joiner summary: totalScheduledWorkingDays is 27', s.totalScheduledWorkingDays === 27);
+    check('Oct 9 joiner summary: eligibleWorkingDays is 20', s.eligibleWorkingDays === 20);
+    check('Oct 9 joiner summary: workingDaysBeforeJoining is 7', s.workingDaysBeforeJoining === 7);
+    check('Oct 9 joiner summary: weeklyOffDays is 4', s.weeklyOffDays === 4);
   }
 
   console.log('\nAll attendance summary tests passed.');

@@ -243,17 +243,18 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     ? attSummary.rows
     : [
         { label: 'Total Calendar Days', value: String(totalDays) },
-        { label: 'Total Working Days', value: String(input.workingDays ?? 0) },
+        { label: 'Total Scheduled Working Days', value: String(input.workingDays ?? 0) },
+        { label: 'Weekly Off Days', value: String(input.weeklyOffCount ?? 0) },
+        { label: 'Holidays', value: String(input.holidayCount ?? 0) },
+        { label: 'Working Days Before Joining', value: '0' },
+        { label: 'Eligible Working Days After Joining', value: String(input.workingDays ?? 0) },
         { label: 'Present Days', value: String(input.presentDays ?? 0) },
         { label: 'Absent Days', value: String(input.absentDays ?? 0) },
         { label: 'Half Days', value: String(input.halfDays ?? 0) },
         { label: 'Paid Leave Days', value: String(input.paidLeaveDays ?? 0) },
         { label: 'Unpaid Leave Days', value: String(input.unpaidLeaveDays ?? 0) },
-        { label: 'Weekly Off Days', value: String(input.weeklyOffCount ?? 0) },
-        { label: 'Holidays', value: String(input.holidayCount ?? 0) },
-        { label: 'Overtime Hours', value: input.overtimeHours ? `${input.overtimeHours}h` : '0h 0m' },
-        { label: 'Working Days Before Joining', value: '0' },
         { label: 'Remaining Working Days', value: '0' },
+        { label: 'Overtime Hours', value: input.overtimeHours ? `${input.overtimeHours}h` : '0h 0m' },
       ];
 
   const half = Math.ceil(rows.length / 2);

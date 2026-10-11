@@ -12,6 +12,7 @@ export type ApprovedLeaveSpan = {
   toYmd: string;
   type?: string | null;
   leaveCategory?: string | null;
+  status?: string | null;
 };
 
 export type ShiftWindow = {
@@ -74,7 +75,18 @@ export type AttendanceSummary = {
   periodStart: string;
   periodEnd: string;
   totalCalendarDays: number;
+  /** Total scheduled working days in the entire month (divisor). */
+  totalScheduledWorkingDays: number;
+  /** Scheduled working days in whole month; payroll divides gross by this. */
+  monthWorkingDays: number;
+  /** Scheduled working days inside employment window (on/after joining). */
   totalWorkingDays: number;
+  /** Eligible working days on/after joining date. */
+  eligibleWorkingDays: number;
+  /** Scheduled working days before joining date. */
+  workingDaysBeforeJoining: number;
+  /** Scheduled working days before joining date (alias). */
+  notJoinedDays: number;
   presentDays: number;
   absentDays: number;
   halfDays: number;
@@ -84,7 +96,6 @@ export type AttendanceSummary = {
   weeklyOffWorkedDays: number;
   holidays: number;
   holidayWorkedDays: number;
-  notJoinedDays: number;
   remainingWorkingDays: number;
   overtimeMinutes: number;
   overtimeLabel: string;
@@ -304,16 +315,21 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
     if (!isHoliday && !isWeeklyOff) result.monthWorkingDays++;
 
     const att = byDate.get(dateStr);
-    const leave = input.leaves.find((l) => l.fromYmd <= dateStr && dateStr <= l.toYmd);
+    const approvedLeave = input.leaves.find(
+      (l) => (!l.status || l.status.toUpperCase() === 'APPROVED') && l.fromYmd <= dateStr && dateStr <= l.toYmd,
+    );
+    const unapprovedLeave = input.leaves.find(
+      (l) => Boolean(l.status && l.status.toUpperCase() !== 'APPROVED') && l.fromYmd <= dateStr && dateStr <= l.toYmd,
+    );
     const status = statusOf(att);
     const punched = hasPunch(att);
     const isHalfDay = HALF_DAY.has(status);
     const isPresent =
       status === 'PRESENT' || status === 'LATE' || status === 'FULL_DAY' ||
       (punched && status !== 'ABSENT' && !isHalfDay && !status.includes('LEAVE'));
-    const isLeaveStatus = LEAVE.has(status);
+    const isLeaveStatus = LEAVE.has(status) && !unapprovedLeave;
     const isExplicitAbsent = status === 'ABSENT';
-    const hasEvidence = isPresent || isHalfDay || isLeaveStatus || Boolean(leave) || punched ||
+    const hasEvidence = isPresent || isHalfDay || isLeaveStatus || Boolean(approvedLeave) || punched ||
       status === 'HOLIDAY_WORKED' || status === 'WEEKLY_OFF_WORKED';
 
     if (joiningYmd && dateStr < joiningYmd && !hasEvidence) {
@@ -351,9 +367,9 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
     } else if (isPresent) {
       result.presentDays++;
       if (att && input.isLateCheckIn?.(att)) result.lateMarks++;
-    } else if (leave || isLeaveStatus) {
+    } else if (approvedLeave || isLeaveStatus) {
       const isUnpaid =
-        (leave && (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID')) ||
+        (approvedLeave && (approvedLeave.type === 'UNPAID' || approvedLeave.type === 'LOP' || approvedLeave.leaveCategory === 'UNPAID')) ||
         status === 'UNPAID_LEAVE';
       if (isUnpaid) result.unpaidLeaveDays++;
       else result.paidLeaveDays++;
@@ -375,7 +391,12 @@ export function attendanceSummaryFromClassification(c: AttendanceClassification)
     periodStart: c.periodStart,
     periodEnd: c.periodEnd,
     totalCalendarDays: c.totalCalendarDays,
+    totalScheduledWorkingDays: c.monthWorkingDays,
+    monthWorkingDays: c.monthWorkingDays,
     totalWorkingDays: c.scheduledWorkingDays,
+    eligibleWorkingDays: c.scheduledWorkingDays,
+    workingDaysBeforeJoining: c.notJoinedDays,
+    notJoinedDays: c.notJoinedDays,
     presentDays: c.presentDays,
     absentDays: c.absentDays,
     halfDays: c.halfDays,
@@ -385,7 +406,6 @@ export function attendanceSummaryFromClassification(c: AttendanceClassification)
     weeklyOffWorkedDays: c.weeklyOffWorkedCount,
     holidays: totalHolidays,
     holidayWorkedDays: c.holidayWorkedCount,
-    notJoinedDays: c.notJoinedDays,
     remainingWorkingDays: c.remainingWorkingDays,
     overtimeMinutes: c.overtimeMinutes,
     overtimeLabel: formatOvertime(c.overtimeMinutes),
@@ -417,7 +437,7 @@ export function attendanceSummaryFromStoredPayslip(
 ): AttendanceSummary {
   const n = (v: number | null | undefined) => Math.max(0, Math.round(Number(v) || 0));
   const monthWorkingDays = n(stored.workingDays) || live.monthWorkingDays;
-  const totalWorkingDays = Math.max(0, monthWorkingDays - live.notJoinedDays);
+  const eligibleWorkingDays = Math.max(0, monthWorkingDays - live.notJoinedDays);
   const presentDays = n(stored.presentDays);
   const halfDays = n(stored.halfDays);
   const paidLeaveDays = n(stored.paidLeaveDays);
@@ -432,7 +452,12 @@ export function attendanceSummaryFromStoredPayslip(
     periodStart: live.periodStart,
     periodEnd: live.periodEnd,
     totalCalendarDays: n(stored.totalCalendarDays) || live.totalCalendarDays,
-    totalWorkingDays,
+    totalScheduledWorkingDays: monthWorkingDays,
+    monthWorkingDays,
+    totalWorkingDays: eligibleWorkingDays,
+    eligibleWorkingDays,
+    workingDaysBeforeJoining: live.notJoinedDays,
+    notJoinedDays: live.notJoinedDays,
     presentDays,
     absentDays,
     halfDays,
@@ -442,8 +467,7 @@ export function attendanceSummaryFromStoredPayslip(
     weeklyOffWorkedDays: weeklyOffWorked,
     holidays: totalHolidays,
     holidayWorkedDays: holidayWorked,
-    notJoinedDays: live.notJoinedDays,
-    remainingWorkingDays: Math.max(0, totalWorkingDays - accounted),
+    remainingWorkingDays: Math.max(0, eligibleWorkingDays - accounted),
     overtimeMinutes: live.overtimeMinutes,
     overtimeLabel: formatOvertime(live.overtimeMinutes),
     joiningDate: live.joiningYmd,
@@ -460,12 +484,7 @@ function withRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummary {
 export function attendanceSummaryRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummaryRow[] {
   const rows: AttendanceSummaryRow[] = [
     { label: 'Total Calendar Days', value: String(s.totalCalendarDays) },
-    { label: 'Total Working Days', value: String(s.totalWorkingDays) },
-    { label: 'Present Days', value: String(s.presentDays) },
-    { label: 'Absent Days', value: String(s.absentDays) },
-    { label: 'Half Days', value: String(s.halfDays) },
-    { label: 'Paid Leave Days', value: String(s.paidLeaveDays) },
-    { label: 'Unpaid Leave Days', value: String(s.unpaidLeaveDays) },
+    { label: 'Total Scheduled Working Days', value: String(s.totalScheduledWorkingDays ?? s.monthWorkingDays ?? s.totalWorkingDays) },
     {
       label: 'Weekly Off Days',
       value: s.weeklyOffWorkedDays > 0 ? `${s.weeklyOffDays} (${s.weeklyOffWorkedDays} worked)` : String(s.weeklyOffDays),
@@ -474,9 +493,15 @@ export function attendanceSummaryRows(s: Omit<AttendanceSummary, 'rows'>): Atten
       label: 'Holidays',
       value: s.holidayWorkedDays > 0 ? `${s.holidays} (${s.holidayWorkedDays} worked)` : String(s.holidays),
     },
-    { label: 'Overtime Hours', value: s.overtimeLabel },
-    { label: 'Working Days Before Joining', value: String(s.notJoinedDays) },
+    { label: 'Working Days Before Joining', value: String(s.workingDaysBeforeJoining ?? s.notJoinedDays ?? 0) },
+    { label: 'Eligible Working Days After Joining', value: String(s.eligibleWorkingDays ?? s.totalWorkingDays) },
+    { label: 'Present Days', value: String(s.presentDays) },
+    { label: 'Absent Days', value: String(s.absentDays) },
+    { label: 'Half Days', value: String(s.halfDays) },
+    { label: 'Paid Leave Days', value: String(s.paidLeaveDays) },
+    { label: 'Unpaid Leave Days', value: String(s.unpaidLeaveDays) },
     { label: 'Remaining Working Days', value: String(s.remainingWorkingDays) },
+    { label: 'Overtime Hours', value: s.overtimeLabel },
   ];
   return rows;
 }
