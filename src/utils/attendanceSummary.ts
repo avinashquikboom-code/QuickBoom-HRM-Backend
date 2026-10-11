@@ -19,6 +19,7 @@ export type ShiftWindow = {
   toYmd?: string | null;
   startTime: string;
   endTime: string;
+  workingDays?: string[];
 };
 
 export type AttendanceClassificationInput = {
@@ -188,7 +189,7 @@ function shiftMinutesForDate(dateStr: string, input: AttendanceClassificationInp
   return scheduledShiftMinutes(input.officeStartTime ?? '09:00', input.officeEndTime ?? '18:00');
 }
 
-function normalizeDayName(d: string): string {
+export function normalizeDayName(d: string): string {
   const s = String(d || '').trim().toLowerCase();
   if (s.startsWith('sun')) return 'Sunday';
   if (s.startsWith('mon')) return 'Monday';
@@ -198,6 +199,52 @@ function normalizeDayName(d: string): string {
   if (s.startsWith('fri')) return 'Friday';
   if (s.startsWith('sat')) return 'Saturday';
   return d;
+}
+
+/**
+ * Calculate calendar days, weekly off days, holidays, and scheduled working
+ * days dynamically from the actual calendar for the selected payroll month.
+ * Never hardcodes days or assumes fixed 26, 30, or 31.
+ */
+export function calculateScheduledWorkingDays(
+  year: number,
+  month: number,
+  workingDayNames?: string[] | null,
+  holidayYmds?: string[] | null,
+): {
+  totalCalendarDays: number;
+  workingDays: number;
+  weeklyOffDays: number;
+  holidayDays: number;
+} {
+  const totalCalendarDays = new Date(year, month, 0).getDate();
+  const rawWorkingDays = (Array.isArray(workingDayNames) && workingDayNames.length > 0)
+    ? workingDayNames
+    : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const normalizedWorkingDays = new Set(rawWorkingDays.map(normalizeDayName));
+  const holidays = new Set((holidayYmds || []).map((h) => String(h).slice(0, 10)));
+  const monthPrefix = `${year}-${pad2(month)}`;
+
+  let weeklyOffDays = 0;
+  let holidayDays = 0;
+  let workingDays = 0;
+
+  for (let day = 1; day <= totalCalendarDays; day++) {
+    const dateStr = `${monthPrefix}-${pad2(day)}`;
+    const dayName = new Date(year, month - 1, day, 12, 0, 0).toLocaleDateString('en-US', { weekday: 'long' });
+    const isWeeklyOff = !normalizedWorkingDays.has(dayName);
+    const isHoliday = holidays.has(dateStr);
+
+    if (isHoliday) {
+      holidayDays++;
+    } else if (isWeeklyOff) {
+      weeklyOffDays++;
+    } else {
+      workingDays++;
+    }
+  }
+
+  return { totalCalendarDays, workingDays, weeklyOffDays, holidayDays };
 }
 
 /**
@@ -246,7 +293,13 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
   for (let day = 1; day <= totalCalendarDays; day++) {
     const dateStr = `${monthPrefix}-${pad2(day)}`;
     const dayName = new Date(year, month - 1, day, 12, 0, 0).toLocaleDateString('en-US', { weekday: 'long' });
-    const isWeeklyOff = !normalizedWorkingDays.has(dayName);
+
+    const shift = (input.shifts || []).find((s) => s.fromYmd <= dateStr && (!s.toYmd || dateStr <= s.toYmd));
+    const activeWorkingDays = (shift && Array.isArray(shift.workingDays) && shift.workingDays.length > 0)
+      ? new Set(shift.workingDays.map(normalizeDayName))
+      : normalizedWorkingDays;
+
+    const isWeeklyOff = !activeWorkingDays.has(dayName);
     const isHoliday = holidays.has(dateStr);
     if (!isHoliday && !isWeeklyOff) result.monthWorkingDays++;
 
@@ -316,6 +369,8 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
 
 /** Display summary straight from a live classification. */
 export function attendanceSummaryFromClassification(c: AttendanceClassification): AttendanceSummary {
+  const totalWeeklyOffDays = c.weeklyOffCount + c.weeklyOffWorkedCount + c.notJoinedWeeklyOffDays;
+  const totalHolidays = c.holidayCount + c.holidayWorkedCount + c.notJoinedHolidayDays;
   return withRows({
     periodStart: c.periodStart,
     periodEnd: c.periodEnd,
@@ -326,9 +381,9 @@ export function attendanceSummaryFromClassification(c: AttendanceClassification)
     halfDays: c.halfDays,
     paidLeaveDays: c.paidLeaveDays,
     unpaidLeaveDays: c.unpaidLeaveDays,
-    weeklyOffDays: c.weeklyOffCount + c.weeklyOffWorkedCount,
+    weeklyOffDays: totalWeeklyOffDays,
     weeklyOffWorkedDays: c.weeklyOffWorkedCount,
-    holidays: c.holidayCount + c.holidayWorkedCount,
+    holidays: totalHolidays,
     holidayWorkedDays: c.holidayWorkedCount,
     notJoinedDays: c.notJoinedDays,
     remainingWorkingDays: c.remainingWorkingDays,
@@ -371,6 +426,8 @@ export function attendanceSummaryFromStoredPayslip(
   const accounted = presentDays + halfDays + paidLeaveDays + unpaidLeaveDays + absentDays;
   const weeklyOffWorked = n(stored.weeklyOffWorkedCount);
   const holidayWorked = n(stored.holidayWorkedCount);
+  const totalWeeklyOffDays = n(stored.weeklyOffCount) || (live.weeklyOffCount + live.weeklyOffWorkedCount + live.notJoinedWeeklyOffDays);
+  const totalHolidays = n(stored.holidayCount) || (live.holidayCount + live.holidayWorkedCount + live.notJoinedHolidayDays);
   return withRows({
     periodStart: live.periodStart,
     periodEnd: live.periodEnd,
@@ -381,9 +438,9 @@ export function attendanceSummaryFromStoredPayslip(
     halfDays,
     paidLeaveDays,
     unpaidLeaveDays,
-    weeklyOffDays: Math.max(0, n(stored.weeklyOffCount) - live.notJoinedWeeklyOffDays) + weeklyOffWorked,
+    weeklyOffDays: totalWeeklyOffDays,
     weeklyOffWorkedDays: weeklyOffWorked,
-    holidays: Math.max(0, n(stored.holidayCount) - live.notJoinedHolidayDays) + holidayWorked,
+    holidays: totalHolidays,
     holidayWorkedDays: holidayWorked,
     notJoinedDays: live.notJoinedDays,
     remainingWorkingDays: Math.max(0, totalWorkingDays - accounted),
@@ -403,6 +460,7 @@ function withRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummary {
 export function attendanceSummaryRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummaryRow[] {
   const rows: AttendanceSummaryRow[] = [
     { label: 'Total Calendar Days', value: String(s.totalCalendarDays) },
+    { label: 'Total Working Days', value: String(s.totalWorkingDays) },
     { label: 'Present Days', value: String(s.presentDays) },
     { label: 'Absent Days', value: String(s.absentDays) },
     { label: 'Half Days', value: String(s.halfDays) },

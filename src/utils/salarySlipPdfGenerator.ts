@@ -53,6 +53,14 @@ export interface GenerateSalarySlipPdfInput {
   absentDays?: number | null;
   halfDays?: number | null;
   unpaidLeaveDays?: number | null;
+  workingDays?: number | null;
+  presentDays?: number | null;
+  paidLeaveDays?: number | null;
+  weeklyOffCount?: number | null;
+  holidayCount?: number | null;
+  overtimeHours?: number | string | null;
+  notJoinedDays?: number | null;
+  remainingWorkingDays?: number | null;
   expenseCategories?: Record<string, number> | null;
   expenseReimbursement?: number | null;
   commissionEarned?: number | null;
@@ -223,20 +231,34 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     ],
   ];
 
-  if (attSummary && Array.isArray(attSummary.rows) && attSummary.rows.length > 0) {
-    const rows = attSummary.rows;
-    const half = Math.ceil(rows.length / 2);
-    for (let i = 0; i < half; i++) {
-      const left = rows[i];
-      const right = rows[i + half];
-      const shaded = i % 2 === 1;
-      attendanceBody.push([
-        { text: left ? left.label : '', fontSize: 8, color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
-        { text: left ? left.value : '', fontSize: 8, bold: true, alignment: 'right', color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
-        { text: right ? right.label : '', fontSize: 8, color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
-        { text: right ? right.value : '', fontSize: 8, bold: true, alignment: 'right', color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
-      ]);
-    }
+  const rows = (attSummary && Array.isArray(attSummary.rows) && attSummary.rows.length > 0)
+    ? attSummary.rows
+    : [
+        { label: 'Total Calendar Days', value: String(totalDays) },
+        { label: 'Total Working Days', value: String(input.workingDays ?? 0) },
+        { label: 'Present Days', value: String(input.presentDays ?? 0) },
+        { label: 'Absent Days', value: String(input.absentDays ?? 0) },
+        { label: 'Half Days', value: String(input.halfDays ?? 0) },
+        { label: 'Paid Leave Days', value: String(input.paidLeaveDays ?? 0) },
+        { label: 'Unpaid Leave Days', value: String(input.unpaidLeaveDays ?? 0) },
+        { label: 'Weekly Off Days', value: String(input.weeklyOffCount ?? 0) },
+        { label: 'Holidays', value: String(input.holidayCount ?? 0) },
+        { label: 'Overtime Hours', value: input.overtimeHours ? `${input.overtimeHours}h` : '0h 0m' },
+        { label: 'Working Days Before Joining', value: '0' },
+        { label: 'Remaining Working Days', value: '0' },
+      ];
+
+  const half = Math.ceil(rows.length / 2);
+  for (let i = 0; i < half; i++) {
+    const left = rows[i];
+    const right = rows[i + half];
+    const shaded = i % 2 === 1;
+    attendanceBody.push([
+      { text: left ? left.label : '', fontSize: 8, color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
+      { text: left ? left.value : '', fontSize: 8, bold: true, alignment: 'right', color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
+      { text: right ? right.label : '', fontSize: 8, color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
+      { text: right ? right.value : '', fontSize: 8, bold: true, alignment: 'right', color: TEXT_MAIN, fillColor: shaded ? '#F9FAFB' : undefined },
+    ]);
   }
 
   // 5. Reimbursements Table

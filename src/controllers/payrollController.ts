@@ -754,17 +754,6 @@ export const getAdminPayrollSlips = async (
       });
     }
 
-    const calculateScheduledWorkingDays = (year: number, month: number, office: any): number => {
-      const calendarDays = new Date(year, month, 0).getDate();
-      const officeDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-      let count = 0;
-      for (let d = 1; d <= calendarDays; d++) {
-        const dayName = new Date(year, month - 1, d).toLocaleDateString('en-US', { weekday: 'long' });
-        if (officeDays.includes(dayName)) count++;
-      }
-      return count > 0 ? count : 26;
-    };
-
     // Transform to match frontend expectations safely
     const transformedSlips = await Promise.all(slips.map(async (slip) => {
       return await payrollService.resolveFullPayslipView(slip, slip.employee);

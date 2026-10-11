@@ -8,6 +8,8 @@ import {
   attendanceSummaryFromStoredPayslip,
   classifyPayrollAttendance,
   formatOvertime,
+  calculateScheduledWorkingDays,
+  normalizeDayName,
 } from '../src/utils/attendanceSummary';
 import { absentDeductionLabel } from '../src/utils/attendanceSummaryPdf';
 import { computePayrollSettlement } from '../src/utils/salaryGross';
@@ -215,7 +217,7 @@ function run() {
       c,
     );
     check('joining (PAID): stored summary matches live summary',
-      stored.totalWorkingDays === 14 && stored.absentDays === 0 && stored.weeklyOffDays === 2 && stored.remainingWorkingDays === 0);
+      stored.totalWorkingDays === 14 && stored.absentDays === 0 && stored.weeklyOffDays === 5 && stored.remainingWorkingDays === 0);
   }
 
   // 7. Attendance recorded before the joining date still counts (no evidence is discarded)
@@ -238,7 +240,7 @@ function run() {
     assertReconciles('no records current', current);
   }
 
-  // 9. Month-end / different period lengths
+  // 9. Month-end / different period lengths & Dynamic Calendar Calculation
   {
     const feb = classify({ year: 2026, month: 2 });
     check('Feb 2026: 28 calendar days, 24 working days', feb.totalCalendarDays === 28 && feb.monthWorkingDays === 24);
@@ -249,6 +251,38 @@ function run() {
     check('Apr 2026: 30 calendar days', apr.totalCalendarDays === 30);
     assertReconciles('Feb 2026', feb);
     assertReconciles('Apr 2026', apr);
+
+    // Dynamic Calendar Function Checks
+    const oct2026 = calculateScheduledWorkingDays(2026, 10, MON_SAT);
+    check('Oct 2026: 31 calendar days', oct2026.totalCalendarDays === 31);
+    check('Oct 2026: 4 weekly offs (Sundays 4, 11, 18, 25)', oct2026.weeklyOffDays === 4);
+    check('Oct 2026: 27 working days before public holidays', oct2026.workingDays === 27);
+
+    const feb2026Cal = calculateScheduledWorkingDays(2026, 2, MON_SAT);
+    check('Feb 2026: 28 calendar days', feb2026Cal.totalCalendarDays === 28);
+    check('Feb 2026: 4 weekly offs', feb2026Cal.weeklyOffDays === 4);
+    check('Feb 2026: 24 working days', feb2026Cal.workingDays === 24);
+
+    const feb2024Cal = calculateScheduledWorkingDays(2024, 2, MON_SAT);
+    check('Feb 2024 (leap): 29 calendar days', feb2024Cal.totalCalendarDays === 29);
+    check('Feb 2024 (leap): 4 weekly offs', feb2024Cal.weeklyOffDays === 4);
+    check('Feb 2024 (leap): 25 working days', feb2024Cal.workingDays === 25);
+
+    const apr2026Cal = calculateScheduledWorkingDays(2026, 4, MON_SAT);
+    check('Apr 2026: 30 calendar days', apr2026Cal.totalCalendarDays === 30);
+    check('Apr 2026: 4 weekly offs', apr2026Cal.weeklyOffDays === 4);
+    check('Apr 2026: 26 working days', apr2026Cal.workingDays === 26);
+
+    // 5-day work week (Monday - Friday)
+    const MON_FRI = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    const oct2026MonFri = calculateScheduledWorkingDays(2026, 10, MON_FRI);
+    check('Oct 2026 (5-day week): 9 weekly offs (5 Sat + 4 Sun)', oct2026MonFri.weeklyOffDays === 9);
+    check('Oct 2026 (5-day week): 22 working days', oct2026MonFri.workingDays === 22);
+
+    // Public holiday deduction check
+    const octWithHoliday = calculateScheduledWorkingDays(2026, 10, MON_SAT, ['2026-10-02']);
+    check('Oct 2026 with Oct 2 holiday: 1 holiday', octWithHoliday.holidayDays === 1);
+    check('Oct 2026 with Oct 2 holiday: 26 working days', octWithHoliday.workingDays === 26);
   }
 
   // 10. Salary amounts are unaffected: settlement for the earlier example still reconciles.
@@ -314,12 +348,13 @@ function run() {
     check('randomized: 400 scenarios match pre-change payroll counts and reconcile', mismatches === 0);
   }
 
-  // 12. 11 attendance fields are present in exact order
+  // 12. All 12 attendance fields are present in exact specified order
   {
     const feb = classify({ year: 2026, month: 2 });
     const s = attendanceSummaryFromClassification(feb);
     const expectedLabels = [
       'Total Calendar Days',
+      'Total Working Days',
       'Present Days',
       'Absent Days',
       'Half Days',
@@ -331,8 +366,7 @@ function run() {
       'Working Days Before Joining',
       'Remaining Working Days',
     ];
-    check('attendance summary has exactly 11 rows', s.rows.length === 11);
-    check('attendance summary has no Total Working Days row', !s.rows.some((r) => r.label === 'Total Working Days'));
+    check('attendance summary has exactly 12 rows', s.rows.length === 12);
     for (let i = 0; i < expectedLabels.length; i++) {
       check(`attendance row ${i + 1} is ${expectedLabels[i]}`, s.rows[i].label === expectedLabels[i]);
     }

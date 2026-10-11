@@ -9,6 +9,8 @@ import {
   attendanceSummaryFromClassification,
   attendanceSummaryFromStoredPayslip,
   classifyPayrollAttendance,
+  calculateScheduledWorkingDays,
+  normalizeDayName,
 } from '../utils/attendanceSummary';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
@@ -1013,10 +1015,17 @@ class PayrollService {
     const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     const todayYmd = `${nowIst.getUTCFullYear()}-${String(nowIst.getUTCMonth() + 1).padStart(2, '0')}-${String(nowIst.getUTCDate()).padStart(2, '0')}`;
 
+    const activeShift = shiftAssignments.find((a) => a.shift?.workingDays && a.shift.workingDays.length > 0);
+    const configuredWorkingDays = (activeShift?.shift?.workingDays && activeShift.shift.workingDays.length > 0)
+      ? activeShift.shift.workingDays
+      : ((office?.workingDays && office.workingDays.length > 0)
+          ? office.workingDays
+          : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
+
     return classifyPayrollAttendance({
       year,
       month,
-      workingDayNames: office?.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+      workingDayNames: configuredWorkingDays,
       holidayYmds: holidays.map((h) => toIstYmd(h.date)),
       records: attendanceRecords,
       leaves: approvedLeaves.map((l) => ({
@@ -1034,6 +1043,7 @@ class PayrollService {
         toYmd: a.effectiveTo ? toIstYmd(a.effectiveTo) : null,
         startTime: a.shift.startTime,
         endTime: a.shift.endTime,
+        workingDays: a.shift.workingDays,
       })),
       isLateCheckIn: (rec) => {
         if (!rec.checkIn || !office?.workingHoursStart) return false;
@@ -1617,19 +1627,9 @@ class PayrollService {
       }
     }
 
-    const calculateScheduledWorkingDays = (year: number, month: number, office: any): number => {
-      const calendarDays = new Date(year, month, 0).getDate();
-      const officeDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Friday", "Saturday"];
-      let count = 0;
-      for (let d = 1; d <= calendarDays; d++) {
-        const dayName = new Date(year, month - 1, d).toLocaleDateString('en-US', { weekday: 'long' });
-        if (officeDays.includes(dayName)) count++;
-      }
-      return count > 0 ? count : 26;
-    };
-
-    const calendarDays = new Date(ps.year, ps.month, 0).getDate();
-    const schedWorkingDays = ps.workingDays || calculateScheduledWorkingDays(ps.year, ps.month, employee?.office);
+    const cal = calculateScheduledWorkingDays(ps.year, ps.month, employee?.office?.workingDays);
+    const calendarDays = ps.totalCalendarDays || cal.totalCalendarDays;
+    const schedWorkingDays = ps.workingDays || cal.workingDays;
 
     // Earnings come from the shared backend resolver
     const earnings = await this.resolvePayslipEarnings(ps);
