@@ -6,6 +6,7 @@ import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from '../services/payrollAutomationService';
 import { sendHRNotification, notifyEmployee } from '../utils/hrNotificationHelper';
 import { buildPayslipEarningLines } from '../utils/salaryGross';
+import { absentDeductionLabel, attendanceSummaryPdfContent } from '../utils/attendanceSummaryPdf';
 
 // ==========================================
 // Enhanced Payroll Controller
@@ -391,7 +392,6 @@ export const generatePayslipPDF = async (
     const expenseReimbursement = view.expenseReimbursement || 0;
     const netSalary = view.netSalary || 0;
     const totalTakeHomePay = view.totalTakeHomePay || 0;
-    const dailySalary = view.dailySalary || 0;
 
     const earningBreakdown = buildPayslipEarningLines({
       basicSalary: earnings.baseSalary ?? earnings.basicSalary,
@@ -445,7 +445,7 @@ export const generatePayslipPDF = async (
     }
     if (absentDeduction > 0) {
       deductionsTableBody.push([
-        { text: `Absent Deduction (${view.absentDays || 0} days)`, fontSize: 9, color: '#111827' },
+        { text: absentDeductionLabel(view.absentDays || 0, view.attendanceSummary), fontSize: 9, color: '#111827' },
         { text: fmtDed(absentDeduction), fontSize: 9, alignment: 'right', color: '#111827' }
       ]);
     }
@@ -567,40 +567,7 @@ export const generatePayslipPDF = async (
           ], width: '50%' },
         ], margin: [0,0,0,16] },
         { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 0.5, lineColor: '#E5E7EB' }], margin: [0,0,0,16] },
-        // Attendance Summary Section
-        { text: 'Attendance Summary', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
-        { table: {
-            widths: ['*', 'auto', '*', 'auto'],
-            body: [
-              [
-                { text: 'Total Calendar Days', fontSize: 8, color: '#4B5563' }, { text: `${view.totalCalendarDays || totalDaysInMonth}`, fontSize: 8, bold: true },
-                { text: 'Scheduled Working Days', fontSize: 8, color: '#4B5563' }, { text: `${view.workingDays || 26}`, fontSize: 8, bold: true }
-              ],
-              [
-                { text: 'Present Days', fontSize: 8, color: '#4B5563' }, { text: `${view.presentDays || 0}`, fontSize: 8, bold: true, color: '#059669' },
-                { text: 'Half Days', fontSize: 8, color: '#4B5563' }, { text: `${view.halfDays || 0}`, fontSize: 8, bold: true, color: '#D97706' }
-              ],
-              [
-                { text: 'Paid Leave', fontSize: 8, color: '#4B5563' }, { text: `${view.paidLeaveDays || 0}`, fontSize: 8, bold: true },
-                { text: 'Unpaid Leave', fontSize: 8, color: '#4B5563' }, { text: `${view.unpaidLeaveDays || 0}`, fontSize: 8, bold: true, color: '#DC2626' }
-              ],
-              [
-                { text: 'Absent Days', fontSize: 8, color: '#4B5563' }, { text: `${view.absentDays || 0}`, fontSize: 8, bold: true, color: '#DC2626' },
-                { text: 'Holidays (Not Worked)', fontSize: 8, color: '#4B5563' }, { text: `${view.holidayCount || 0}`, fontSize: 8, bold: true }
-              ],
-              [
-                { text: 'Weekly Offs', fontSize: 8, color: '#4B5563' }, { text: `${view.weeklyOffCount || 0}`, fontSize: 8, bold: true },
-                { text: 'Holiday Worked', fontSize: 8, color: '#4B5563' }, { text: `${view.holidayWorkedCount || 0}`, fontSize: 8, bold: true, color: PRIMARY }
-              ],
-              [
-                { text: 'Weekly Off Worked', fontSize: 8, color: '#4B5563' }, { text: `${view.weeklyOffWorkedCount || 0}`, fontSize: 8, bold: true, color: PRIMARY },
-                { text: 'Daily Salary', fontSize: 8, color: '#4B5563' }, { text: fmt(dailySalary), fontSize: 8, bold: true }
-              ]
-            ]
-          },
-          layout: 'lightHorizontalLines',
-          margin: [0,0,0,16]
-        },
+        ...attendanceSummaryPdfContent(view.attendanceSummary, { primary: PRIMARY }),
         // Earnings
         { text: 'Earnings', bold: true, fontSize: 11, color: '#111827', margin: [0,0,0,8] },
         { table: { headerRows: 1, dontBreakRows: true, widths: ['*', 120],

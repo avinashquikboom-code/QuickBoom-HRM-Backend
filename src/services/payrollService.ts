@@ -3,6 +3,13 @@ import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from './payrollAutomationService';
 import { computeGrossSalary, mapStructureGrossFields, isCommissionEligibleEmployee, computePayrollSettlement } from '../utils/salaryGross';
+import {
+  AttendanceClassification,
+  AttendanceSummary,
+  attendanceSummaryFromClassification,
+  attendanceSummaryFromStoredPayslip,
+  classifyPayrollAttendance,
+} from '../utils/attendanceSummary';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
 export interface PayrollCalculation {
@@ -51,6 +58,7 @@ export interface PayrollCalculation {
   commissionEarned: number;
   isCommissionEligible?: boolean;
   overtimeHours: number;
+  attendanceSummary?: AttendanceSummary;
   components: PayslipSalaryComponents;
 }
 
@@ -164,7 +172,7 @@ class PayrollService {
         }) || (baseSalary + totalAllowance) || 12000;
 
       // Get attendance breakdown data for the month
-      const attendanceData = await this.getAttendanceData(employeeId, month, year, employee.office);
+      const attendanceData = await this.getAttendanceData(employeeId, month, year, employee.office, employee.joiningDate);
 
       const workingDays = attendanceData.workingDays || 26;
       const totalCalendarDays = attendanceData.totalCalendarDays || new Date(year, month, 0).getDate();
@@ -322,6 +330,7 @@ class PayrollService {
         commissionEarned,
         isCommissionEligible,
         overtimeHours: attendanceData.overtimeHours,
+        attendanceSummary: attendanceSummaryFromClassification(attendanceData.classification),
         components: {
           hra: salaryStructure.hra || 0,
           travelAllowance: salaryStructure.conveyance || 0,
@@ -959,203 +968,110 @@ class PayrollService {
   /**
    * Day-by-day attendance & leave & holiday classification with deterministic priority
    */
-  private async getAttendanceData(employeeId: number, month: number, year: number, office?: any): Promise<any> {
-    try {
-      const monthRange = getIstMonthRange(year, month);
-      const totalCalendarDays = new Date(year, month, 0).getDate();
-      const startDateStr = monthRange.startDateStr;
-      const endDateStr = monthRange.endDateStr;
-
-      const startDate = monthRange.monthStart;
-      const endDate = monthRange.monthEnd;
-
-      // Fetch attendance records for month
-      const attendanceRecords = await prisma.attendance.findMany({
-        where: {
-          employeeId,
-          date: { gte: startDateStr, lte: endDateStr }
-        }
-      });
-
-      // Fetch holidays for month
-      const holidays = await prisma.holiday.findMany({
-        where: {
-          date: { gte: startDate, lte: endDate }
-        }
-      });
-
-      // Fetch approved leave requests for employee covering month
-      const approvedLeaves = await prisma.leaveRequest.findMany({
+  /**
+   * Authoritative attendance classification for one employee and payroll
+   * period. Payroll, payslip views, PDFs, Admin and mobile all read from this.
+   */
+  async getAttendanceSnapshot(
+    employeeId: number,
+    month: number,
+    year: number,
+    office?: any,
+    joiningDate?: Date | string | null,
+  ): Promise<AttendanceClassification> {
+    const monthRange = getIstMonthRange(year, month);
+    const [attendanceRecords, holidays, approvedLeaves, shiftAssignments] = await Promise.all([
+      prisma.attendance.findMany({
+        where: { employeeId, date: { gte: monthRange.startDateStr, lte: monthRange.endDateStr } },
+      }),
+      prisma.holiday.findMany({
+        where: { date: { gte: monthRange.monthStart, lte: monthRange.monthEnd } },
+      }),
+      prisma.leaveRequest.findMany({
         where: {
           employeeId,
           status: 'APPROVED',
-          fromDate: { lte: endDate },
-          toDate: { gte: startDate }
-        }
-      });
+          fromDate: { lte: monthRange.monthEnd },
+          toDate: { gte: monthRange.monthStart },
+        },
+      }),
+      prisma.shiftAssignment.findMany({
+        where: {
+          employeeId,
+          effectiveFrom: { lte: monthRange.monthEnd },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: monthRange.monthStart } }],
+        },
+        include: { shift: true },
+        orderBy: { effectiveFrom: 'desc' },
+      }),
+    ]);
 
-      const toIstYmd = (d: Date | string) => {
-        const dt = new Date(d);
-        const ist = new Date(dt.getTime() + 5.5 * 60 * 60 * 1000);
-        return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
-      };
+    const toIstYmd = (d: Date | string) => {
+      const ist = new Date(new Date(d).getTime() + 5.5 * 60 * 60 * 1000);
+      return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
+    };
+    const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+    const todayYmd = `${nowIst.getUTCFullYear()}-${String(nowIst.getUTCMonth() + 1).padStart(2, '0')}-${String(nowIst.getUTCDate()).padStart(2, '0')}`;
 
-      const officeWorkingDays = office?.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    return classifyPayrollAttendance({
+      year,
+      month,
+      workingDayNames: office?.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+      holidayYmds: holidays.map((h) => toIstYmd(h.date)),
+      records: attendanceRecords,
+      leaves: approvedLeaves.map((l) => ({
+        fromYmd: toIstYmd(l.fromDate),
+        toYmd: toIstYmd(l.toDate),
+        type: l.type,
+        leaveCategory: l.leaveCategory,
+      })),
+      todayYmd,
+      joiningYmd: joiningDate ? toIstYmd(joiningDate) : null,
+      officeStartTime: office?.workingHoursStart,
+      officeEndTime: office?.workingHoursEnd,
+      shifts: shiftAssignments.map((a) => ({
+        fromYmd: toIstYmd(a.effectiveFrom),
+        toYmd: a.effectiveTo ? toIstYmd(a.effectiveTo) : null,
+        startTime: a.shift.startTime,
+        endTime: a.shift.endTime,
+      })),
+      isLateCheckIn: (rec) => {
+        if (!rec.checkIn || !office?.workingHoursStart) return false;
+        return new Date(rec.checkIn).toTimeString().slice(0, 5) > office.workingHoursStart;
+      },
+    });
+  }
 
-      let scheduledWorkingDays = 0;
-      let presentDays = 0;
-      let halfDays = 0;
-      let paidLeaveDays = 0;
-      let unpaidLeaveDays = 0;
-      let absentDays = 0;
-      let holidayCount = 0;
-      let weeklyOffCount = 0;
-      let holidayWorkedCount = 0;
-      let weeklyOffWorkedCount = 0;
-      let lateMarks = 0;
-
-      // Deduplicate attendance records by date into a canonical map.
-      // Deterministic Priority:
-      //  Level 5: Explicit PRESENT, LATE, FULL_DAY, HOLIDAY_WORKED, WEEKLY_OFF_WORKED
-      //  Level 4: HALF_DAY, HALF-DAY, HALFDAY, HALF DAY
-      //  Level 3: Records with checkIn/checkOut not marked ABSENT
-      //  Level 2: LEAVE, ON_LEAVE, PAID_LEAVE, UNPAID_LEAVE, PAID
-      //  Level 1: Records with punches marked ABSENT
-      //  Level 0: Plain placeholder ABSENT / unpunched placeholder
-      const attendanceByDate = new Map<string, any>();
-
-      const getStatusRank = (rec: any): number => {
-        const s = (rec?.status || '').toUpperCase().trim();
-        const hasPunch = Boolean(rec?.checkIn || rec?.checkOut);
-        if (s === 'PRESENT' || s === 'LATE' || s === 'FULL_DAY' || s === 'HOLIDAY_WORKED' || s === 'WEEKLY_OFF_WORKED') {
-          return 5;
-        }
-        if (s === 'HALF_DAY' || s === 'HALF-DAY' || s === 'HALFDAY' || s === 'HALF DAY') {
-          return 4;
-        }
-        if (hasPunch && s !== 'ABSENT') {
-          return 3;
-        }
-        if (s === 'LEAVE' || s === 'ON_LEAVE' || s === 'PAID_LEAVE' || s === 'UNPAID_LEAVE' || s === 'PAID') {
-          return 2;
-        }
-        if (hasPunch && s === 'ABSENT') {
-          return 1;
-        }
-        return 0;
-      };
-
-      for (const rec of attendanceRecords) {
-        const dStr = rec.date;
-        const existing = attendanceByDate.get(dStr);
-        if (!existing) {
-          attendanceByDate.set(dStr, rec);
-        } else {
-          const rankExisting = getStatusRank(existing);
-          const rankNew = getStatusRank(rec);
-          if (rankNew > rankExisting) {
-            attendanceByDate.set(dStr, rec);
-          } else if (rankNew === rankExisting) {
-            const existingPunches = (existing.checkIn ? 1 : 0) + (existing.checkOut ? 1 : 0);
-            const newPunches = (rec.checkIn ? 1 : 0) + (rec.checkOut ? 1 : 0);
-            if (newPunches > existingPunches || (newPunches === existingPunches && new Date(rec.updatedAt || rec.createdAt) > new Date(existing.updatedAt || existing.createdAt))) {
-              attendanceByDate.set(dStr, rec);
-            }
-          }
-        }
-      }
-
-      const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-      const todayIstStr = `${nowIst.getUTCFullYear()}-${String(nowIst.getUTCMonth() + 1).padStart(2, '0')}-${String(nowIst.getUTCDate()).padStart(2, '0')}`;
-      const targetMonthEndStr = `${year}-${String(month).padStart(2, '0')}-${String(totalCalendarDays).padStart(2, '0')}`;
-      const isPastMonth = targetMonthEndStr < todayIstStr;
-
-      for (let day = 1; day <= totalCalendarDays; day++) {
-        const dayStr = String(day).padStart(2, '0');
-        const dateStr = `${year}-${String(month).padStart(2, '0')}-${dayStr}`;
-        const dateObj = new Date(year, month - 1, day, 12, 0, 0);
-        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
-
-        const isWeeklyOff = !officeWorkingDays.includes(dayName);
-        const isHoliday = holidays.some(h => {
-          const hStr = toIstYmd(h.date);
-          return hStr === dateStr;
-        });
-
-        const att = attendanceByDate.get(dateStr);
-        const leave = approvedLeaves.find(l => {
-          const fStr = toIstYmd(l.fromDate);
-          const tStr = toIstYmd(l.toDate);
-          return fStr <= dateStr && dateStr <= tStr;
-        });
-
-        const rawStatus = (att?.status || '').toUpperCase().trim();
-        const hasPunch = Boolean(att?.checkIn || att?.checkOut);
-
-        const isHalfDay = rawStatus === 'HALF_DAY' || rawStatus === 'HALF-DAY' || rawStatus === 'HALFDAY' || rawStatus === 'HALF DAY';
-        const isPresent = rawStatus === 'PRESENT' || rawStatus === 'LATE' || rawStatus === 'FULL_DAY' || (hasPunch && rawStatus !== 'ABSENT' && !isHalfDay && !rawStatus.includes('LEAVE'));
-        const isLeaveStatus = rawStatus === 'LEAVE' || rawStatus === 'ON_LEAVE' || rawStatus === 'PAID_LEAVE' || rawStatus === 'UNPAID_LEAVE' || rawStatus === 'PAID';
-        const isExplicitAbsent = rawStatus === 'ABSENT';
-
-        // Deterministic Classification
-        if (isHoliday) {
-          if (isPresent || rawStatus === 'HOLIDAY_WORKED' || hasPunch) {
-            holidayWorkedCount++;
-          } else {
-            holidayCount++;
-          }
-        } else if (isWeeklyOff) {
-          if (isPresent || rawStatus === 'WEEKLY_OFF_WORKED' || hasPunch) {
-            weeklyOffWorkedCount++;
-          } else {
-            weeklyOffCount++;
-          }
-        } else {
-          // Scheduled Working Day
-          scheduledWorkingDays++;
-
-          if (isHalfDay) {
-            halfDays++;
-          } else if (isPresent) {
-            presentDays++;
-            if (att?.checkIn && office?.workingHoursStart) {
-              const checkInTime = new Date(att.checkIn).toTimeString().slice(0, 5);
-              if (checkInTime > office.workingHoursStart) {
-                lateMarks++;
-              }
-            }
-          } else if (leave || isLeaveStatus) {
-            const isUnpaid = (leave && (leave.type === 'UNPAID' || leave.type === 'LOP' || leave.leaveCategory === 'UNPAID')) || rawStatus === 'UNPAID_LEAVE';
-            if (isUnpaid) {
-              unpaidLeaveDays++;
-            } else {
-              paidLeaveDays++;
-            }
-          } else if (isExplicitAbsent) {
-            absentDays++;
-          } else if (isPastMonth || dateStr <= todayIstStr) {
-            // Working day with no punch/attendance record and no approved leave is ABSENT
-            absentDays++;
-          }
-        }
-      }
-
-      const finalWorkingDays = scheduledWorkingDays > 0 ? scheduledWorkingDays : (totalCalendarDays - weeklyOffCount - holidayCount) || 26;
-
+  private async getAttendanceData(
+    employeeId: number,
+    month: number,
+    year: number,
+    office?: any,
+    joiningDate?: Date | string | null,
+  ): Promise<any> {
+    try {
+      const c = await this.getAttendanceSnapshot(employeeId, month, year, office, joiningDate);
+      // Payroll fields keep their whole-month meaning (pre-joining days included),
+      // so stored payslips and deductions are unchanged; the summary splits them out.
+      const holidayCount = c.holidayCount + c.notJoinedHolidayDays;
+      const weeklyOffCount = c.weeklyOffCount + c.notJoinedWeeklyOffDays;
       return {
-        workingDays: finalWorkingDays,
-        totalCalendarDays,
-        presentDays,
-        absentDays,
-        halfDays,
-        paidLeaveDays,
-        unpaidLeaveDays,
+        workingDays: c.monthWorkingDays > 0
+          ? c.monthWorkingDays
+          : (c.totalCalendarDays - weeklyOffCount - holidayCount) || 26,
+        totalCalendarDays: c.totalCalendarDays,
+        presentDays: c.presentDays,
+        absentDays: c.absentDays + c.notJoinedElapsedDays,
+        halfDays: c.halfDays,
+        paidLeaveDays: c.paidLeaveDays,
+        unpaidLeaveDays: c.unpaidLeaveDays,
         holidayCount,
         weeklyOffCount,
-        holidayWorkedCount,
-        weeklyOffWorkedCount,
-        lateMarks,
-        overtimeHours: 0
+        holidayWorkedCount: c.holidayWorkedCount,
+        weeklyOffWorkedCount: c.weeklyOffWorkedCount,
+        lateMarks: c.lateMarks,
+        overtimeHours: Math.round((c.overtimeMinutes / 60) * 100) / 100,
+        classification: c,
       };
     } catch (error) {
       console.error('Get attendance data error:', error);
@@ -1661,6 +1577,8 @@ class PayrollService {
       dailySalary: calc.dailySalary,
       workingDays: calc.workingDays,
       totalCalendarDays: calc.totalCalendarDays,
+      overtimeHours: calc.overtimeHours,
+      attendanceSummary: calc.attendanceSummary ?? null,
       expenseCategories,
       earnings,
       summary: {
@@ -1815,6 +1733,17 @@ class PayrollService {
     const isPaid = ps.status?.toUpperCase() === 'PAID';
     const paymentStatus = isPaid ? 'PAID' : 'PENDING';
 
+    let storedAttendanceSummary: AttendanceSummary | null = null;
+    try {
+      const live = await this.getAttendanceSnapshot(ps.employeeId, ps.month, ps.year, employee?.office, employee?.joiningDate);
+      storedAttendanceSummary = attendanceSummaryFromStoredPayslip(
+        { ...ps, workingDays: schedWorkingDays, totalCalendarDays: ps.totalCalendarDays || calendarDays },
+        live,
+      );
+    } catch (err) {
+      console.warn(`[resolveFullPayslipView] attendance summary unavailable for payslip #${ps?.id}:`, err);
+    }
+
     // Also resolve expense breakdown for PDF
     const monthRange = getIstMonthRange(ps.year, ps.month);
     const approvedExpensesList = await prisma.expense.findMany({
@@ -1913,6 +1842,8 @@ class PayrollService {
       dailySalary: ps.dailySalary || 0,
       workingDays: schedWorkingDays,
       totalCalendarDays: ps.totalCalendarDays || calendarDays,
+      overtimeHours: storedAttendanceSummary ? Math.round((storedAttendanceSummary.overtimeMinutes / 60) * 100) / 100 : 0,
+      attendanceSummary: storedAttendanceSummary,
       expenseCategories,
       earnings: {
         baseSalary: earnings.baseSalary,

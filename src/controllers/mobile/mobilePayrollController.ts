@@ -5,6 +5,7 @@ import payrollService, { payslipComponentData } from '../../services/payrollServ
 import { getIstMonthRange } from '../../utils/commissionHelper';
 import { numToWords } from '../../services/payrollAutomationService';
 import { buildPayslipEarningLines } from '../../utils/salaryGross';
+import { absentDeductionLabel, attendanceSummaryPdfContent } from '../../utils/attendanceSummaryPdf';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -261,7 +262,7 @@ export const downloadPayslip = async (
     if (view.deductionsObj.advanceDeduction > 0) deductionsItems.push({ name: 'Advance Salary', amount: view.deductionsObj.advanceDeduction });
     if (view.deductionsObj.pf > 0) deductionsItems.push({ name: 'Provident Fund (PF)', amount: view.deductionsObj.pf });
     if (view.deductionsObj.esic > 0) deductionsItems.push({ name: 'ESIC / Tax', amount: view.deductionsObj.esic });
-    if (view.deductionsObj.absentDeduction > 0) deductionsItems.push({ name: `Absent (${view.absentDays} days)`, amount: view.deductionsObj.absentDeduction });
+    if (view.deductionsObj.absentDeduction > 0) deductionsItems.push({ name: absentDeductionLabel(view.absentDays, view.attendanceSummary).replace('Absent Deduction', 'Absent'), amount: view.deductionsObj.absentDeduction });
     if (view.deductionsObj.halfDayDeduction > 0) deductionsItems.push({ name: `Half Day (${view.halfDays} half days)`, amount: view.deductionsObj.halfDayDeduction });
     if (view.deductionsObj.leaveDeduction > 0) deductionsItems.push({ name: `Leave (${view.unpaidLeaveDays} unpaid leaves)`, amount: view.deductionsObj.leaveDeduction });
     if (view.deductionsObj.otherDeductions > 0) deductionsItems.push({ name: 'Other Deductions', amount: view.deductionsObj.otherDeductions });
@@ -368,8 +369,14 @@ export const downloadPayslip = async (
         },
         layout: 'lightHorizontalLines'
       },
-      
-      { text: 'Salary Breakdown', style: 'sectionHeader', margin: [0, 20, 0, 8] },
+
+      ...attendanceSummaryPdfContent(view.attendanceSummary, {
+        primary: PRIMARY_COLOR,
+        titleStyle: 'sectionHeader',
+        titleMargin: [0, 20, 0, 4],
+      }),
+
+      { text: 'Salary Breakdown', style: 'sectionHeader', margin: [0, view.attendanceSummary ? 4 : 20, 0, 8] },
       
       // Earnings & Deductions Table
       {
