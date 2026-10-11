@@ -188,6 +188,18 @@ function shiftMinutesForDate(dateStr: string, input: AttendanceClassificationInp
   return scheduledShiftMinutes(input.officeStartTime ?? '09:00', input.officeEndTime ?? '18:00');
 }
 
+function normalizeDayName(d: string): string {
+  const s = String(d || '').trim().toLowerCase();
+  if (s.startsWith('sun')) return 'Sunday';
+  if (s.startsWith('mon')) return 'Monday';
+  if (s.startsWith('tue')) return 'Tuesday';
+  if (s.startsWith('wed')) return 'Wednesday';
+  if (s.startsWith('thu')) return 'Thursday';
+  if (s.startsWith('fri')) return 'Friday';
+  if (s.startsWith('sat')) return 'Saturday';
+  return d;
+}
+
 /**
  * Single attendance classification for a payroll period. Each calendar day
  * lands in exactly one bucket, so attendance and leave never double count.
@@ -201,6 +213,7 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
   const periodEnd = `${monthPrefix}-${pad2(totalCalendarDays)}`;
   const isPastMonth = periodEnd < input.todayYmd;
   const holidays = new Set(input.holidayYmds);
+  const normalizedWorkingDays = new Set((input.workingDayNames || []).map(normalizeDayName));
   const byDate = dedupeAttendanceByDate(input.records);
   const joiningYmd = input.joiningYmd || null;
 
@@ -233,7 +246,7 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
   for (let day = 1; day <= totalCalendarDays; day++) {
     const dateStr = `${monthPrefix}-${pad2(day)}`;
     const dayName = new Date(year, month - 1, day, 12, 0, 0).toLocaleDateString('en-US', { weekday: 'long' });
-    const isWeeklyOff = !input.workingDayNames.includes(dayName);
+    const isWeeklyOff = !normalizedWorkingDays.has(dayName);
     const isHoliday = holidays.has(dateStr);
     if (!isHoliday && !isWeeklyOff) result.monthWorkingDays++;
 
@@ -389,6 +402,7 @@ function withRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummary {
 /** Rows rendered by every salary slip surface (PDFs, Admin, mobile). */
 export function attendanceSummaryRows(s: Omit<AttendanceSummary, 'rows'>): AttendanceSummaryRow[] {
   const rows: AttendanceSummaryRow[] = [
+    { label: 'Total Calendar Days', value: String(s.totalCalendarDays) },
     { label: 'Total Working Days', value: String(s.totalWorkingDays) },
     { label: 'Present Days', value: String(s.presentDays) },
     { label: 'Absent Days', value: String(s.absentDays) },
@@ -404,12 +418,8 @@ export function attendanceSummaryRows(s: Omit<AttendanceSummary, 'rows'>): Atten
       value: s.holidayWorkedDays > 0 ? `${s.holidays} (${s.holidayWorkedDays} worked)` : String(s.holidays),
     },
     { label: 'Overtime Hours', value: s.overtimeLabel },
+    { label: 'Working Days Before Joining', value: String(s.notJoinedDays) },
+    { label: 'Remaining Working Days', value: String(s.remainingWorkingDays) },
   ];
-  if (s.notJoinedDays > 0) {
-    rows.push({ label: 'Working Days Before Joining', value: String(s.notJoinedDays) });
-  }
-  if (s.remainingWorkingDays > 0) {
-    rows.push({ label: 'Remaining Working Days', value: String(s.remainingWorkingDays) });
-  }
   return rows;
 }

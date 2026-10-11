@@ -314,7 +314,32 @@ function run() {
     check('randomized: 400 scenarios match pre-change payroll counts and reconcile', mismatches === 0);
   }
 
+  // 12. 12 attendance fields are present in exact order
+  {
+    const feb = classify({ year: 2026, month: 2 });
+    const s = attendanceSummaryFromClassification(feb);
+    const expectedLabels = [
+      'Total Calendar Days',
+      'Total Working Days',
+      'Present Days',
+      'Absent Days',
+      'Half Days',
+      'Paid Leave Days',
+      'Unpaid Leave Days',
+      'Weekly Off Days',
+      'Holidays',
+      'Overtime Hours',
+      'Working Days Before Joining',
+      'Remaining Working Days',
+    ];
+    check('attendance summary has exactly 12 rows', s.rows.length === 12);
+    for (let i = 0; i < expectedLabels.length; i++) {
+      check(`attendance row ${i + 1} is ${expectedLabels[i]}`, s.rows[i].label === expectedLabels[i]);
+    }
+  }
+
   console.log('\nAll attendance summary tests passed.');
 }
 
 run();
+

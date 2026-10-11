@@ -71,7 +71,8 @@ function run() {
     totalDeductions: halfDay,
     reimbursements: 500,
   });
-  check('approved reimbursement in net', approvedReimb.netSalary === 15136.36);
+  check('approved reimbursement in take-home', approvedReimb.totalTakeHomePay === 15136.36);
+  check('net salary excludes reimbursement', approvedReimb.netSalary === 14636.36);
 
   const pendingIgnored = computePayrollSettlement({
     baseGrossEarnings: base,

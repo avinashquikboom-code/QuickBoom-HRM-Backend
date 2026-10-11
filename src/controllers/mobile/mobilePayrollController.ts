@@ -6,6 +6,7 @@ import { getIstMonthRange } from '../../utils/commissionHelper';
 import { numToWords } from '../../services/payrollAutomationService';
 import { buildPayslipEarningLines } from '../../utils/salaryGross';
 import { absentDeductionLabel, attendanceSummaryPdfContent } from '../../utils/attendanceSummaryPdf';
+import { generateSalarySlipPdfStream } from '../../utils/salarySlipPdfGenerator';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -227,234 +228,38 @@ export const downloadPayslip = async (
     // SINGLE SOURCE OF TRUTH: Get the fully resolved view object
     const view = await payrollService.resolveFullPayslipView(payslip, employeeWithSalary);
 
-    const totalDeductions = view.totalDeductions;
-    const netSalary = view.netSalary;
-    const totalTakeHomePay = view.totalTakeHomePay;
-    const isCommissionEligible = Boolean(view.isCommissionEligible);
-    const commissionEarned = isCommissionEligible ? (view.commissionEarned || 0) : 0;
-    const expenseReimbursement = view.expenseReimbursement;
-    const paymentStatus = view.paymentStatus;
-    const totalDaysInMonth = view.totalCalendarDays;
-
-    const fmt = (n: number) => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-    const earningBreakdown = buildPayslipEarningLines({
-      basicSalary: view.earnings.baseSalary ?? view.earnings.basicSalary,
-      hra: view.earnings.hra,
-      medicalAllowance: view.earnings.medicalAllowance || view.earnings.medical,
-      travelAllowance: view.earnings.travelAllowance || view.earnings.travel,
-      specialAllowance: view.earnings.specialAllowance,
-      incentive: view.earnings.incentive,
-      bonus: view.earnings.bonus,
-      travelMedicalAllowance: view.earnings.travelMedicalAllowance,
+    const pdfDoc = generateSalarySlipPdfStream({
+      employeeName: view.employeeName || payslip.employeeName,
+      employeeCode: view.employeeCode || payslip.employeeCode,
+      designation: view.designation || payslip.designation,
+      department: view.department || payslip.department,
+      officeName: view.officeName || payslip.officeName,
+      month: payslip.month,
+      year: payslip.year,
+      paymentStatus: view.paymentStatus || payslip.status,
+      documentId: view.documentId,
+      totalCalendarDays: view.totalCalendarDays,
+      earnings: view.earnings,
       extraHolidayPayout: view.extraHolidayPayout,
       extraWeeklyOffPayout: view.extraWeeklyOffPayout,
+      deductionsObj: view.deductionsObj,
+      absentDays: view.absentDays,
+      halfDays: view.halfDays,
+      unpaidLeaveDays: view.unpaidLeaveDays,
+      expenseCategories: view.expenseCategories,
+      expenseReimbursement: view.expenseReimbursement,
+      commissionEarned: view.commissionEarned,
+      isCommissionEligible: view.isCommissionEligible,
+      netSalary: view.netSalary,
+      totalTakeHomePay: view.totalTakeHomePay,
+      netInWords: view.netInWords,
+      attendanceSummary: view.attendanceSummary,
     });
-    const earningsItems = earningBreakdown.lines;
-    const extraPayout = earningBreakdown.extraPayout;
-    const displayedGrossEarnings = earningBreakdown.displayedGrossEarnings;
-    if (earningsItems.length === 1 && view.allowance > 0) {
-      earningsItems.push({ name: 'Allowances', amount: view.allowance });
-    }
 
-    // Build Deductions Items
-    const deductionsItems: { name: string; amount: number }[] = [];
-    if (view.deductionsObj.advanceDeduction > 0) deductionsItems.push({ name: 'Advance Salary', amount: view.deductionsObj.advanceDeduction });
-    if (view.deductionsObj.pf > 0) deductionsItems.push({ name: 'Provident Fund (PF)', amount: view.deductionsObj.pf });
-    if (view.deductionsObj.esic > 0) deductionsItems.push({ name: 'ESIC / Tax', amount: view.deductionsObj.esic });
-    if (view.deductionsObj.absentDeduction > 0) deductionsItems.push({ name: absentDeductionLabel(view.absentDays, view.attendanceSummary).replace('Absent Deduction', 'Absent'), amount: view.deductionsObj.absentDeduction });
-    if (view.deductionsObj.halfDayDeduction > 0) deductionsItems.push({ name: `Half Day (${view.halfDays} half days)`, amount: view.deductionsObj.halfDayDeduction });
-    if (view.deductionsObj.leaveDeduction > 0) deductionsItems.push({ name: `Leave (${view.unpaidLeaveDays} unpaid leaves)`, amount: view.deductionsObj.leaveDeduction });
-    if (view.deductionsObj.otherDeductions > 0) deductionsItems.push({ name: 'Other Deductions', amount: view.deductionsObj.otherDeductions });
-    if (deductionsItems.length === 0) {
-      deductionsItems.push({ name: 'Advance Salary', amount: 0 }); // placeholder if none
-    }
-
-    const maxRows = Math.max(earningsItems.length, deductionsItems.length);
-    const tableRows: any[] = [];
-    for (let i = 0; i < maxRows; i++) {
-      const earn = earningsItems[i];
-      const ded = deductionsItems[i];
-      tableRows.push([
-        { text: earn ? earn.name : '' },
-        { text: earn ? `Rs. ${fmt(earn.amount)}` : '', alignment: 'right' },
-        { text: ded ? ded.name : '' },
-        { text: ded ? (ded.amount > 0 ? `-Rs. ${fmt(ded.amount)}` : `Rs. ${fmt(0)}`) : '', alignment: 'right' },
-      ]);
-    }
-
-    const earningsTableBody: any[] = [
-      [
-        { text: 'Earnings', bold: true, fillColor: '#f3f4f6' },
-        { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' },
-        { text: 'Deductions', bold: true, fillColor: '#f3f4f6' },
-        { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' }
-      ],
-      ...tableRows,
-      [
-        { text: 'Gross Earnings', bold: true, fillColor: '#f9fafb' },
-        { text: `Rs. ${fmt(displayedGrossEarnings)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' },
-        { text: 'Total Deductions', bold: true, fillColor: '#f9fafb' },
-        { text: totalDeductions > 0 ? `-Rs. ${fmt(totalDeductions)}` : `Rs. ${fmt(0)}`, bold: true, alignment: 'right', fillColor: '#f9fafb' }
-      ]
-    ];
-
-    // Build Reimbursements / Expenses Section
-    const reimbursementsTableBody: any[] = [
-      [
-        { text: 'Reimbursement / Expense Category', bold: true, fillColor: '#f3f4f6' },
-        { text: 'Amount (INR)', bold: true, alignment: 'right', fillColor: '#f3f4f6' }
-      ]
-    ];
-    
-    if (view.expenseCategories && Object.keys(view.expenseCategories).length > 0) {
-      for (const [cat, amt] of Object.entries(view.expenseCategories)) {
-        reimbursementsTableBody.push([
-          { text: `${cat} Expense` },
-          { text: `Rs. ${fmt(amt as number)}`, alignment: 'right' }
-        ]);
-      }
-    } else if (expenseReimbursement > 0) {
-      reimbursementsTableBody.push([
-        { text: 'Approved Expenses' },
-        { text: `Rs. ${fmt(expenseReimbursement)}`, alignment: 'right' }
-      ]);
-    } else {
-      reimbursementsTableBody.push([
-        { text: 'No Expenses / Reimbursements', color: '#6b7280', italics: true },
-        { text: `Rs. ${fmt(0)}`, alignment: 'right', color: '#6b7280' }
-      ]);
-    }
-
-    reimbursementsTableBody.push([
-      { text: 'Total Reimbursements', bold: true, fillColor: '#ecfdf5', color: '#047857' },
-      { text: `Rs. ${fmt(expenseReimbursement)}`, bold: true, alignment: 'right', fillColor: '#ecfdf5', color: '#047857' }
-    ]);
-
-    const docContent: any[] = [
-      // Title Header
-      { text: 'HOPKID PORTAL', style: 'companyName', alignment: 'center' },
-      { text: 'Human Resources · Payroll Division', style: 'companySub', alignment: 'center', margin: [0, 2, 0, 15] },
-      
-      { text: 'SALARY SLIP', style: 'docTitle', alignment: 'center', margin: [0, 0, 0, 20] },
-      
-      // Employee details table
-      {
-        style: 'tableExample',
-        table: {
-          widths: ['*', '*'],
-          body: [
-            [
-              {
-                text: [
-                  { text: 'Employee Name: ', bold: true }, view.employeeName || payslip.employeeName, '\n',
-                  { text: 'Employee Code: ', bold: true }, view.employeeCode || payslip.employeeCode, '\n',
-                  { text: 'Designation:   ', bold: true }, view.designation || payslip.designation || '\u2014', '\n',
-                  { text: 'Department:    ', bold: true }, view.department || payslip.department || '\u2014'
-                ],
-                margin: [5, 5, 5, 5]
-              },
-              {
-                text: [
-                  { text: 'Office / Branch:     ', bold: true }, view.officeName || payslip.officeName || '\u2014', '\n',
-                  { text: 'Pay Period:          ', bold: true }, periodLabel, '\n',
-                  { text: 'Total Days of Month: ', bold: true }, `${totalDaysInMonth} Days`, '\n',
-                  { text: 'Document ID:         ', bold: true }, view.documentId || `HR-PAY-${payslip.employeeCode}-${payslip.year}${String(payslip.month).padStart(2, '0')}`, '\n',
-                  { text: 'Status:              ', bold: true }, paymentStatus
-                ],
-                margin: [5, 5, 5, 5]
-              }
-            ]
-          ]
-        },
-        layout: 'lightHorizontalLines'
-      },
-
-      ...attendanceSummaryPdfContent(view.attendanceSummary, {
-        primary: PRIMARY_COLOR,
-        titleStyle: 'sectionHeader',
-        titleMargin: [0, 20, 0, 4],
-      }),
-
-      { text: 'Salary Breakdown', style: 'sectionHeader', margin: [0, view.attendanceSummary ? 4 : 20, 0, 8] },
-      
-      // Earnings & Deductions Table
-      {
-        table: {
-          widths: ['*', 'auto', '*', 'auto'],
-          body: earningsTableBody
-        },
-        layout: 'grid'
-      },
-
-      // Reimbursements Section
-      { text: 'Reimbursements / Expenses', style: 'sectionHeader', margin: [0, 16, 0, 8] },
-      {
-        table: {
-          widths: ['*', 'auto'],
-          body: reimbursementsTableBody
-        },
-        layout: 'grid'
-      },
-      
-      // Net pay calculation breakdown & block
-      {
-        margin: [0, 20, 0, 0],
-        table: {
-          widths: ['*'],
-          body: [
-            [
-              {
-                fillColor: PRIMARY_COLOR,
-                color: 'white',
-                text: [
-                  { text: 'PAYABLE SUMMARY\n', fontSize: 10, bold: true },
-                  { text: `Gross Earnings: Rs. ${fmt(displayedGrossEarnings)}  |  Less Deductions: Rs. ${fmt(totalDeductions)}  |  Net Salary: Rs. ${fmt(netSalary)}\n`, fontSize: 9 },
-                  ...(isCommissionEligible && commissionEarned > 0 ? [{ text: `Add: Commission: +Rs. ${fmt(commissionEarned)}\n`, fontSize: 9, bold: true }] : []),
-                  ...(expenseReimbursement > 0 ? [{ text: `Add: Eligible Reimbursements: +Rs. ${fmt(expenseReimbursement)}\n`, fontSize: 9, bold: true }] : []),
-                  { text: `\nTOTAL TAKE-HOME PAY\n`, fontSize: 11, bold: true },
-                  { text: `INR ${fmt(totalTakeHomePay)}/-\n`, fontSize: 18, bold: true },
-                  { text: `In Words: ${payslip.netInWords || `${totalTakeHomePay.toLocaleString('en-IN')} Rupees Only`}`, fontSize: 9, italics: true }
-                ],
-                alignment: 'center',
-                margin: [15, 12, 15, 12]
-              }
-            ]
-          ]
-        },
-        layout: 'noBorders'
-      },
-      
-      // Footer disclaimer
-      { 
-        text: 'This is a computer-generated salary slip and does not require a physical signature.', 
-        style: 'footerDisclaimer', 
-        alignment: 'center', 
-        margin: [0, 35, 0, 0] 
-      }
-    ];
-
-    const docDefinition = {
-      content: docContent,
-      styles: {
-        companyName: { fontSize: 20, bold: true, color: PRIMARY_COLOR },
-        companySub: { fontSize: 9, color: '#6b7280' },
-        docTitle: { fontSize: 14, bold: true, decoration: 'underline', color: '#111827' },
-        sectionHeader: { fontSize: 11, bold: true, color: '#374151' },
-        footerDisclaimer: { fontSize: 8, color: '#9ca3af', italics: true }
-      },
-      defaultStyle: {
-        font: 'Roboto',
-        fontSize: 10
-      }
-    };
-
-    const pdfDoc = printer.createPdfKitDocument(docDefinition);
-    
-    const safeName = payslip.employeeName.replace(/\s+/g, '_');
+    const safeName = (view.employeeName || payslip.employeeName).replace(/\s+/g, '_');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=SalarySlip_${payslip.employeeCode}_${safeName}_${payslip.year}_${payslip.month}.pdf`);
-    
+    res.setHeader('Content-Disposition', `attachment; filename=SalarySlip_${view.employeeCode || payslip.employeeCode}_${safeName}_${payslip.year}_${payslip.month}.pdf`);
+
     pdfDoc.pipe(res);
     pdfDoc.end();
   } catch (error) {

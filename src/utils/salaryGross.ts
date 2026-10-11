@@ -108,8 +108,8 @@ export function computePayrollSettlement(input: {
   const totalDeductions = normalizeDeduction(input.totalDeductions);
   const reimbursements = money(input.reimbursements);
   const commissionEarned = money(input.commissionEarned);
-  const netSalary = Math.max(0, money(totalEarnings + reimbursements - totalDeductions));
-  const totalTakeHomePay = Math.max(0, money(netSalary + commissionEarned));
+  const netSalary = Math.max(0, money(totalEarnings - totalDeductions));
+  const totalTakeHomePay = Math.max(0, money(netSalary + reimbursements + commissionEarned));
   return {
     baseGrossEarnings,
     holidayWeeklyOffPay,
@@ -200,7 +200,7 @@ export function reconcileOfficialPayslipDisplay(input: {
     componentSumMatchesGross: Math.abs(breakdown.displayedGrossEarnings - settlement.totalEarnings) < 0.02,
     netReconciles:
       Math.abs(settlement.netSalary - money(
-        breakdown.displayedGrossEarnings + money(input.reimbursements) - settlement.totalDeductions
+        breakdown.displayedGrossEarnings - settlement.totalDeductions
       )) < 0.02,
     settlement,
   };
