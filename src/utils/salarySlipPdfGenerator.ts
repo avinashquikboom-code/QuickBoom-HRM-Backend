@@ -4,13 +4,19 @@ import { AttendanceSummary, AttendanceSummaryRow } from './attendanceSummary';
 import { numToWords } from '../services/payrollAutomationService';
 
 const PdfPrinter = require('pdfmake');
+const pdfmakeVfs = require('pdfmake/build/vfs_fonts.js');
+
+// Built-in Helvetica has no glyph for the rupee sign (U+20B9); the Roboto
+// fonts bundled with pdfmake do, so they are embedded instead.
+const vfs: Record<string, string> = pdfmakeVfs.pdfMake?.vfs || pdfmakeVfs.vfs || pdfmakeVfs;
+const vfsFont = (name: string) => Buffer.from(vfs[name], 'base64');
 
 const fonts = {
   Roboto: {
-    normal: 'Helvetica',
-    bold: 'Helvetica-Bold',
-    italics: 'Helvetica-Oblique',
-    bolditalics: 'Helvetica-BoldOblique',
+    normal: vfsFont('Roboto-Regular.ttf'),
+    bold: vfsFont('Roboto-Medium.ttf'),
+    italics: vfsFont('Roboto-Italic.ttf'),
+    bolditalics: vfsFont('Roboto-MediumItalic.ttf'),
   },
 };
 
@@ -84,6 +90,8 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
   const TEXT_MUTED = '#4B5563';
   const TEXT_LIGHT = '#6B7280';
   const BORDER_COLOR = '#E5E7EB';
+  // Shared width for every amount column so right edges line up across sections.
+  const AMOUNT_COL = 90;
 
   const monthName = MONTH_NAMES[input.month - 1] || `Month ${input.month}`;
   const periodLabel = `${monthName} ${input.year}`;
@@ -301,6 +309,22 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
   const netInWords =
     input.netInWords || `${numToWords(Math.round(takeHomePay))} Rupees Only`;
 
+  const summaryRow = (label: string, amount: string, opts: { bold?: boolean; color?: string; fontSize?: number } = {}) => [
+    { text: label, fontSize: opts.fontSize ?? 8.5, bold: opts.bold, color: opts.color ?? TEXT_MAIN },
+    { text: amount, fontSize: opts.fontSize ?? 8.5, bold: opts.bold, color: opts.color ?? TEXT_MAIN, alignment: 'right', noWrap: true },
+  ];
+  const payableSummaryBody: any[] = [
+    summaryRow('Gross Earnings', fmt(grossEarnings)),
+    summaryRow('Less: Total Deductions', fmtDed(totalDeductions), { color: '#BE123C' }),
+    summaryRow('Net Salary', fmt(netSalary), { bold: true }),
+  ];
+  if (reimbursements > 0) {
+    payableSummaryBody.push(summaryRow('Add: Eligible Reimbursements', `+${fmt(reimbursements)}`, { bold: true, color: '#059669', fontSize: 8 }));
+  }
+  if (commission > 0) {
+    payableSummaryBody.push(summaryRow('Add: Commission', `+${fmt(commission)}`, { bold: true, color: '#059669', fontSize: 8 }));
+  }
+
   // Return complete pdfmake document definition
   return {
     pageSize: 'A4',
@@ -495,7 +519,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
             table: {
               headerRows: 1,
               dontBreakRows: true,
-              widths: ['*', 70, '*', 70],
+              widths: ['*', AMOUNT_COL, '*', AMOUNT_COL],
               body: financialTableBody,
             },
             layout: {
@@ -520,7 +544,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
             table: {
               headerRows: 1,
               dontBreakRows: true,
-              widths: ['*', 100],
+              widths: ['*', AMOUNT_COL],
               body: reimbTableBody,
             },
             layout: {
@@ -545,7 +569,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
             [
               {
                 fillColor: PRIMARY_LIGHT,
-                margin: [12, 10, 12, 10],
+                margin: [12, 10, 6, 10],
                 stack: [
                   {
                     text: 'PAYABLE SUMMARY',
@@ -555,33 +579,16 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
                     margin: [0, 0, 0, 4],
                   },
                   {
-                    text: `Gross Earnings: ${fmt(grossEarnings)}   \u2022   Less Deductions: ${fmtDed(totalDeductions)}   \u2022   Net Salary: ${fmt(netSalary)}`,
-                    fontSize: 8.5,
-                    color: TEXT_MAIN,
-                    margin: [0, 0, 0, 2],
+                    table: { widths: ['*', AMOUNT_COL], body: payableSummaryBody },
+                    layout: {
+                      hLineWidth: () => 0,
+                      vLineWidth: () => 0,
+                      paddingLeft: () => 0,
+                      paddingRight: () => 0,
+                      paddingTop: () => 1.5,
+                      paddingBottom: () => 1.5,
+                    },
                   },
-                  ...(reimbursements > 0
-                    ? [
-                        {
-                          text: `Add: Eligible Reimbursements: +${fmt(reimbursements)}`,
-                          fontSize: 8,
-                          color: '#059669',
-                          bold: true,
-                          margin: [0, 1, 0, 1],
-                        },
-                      ]
-                    : []),
-                  ...(commission > 0
-                    ? [
-                        {
-                          text: `Add: Commission: +${fmt(commission)}`,
-                          fontSize: 8,
-                          color: '#059669',
-                          bold: true,
-                          margin: [0, 1, 0, 1],
-                        },
-                      ]
-                    : []),
                   {
                     columns: [
                       {
@@ -609,7 +616,8 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
                         bold: true,
                         color: PRIMARY_DARK,
                         alignment: 'right',
-                        margin: [0, 4, 0, 0],
+                        noWrap: true,
+                        margin: [8, 4, 0, 0],
                       },
                     ],
                   },
@@ -623,6 +631,8 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
           vLineWidth: () => 1,
           hLineColor: () => PRIMARY,
           vLineColor: () => PRIMARY,
+          paddingLeft: () => 0,
+          paddingRight: () => 0,
         },
         margin: [0, 0, 0, 8],
       },
