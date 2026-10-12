@@ -128,7 +128,21 @@ export const fetchCommissionWallet = async (
         hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
         customerName: noteClean,
         billAmount: t.saleAmount,
-        commissionPercentage: t.commissionPercent || 0,
+        commissionPercentage: t.commissionPercent !== null && t.commissionPercent !== undefined
+          ? Number(t.commissionPercent)
+          : (t.saleAmount > 0 && t.commissionAmount > 0
+              ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+              : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
+        commissionPercent: t.commissionPercent !== null && t.commissionPercent !== undefined
+          ? Number(t.commissionPercent)
+          : (t.saleAmount > 0 && t.commissionAmount > 0
+              ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+              : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
+        commissionRate: t.commissionPercent !== null && t.commissionPercent !== undefined
+          ? Number(t.commissionPercent)
+          : (t.saleAmount > 0 && t.commissionAmount > 0
+              ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+              : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
         commissionEarned: t.commissionAmount,
         generatedDate: t.createdAt.toISOString(),
         paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
@@ -393,7 +407,21 @@ export const fetchCommissionHistory = async (
             hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
             customerName: noteClean,
             billAmount: t.saleAmount,
-            commissionPercentage: t.commissionPercent || 0,
+            commissionPercentage: t.commissionPercent !== null && t.commissionPercent !== undefined
+              ? Number(t.commissionPercent)
+              : (t.saleAmount > 0 && t.commissionAmount > 0
+                  ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+                  : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
+            commissionPercent: t.commissionPercent !== null && t.commissionPercent !== undefined
+              ? Number(t.commissionPercent)
+              : (t.saleAmount > 0 && t.commissionAmount > 0
+                  ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+                  : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
+            commissionRate: t.commissionPercent !== null && t.commissionPercent !== undefined
+              ? Number(t.commissionPercent)
+              : (t.saleAmount > 0 && t.commissionAmount > 0
+                  ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+                  : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
             commissionEarned: t.commissionAmount,
             generatedDate: t.createdAt.toISOString(),
             paymentDate: t.paidAt ? t.paidAt.toISOString() : null,

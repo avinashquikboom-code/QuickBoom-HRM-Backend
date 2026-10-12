@@ -163,7 +163,7 @@ export async function syncHopkidSales(options?: {
             policyId: policy ? policy.id : null,
             saleAmount,
             commissionType,
-            commissionPercent: commissionPercent || null,
+            commissionPercent: typeof commissionPercent === 'number' ? commissionPercent : null,
             commissionAmount,
             billId: billId || null,
             invoiceNumber: invoiceNumber || null,

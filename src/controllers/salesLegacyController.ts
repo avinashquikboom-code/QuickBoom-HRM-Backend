@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { pushNotificationService } from '../services/pushNotificationService';
 import { resolveEmployeeId, parseIsOld, calculateEffectiveCommissionForLineItem } from '../utils/commissionHelper';
+import { extractProductLineMeta } from '../utils/productLineMeta';
 
 export const addSales = async (
   req: AuthenticatedRequest,
@@ -563,7 +564,7 @@ export const addSalesExchange = async (
       return;
     }
 
-    const rate = originalTransaction?.commissionPercent ?? employee.commissionPercentage ?? 1.0;
+    const rate = originalTransaction?.commissionPercent ?? employee.commissionPercentage ?? 0;
     const oldComm = (retAmt * rate) / 100;
     const newComm = (newAmt * rate) / 100;
     const createdTxns: any[] = [];
@@ -915,8 +916,13 @@ export const syncSalesBatch = async (
 
             if (!emp) continue;
 
-            const rate = emp.commissionPercentage ?? 1.0;
-            const baseComm = (itemTotal * rate) / 100;
+            const itemMeta = extractProductLineMeta(item);
+            const rate = itemMeta.directCommissionRate !== null
+              ? itemMeta.directCommissionRate
+              : (emp.commissionPercentage !== null && emp.commissionPercentage !== undefined ? Number(emp.commissionPercentage) : 0);
+            const baseComm = itemMeta.directCommissionAmount !== null
+              ? itemMeta.directCommissionAmount
+              : ((itemTotal * rate) / 100);
             const commAmount = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
             const effectiveSaleAmount = isOld ? -Math.abs(itemTotal) : Math.abs(itemTotal);
 
@@ -957,7 +963,7 @@ export const syncSalesBatch = async (
 
             const emp = originalTransaction?.employee || defaultEmployee;
             if (emp) {
-              const rate = originalTransaction?.commissionPercent ?? emp.commissionPercentage ?? 1.0;
+              const rate = originalTransaction?.commissionPercent ?? emp.commissionPercentage ?? 0;
 
               if (retAmt > 0) {
                 const oldComm = (retAmt * rate) / 100;

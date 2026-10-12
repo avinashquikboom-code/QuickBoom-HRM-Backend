@@ -1,4 +1,4 @@
-import { enrichProductBreakdown } from '../../utils/productLineMeta';
+import { enrichProductBreakdown, extractProductLineMeta } from '../../utils/productLineMeta';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
@@ -162,10 +162,14 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
 
     const mappedTransactions = transactions.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
-      const rate = Number(t.commissionPercent ?? employee.commissionPercentage ?? 1);
       const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
       let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
-      if (!comm || comm === 0) {
+      const rate = t.commissionPercent !== null && t.commissionPercent !== undefined
+        ? Number(t.commissionPercent)
+        : (effectiveSale > 0 && comm > 0
+            ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
+            : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0));
+      if ((!comm || comm === 0) && rate > 0) {
         comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
       }
 
@@ -182,10 +186,14 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
         customerName: noteClean,
         amount: effectiveSale,
         saleAmount: effectiveSale,
+        billAmount: effectiveSale,
         commission: comm,
         commissionType: t.commissionType,
         commissionPercent: rate,
+        commissionPercentage: rate,
+        commissionRate: rate,
         commissionAmount: comm,
+        commissionEarned: comm,
         totalCommission: comm,
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
@@ -810,12 +818,12 @@ export const getMobileCommissionBills = async (
       const numInv = getNumericInvoiceNumber(t);
       const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
       let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
-      let rate = t.commissionPercent !== null && t.commissionPercent !== undefined && Number(t.commissionPercent) > 0
+      let rate = t.commissionPercent !== null && t.commissionPercent !== undefined
         ? Number(t.commissionPercent)
         : (effectiveSale > 0 && comm > 0
             ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
-            : Number(employee.commissionPercentage ?? 1));
-      if (!comm || comm === 0) {
+            : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0));
+      if ((!comm || comm === 0) && rate > 0) {
         comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
       }
       return {
@@ -825,9 +833,13 @@ export const getMobileCommissionBills = async (
         invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
         invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
         saleAmount: effectiveSale,
+        billAmount: effectiveSale,
         commission: comm,
         commissionAmount: comm,
+        commissionEarned: comm,
         commissionRate: rate,
+        commissionPercentage: rate,
+        commissionPercent: rate,
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),
@@ -1055,15 +1067,16 @@ export const getMobileCommissionBillDetail = async (
 
       if (meta.lineItems && meta.lineItems.length > 0) {
         for (const item of meta.lineItems) {
+          const itemMeta = extractProductLineMeta(item);
           const itemAmt = safeParseAmount(item.productPrice || item.price || item.productNetAmount || item.amount || 0);
-          const itemProdId = item.productId || item.productID || item.id;
-          const itemCatId = item.categoryId || item.CategoryID || item.category_id;
-          const itemCatName = item.category || item.categoryName;
+          const itemProdId = itemMeta.numericProductId ?? itemMeta.productId ?? item.productId ?? item.productID ?? item.id;
+          const itemCatId = itemMeta.categoryId ?? itemMeta.rawCategoryId ?? item.categoryId ?? item.CategoryID ?? item.category_id;
+          const itemCatName = itemMeta.category ?? item.category ?? item.categoryName;
 
           const lineRes = calculateEffectiveCommissionForLineItem({
             saleAmount: itemAmt,
             productId: itemProdId,
-            productName: item.productName || item.name,
+            productName: itemMeta.productName ?? item.productName ?? item.name,
             categoryId: itemCatId,
             categoryName: itemCatName,
             policies: activePolicies,
@@ -1074,14 +1087,14 @@ export const getMobileCommissionBillDetail = async (
               storeId: employee.storeId,
             },
             storeId: employee.storeId,
-            directCommissionRate: item.directCommissionRate,
-            directCommissionAmount: item.directCommissionAmount,
+            directCommissionRate: itemMeta.directCommissionRate ?? item.directCommissionRate,
+            directCommissionAmount: itemMeta.directCommissionAmount ?? item.directCommissionAmount,
           });
 
           totalCalculatedComm += lineRes.commissionAmount;
           productCommissionBreakdown.push({
             productID: itemProdId,
-            productName: item.productName || item.name || 'Product',
+            productName: itemMeta.productName ?? item.productName ?? item.name ?? 'Product',
             quantity: Number(item.qty || item.quantity || 1),
             saleAmount: itemAmt,
             commissionRate: lineRes.commissionRate,
@@ -1093,10 +1106,11 @@ export const getMobileCommissionBillDetail = async (
       }
 
       totalCalculatedComm = Math.round(totalCalculatedComm * 100) / 100;
-      const rate = grossSale > 0 && totalCalculatedComm > 0
-        ? Math.round(((totalCalculatedComm / grossSale) * 100) * 100) / 100
-        : (employee.commissionPercentage ?? 1);
-      const commAmount = safeParseAmount(meta.commissionAmount || 0) || totalCalculatedComm || Math.round(((grossSale * rate) / 100) * 100) / 100;
+      const explicitCommAmount = meta.commissionAmount !== null && meta.commissionAmount !== undefined && !isNaN(Number(meta.commissionAmount)) ? safeParseAmount(meta.commissionAmount) : null;
+      const commAmount = explicitCommAmount !== null ? explicitCommAmount : totalCalculatedComm;
+      const rate = grossSale > 0 && commAmount > 0
+        ? Math.round(((commAmount / grossSale) * 100) * 100) / 100
+        : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0);
       const invString = meta.invoiceNumber || `HWM-${numInv}`;
 
       let products: any[] = [];
@@ -1173,15 +1187,16 @@ export const getMobileCommissionBillDetail = async (
 
           if (meta.lineItems && meta.lineItems.length > 0) {
             for (const item of meta.lineItems) {
+              const itemMeta = extractProductLineMeta(item);
               const itemAmt = safeParseAmount(item.productPrice || item.price || item.amount || 0);
-              const itemProdId = item.productId || item.productID || item.id;
-              const itemCatId = item.categoryId || item.CategoryID || item.category_id;
-              const itemCatName = item.category || item.categoryName;
+              const itemProdId = itemMeta.numericProductId ?? itemMeta.productId ?? item.productId ?? item.productID ?? item.id;
+              const itemCatId = itemMeta.categoryId ?? itemMeta.rawCategoryId ?? item.categoryId ?? item.CategoryID ?? item.category_id;
+              const itemCatName = itemMeta.category ?? item.category ?? item.categoryName;
 
               const lineRes = calculateEffectiveCommissionForLineItem({
                 saleAmount: itemAmt,
                 productId: itemProdId,
-                productName: item.productName || item.name,
+                productName: itemMeta.productName ?? item.productName ?? item.name,
                 categoryId: itemCatId,
                 categoryName: itemCatName,
                 policies: activePolicies,
@@ -1192,14 +1207,14 @@ export const getMobileCommissionBillDetail = async (
                   storeId: employee.storeId,
                 },
                 storeId: employee.storeId,
-                directCommissionRate: item.directCommissionRate,
-                directCommissionAmount: item.directCommissionAmount,
+                directCommissionRate: itemMeta.directCommissionRate ?? item.directCommissionRate,
+                directCommissionAmount: itemMeta.directCommissionAmount ?? item.directCommissionAmount,
               });
 
               totalCalculatedComm += lineRes.commissionAmount;
               productCommissionBreakdown.push({
                 productID: itemProdId,
-                productName: item.productName || item.name || 'Product',
+                productName: itemMeta.productName ?? item.productName ?? item.name ?? 'Product',
                 quantity: Number(item.qty || item.quantity || 1),
                 saleAmount: itemAmt,
                 commissionRate: lineRes.commissionRate,
@@ -1211,10 +1226,11 @@ export const getMobileCommissionBillDetail = async (
           }
 
           totalCalculatedComm = Math.round(totalCalculatedComm * 100) / 100;
-          const rate = grossSale > 0 && totalCalculatedComm > 0
-            ? Math.round(((totalCalculatedComm / grossSale) * 100) * 100) / 100
-            : (employee.commissionPercentage ?? 1);
-          const commAmount = totalCalculatedComm || Math.round(((grossSale * rate) / 100) * 100) / 100;
+          const explicitCommAmount = meta.commissionAmount !== null && meta.commissionAmount !== undefined && !isNaN(Number(meta.commissionAmount)) ? safeParseAmount(meta.commissionAmount) : null;
+          const commAmount = explicitCommAmount !== null ? explicitCommAmount : totalCalculatedComm;
+          const rate = grossSale > 0 && commAmount > 0
+            ? Math.round(((commAmount / grossSale) * 100) * 100) / 100
+            : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0);
           const invString = meta.invoiceNumber || `HWM-${numInv}`;
 
           let products: any[] = [];
@@ -1409,11 +1425,11 @@ export const getMobileCommissionBillDetail = async (
       orderBy: { priority: 'asc' },
     });
 
-    const rate = sale.commissionPercent !== null && sale.commissionPercent !== undefined && Number(sale.commissionPercent) > 0
+    const rate = sale.commissionPercent !== null && sale.commissionPercent !== undefined
       ? Number(sale.commissionPercent)
       : (sale.saleAmount > 0 && (sale.commissionAmount > 0 || (sale.newCommission && Number(sale.newCommission) > 0))
           ? Math.round((((sale.newCommission && Number(sale.newCommission) > 0 ? Number(sale.newCommission) : sale.commissionAmount) / sale.saleAmount) * 100) * 100) / 100
-          : (employee.commissionPercentage ?? 1));
+          : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0));
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const numInv = getNumericInvoiceNumber(sale);
     const invString = sale.invoiceNumber || `HWM-${numInv}`;
@@ -1424,17 +1440,17 @@ export const getMobileCommissionBillDetail = async (
     const newAmt = Number(sale.newAmount || sale.saleAmount || 0);
     const oldComm = sale.oldCommission !== null && sale.oldCommission !== undefined && sale.oldCommission > 0
       ? Number(sale.oldCommission)
-      : (oldAmt > 0 ? Math.round(((oldAmt * rate) / 100) * 100) / 100 : 0);
+      : (oldAmt > 0 && rate > 0 ? Math.round(((oldAmt * rate) / 100) * 100) / 100 : 0);
     const newComm = sale.newCommission !== null && sale.newCommission !== undefined && sale.newCommission > 0
       ? Number(sale.newCommission)
-      : Math.round(((newAmt * rate) / 100) * 100) / 100;
+      : (rate > 0 ? Math.round(((newAmt * rate) / 100) * 100) / 100 : 0);
 
     let finalCommAmount = sale.commissionAmount;
-    if (!finalCommAmount || finalCommAmount === 0) {
+    if (finalCommAmount === undefined || finalCommAmount === null) {
       if (isUpdate && oldAmt > 0) {
         finalCommAmount = Math.round((oldComm + newComm) * 100) / 100;
       } else {
-        finalCommAmount = Math.round(((sale.saleAmount * rate) / 100) * 100) / 100;
+        finalCommAmount = rate > 0 ? Math.round(((sale.saleAmount * rate) / 100) * 100) / 100 : 0;
       }
     }
 
@@ -1444,14 +1460,15 @@ export const getMobileCommissionBillDetail = async (
     let computedBreakdown = existingBreakdown;
     if (computedBreakdown.length === 0 && rawLineItemsForBreakdown && Array.isArray(rawLineItemsForBreakdown) && rawLineItemsForBreakdown.length > 0) {
       computedBreakdown = rawLineItemsForBreakdown.map((item: any) => {
+        const itemMeta = extractProductLineMeta(item);
         const itemAmt = safeParseAmount(item.productPrice || item.price || item.productNetAmount || item.amount || 0);
-        const itemProdId = item.productId || item.productID || item.id;
-        const itemCatId = item.categoryId || item.CategoryID || item.category_id;
-        const itemCatName = item.category || item.categoryName;
+        const itemProdId = itemMeta.numericProductId ?? itemMeta.productId ?? item.productId ?? item.productID ?? item.id;
+        const itemCatId = itemMeta.categoryId ?? itemMeta.rawCategoryId ?? item.categoryId ?? item.CategoryID ?? item.category_id;
+        const itemCatName = itemMeta.category ?? item.category ?? item.categoryName;
         const lineRes = calculateEffectiveCommissionForLineItem({
           saleAmount: itemAmt,
           productId: itemProdId,
-          productName: item.productName || item.name,
+          productName: itemMeta.productName ?? item.productName ?? item.name,
           categoryId: itemCatId,
           categoryName: itemCatName,
           policies: activePolicies,
@@ -1462,12 +1479,12 @@ export const getMobileCommissionBillDetail = async (
             storeId: employee.storeId,
           },
           storeId: employee.storeId,
-          directCommissionRate: item.directCommissionRate,
-          directCommissionAmount: item.directCommissionAmount,
+          directCommissionRate: itemMeta.directCommissionRate ?? item.directCommissionRate,
+          directCommissionAmount: itemMeta.directCommissionAmount ?? item.directCommissionAmount,
         });
         return {
           productID: itemProdId,
-          productName: item.productName || item.name || 'Product',
+          productName: itemMeta.productName ?? item.productName ?? item.name ?? 'Product',
           quantity: Number(item.qty || item.quantity || 1),
           saleAmount: itemAmt,
           commissionRate: lineRes.commissionRate,
@@ -1486,9 +1503,13 @@ export const getMobileCommissionBillDetail = async (
         billNumber: numInv,
         invoiceNo: invString,
         saleAmount: sale.saleAmount,
+        billAmount: sale.saleAmount,
         netAmount: sale.saleAmount,
         commissionRate: rate,
+        commissionPercentage: rate,
+        commissionPercent: rate,
         commissionAmount: finalCommAmount,
+        commissionEarned: finalCommAmount,
         totalCommission: finalCommAmount,
         oldAmount: oldAmt,
         newAmount: newAmt,

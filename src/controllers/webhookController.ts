@@ -167,7 +167,9 @@ export async function groupAndCalculateCommissionBySalesman(
               mobileNumber: mobileNumber ? String(mobileNumber) : null,
               status: 'active',
               source: 'HOPKID',
-              commissionPercentage: 1.00,
+              commissionPercentage: (lineItem.commissionPercentage !== undefined && lineItem.commissionPercentage !== null && !isNaN(Number(lineItem.commissionPercentage)))
+                ? Number(lineItem.commissionPercentage)
+                : (lineMeta.directCommissionRate ?? null),
               storeId: invoiceData.metaStoreId,
             },
             include: {
@@ -189,16 +191,20 @@ export async function groupAndCalculateCommissionBySalesman(
 
       const targetStoreId = invoiceData.metaStoreId || salesman.storeId;
 
-      // Prioritize lineItem.commissionAmount & lineItem.commission from ERP webhook payload
+      // Prioritize lineMeta directCommissionAmount & directCommissionRate from ERP webhook payload
       const directLineCommAmount =
-        lineItem.commissionAmount !== null && lineItem.commissionAmount !== undefined && !isNaN(Number(lineItem.commissionAmount))
-          ? Number(lineItem.commissionAmount)
-          : (lineItem.commission_amount !== null && lineItem.commission_amount !== undefined && !isNaN(Number(lineItem.commission_amount)) ? Number(lineItem.commission_amount) : null);
+        lineMeta.directCommissionAmount !== null
+          ? lineMeta.directCommissionAmount
+          : (lineItem.commissionAmount !== null && lineItem.commissionAmount !== undefined && !isNaN(Number(lineItem.commissionAmount))
+            ? Number(lineItem.commissionAmount)
+            : (lineItem.commission_amount !== null && lineItem.commission_amount !== undefined && !isNaN(Number(lineItem.commission_amount)) ? Number(lineItem.commission_amount) : null));
 
       const directLineCommRate =
-        lineItem.commission !== null && lineItem.commission !== undefined && !isNaN(Number(lineItem.commission))
-          ? Number(lineItem.commission)
-          : (lineItem.commissionRate !== null && lineItem.commissionRate !== undefined && !isNaN(Number(lineItem.commissionRate)) ? Number(lineItem.commissionRate) : null);
+        lineMeta.directCommissionRate !== null
+          ? lineMeta.directCommissionRate
+          : (lineItem.commission !== null && lineItem.commission !== undefined && !isNaN(Number(lineItem.commission))
+            ? Number(lineItem.commission)
+            : (lineItem.commissionRate !== null && lineItem.commissionRate !== undefined && !isNaN(Number(lineItem.commissionRate)) ? Number(lineItem.commissionRate) : null));
 
       const commResult = calculateEffectiveCommissionForLineItem({
         productId: lineMeta.numericProductId ?? lineMeta.productId ?? productId,
@@ -287,7 +293,7 @@ export async function groupAndCalculateCommissionBySalesman(
         ? Math.round(((entry.totalCommission / entry.totalAmount) * 100) * 100) / 100
         : (entry.salesman.commissionPercentage !== null && entry.salesman.commissionPercentage !== undefined
             ? Number(entry.salesman.commissionPercentage)
-            : 1);
+            : 0);
   }
 
   return commissionMap;
@@ -572,9 +578,9 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         // ═══════════════════════════════════════════════════════════════
         const effectiveRate = newSaleAmount > 0 && commAmt > 0
           ? Math.round(((commAmt / newSaleAmount) * 100) * 100) / 100
-          : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : (existingTx.commissionPercent ?? 1));
+          : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : (existingTx.commissionPercent ?? 0));
         const oldComm = existingTx.commissionAmount || (oldSaleAmount > 0 ? Math.round(((oldSaleAmount * (existingTx.commissionPercent ?? effectiveRate)) / 100) * 100) / 100 : (existingTx.oldCommission || 0));
-        const newComm = commAmt > 0 ? commAmt : (newSaleAmount > 0 ? Math.round(((newSaleAmount * effectiveRate) / 100) * 100) / 100 : newCommissionAmount);
+        const newComm = commAmt > 0 ? commAmt : (newSaleAmount > 0 && effectiveRate > 0 ? Math.round(((newSaleAmount * effectiveRate) / 100) * 100) / 100 : (commAmt === 0 ? 0 : newCommissionAmount));
         const totalCommissionEarned = isCancelledOrReturned ? 0 : newComm;
         const commDelta = Math.round((totalCommissionEarned - oldCommission) * 100) / 100;
         const saleDelta = newSaleAmount - oldSaleAmount;
@@ -665,8 +671,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         const finalSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
         const effectiveRate = finalSaleAmount > 0 && commAmt > 0
           ? Math.round(((commAmt / finalSaleAmount) * 100) * 100) / 100
-          : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 1);
-        const finalCommAmount = isCancelledOrReturned ? 0 : (commAmt > 0 ? commAmt : Math.round(((finalSaleAmount * effectiveRate) / 100) * 100) / 100);
+          : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0);
+        const finalCommAmount = isCancelledOrReturned ? 0 : (commAmt > 0 ? commAmt : (effectiveRate > 0 ? Math.round(((finalSaleAmount * effectiveRate) / 100) * 100) / 100 : 0));
 
         const existingTxInDb = await tx.commissionTransaction.findFirst({
           where: { billId: billIdKey, employeeId: salesman.id }
@@ -752,7 +758,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         }
 
         console.log(`[Invoice Created]\nBillId: ${billIdKey}\nAmount: ₹${finalSaleAmount}\nEmployee(s): ${salesman.employeeCode || salesman.id} (${salesman.firstName} ${salesman.lastName})`);
-        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: 0\nnewAmount: ${finalSaleAmount}\ncommissionRate: ${salesman.commissionPercentage || 1}%\noldCommission: 0\nnewCommission: ${finalCommAmount}\ncommissionAdjustment: +${finalCommAmount}\nfinalCommission: ${finalCommAmount}`);
+        console.log(`[Commission]\neventId: ${resolvedEventId || 'N/A'}\ninvoiceId: ${billIdKey}\nemployeeId: ${salesman.id}\nemployeeName: ${salesman.firstName} ${salesman.lastName}\nstoreId: ${targetStoreId || 'N/A'}\nisOld: 0\noldAmount: 0\nnewAmount: ${finalSaleAmount}\ncommissionRate: ${effectiveRate}%\noldCommission: 0\nnewCommission: ${finalCommAmount}\ncommissionAdjustment: +${finalCommAmount}\nfinalCommission: ${finalCommAmount}`);
         console.log(`[Commission Audit] CREATE path | BillId: ${billIdKey} | EmployeeId: ${salesman.id}`);
         console.log(`[Commission Audit]   oldAmount: ₹0`);
         console.log(`[Commission Audit]   newAmount: ₹${finalSaleAmount}`);
@@ -995,11 +1001,6 @@ export async function processCreditNoteCreated(payload: any, eventId?: string | 
   // Record commission transaction with difference calculation: Difference Amount = CN Amount - Original Bill Amount
   for (const [empId, empData] of employeeCommissionMap.entries()) {
     try {
-      const salesman = empData.employee;
-      const rateVal = salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 1;
-      const returnAmount = empData.totalReturnAmount > 0 ? empData.totalReturnAmount : totalAmount;
-      const returnCommission = Math.round(((returnAmount * rateVal) / 100) * 100) / 100;
-
       // Find original bill transaction
       let originalTx: any = null;
       if (invoiceNo) {
@@ -1030,6 +1031,13 @@ export async function processCreditNoteCreated(payload: any, eventId?: string | 
           });
         }
       }
+
+      const salesman = empData.employee;
+      const rateVal = originalTx?.commissionPercent !== null && originalTx?.commissionPercent !== undefined
+        ? Number(originalTx.commissionPercent)
+        : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0);
+      const returnAmount = empData.totalReturnAmount > 0 ? empData.totalReturnAmount : totalAmount;
+      const returnCommission = Math.round(((returnAmount * rateVal) / 100) * 100) / 100;
 
       let origSaleAmt = originalTx ? Number(originalTx.saleAmount || originalTx.newAmount || 0) : 0;
       let origCommAmt = originalTx ? Number(originalTx.commissionAmount || originalTx.newCommission || 0) : 0;
@@ -1295,8 +1303,13 @@ export async function processSalesExchangeCreated(payload: any, eventId?: string
       const rawAmount = Number(lineItem.productNetAmount || lineItem.netAmount || lineItem.amount || lineItem.Total || lineItem.price || 0);
       if (isNaN(rawAmount) || rawAmount <= 0) continue;
 
-      const rate = employee.commissionPercentage ?? 1.0;
-      const baseComm = (rawAmount * rate) / 100;
+      const itemMeta = extractProductLineMeta(lineItem);
+      const rate = itemMeta.directCommissionRate !== null
+        ? itemMeta.directCommissionRate
+        : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0);
+      const baseComm = itemMeta.directCommissionAmount !== null
+        ? itemMeta.directCommissionAmount
+        : ((rawAmount * rate) / 100);
 
       // Existing Sales Exchange Rule:
       // IsOld = 1 (Returned item from original bill)

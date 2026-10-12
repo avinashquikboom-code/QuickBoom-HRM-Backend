@@ -166,7 +166,9 @@ export async function syncHopkidEmployees(): Promise<void> {
       const mobileNumber = emp.mobileNo || '';
       const joiningDate = emp.dateofJoining ? new Date(emp.dateofJoining) : null;
       const status = emp.isActive ? 'active' : 'inactive';
-      const commissionPercentage = emp.commissionPercentage || 1.00;
+      const commissionPercentage = (emp.commissionPercentage !== undefined && emp.commissionPercentage !== null && !isNaN(Number(emp.commissionPercentage)))
+        ? Number(emp.commissionPercentage)
+        : null;
       const employeeID = emp.employeeID ? emp.employeeID.toLowerCase() : null;
 
       // Upsert the Employee by employeeCode

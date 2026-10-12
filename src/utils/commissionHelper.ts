@@ -149,7 +149,7 @@ export function resolveBillAndCommissionReconciliation(params: {
   const rawAmount = safeParseAmount(params.amount);
   const commRate = params.commissionPercent !== undefined && params.commissionPercent !== null && !isNaN(Number(params.commissionPercent))
     ? Number(params.commissionPercent)
-    : (params.employeeRate !== undefined && params.employeeRate !== null && !isNaN(Number(params.employeeRate)) ? Number(params.employeeRate) : 1);
+    : (params.employeeRate !== undefined && params.employeeRate !== null && !isNaN(Number(params.employeeRate)) ? Number(params.employeeRate) : 0);
 
   // Parse notes regex for old/new amounts (e.g. "Original Bill: ₹848", "Old Amount: ₹848", "CN Amount: ₹1398", "New Amount: ₹1398")
   const oldNotesMatch = notesStr.match(/(?:Original Bill|Old Amount|Old Bill|Original Amount):\s*[₹$]?([0-9.]+)/i);
@@ -2129,6 +2129,7 @@ export function calculateEffectiveCommissionForLineItem(
     if (parsedProdId !== null && p.productId === parsedProdId) return true;
     if (productId !== null && productId !== undefined && String(p.productId) === String(productId)) return true;
     if (cleanProdName && p.name && p.name.toLowerCase().includes(cleanProdName)) return true;
+    if (cleanProdName && p.description && p.description.toLowerCase().includes(cleanProdName)) return true;
     return false;
   });
 
@@ -2196,7 +2197,7 @@ export function calculateEffectiveCommissionForLineItem(
   }
 
   // 7. Salesperson Default commissionPercentage fallback (Priority 6)
-  if (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined && Number(salesman.commissionPercentage) > 0) {
+  if (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined && !isNaN(Number(salesman.commissionPercentage))) {
     const rate = Number(salesman.commissionPercentage);
     const amt = Math.round(((absAmount * rate) / 100) * 100) / 100;
     return {

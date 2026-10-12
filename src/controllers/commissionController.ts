@@ -589,7 +589,11 @@ export const getCommissionTransactions = async (
         }
       }
 
-      const rate = Number(t.commissionPercent ?? t.employee?.commissionPercentage ?? 1);
+      const rate = t.commissionPercent !== null && t.commissionPercent !== undefined
+        ? Number(t.commissionPercent)
+        : (t.saleAmount > 0 && t.commissionAmount > 0
+            ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+            : (t.employee?.commissionPercentage !== null && t.employee?.commissionPercentage !== undefined ? Number(t.employee?.commissionPercentage) : 0));
 
       const recon = resolveBillAndCommissionReconciliation({
         eventType: t.eventType,

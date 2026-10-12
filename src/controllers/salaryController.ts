@@ -153,7 +153,7 @@ export const getSalarySlip = async (
         workingDays: view.workingDays,
         totalCalendarDays: view.totalCalendarDays,
         dailySalary: view.dailySalary,
-        commissionRate: employee.commissionPercentage || 1.0,
+        commissionRate: employee.commissionPercentage ?? 0,
         salaryAdvanceLimit,
         salaryAdvanceUsed,
         salaryAdvanceRemaining,
