@@ -2,7 +2,7 @@ import { enrichProductBreakdown } from '../../utils/productLineMeta';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails, getTransactionNetContribution, getNumericInvoiceNumber, parseIstStartOfDay, parseIstEndOfDay } from '../../utils/commissionHelper';
+import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInvoiceDetails, getTransactionNetContribution, getNumericInvoiceNumber, parseIstStartOfDay, parseIstEndOfDay, calculateEffectiveCommissionForLineItem } from '../../utils/commissionHelper';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { CommissionService } from '../../services/commissionService';
 import { deduplicateCommissionTransactions } from '../../utils/commissionDeduplicator';
@@ -808,9 +808,13 @@ export const getMobileCommissionBills = async (
 
     const bills: any[] = txs.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
-      const rate = Number(t.commissionPercent ?? employee.commissionPercentage ?? 1);
       const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
       let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
+      let rate = t.commissionPercent !== null && t.commissionPercent !== undefined && Number(t.commissionPercent) > 0
+        ? Number(t.commissionPercent)
+        : (effectiveSale > 0 && comm > 0
+            ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
+            : Number(employee.commissionPercentage ?? 1));
       if (!comm || comm === 0) {
         comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
       }
@@ -1041,8 +1045,58 @@ export const getMobileCommissionBillDetail = async (
       const discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
       const tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || 0);
       const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: meta.billId || billIdStr, id: foundLogId });
-      const rate = employee.commissionPercentage ?? 1;
-      const commAmount = safeParseAmount(meta.commissionAmount || 0) || Math.round(((grossSale * rate) / 100) * 100) / 100;
+      const activePolicies = await prisma.commissionPolicy.findMany({
+        where: { isActive: true },
+        orderBy: { priority: 'asc' },
+      });
+
+      let productCommissionBreakdown: any[] = [];
+      let totalCalculatedComm = 0;
+
+      if (meta.lineItems && meta.lineItems.length > 0) {
+        for (const item of meta.lineItems) {
+          const itemAmt = safeParseAmount(item.productPrice || item.price || item.productNetAmount || item.amount || 0);
+          const itemProdId = item.productId || item.productID || item.id;
+          const itemCatId = item.categoryId || item.CategoryID || item.category_id;
+          const itemCatName = item.category || item.categoryName;
+
+          const lineRes = calculateEffectiveCommissionForLineItem({
+            saleAmount: itemAmt,
+            productId: itemProdId,
+            productName: item.productName || item.name,
+            categoryId: itemCatId,
+            categoryName: itemCatName,
+            policies: activePolicies,
+            salesman: {
+              id: employee.id,
+              employeeCode: employee.employeeCode,
+              commissionPercentage: employee.commissionPercentage,
+              storeId: employee.storeId,
+            },
+            storeId: employee.storeId,
+            directCommissionRate: item.directCommissionRate,
+            directCommissionAmount: item.directCommissionAmount,
+          });
+
+          totalCalculatedComm += lineRes.commissionAmount;
+          productCommissionBreakdown.push({
+            productID: itemProdId,
+            productName: item.productName || item.name || 'Product',
+            quantity: Number(item.qty || item.quantity || 1),
+            saleAmount: itemAmt,
+            commissionRate: lineRes.commissionRate,
+            commissionAmount: lineRes.commissionAmount,
+            category: itemCatName || (itemCatId ? `Category #${itemCatId}` : undefined),
+            categoryId: itemCatId,
+          });
+        }
+      }
+
+      totalCalculatedComm = Math.round(totalCalculatedComm * 100) / 100;
+      const rate = grossSale > 0 && totalCalculatedComm > 0
+        ? Math.round(((totalCalculatedComm / grossSale) * 100) * 100) / 100
+        : (employee.commissionPercentage ?? 1);
+      const commAmount = safeParseAmount(meta.commissionAmount || 0) || totalCalculatedComm || Math.round(((grossSale * rate) / 100) * 100) / 100;
       const invString = meta.invoiceNumber || `HWM-${numInv}`;
 
       let products: any[] = [];
@@ -1085,7 +1139,7 @@ export const getMobileCommissionBillDetail = async (
           paymentMode: meta.paymentMode || '-',
           storeName: meta.storeName || employee.store?.name || 'HopKid Store',
           products,
-          productCommissionBreakdown: [],
+          productCommissionBreakdown,
           grossSale,
           discount,
           tax,
@@ -1109,8 +1163,58 @@ export const getMobileCommissionBillDetail = async (
           const invoiceData = meta.invoice || fetchedInvoice.data || fetchedInvoice;
           const grossSale = safeParseAmount(meta.amount || invoiceData.netAmount || invoiceData.grandTotal || 0);
           const numInv = getNumericInvoiceNumber({ invoiceNumber: meta.invoiceNumber, billId: meta.billId || billIdStr });
-          const rate = employee.commissionPercentage ?? 1;
-          const commAmount = Math.round(((grossSale * rate) / 100) * 100) / 100;
+          const activePolicies = await prisma.commissionPolicy.findMany({
+            where: { isActive: true },
+            orderBy: { priority: 'asc' },
+          });
+
+          let productCommissionBreakdown: any[] = [];
+          let totalCalculatedComm = 0;
+
+          if (meta.lineItems && meta.lineItems.length > 0) {
+            for (const item of meta.lineItems) {
+              const itemAmt = safeParseAmount(item.productPrice || item.price || item.amount || 0);
+              const itemProdId = item.productId || item.productID || item.id;
+              const itemCatId = item.categoryId || item.CategoryID || item.category_id;
+              const itemCatName = item.category || item.categoryName;
+
+              const lineRes = calculateEffectiveCommissionForLineItem({
+                saleAmount: itemAmt,
+                productId: itemProdId,
+                productName: item.productName || item.name,
+                categoryId: itemCatId,
+                categoryName: itemCatName,
+                policies: activePolicies,
+                salesman: {
+                  id: employee.id,
+                  employeeCode: employee.employeeCode,
+                  commissionPercentage: employee.commissionPercentage,
+                  storeId: employee.storeId,
+                },
+                storeId: employee.storeId,
+                directCommissionRate: item.directCommissionRate,
+                directCommissionAmount: item.directCommissionAmount,
+              });
+
+              totalCalculatedComm += lineRes.commissionAmount;
+              productCommissionBreakdown.push({
+                productID: itemProdId,
+                productName: item.productName || item.name || 'Product',
+                quantity: Number(item.qty || item.quantity || 1),
+                saleAmount: itemAmt,
+                commissionRate: lineRes.commissionRate,
+                commissionAmount: lineRes.commissionAmount,
+                category: itemCatName || (itemCatId ? `Category #${itemCatId}` : undefined),
+                categoryId: itemCatId,
+              });
+            }
+          }
+
+          totalCalculatedComm = Math.round(totalCalculatedComm * 100) / 100;
+          const rate = grossSale > 0 && totalCalculatedComm > 0
+            ? Math.round(((totalCalculatedComm / grossSale) * 100) * 100) / 100
+            : (employee.commissionPercentage ?? 1);
+          const commAmount = totalCalculatedComm || Math.round(((grossSale * rate) / 100) * 100) / 100;
           const invString = meta.invoiceNumber || `HWM-${numInv}`;
 
           let products: any[] = [];
@@ -1153,7 +1257,7 @@ export const getMobileCommissionBillDetail = async (
               paymentMode: meta.paymentMode || '-',
               storeName: meta.storeName || employee.store?.name || 'HopKid Store',
               products,
-              productCommissionBreakdown: [],
+              productCommissionBreakdown,
               grossSale,
               discount: 0,
               tax: 0,
@@ -1300,9 +1404,16 @@ export const getMobileCommissionBillDetail = async (
       }
     }
 
-    const rate = sale.commissionPercent !== null && sale.commissionPercent !== undefined && sale.commissionPercent > 0
+    const activePolicies = await prisma.commissionPolicy.findMany({
+      where: { isActive: true },
+      orderBy: { priority: 'asc' },
+    });
+
+    const rate = sale.commissionPercent !== null && sale.commissionPercent !== undefined && Number(sale.commissionPercent) > 0
       ? Number(sale.commissionPercent)
-      : (employee.commissionPercentage ?? 1);
+      : (sale.saleAmount > 0 && (sale.commissionAmount > 0 || (sale.newCommission && Number(sale.newCommission) > 0))
+          ? Math.round((((sale.newCommission && Number(sale.newCommission) > 0 ? Number(sale.newCommission) : sale.commissionAmount) / sale.saleAmount) * 100) * 100) / 100
+          : (employee.commissionPercentage ?? 1));
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const numInv = getNumericInvoiceNumber(sale);
     const invString = sale.invoiceNumber || `HWM-${numInv}`;
@@ -1329,6 +1440,44 @@ export const getMobileCommissionBillDetail = async (
 
     console.log(`[MOBILE-BILL-DETAIL] Returning detail for billId=${numInv} (invoiceNumber=${invString}) | saleAmount=₹${sale.saleAmount} | rate=${rate}% | comm=₹${finalCommAmount}`);
 
+    const existingBreakdown = enrichProductBreakdown(sale.productBreakdown, rawLineItemsForBreakdown) ?? [];
+    let computedBreakdown = existingBreakdown;
+    if (computedBreakdown.length === 0 && rawLineItemsForBreakdown && Array.isArray(rawLineItemsForBreakdown) && rawLineItemsForBreakdown.length > 0) {
+      computedBreakdown = rawLineItemsForBreakdown.map((item: any) => {
+        const itemAmt = safeParseAmount(item.productPrice || item.price || item.productNetAmount || item.amount || 0);
+        const itemProdId = item.productId || item.productID || item.id;
+        const itemCatId = item.categoryId || item.CategoryID || item.category_id;
+        const itemCatName = item.category || item.categoryName;
+        const lineRes = calculateEffectiveCommissionForLineItem({
+          saleAmount: itemAmt,
+          productId: itemProdId,
+          productName: item.productName || item.name,
+          categoryId: itemCatId,
+          categoryName: itemCatName,
+          policies: activePolicies,
+          salesman: {
+            id: employee.id,
+            employeeCode: employee.employeeCode,
+            commissionPercentage: employee.commissionPercentage,
+            storeId: employee.storeId,
+          },
+          storeId: employee.storeId,
+          directCommissionRate: item.directCommissionRate,
+          directCommissionAmount: item.directCommissionAmount,
+        });
+        return {
+          productID: itemProdId,
+          productName: item.productName || item.name || 'Product',
+          quantity: Number(item.qty || item.quantity || 1),
+          saleAmount: itemAmt,
+          commissionRate: lineRes.commissionRate,
+          commissionAmount: lineRes.commissionAmount,
+          category: itemCatName || (itemCatId ? `Category #${itemCatId}` : undefined),
+          categoryId: itemCatId,
+        };
+      });
+    }
+
     res.json({
       success: true,
       data: {
@@ -1354,9 +1503,7 @@ export const getMobileCommissionBillDetail = async (
         paymentMode,
         storeName,
         products,
-        productCommissionBreakdown: sale.employeeId === employee.id
-          ? (enrichProductBreakdown(sale.productBreakdown, rawLineItemsForBreakdown) ?? [])
-          : [],
+        productCommissionBreakdown: sale.employeeId === employee.id ? computedBreakdown : [],
         grossSale,
         discount,
         tax,

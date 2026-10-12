@@ -876,6 +876,12 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     ? payload.data.lineItems
     : Array.isArray(payload?.lineItems)
     ? payload.lineItems
+    : Array.isArray(payload?.data?.SalesProductList)
+    ? payload.data.SalesProductList
+    : Array.isArray(payload?.SalesProductList)
+    ? payload.SalesProductList
+    : Array.isArray(invoice?.SalesProductList)
+    ? invoice.SalesProductList
     : Array.isArray(payload?.data?.CreditNoteProducts)
     ? payload.data.CreditNoteProducts
     : Array.isArray(payload?.CreditNoteProducts)
@@ -1972,6 +1978,245 @@ export function calculateInvoiceUpdateCommission(
     newCommission: newComm,
     totalCommission,
     commissionDifference,
+  };
+}
+
+export interface EffectiveCommissionResult {
+  commissionRate: number;
+  commissionAmount: number;
+  commissionType: 'PERCENTAGE' | 'FIXED' | 'DIRECT' | 'NONE';
+  appliedLevel: 'LINE_OVERRIDE' | 'PRODUCT' | 'CATEGORY' | 'EMPLOYEE' | 'STORE' | 'COMPANY' | 'FALLBACK';
+  policyId: number | null;
+  policyName: string | null;
+}
+
+export interface CommissionResolutionInput {
+  productId?: string | number | null;
+  productName?: string | null;
+  categoryId?: string | number | null;
+  categoryName?: string | null;
+  saleAmount: number;
+  salesman: {
+    id: number;
+    employeeCode?: string | null;
+    commissionPercentage?: number | null;
+    storeId?: number | null;
+  };
+  storeId?: number | null;
+  directCommissionAmount?: number | null;
+  directCommissionRate?: number | null;
+  policies: any[];
+}
+
+/**
+ * Calculates effective commission for a product line item following strict business priority:
+ * 1. Direct ERP Line Item Override (explicit commissionAmount or commissionRate from payload)
+ * 2. Product-Level Commission Policy (employee+product > store+product > global product)
+ * 3. Category-Level Commission Policy (employee+category > store+category > global category)
+ * 4. Employee/Salesperson-Specific Commission Policy
+ * 5. Branch/Store-Specific Commission Policy
+ * 6. Company/Head Office-Level Commission Policy (Global)
+ * 7. Salesperson Default commissionPercentage fallback
+ * 8. Zero fallback
+ */
+export function calculateEffectiveCommissionForLineItem(
+  input: CommissionResolutionInput
+): EffectiveCommissionResult {
+  const {
+    productId,
+    productName,
+    categoryId,
+    categoryName,
+    saleAmount,
+    salesman,
+    storeId,
+    directCommissionAmount,
+    directCommissionRate,
+    policies = [],
+  } = input;
+
+  const absAmount = Math.abs(saleAmount || 0);
+
+  // 1. Direct line item override from ERP payload
+  if (directCommissionAmount !== null && directCommissionAmount !== undefined && !isNaN(Number(directCommissionAmount))) {
+    const dAmt = Math.round(Math.abs(Number(directCommissionAmount)) * 100) / 100;
+    const dRate = directCommissionRate !== null && directCommissionRate !== undefined && !isNaN(Number(directCommissionRate))
+      ? Number(directCommissionRate)
+      : (absAmount > 0 ? Math.round(((dAmt / absAmount) * 100) * 100) / 100 : 0);
+    return {
+      commissionRate: dRate,
+      commissionAmount: dAmt,
+      commissionType: 'DIRECT',
+      appliedLevel: 'LINE_OVERRIDE',
+      policyId: null,
+      policyName: 'ERP Direct Line Commission',
+    };
+  }
+
+  if (directCommissionRate !== null && directCommissionRate !== undefined && !isNaN(Number(directCommissionRate))) {
+    const dRate = Number(directCommissionRate);
+    const dAmt = Math.round(((absAmount * dRate) / 100) * 100) / 100;
+    return {
+      commissionRate: dRate,
+      commissionAmount: dAmt,
+      commissionType: 'PERCENTAGE',
+      appliedLevel: 'LINE_OVERRIDE',
+      policyId: null,
+      policyName: 'ERP Direct Line Commission Rate',
+    };
+  }
+
+  // Parse numeric product & category IDs for comparison
+  const parsedProdId = productId !== null && productId !== undefined && !isNaN(Number(productId))
+    ? Number(productId)
+    : null;
+  const parsedCatId = categoryId !== null && categoryId !== undefined && !isNaN(Number(categoryId))
+    ? Number(categoryId)
+    : null;
+
+  const cleanCatName = (categoryName || '').trim().toLowerCase();
+  const cleanProdName = (productName || '').trim().toLowerCase();
+  const targetStoreId = storeId || salesman.storeId || null;
+
+  // Filter only active & non-expired policies
+  const now = new Date();
+  const activePolicies = policies.filter((p) => {
+    if (!p.isActive) return false;
+    if (p.effectiveFrom && new Date(p.effectiveFrom) > now) return false;
+    if (p.effectiveTo && new Date(p.effectiveTo) < now) return false;
+    return true;
+  });
+
+  // Helper to apply policy
+  const applyPolicy = (policy: any, level: EffectiveCommissionResult['appliedLevel']): EffectiveCommissionResult => {
+    if (policy.commissionType === 'PERCENTAGE') {
+      const rate = Number(policy.commissionValue || 0);
+      const amt = Math.round(((absAmount * rate) / 100) * 100) / 100;
+      return {
+        commissionRate: rate,
+        commissionAmount: amt,
+        commissionType: 'PERCENTAGE',
+        appliedLevel: level,
+        policyId: policy.id,
+        policyName: policy.name,
+      };
+    } else if (policy.commissionType === 'FIXED') {
+      const amt = Math.round(Number(policy.commissionValue || 0) * 100) / 100;
+      const rate = absAmount > 0 ? Math.round(((amt / absAmount) * 100) * 100) / 100 : 0;
+      return {
+        commissionRate: rate,
+        commissionAmount: amt,
+        commissionType: 'FIXED',
+        appliedLevel: level,
+        policyId: policy.id,
+        policyName: policy.name,
+      };
+    } else {
+      return {
+        commissionRate: 0,
+        commissionAmount: 0,
+        commissionType: 'NONE',
+        appliedLevel: level,
+        policyId: policy.id,
+        policyName: policy.name,
+      };
+    }
+  };
+
+  // 2. Product-Level Policies (Priority 1)
+  const productPolicies = activePolicies.filter((p) => {
+    if (p.productId === null || p.productId === undefined) return false;
+    if (parsedProdId !== null && p.productId === parsedProdId) return true;
+    if (productId !== null && productId !== undefined && String(p.productId) === String(productId)) return true;
+    if (cleanProdName && p.name && p.name.toLowerCase().includes(cleanProdName)) return true;
+    return false;
+  });
+
+  if (productPolicies.length > 0) {
+    // 2a. Salesperson + Product
+    const empProd = productPolicies.find((p) => p.employeeId === salesman.id);
+    if (empProd) return applyPolicy(empProd, 'PRODUCT');
+    // 2b. Store + Product
+    if (targetStoreId) {
+      const storeProd = productPolicies.find((p) => p.storeId === targetStoreId);
+      if (storeProd) return applyPolicy(storeProd, 'PRODUCT');
+    }
+    // 2c. Global Product
+    const globalProd = productPolicies.find((p) => !p.employeeId && !p.storeId);
+    if (globalProd) return applyPolicy(globalProd, 'PRODUCT');
+    // Any matching product policy ordered by priority
+    return applyPolicy(productPolicies[0], 'PRODUCT');
+  }
+
+  // 3. Category-Level Policies (Priority 2)
+  const categoryPolicies = activePolicies.filter((p) => {
+    if (p.categoryId === null || p.categoryId === undefined) return false;
+    if (parsedCatId !== null && p.categoryId === parsedCatId) return true;
+    if (categoryId !== null && categoryId !== undefined && String(p.categoryId) === String(categoryId)) return true;
+    if (cleanCatName && p.name && p.name.toLowerCase().includes(cleanCatName)) return true;
+    if (cleanCatName && p.description && p.description.toLowerCase().includes(cleanCatName)) return true;
+    return false;
+  });
+
+  if (categoryPolicies.length > 0) {
+    // 3a. Salesperson + Category
+    const empCat = categoryPolicies.find((p) => p.employeeId === salesman.id);
+    if (empCat) return applyPolicy(empCat, 'CATEGORY');
+    // 3b. Store + Category
+    if (targetStoreId) {
+      const storeCat = categoryPolicies.find((p) => p.storeId === targetStoreId);
+      if (storeCat) return applyPolicy(storeCat, 'CATEGORY');
+    }
+    // 3c. Global Category
+    const globalCat = categoryPolicies.find((p) => !p.employeeId && !p.storeId);
+    if (globalCat) return applyPolicy(globalCat, 'CATEGORY');
+    // Any matching category policy ordered by priority
+    return applyPolicy(categoryPolicies[0], 'CATEGORY');
+  }
+
+  // 4. Employee/Salesperson-Specific Policies (Priority 3)
+  const employeePolicy = activePolicies.find((p) => p.employeeId === salesman.id && !p.productId && !p.categoryId);
+  if (employeePolicy) {
+    return applyPolicy(employeePolicy, 'EMPLOYEE');
+  }
+
+  // 5. Store/Branch-Specific Policies (Priority 4)
+  if (targetStoreId) {
+    const storePolicy = activePolicies.find((p) => p.storeId === targetStoreId && !p.employeeId && !p.productId && !p.categoryId);
+    if (storePolicy) {
+      return applyPolicy(storePolicy, 'STORE');
+    }
+  }
+
+  // 6. Company/Head Office-Level Policies (Priority 5)
+  const globalPolicies = activePolicies.filter((p) => !p.employeeId && !p.storeId && !p.productId && !p.categoryId);
+  if (globalPolicies.length > 0) {
+    globalPolicies.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+    return applyPolicy(globalPolicies[0], 'COMPANY');
+  }
+
+  // 7. Salesperson Default commissionPercentage fallback (Priority 6)
+  if (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined && Number(salesman.commissionPercentage) > 0) {
+    const rate = Number(salesman.commissionPercentage);
+    const amt = Math.round(((absAmount * rate) / 100) * 100) / 100;
+    return {
+      commissionRate: rate,
+      commissionAmount: amt,
+      commissionType: 'PERCENTAGE',
+      appliedLevel: 'EMPLOYEE',
+      policyId: null,
+      policyName: 'Salesperson Default Percentage',
+    };
+  }
+
+  // 8. Zero fallback
+  return {
+    commissionRate: 0,
+    commissionAmount: 0,
+    commissionType: 'PERCENTAGE',
+    appliedLevel: 'FALLBACK',
+    policyId: null,
+    policyName: 'Default Fallback (0%)',
   };
 }
 

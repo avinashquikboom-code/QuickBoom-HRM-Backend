@@ -12,7 +12,8 @@ import {
   parseIstEndOfDay,
   getTransactionNetContribution,
   extractWebhookMeta,
-  resolveBillAndCommissionReconciliation
+  resolveBillAndCommissionReconciliation,
+  calculateEffectiveCommissionForLineItem
 } from '../utils/commissionHelper';
 import { deduplicateCommissionTransactions } from '../utils/commissionDeduplicator';
 import { notifyEmployee, sendHRNotification } from '../utils/hrNotificationHelper';
@@ -71,7 +72,28 @@ export const createCommissionPolicy = async (
   res: Response
 ): Promise<void> => {
   try {
-    const policyData = req.body;
+    const raw = req.body;
+    const policyData: any = {
+      name: raw.name,
+      description: raw.description || null,
+      commissionType: raw.commissionType || 'PERCENTAGE',
+      commissionValue: parseFloat(raw.commissionValue || 0),
+      priority: raw.priority !== undefined ? parseInt(raw.priority, 10) : 0,
+      isActive: raw.isActive !== undefined ? Boolean(raw.isActive) : true,
+      companyId: raw.companyId ? parseInt(raw.companyId, 10) : ((req.user as any)?.companyId || 1),
+      storeId: raw.storeId ? parseInt(raw.storeId, 10) : null,
+      employeeId: raw.employeeId ? parseInt(raw.employeeId, 10) : null,
+      categoryId: raw.categoryId ? parseInt(raw.categoryId, 10) : null,
+      productId: raw.productId ? parseInt(raw.productId, 10) : null,
+      brandId: raw.brandId ? parseInt(raw.brandId, 10) : null,
+      departmentId: raw.departmentId ? parseInt(raw.departmentId, 10) : null,
+      designationId: raw.designationId ? parseInt(raw.designationId, 10) : null,
+      minSaleAmount: raw.minSaleAmount ? parseFloat(raw.minSaleAmount) : null,
+      maxSaleAmount: raw.maxSaleAmount ? parseFloat(raw.maxSaleAmount) : null,
+      startDate: raw.startDate ? new Date(raw.startDate) : (raw.effectiveFrom ? new Date(raw.effectiveFrom) : null),
+      endDate: raw.endDate ? new Date(raw.endDate) : (raw.effectiveTo ? new Date(raw.effectiveTo) : null),
+    };
+
     const policy = await prisma.commissionPolicy.create({
       data: policyData,
       include: {
@@ -98,11 +120,13 @@ export const getCommissionPolicies = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { storeId, employeeId, isActive } = req.query;
+    const { storeId, employeeId, isActive, categoryId, productId } = req.query;
 
     const whereClause: any = {};
     if (storeId) whereClause.storeId = parseInt(storeId as string);
     if (employeeId) whereClause.employeeId = parseInt(employeeId as string);
+    if (categoryId) whereClause.categoryId = parseInt(categoryId as string);
+    if (productId) whereClause.productId = parseInt(productId as string);
     if (isActive !== undefined) whereClause.isActive = isActive === 'true';
 
     const policies = await prisma.commissionPolicy.findMany({
@@ -159,7 +183,28 @@ export const updateCommissionPolicy = async (
   try {
     const { id } = req.params;
     const policyId = Array.isArray(id) ? id[0] : id;
-    const policyData = req.body;
+    const raw = req.body;
+
+    const policyData: any = {};
+    if (raw.name !== undefined) policyData.name = raw.name;
+    if (raw.description !== undefined) policyData.description = raw.description || null;
+    if (raw.commissionType !== undefined) policyData.commissionType = raw.commissionType;
+    if (raw.commissionValue !== undefined) policyData.commissionValue = parseFloat(raw.commissionValue);
+    if (raw.priority !== undefined) policyData.priority = parseInt(raw.priority, 10);
+    if (raw.isActive !== undefined) policyData.isActive = Boolean(raw.isActive);
+    if (raw.storeId !== undefined) policyData.storeId = raw.storeId ? parseInt(raw.storeId, 10) : null;
+    if (raw.employeeId !== undefined) policyData.employeeId = raw.employeeId ? parseInt(raw.employeeId, 10) : null;
+    if (raw.categoryId !== undefined) policyData.categoryId = raw.categoryId ? parseInt(raw.categoryId, 10) : null;
+    if (raw.productId !== undefined) policyData.productId = raw.productId ? parseInt(raw.productId, 10) : null;
+    if (raw.brandId !== undefined) policyData.brandId = raw.brandId ? parseInt(raw.brandId, 10) : null;
+    if (raw.departmentId !== undefined) policyData.departmentId = raw.departmentId ? parseInt(raw.departmentId, 10) : null;
+    if (raw.designationId !== undefined) policyData.designationId = raw.designationId ? parseInt(raw.designationId, 10) : null;
+    if (raw.minSaleAmount !== undefined) policyData.minSaleAmount = raw.minSaleAmount ? parseFloat(raw.minSaleAmount) : null;
+    if (raw.maxSaleAmount !== undefined) policyData.maxSaleAmount = raw.maxSaleAmount ? parseFloat(raw.maxSaleAmount) : null;
+    if (raw.startDate !== undefined) policyData.startDate = raw.startDate ? new Date(raw.startDate) : null;
+    if (raw.endDate !== undefined) policyData.endDate = raw.endDate ? new Date(raw.endDate) : null;
+    if (raw.effectiveFrom !== undefined && !raw.startDate) policyData.startDate = raw.effectiveFrom ? new Date(raw.effectiveFrom) : null;
+    if (raw.effectiveTo !== undefined && !raw.endDate) policyData.endDate = raw.effectiveTo ? new Date(raw.effectiveTo) : null;
 
     const policy = await prisma.commissionPolicy.update({
       where: { id: parseInt(policyId) },
@@ -767,31 +812,40 @@ export const calculateCommission = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { employeeId, saleAmount, storeId, billId, invoiceNumber } = req.body;
+    const {
+      employeeId,
+      saleAmount,
+      storeId,
+      billId,
+      invoiceNumber,
+      categoryId,
+      productId,
+      categoryName,
+      items,
+      directCommissionRate,
+      directCommissionAmount,
+    } = req.body;
 
-    // Find applicable policy for the employee
-    const employee = await prisma.employee.findUnique({
-      where: { id: parseInt(employeeId) },
-      include: {
-        commissionPolicies: {
-          where: { isActive: true },
-          orderBy: { priority: 'asc' },
-        },
-      },
-    });
-
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found.' });
-      return;
+    // Find applicable employee
+    let employee = null;
+    if (employeeId) {
+      const resolvedId = await resolveEmployeeId(String(employeeId));
+      if (resolvedId !== null) {
+        employee = await prisma.employee.findUnique({
+          where: { id: resolvedId },
+          include: {
+            commissionPolicies: {
+              where: { isActive: true },
+              orderBy: { priority: 'asc' },
+            },
+          },
+        });
+      }
     }
 
-    // Find the most specific policy
-    let policy = employee.commissionPolicies[0];
-    
-    // If no employee-specific policy, check store policy
-    if (!policy && storeId) {
-      const store = await prisma.store.findUnique({
-        where: { id: parseInt(storeId) },
+    if (!employee && req.user?.id) {
+      employee = await prisma.employee.findFirst({
+        where: { userId: req.user.id },
         include: {
           commissionPolicies: {
             where: { isActive: true },
@@ -799,30 +853,105 @@ export const calculateCommission = async (
           },
         },
       });
-      if (store && store.commissionPolicies.length > 0) {
-        policy = store.commissionPolicies[0];
-      }
     }
 
-    let commission = 0;
-    let commissionPercent = 0;
-
-    if (policy) {
-      if (policy.commissionType === 'PERCENTAGE') {
-        commission = (saleAmount * policy.commissionValue) / 100;
-        commissionPercent = policy.commissionValue;
-      } else if (policy.commissionType === 'FIXED') {
-        commission = policy.commissionValue;
-      }
+    if (!employee) {
+      res.status(404).json({ success: false, message: 'Employee not found.' });
+      return;
     }
+
+    const activePolicies = await prisma.commissionPolicy.findMany({
+      where: { isActive: true },
+      orderBy: { priority: 'asc' },
+    });
+
+    const parsedSaleAmount = parseFloat(saleAmount || 0);
+    const targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
+
+    if (Array.isArray(items) && items.length > 0) {
+      let totalCommission = 0;
+      const productBreakdown: any[] = [];
+      for (const item of items) {
+        const itemAmt = Number(item.amount ?? item.Total ?? item.price ?? item.productNetAmount ?? 0);
+        if (isNaN(itemAmt) || itemAmt <= 0) continue;
+        const itemProdId = item.productId ?? item.productID ?? item.id;
+        const itemCatId = item.categoryId ?? item.CategoryID ?? item.category_id;
+        const itemCatName = item.category ?? item.categoryName;
+
+        const lineRes = calculateEffectiveCommissionForLineItem({
+          saleAmount: itemAmt,
+          productId: itemProdId,
+          productName: item.productName ?? item.name,
+          categoryId: itemCatId,
+          categoryName: itemCatName,
+          policies: activePolicies,
+          salesman: {
+            id: employee.id,
+            employeeCode: employee.employeeCode,
+            commissionPercentage: employee.commissionPercentage,
+            storeId: employee.storeId,
+          },
+          storeId: targetStoreId,
+          directCommissionRate: item.directCommissionRate,
+          directCommissionAmount: item.directCommissionAmount,
+        });
+
+        totalCommission += lineRes.commissionAmount;
+        productBreakdown.push({
+          productID: itemProdId,
+          productName: item.productName ?? item.name ?? 'Product',
+          quantity: Number(item.qty ?? item.quantity ?? 1),
+          saleAmount: itemAmt,
+          commissionRate: lineRes.commissionRate,
+          commissionAmount: lineRes.commissionAmount,
+          category: itemCatName || (itemCatId ? `Category #${itemCatId}` : undefined),
+          categoryId: itemCatId,
+        });
+      }
+
+      totalCommission = Math.round(totalCommission * 100) / 100;
+      const blendedRate = parsedSaleAmount > 0
+        ? Math.round(((totalCommission / parsedSaleAmount) * 100) * 100) / 100
+        : 0;
+
+      res.json({
+        success: true,
+        commission: totalCommission,
+        commissionPercent: blendedRate,
+        productBreakdown,
+        employee,
+        message: 'Commission calculated successfully across items.',
+      });
+      return;
+    }
+
+    const singleRes = calculateEffectiveCommissionForLineItem({
+      saleAmount: parsedSaleAmount,
+      productId,
+      productName: req.body.productName,
+      categoryId,
+      categoryName,
+      policies: activePolicies,
+      salesman: {
+        id: employee.id,
+        employeeCode: employee.employeeCode,
+        commissionPercentage: employee.commissionPercentage,
+        storeId: employee.storeId,
+      },
+      storeId: targetStoreId,
+      directCommissionRate,
+      directCommissionAmount,
+    });
 
     res.json({
       success: true,
-      commission,
-      commissionPercent,
-      policy,
+      commission: singleRes.commissionAmount,
+      commissionPercent: singleRes.commissionRate,
+      policyId: singleRes.policyId,
+      policyName: singleRes.policyName,
+      ruleApplied: singleRes.appliedLevel,
       employee,
-      message: policy ? 'Commission calculated successfully.' : 'No applicable commission policy found.',
+      message: singleRes.policyId ? 'Commission calculated successfully.' : 'Calculated using employee default/fallback rate.',
     });
   } catch (error) {
     console.error('Calculate commission error:', error);

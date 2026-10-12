@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { pushNotificationService } from '../services/pushNotificationService';
-import { resolveEmployeeId, parseIsOld } from '../utils/commissionHelper';
+import { resolveEmployeeId, parseIsOld, calculateEffectiveCommissionForLineItem } from '../utils/commissionHelper';
 
 export const addSales = async (
   req: AuthenticatedRequest,
@@ -56,56 +56,114 @@ export const addSales = async (
       return;
     }
 
-    // Find applicable commission policy
-    let policy = employee.commissionPolicies[0];
+    // Load active commission policies for priority resolution (product -> category -> employee -> store -> global)
+    const activePolicies = await prisma.commissionPolicy.findMany({
+      where: { isActive: true },
+      orderBy: { priority: 'asc' },
+    });
+
+    const parsedSaleAmount = parseFloat(saleAmount);
     const targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
 
-    if (!policy && targetStoreId) {
-      const store = await prisma.store.findUnique({
-        where: { id: targetStoreId },
-        include: {
-          commissionPolicies: {
-            where: { isActive: true },
-            orderBy: { priority: 'asc' },
-          },
-        },
-      });
-      if (store && store.commissionPolicies.length > 0) {
-        policy = store.commissionPolicies[0];
-      }
-    }
+    const rawLineItems = Array.isArray(req.body.SalesProductList) && req.body.SalesProductList.length > 0
+      ? req.body.SalesProductList
+      : (Array.isArray(req.body.items) && req.body.items.length > 0
+        ? req.body.items
+        : (Array.isArray(req.body.products) && req.body.products.length > 0 ? req.body.products : null));
 
     let commissionAmount = 0;
     let commissionPercent = 0;
     let commissionType = 'PERCENTAGE';
+    let resolvedPolicyId: number | null = null;
+    const productBreakdown: any[] = [];
 
-    // ── COMMISSION-DIAG: amount tracing ──────────────────────────────────────
-    const parsedSaleAmount = parseFloat(saleAmount);
-    console.log(`[COMMISSION-DIAG] addSales called | raw saleAmount from body: ${JSON.stringify(saleAmount)} | parsed: ${parsedSaleAmount}`);
-    console.log(`[COMMISSION-DIAG] employee: id=${employee.id}, code=${employee.employeeCode}, commissionPercentage=${employee.commissionPercentage}`);
-    console.log(`[COMMISSION-DIAG] policy resolved: ${policy ? `id=${policy.id}, type=${policy.commissionType}, value=${policy.commissionValue}` : 'null (no active policy)'}`);
-    // ─────────────────────────────────────────────────────────────────────────
+    if (rawLineItems && rawLineItems.length > 0) {
+      for (const item of rawLineItems) {
+        const itemAmt = Number(item.amount ?? item.Total ?? item.price ?? item.productNetAmount ?? 0);
+        if (isNaN(itemAmt) || itemAmt <= 0) continue;
+        const itemProdId = item.productId ?? item.productID ?? item.id;
+        const itemCatId = item.categoryId ?? item.CategoryID ?? item.category_id;
+        const itemCatName = item.category ?? item.categoryName;
 
-    if (policy) {
-      commissionType = policy.commissionType;
-      if (policy.commissionType === 'PERCENTAGE') {
-        commissionAmount = (parsedSaleAmount * policy.commissionValue) / 100;
-        commissionPercent = policy.commissionValue;
-        console.log(`[COMMISSION-DIAG] Branch: POLICY PERCENTAGE | ${parsedSaleAmount} × ${policy.commissionValue}% / 100 = ${commissionAmount}`);
-      } else if (policy.commissionType === 'FIXED') {
-        commissionAmount = policy.commissionValue;
-        console.log(`[COMMISSION-DIAG] Branch: POLICY FIXED | commissionAmount = ${commissionAmount}`);
+        const lineRes = calculateEffectiveCommissionForLineItem({
+          saleAmount: itemAmt,
+          productId: itemProdId,
+          productName: item.productName ?? item.name,
+          categoryId: itemCatId,
+          categoryName: itemCatName,
+          policies: activePolicies,
+          salesman: {
+            id: employee.id,
+            employeeCode: employee.employeeCode,
+            commissionPercentage: employee.commissionPercentage,
+            storeId: employee.storeId,
+          },
+          storeId: targetStoreId,
+          directCommissionRate: item.directCommissionRate,
+          directCommissionAmount: item.directCommissionAmount,
+        });
+
+        commissionAmount += lineRes.commissionAmount;
+        if (!resolvedPolicyId && lineRes.policyId) {
+          resolvedPolicyId = lineRes.policyId;
+        }
+
+        productBreakdown.push({
+          productID: itemProdId,
+          productName: item.productName ?? item.name ?? 'Product',
+          quantity: Number(item.qty ?? item.quantity ?? 1),
+          saleAmount: itemAmt,
+          commissionRate: lineRes.commissionRate,
+          commissionAmount: lineRes.commissionAmount,
+          category: itemCatName || (itemCatId ? `Category #${itemCatId}` : undefined),
+          categoryId: itemCatId,
+        });
       }
-    } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
-      commissionType = 'PERCENTAGE';
-      commissionPercent = employee.commissionPercentage;
-      commissionAmount = (parsedSaleAmount * employee.commissionPercentage) / 100;
-      console.log(`[COMMISSION-DIAG] Branch: EMPLOYEE commissionPercentage | ${parsedSaleAmount} × ${employee.commissionPercentage}% / 100 = ${commissionAmount}`);
+      commissionAmount = Math.round(commissionAmount * 100) / 100;
+      commissionPercent = parsedSaleAmount > 0
+        ? Math.round(((commissionAmount / parsedSaleAmount) * 100) * 100) / 100
+        : 0;
     } else {
-      console.warn(`[COMMISSION-DIAG] Branch: NO POLICY & NO commissionPercentage — commissionAmount=0 for employee id=${employee.id}`);
+      const singleRes = calculateEffectiveCommissionForLineItem({
+        saleAmount: parsedSaleAmount,
+        productId: req.body.productId ?? req.body.productID,
+        productName: req.body.productName,
+        categoryId: req.body.categoryId ?? req.body.CategoryID ?? req.body.category_id,
+        categoryName: req.body.categoryName ?? req.body.category,
+        policies: activePolicies,
+        salesman: {
+          id: employee.id,
+          employeeCode: employee.employeeCode,
+          commissionPercentage: employee.commissionPercentage,
+          storeId: employee.storeId,
+        },
+        storeId: targetStoreId,
+        directCommissionRate: req.body.directCommissionRate,
+        directCommissionAmount: req.body.directCommissionAmount,
+      });
+
+      commissionAmount = singleRes.commissionAmount;
+      commissionPercent = singleRes.commissionRate;
+      commissionType = singleRes.commissionType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+      resolvedPolicyId = singleRes.policyId;
+
+      if (req.body.productName || req.body.productId || req.body.categoryId || req.body.category) {
+        productBreakdown.push({
+          productID: req.body.productId ?? req.body.productID,
+          productName: req.body.productName ?? 'Product',
+          quantity: 1,
+          saleAmount: parsedSaleAmount,
+          commissionRate: singleRes.commissionRate,
+          commissionAmount: singleRes.commissionAmount,
+          category: req.body.categoryName ?? req.body.category ?? (req.body.categoryId ? `Category #${req.body.categoryId}` : undefined),
+          categoryId: req.body.categoryId,
+        });
+      }
     }
 
-    console.log(`[COMMISSION-DIAG] Final stored values → saleAmount=${parsedSaleAmount}, commissionAmount=${commissionAmount}, commissionPercent=${commissionPercent}`);
+    // ── COMMISSION-DIAG: amount tracing ──────────────────────────────────────
+    console.log(`[COMMISSION-DIAG] addSales called | saleAmount: ${parsedSaleAmount} | commAmount: ${commissionAmount} | rate: ${commissionPercent}% | employee: id=${employee.id}`);
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Create or update the transaction
     let transaction;
@@ -119,11 +177,12 @@ export const addSales = async (
         },
         update: {
           storeId: targetStoreId,
-          policyId: policy ? policy.id : null,
+          policyId: resolvedPolicyId,
           saleAmount: parsedSaleAmount,
           commissionType,
           commissionPercent: commissionPercent || null,
           commissionAmount,
+          productBreakdown: productBreakdown.length > 0 ? (productBreakdown as any) : undefined,
           invoiceNumber: invoiceNumber || null,
           status: 'PENDING',
           notes: notes || null,
@@ -132,11 +191,12 @@ export const addSales = async (
         create: {
           employeeId: employee.id,
           storeId: targetStoreId,
-          policyId: policy ? policy.id : null,
+          policyId: resolvedPolicyId,
           saleAmount: parsedSaleAmount,
           commissionType,
           commissionPercent: commissionPercent || null,
           commissionAmount,
+          productBreakdown: productBreakdown.length > 0 ? (productBreakdown as any) : undefined,
           billId: String(billId),
           invoiceNumber: invoiceNumber || null,
           status: 'PENDING',
@@ -153,11 +213,12 @@ export const addSales = async (
         data: {
           employeeId: employee.id,
           storeId: targetStoreId,
-          policyId: policy ? policy.id : null,
+          policyId: resolvedPolicyId,
           saleAmount: parsedSaleAmount,
           commissionType,
           commissionPercent: commissionPercent || null,
           commissionAmount,
+          productBreakdown: productBreakdown.length > 0 ? (productBreakdown as any) : undefined,
           billId: null,
           invoiceNumber: invoiceNumber || null,
           status: 'PENDING',
@@ -302,11 +363,12 @@ export const addCreditNote = async (
 
     // Proportional reduction in commission
     let reducedCommission = 0;
-    if (originalTransaction.commissionPercent) {
+    if (originalTransaction.commissionPercent && originalTransaction.commissionPercent > 0) {
       reducedCommission = (Number(creditAmount) * originalTransaction.commissionPercent) / 100;
-    } else if (originalTransaction.commissionType === 'FIXED') {
-      reducedCommission = (Number(creditAmount) / originalTransaction.saleAmount) * originalTransaction.commissionAmount;
+    } else if (originalTransaction.commissionAmount && originalTransaction.saleAmount && Math.abs(originalTransaction.saleAmount) > 0) {
+      reducedCommission = (Number(creditAmount) / Math.abs(originalTransaction.saleAmount)) * Math.abs(originalTransaction.commissionAmount);
     }
+    reducedCommission = Math.round(reducedCommission * 100) / 100;
 
     // Create negative adjustment transaction
     const creditTransaction = await prisma.commissionTransaction.create({
@@ -352,6 +414,11 @@ export const addSalesExchange = async (
 
     // Handle line items if provided in SalesExchangeProductList
     if (Array.isArray(SalesExchangeProductList) && SalesExchangeProductList.length > 0) {
+      const activePolicies = await prisma.commissionPolicy.findMany({
+        where: { isActive: true },
+        orderBy: { priority: 'asc' },
+      });
+
       const createdTxns: any[] = [];
       let totalOldCommission = 0;
       let totalNewCommission = 0;
@@ -375,8 +442,30 @@ export const addSalesExchange = async (
           include: { commissionPolicies: { where: { isActive: true }, orderBy: { priority: 'asc' } } }
         }) : null;
 
-        const rate = employee?.commissionPercentage ?? 1.0;
-        const baseComm = (itemAmount * rate) / 100;
+        const itemCatId = item.CategoryID ?? item.categoryId ?? item.category_id;
+        const itemCatName = item.category ?? item.categoryName;
+        const itemProdId = item.productID ?? item.productId ?? item.id;
+
+        const lineRes = calculateEffectiveCommissionForLineItem({
+          saleAmount: itemAmount,
+          productId: itemProdId,
+          productName: item.productName ?? item.name,
+          categoryId: itemCatId,
+          categoryName: itemCatName,
+          policies: activePolicies,
+          salesman: {
+            id: employee?.id ?? 0,
+            employeeCode: employee?.employeeCode,
+            commissionPercentage: employee?.commissionPercentage,
+            storeId: employee?.storeId,
+          },
+          storeId: employee?.storeId || null,
+          directCommissionRate: item.directCommissionRate,
+          directCommissionAmount: item.directCommissionAmount,
+        });
+
+        const rate = lineRes.commissionRate;
+        const baseComm = lineRes.commissionAmount;
         const commAmount = isOld ? -Math.abs(baseComm) : Math.abs(baseComm);
         const effectiveSaleAmount = isOld ? -Math.abs(itemAmount) : Math.abs(itemAmount);
 
@@ -388,9 +477,9 @@ export const addSalesExchange = async (
             data: {
               employeeId: employee.id,
               storeId: employee.storeId || null,
-              policyId: employee.commissionPolicies?.[0]?.id || null,
+              policyId: lineRes.policyId,
               saleAmount: effectiveSaleAmount,
-              commissionType: 'PERCENTAGE',
+              commissionType: lineRes.commissionType === 'FIXED' ? 'FIXED' : 'PERCENTAGE',
               commissionPercent: rate,
               commissionAmount: commAmount,
               billId: resolvedBillId || null,
@@ -576,6 +665,11 @@ export const syncSalesBatch = async (
         })
       : null;
 
+    const activePolicies = await prisma.commissionPolicy.findMany({
+      where: { isActive: true },
+      orderBy: { priority: 'asc' },
+    });
+
     let syncedCount = 0;
     const results: any[] = [];
 
@@ -625,70 +719,119 @@ export const syncSalesBatch = async (
         const resolvedBillId = payload.billId;
         const { storeId, notes } = payload;
 
-        // ── COMMISSION-DIAG: sync batch amount tracing ────────────────────────
-        console.log(`[COMMISSION-DIAG] syncSalesBatch addSales | endpoint: ${endpoint}`);
-        console.log(`[COMMISSION-DIAG] payload.saleAmount=${payload.saleAmount}, payload.NetAmount=${payload.NetAmount}, payload.FinalAmount=${payload.FinalAmount}`);
-        console.log(`[COMMISSION-DIAG] resolvedSaleAmount=${resolvedSaleAmount}, resolvedInvoiceNumber=${resolvedInvoiceNumber}`);
-        // ─────────────────────────────────────────────────────────────────────
-
         if (resolvedSaleAmount === undefined || isNaN(Number(resolvedSaleAmount))) continue;
 
-        let policy = employee.commissionPolicies[0];
+        const parsedBatchAmount = parseFloat(resolvedSaleAmount);
         const targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
 
-        if (!policy && targetStoreId) {
-          const store = await prisma.store.findUnique({
-            where: { id: targetStoreId },
-            include: {
-              commissionPolicies: {
-                where: { isActive: true },
-                orderBy: { priority: 'asc' },
-              },
-            },
-          });
-          if (store && store.commissionPolicies.length > 0) {
-            policy = store.commissionPolicies[0];
-          }
-        }
+        const rawLineItems = Array.isArray(payload.SalesProductList) && payload.SalesProductList.length > 0
+          ? payload.SalesProductList
+          : (Array.isArray(payload.items) && payload.items.length > 0
+            ? payload.items
+            : (Array.isArray(payload.products) && payload.products.length > 0 ? payload.products : null));
 
         let commissionAmount = 0;
         let commissionPercent = 0;
         let commissionType = 'PERCENTAGE';
+        let resolvedPolicyId: number | null = null;
+        const productBreakdown: any[] = [];
 
-        const parsedBatchAmount = parseFloat(resolvedSaleAmount);
-        console.log(`[COMMISSION-DIAG] syncSalesBatch calc | employee.id=${employee.id}, commissionPercentage=${employee.commissionPercentage}, policy=${policy ? `id=${policy.id} val=${policy.commissionValue}` : 'null'}`);
+        if (rawLineItems && rawLineItems.length > 0) {
+          for (const item of rawLineItems) {
+            const itemAmt = Number(item.amount ?? item.Total ?? item.price ?? item.productNetAmount ?? 0);
+            if (isNaN(itemAmt) || itemAmt <= 0) continue;
+            const itemProdId = item.productId ?? item.productID ?? item.id;
+            const itemCatId = item.categoryId ?? item.CategoryID ?? item.category_id;
+            const itemCatName = item.category ?? item.categoryName;
 
-        if (policy) {
-          commissionType = policy.commissionType;
-          if (policy.commissionType === 'PERCENTAGE') {
-            commissionAmount = (parsedBatchAmount * policy.commissionValue) / 100;
-            commissionPercent = policy.commissionValue;
-            console.log(`[COMMISSION-DIAG] Branch: POLICY PERCENTAGE | ${parsedBatchAmount} × ${policy.commissionValue}% / 100 = ${commissionAmount}`);
-          } else if (policy.commissionType === 'FIXED') {
-            commissionAmount = policy.commissionValue;
-            console.log(`[COMMISSION-DIAG] Branch: POLICY FIXED | commissionAmount=${commissionAmount}`);
+            const lineRes = calculateEffectiveCommissionForLineItem({
+              saleAmount: itemAmt,
+              productId: itemProdId,
+              productName: item.productName ?? item.name,
+              categoryId: itemCatId,
+              categoryName: itemCatName,
+              policies: activePolicies,
+              salesman: {
+                id: employee.id,
+                employeeCode: employee.employeeCode,
+                commissionPercentage: employee.commissionPercentage,
+                storeId: employee.storeId,
+              },
+              storeId: targetStoreId,
+              directCommissionRate: item.directCommissionRate,
+              directCommissionAmount: item.directCommissionAmount,
+            });
+
+            commissionAmount += lineRes.commissionAmount;
+            if (!resolvedPolicyId && lineRes.policyId) {
+              resolvedPolicyId = lineRes.policyId;
+            }
+
+            productBreakdown.push({
+              productID: itemProdId,
+              productName: item.productName ?? item.name ?? 'Product',
+              quantity: Number(item.qty ?? item.quantity ?? 1),
+              saleAmount: itemAmt,
+              commissionRate: lineRes.commissionRate,
+              commissionAmount: lineRes.commissionAmount,
+              category: itemCatName || (itemCatId ? `Category #${itemCatId}` : undefined),
+              categoryId: itemCatId,
+            });
           }
-        } else if (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined) {
-          // Fallback: use per-employee commissionPercentage when no CommissionPolicy exists
-          commissionType = 'PERCENTAGE';
-          commissionPercent = employee.commissionPercentage;
-          commissionAmount = (parsedBatchAmount * employee.commissionPercentage) / 100;
-          console.log(`[COMMISSION-DIAG] Branch: EMPLOYEE commissionPercentage | ${parsedBatchAmount} × ${employee.commissionPercentage}% / 100 = ${commissionAmount}`);
+          commissionAmount = Math.round(commissionAmount * 100) / 100;
+          commissionPercent = parsedBatchAmount > 0
+            ? Math.round(((commissionAmount / parsedBatchAmount) * 100) * 100) / 100
+            : 0;
         } else {
-          console.warn(`[COMMISSION-DIAG] Branch: NO POLICY & NO commissionPercentage — commissionAmount=0 for employee id=${employee.id}`);
+          const singleRes = calculateEffectiveCommissionForLineItem({
+            saleAmount: parsedBatchAmount,
+            productId: payload.productId ?? payload.productID,
+            productName: payload.productName,
+            categoryId: payload.categoryId ?? payload.CategoryID ?? payload.category_id,
+            categoryName: payload.categoryName ?? payload.category,
+            policies: activePolicies,
+            salesman: {
+              id: employee.id,
+              employeeCode: employee.employeeCode,
+              commissionPercentage: employee.commissionPercentage,
+              storeId: employee.storeId,
+            },
+            storeId: targetStoreId,
+            directCommissionRate: payload.directCommissionRate,
+            directCommissionAmount: payload.directCommissionAmount,
+          });
+
+          commissionAmount = singleRes.commissionAmount;
+          commissionPercent = singleRes.commissionRate;
+          commissionType = singleRes.commissionType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+          resolvedPolicyId = singleRes.policyId;
+
+          if (payload.productName || payload.productId || payload.categoryId || payload.category) {
+            productBreakdown.push({
+              productID: payload.productId ?? payload.productID,
+              productName: payload.productName ?? 'Product',
+              quantity: 1,
+              saleAmount: parsedBatchAmount,
+              commissionRate: singleRes.commissionRate,
+              commissionAmount: singleRes.commissionAmount,
+              category: payload.categoryName ?? payload.category ?? (payload.categoryId ? `Category #${payload.categoryId}` : undefined),
+              categoryId: payload.categoryId,
+            });
+          }
         }
 
-        console.log(`[COMMISSION-DIAG] syncSalesBatch → saleAmount=${parsedBatchAmount}, commissionAmount=${commissionAmount}`);
+        console.log(`[COMMISSION-DIAG] syncSalesBatch → saleAmount=${parsedBatchAmount}, comm=${commissionAmount}, rate=${commissionPercent}%`);
 
         const transaction = await prisma.commissionTransaction.create({
           data: {
             employeeId: employee.id,
             storeId: targetStoreId,
-            policyId: policy ? policy.id : null,
+            policyId: resolvedPolicyId,
             saleAmount: parsedBatchAmount,
             commissionType,
             commissionPercent: commissionPercent || null,
             commissionAmount,
+            productBreakdown: productBreakdown.length > 0 ? (productBreakdown as any) : undefined,
             billId: resolvedBillId || null,
             invoiceNumber: resolvedInvoiceNumber || null,
             status: 'PENDING',
@@ -723,11 +866,12 @@ export const syncSalesBatch = async (
         if (!originalTransaction) continue;
 
         let reducedCommission = 0;
-        if (originalTransaction.commissionPercent) {
+        if (originalTransaction.commissionPercent && originalTransaction.commissionPercent > 0) {
           reducedCommission = (Number(resolvedCreditAmount) * originalTransaction.commissionPercent) / 100;
-        } else if (originalTransaction.commissionType === 'FIXED') {
-          reducedCommission = (Number(resolvedCreditAmount) / originalTransaction.saleAmount) * originalTransaction.commissionAmount;
+        } else if (originalTransaction.commissionAmount && originalTransaction.saleAmount && Math.abs(originalTransaction.saleAmount) > 0) {
+          reducedCommission = (Number(resolvedCreditAmount) / Math.abs(originalTransaction.saleAmount)) * Math.abs(originalTransaction.commissionAmount);
         }
+        reducedCommission = Math.round(reducedCommission * 100) / 100;
 
         const creditTransaction = await prisma.commissionTransaction.create({
           data: {
