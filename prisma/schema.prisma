@@ -24,8 +24,6 @@ model User {
   fcmTokens      FCMToken[]
   sessions       UserSession[]
   devices        Device[]
-  createdCampaigns Campaign[]    @relation("CampaignCreator")
-  campaignDeliveries CampaignRecipient[] @relation("UserCampaignRecipients")
 }
 
 model Profile {
@@ -159,7 +157,6 @@ model Employee {
   sales                 Sales[]
   creditNoteLines       CreditNoteLine[]
   salesExchanges        SalesExchange[]
-  campaignRecipients    CampaignRecipient[]
 
   @@index([officeId])
   @@index([departmentId])
@@ -348,7 +345,6 @@ model Notification {
   actionType     String?
   imageUrl       String?
   actionUrl      String?
-  campaignId     String?
   readAt         DateTime?
   deliveryStatus String    @default("SENT")
   failureReason  String?
@@ -357,11 +353,9 @@ model Notification {
   updatedAt      DateTime  @updatedAt
   employee       Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   user           User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campaign       Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   @@index([employeeId])
   @@index([userId])
-  @@index([campaignId])
   @@index([isRead])
   @@index([createdAt])
 }
@@ -1466,64 +1460,3 @@ model NotificationTemplate {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
-
-model Campaign {
-  id               String               @id @default(uuid())
-  title            String
-  message          String               @db.Text
-  description      String?              @db.Text
-  notificationType String               @default("GENERAL_ANNOUNCEMENT")
-  imageUrl         String?
-  actionUrl        String?
-  audienceType     String               @default("ALL_EMPLOYEES")
-  audienceCriteria Json?
-  status           String               @default("DRAFT") // DRAFT, SCHEDULED, PROCESSING, SENDING, SENT, PARTIALLY_FAILED, CANCELLED, FAILED
-  scheduledAt      DateTime?
-  sentAt           DateTime?
-  totalRecipients  Int                  @default(0)
-  sentCount        Int                  @default(0)
-  failedCount      Int                  @default(0)
-  readCount        Int                  @default(0)
-  createdBy        String?
-  createdById      Int?
-  companyId        String?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-
-  createdByAdmin   User?                @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  recipients       CampaignRecipient[]
-  notifications    Notification[]
-
-  @@index([companyId])
-  @@index([status])
-  @@index([scheduledAt])
-  @@index([createdAt])
-  @@index([createdById])
-}
-
-model CampaignRecipient {
-  id             String    @id @default(uuid())
-  campaignId     String
-  employeeId     Int
-  userId         Int?
-  deliveryStatus String    @default("PENDING") // PENDING, SENT, DELIVERED, FAILED
-  isRead         Boolean   @default(false)
-  readAt         DateTime?
-  failureReason  String?
-  fcmMessageId   String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  campaign       Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  user           User?     @relation("UserCampaignRecipients", fields: [userId], references: [id], onDelete: SetNull)
-
-  @@unique([campaignId, employeeId])
-  @@index([campaignId])
-  @@index([employeeId])
-  @@index([userId])
-  @@index([deliveryStatus])
-  @@index([isRead])
-  @@index([createdAt])
-}
-

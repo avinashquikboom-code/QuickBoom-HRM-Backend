@@ -9,7 +9,6 @@ import { metricsMiddleware } from './controllers/healthController';
 import homeRoutes from './routes/homeRoutes';
 import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
-import campaignRoutes from './routes/admin/campaignRoutes';
 import notificationManagementRoutes from './routes/notificationManagementRoutes';
 import superAdminRoutes from './routes/superAdminRoutes';
 import employeeRoutes from './routes/employee/employeeRoutes';
@@ -157,8 +156,6 @@ app.use('/api/admin/activity-logs', activityLogsRoutes);
 app.use('/api/admin/commission', commissionReportController);
 app.use('/api/admin/dashboard', dashboardController);
 app.use('/api/admin/notification-management', notificationManagementRoutes);
-app.use('/api/admin/campaigns', campaignRoutes);
-app.use('/api/v1/admin/campaigns', campaignRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
@@ -442,13 +439,11 @@ async function initRolePermissions() {
 import { initFeatureExpiryCron } from './scripts/featureExpiryCron';
 import { initPayrollCron } from './services/payrollCronService';
 import { initAutoPunchOutCron } from './services/autoPunchOutService';
-import { initCampaignCron } from './services/campaignSchedulerService';
 
 // Initialize cron jobs
 initFeatureExpiryCron();
 initPayrollCron();
 initAutoPunchOutCron();
-initCampaignCron();
 
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);

@@ -28,24 +28,6 @@ export interface NotificationRule {
   updatedAt: Date;
 }
 
-export interface NotificationCampaign {
-  id: number;
-  name: string;
-  title: string;
-  body: string;
-  category: string;
-  recipients: string | number[];
-  scheduledAt?: Date;
-  sentAt?: Date;
-  status: 'DRAFT' | 'SCHEDULED' | 'SENT' | 'FAILED';
-  totalRecipients: number;
-  sentCount: number;
-  failedCount: number;
-  createdBy: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export interface NotificationStats {
   totalNotifications: number;
   sentNotifications: number;
@@ -302,107 +284,6 @@ class NotificationService {
       };
     } catch (error) {
       console.error('Get notification stats error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Create notification campaign
-   */
-  async createNotificationCampaign(campaignData: Partial<NotificationCampaign>): Promise<NotificationCampaign> {
-    try {
-      const campaign = await prisma.$queryRaw`
-        INSERT INTO notification_campaign (
-          name, title, body, category, recipients, scheduled_at, status, 
-          total_recipients, created_by, created_at, updated_at
-        ) VALUES (
-          ${campaignData.name}, ${campaignData.title || ''}, ${campaignData.body || ''}, 
-          ${campaignData.category || 'GENERAL'}, ${JSON.stringify(campaignData.recipients || [])},
-          ${campaignData.scheduledAt || null}, ${campaignData.status || 'DRAFT'},
-          ${campaignData.totalRecipients || 0}, ${campaignData.createdBy || 'System'}, NOW(), NOW()
-        )
-        RETURNING id, name, title, body, category, recipients, scheduled_at as "scheduledAt", 
-                  sent_at as "sentAt", status, total_recipients as "totalRecipients", 
-                  sent_count as "sentCount", failed_count as "failedCount",
-                  created_by as "createdBy", created_at as "createdAt", updated_at as "updatedAt"
-      ` as NotificationCampaign[];
-
-      return campaign[0];
-    } catch (error) {
-      console.error('Create notification campaign error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Process scheduled campaigns
-   */
-  async processScheduledCampaigns(): Promise<void> {
-    try {
-      const campaigns = await prisma.$queryRaw`
-        SELECT * FROM notification_campaign 
-        WHERE status = 'SCHEDULED' 
-        AND scheduled_at <= NOW()
-      ` as NotificationCampaign[];
-
-      for (const campaign of campaigns) {
-        try {
-          const result = await this.sendBulkNotification({
-            title: campaign.title,
-            body: campaign.body,
-            category: campaign.category,
-            recipients: JSON.parse(campaign.recipients as unknown as string),
-            actionType: 'CAMPAIGN'
-          });
-
-          // Update campaign status
-          await prisma.$queryRaw`
-            UPDATE notification_campaign 
-            SET status = 'SENT', sent_at = NOW(), sent_count = ${result.sent}, 
-                failed_count = ${result.failed}, updated_at = NOW()
-            WHERE id = ${campaign.id}
-          `;
-
-        } catch (error) {
-          console.error(`Error processing campaign ${campaign.id}:`, error);
-          
-          // Update campaign status to failed
-          await prisma.$queryRaw`
-            UPDATE notification_campaign 
-            SET status = 'FAILED', updated_at = NOW()
-            WHERE id = ${campaign.id}
-          `;
-        }
-      }
-    } catch (error) {
-      console.error('Process scheduled campaigns error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get notification campaigns
-   */
-  async getNotificationCampaigns(status?: string): Promise<NotificationCampaign[]> {
-    try {
-      let whereClause = '';
-      if (status) {
-        whereClause = `WHERE status = '${status}'`;
-      }
-
-      const campaigns = await prisma.$queryRaw`
-        SELECT id, name, title, body, category, recipients, scheduled_at as "scheduledAt", 
-               sent_at as "sentAt", status, total_recipients as "totalRecipients", 
-               sent_count as "sentCount", failed_count as "failedCount",
-               created_by as "createdBy", created_at as "createdAt", updated_at as "updatedAt"
-        FROM notification_campaign 
-        ${whereClause}
-        ORDER BY created_at DESC
-      ` as NotificationCampaign[];
-
-      return campaigns;
-    } catch (error) {
-      console.error('Get notification campaigns error:', error);
       throw error;
     }
   }

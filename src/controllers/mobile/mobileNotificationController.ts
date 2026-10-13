@@ -28,7 +28,6 @@ export const fetchMyNotifications = async (
       actionUrl: n.actionUrl || null,
       actionId: n.actionId || null,
       actionType: n.actionType || null,
-      campaignId: n.campaignId || null,
       isRead: n.isRead,
       readAt: n.readAt ? n.readAt.toISOString() : null,
       createdAt: n.createdAt.toISOString(),
@@ -69,18 +68,6 @@ export const getNotificationById = async (
         id: numId,
         userId: req.user?.id,
       },
-      include: {
-        campaign: {
-          select: {
-            title: true,
-            description: true,
-            notificationType: true,
-            imageUrl: true,
-            actionUrl: true,
-            sentAt: true,
-          },
-        },
-      },
     });
 
     if (!notification) {
@@ -99,11 +86,9 @@ export const getNotificationById = async (
         actionUrl: notification.actionUrl || null,
         actionId: notification.actionId || null,
         actionType: notification.actionType || null,
-        campaignId: notification.campaignId || null,
         isRead: notification.isRead,
         readAt: notification.readAt ? notification.readAt.toISOString() : null,
         createdAt: notification.createdAt.toISOString(),
-        campaign: notification.campaign || null,
       },
     });
   } catch (error) {
@@ -145,37 +130,6 @@ export const markNotificationAsRead = async (
       },
     });
 
-    // Sync with campaign recipient and stats if this notification belongs to a campaign
-    if (notification.campaignId && notification.employeeId) {
-      try {
-        await prisma.campaignRecipient.updateMany({
-          where: {
-            campaignId: notification.campaignId,
-            employeeId: notification.employeeId,
-          },
-          data: {
-            isRead: true,
-            readAt: now,
-          },
-        });
-
-        // Recalculate read count for campaign
-        const readRecipientsCount = await prisma.campaignRecipient.count({
-          where: {
-            campaignId: notification.campaignId,
-            isRead: true,
-          },
-        });
-
-        await prisma.campaign.update({
-          where: { id: notification.campaignId },
-          data: { readCount: readRecipientsCount },
-        });
-      } catch (syncErr) {
-        console.warn('⚠️ Could not sync campaign recipient read status:', syncErr);
-      }
-    }
-
     res.json({ success: true, message: 'Notification marked as read' });
   } catch (error) {
     console.error('Mark notification as read error:', error);
@@ -192,18 +146,6 @@ export const markAllNotificationsAsRead = async (
 ): Promise<void> => {
   try {
     const now = new Date();
-    const unreadNotifications = await prisma.notification.findMany({
-      where: {
-        userId: req.user?.id,
-        isRead: false,
-      },
-      select: {
-        id: true,
-        campaignId: true,
-        employeeId: true,
-      },
-    });
-
     await prisma.notification.updateMany({
       where: {
         userId: req.user?.id,
@@ -214,26 +156,6 @@ export const markAllNotificationsAsRead = async (
         readAt: now,
       },
     });
-
-    // Sync campaign recipient read statuses
-    for (const notif of unreadNotifications) {
-      if (notif.campaignId && notif.employeeId) {
-        try {
-          await prisma.campaignRecipient.updateMany({
-            where: {
-              campaignId: notif.campaignId,
-              employeeId: notif.employeeId,
-            },
-            data: {
-              isRead: true,
-              readAt: now,
-            },
-          });
-        } catch {
-          // Non-blocking
-        }
-      }
-    }
 
     res.json({ success: true, message: 'All notifications marked as read' });
   } catch (error) {

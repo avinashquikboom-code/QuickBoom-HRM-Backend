@@ -7176,19 +7176,10 @@ export const fetchAdminNotifications = async (
               storeId: true,
             },
           },
-          campaign: {
-            select: {
-              id: true,
-              title: true,
-              notificationType: true,
-              imageUrl: true,
-              actionUrl: true,
-            },
-          },
         },
       });
     } catch (queryErr) {
-      console.warn('fetchAdminNotifications failed with campaign include, falling back without campaign:', queryErr);
+      console.warn('fetchAdminNotifications query failed, retrying without optional metadata:', queryErr);
       try {
         notifications = await prisma.notification.findMany({
           where,
@@ -7228,9 +7219,8 @@ export const fetchAdminNotifications = async (
       isRead: Boolean(n.isRead),
       actionId: n.actionId ? String(n.actionId) : null,
       actionType: n.actionType || null,
-      imageUrl: n.imageUrl || n.campaign?.imageUrl || null,
-      actionUrl: n.actionUrl || n.campaign?.actionUrl || null,
-      campaignId: n.campaignId || null,
+      imageUrl: n.imageUrl || null,
+      actionUrl: n.actionUrl || null,
       createdAt: n.createdAt ? n.createdAt.toISOString() : new Date().toISOString(),
       readAt: n.readAt ? n.readAt.toISOString() : null,
       employee: n.employee
@@ -7317,19 +7307,10 @@ export const fetchAdminNotificationById = async (
               lastName: true,
             },
           },
-          campaign: {
-            select: {
-              id: true,
-              title: true,
-              notificationType: true,
-              imageUrl: true,
-              actionUrl: true,
-            }
-          }
         },
       });
     } catch (queryErr) {
-      console.warn('fetchAdminNotificationById failed with campaign include, falling back without campaign:', queryErr);
+      console.warn('fetchAdminNotificationById query failed, retrying without optional metadata:', queryErr);
       notif = await prisma.notification.findFirst({
         where: {
           id: notificationId,
@@ -7379,9 +7360,8 @@ export const fetchAdminNotificationById = async (
         isRead: notif.isRead,
         actionId: notif.actionId ? String(notif.actionId) : null,
         actionType: notif.actionType || null,
-        imageUrl: notif.imageUrl || notif.campaign?.imageUrl || null,
-        actionUrl: notif.actionUrl || notif.campaign?.actionUrl || null,
-        campaignId: notif.campaignId || null,
+        imageUrl: notif.imageUrl || null,
+        actionUrl: notif.actionUrl || null,
         createdAt: notif.createdAt ? notif.createdAt.toISOString() : new Date().toISOString(),
         readAt: notif.readAt ? notif.readAt.toISOString() : null,
         employee: notif.employee
