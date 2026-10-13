@@ -63,6 +63,7 @@ export const getMessaging = (): Messaging => {
 export interface FirebaseNotification {
   title: string;
   body: string;
+  imageUrl?: string;
   icon?: string;
   click_action?: string;
   sound?: string;
@@ -79,6 +80,7 @@ export interface NotificationOptions {
   priority?: NotificationPriority;
   ttl?: number;
   contentAvailable?: boolean;
+  imageUrl?: string;
 }
 
 export interface FirebaseMessagePayload {

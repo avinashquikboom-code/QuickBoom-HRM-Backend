@@ -14,6 +14,7 @@ export const fetchMyNotifications = async (
     const notifications = await prisma.notification.findMany({
       where: { userId: req.user?.id },
       orderBy: { createdAt: 'desc' },
+      take: 100,
     });
 
     const unreadCount = notifications.filter(n => !n.isRead).length;
@@ -23,7 +24,13 @@ export const fetchMyNotifications = async (
       title: n.title,
       body: n.body,
       category: n.category,
+      imageUrl: n.imageUrl || null,
+      actionUrl: n.actionUrl || null,
+      actionId: n.actionId || null,
+      actionType: n.actionType || null,
+      campaignId: n.campaignId || null,
       isRead: n.isRead,
+      readAt: n.readAt ? n.readAt.toISOString() : null,
       createdAt: n.createdAt.toISOString(),
     }));
 
@@ -41,6 +48,71 @@ export const fetchMyNotifications = async (
 };
 
 /**
+ * Fetch single notification by ID (with authorization check)
+ */
+export const getNotificationById = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { notificationId, id } = req.params;
+    const targetId = notificationId || id;
+    const numId = parseInt(Array.isArray(targetId) ? targetId[0] : targetId, 10);
+
+    if (isNaN(numId)) {
+      res.status(400).json({ success: false, message: 'Invalid notification ID' });
+      return;
+    }
+
+    const notification = await prisma.notification.findFirst({
+      where: {
+        id: numId,
+        userId: req.user?.id,
+      },
+      include: {
+        campaign: {
+          select: {
+            title: true,
+            description: true,
+            notificationType: true,
+            imageUrl: true,
+            actionUrl: true,
+            sentAt: true,
+          },
+        },
+      },
+    });
+
+    if (!notification) {
+      res.status(404).json({ success: false, message: 'Notification not found' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: notification.id.toString(),
+        title: notification.title,
+        body: notification.body,
+        category: notification.category,
+        imageUrl: notification.imageUrl || null,
+        actionUrl: notification.actionUrl || null,
+        actionId: notification.actionId || null,
+        actionType: notification.actionType || null,
+        campaignId: notification.campaignId || null,
+        isRead: notification.isRead,
+        readAt: notification.readAt ? notification.readAt.toISOString() : null,
+        createdAt: notification.createdAt.toISOString(),
+        campaign: notification.campaign || null,
+      },
+    });
+  } catch (error) {
+    console.error('Get notification by ID error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch notification' });
+  }
+};
+
+/**
  * Mark notification as read
  */
 export const markNotificationAsRead = async (
@@ -48,12 +120,13 @@ export const markNotificationAsRead = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { notificationId } = req.params;
-    const id = Array.isArray(notificationId) ? notificationId[0] : notificationId;
+    const { notificationId, id } = req.params;
+    const targetId = notificationId || id;
+    const numId = parseInt(Array.isArray(targetId) ? targetId[0] : targetId, 10);
 
     const notification = await prisma.notification.findFirst({
       where: {
-        id: parseInt(id),
+        id: numId,
         userId: req.user?.id,
       },
     });
@@ -63,10 +136,45 @@ export const markNotificationAsRead = async (
       return;
     }
 
+    const now = new Date();
     await prisma.notification.update({
-      where: { id: parseInt(id) },
-      data: { isRead: true },
+      where: { id: numId },
+      data: {
+        isRead: true,
+        readAt: now,
+      },
     });
+
+    // Sync with campaign recipient and stats if this notification belongs to a campaign
+    if (notification.campaignId && notification.employeeId) {
+      try {
+        await prisma.campaignRecipient.updateMany({
+          where: {
+            campaignId: notification.campaignId,
+            employeeId: notification.employeeId,
+          },
+          data: {
+            isRead: true,
+            readAt: now,
+          },
+        });
+
+        // Recalculate read count for campaign
+        const readRecipientsCount = await prisma.campaignRecipient.count({
+          where: {
+            campaignId: notification.campaignId,
+            isRead: true,
+          },
+        });
+
+        await prisma.campaign.update({
+          where: { id: notification.campaignId },
+          data: { readCount: readRecipientsCount },
+        });
+      } catch (syncErr) {
+        console.warn('⚠️ Could not sync campaign recipient read status:', syncErr);
+      }
+    }
 
     res.json({ success: true, message: 'Notification marked as read' });
   } catch (error) {
@@ -83,13 +191,49 @@ export const markAllNotificationsAsRead = async (
   res: Response
 ): Promise<void> => {
   try {
+    const now = new Date();
+    const unreadNotifications = await prisma.notification.findMany({
+      where: {
+        userId: req.user?.id,
+        isRead: false,
+      },
+      select: {
+        id: true,
+        campaignId: true,
+        employeeId: true,
+      },
+    });
+
     await prisma.notification.updateMany({
       where: {
         userId: req.user?.id,
         isRead: false,
       },
-      data: { isRead: true },
+      data: {
+        isRead: true,
+        readAt: now,
+      },
     });
+
+    // Sync campaign recipient read statuses
+    for (const notif of unreadNotifications) {
+      if (notif.campaignId && notif.employeeId) {
+        try {
+          await prisma.campaignRecipient.updateMany({
+            where: {
+              campaignId: notif.campaignId,
+              employeeId: notif.employeeId,
+            },
+            data: {
+              isRead: true,
+              readAt: now,
+            },
+          });
+        } catch {
+          // Non-blocking
+        }
+      }
+    }
 
     res.json({ success: true, message: 'All notifications marked as read' });
   } catch (error) {

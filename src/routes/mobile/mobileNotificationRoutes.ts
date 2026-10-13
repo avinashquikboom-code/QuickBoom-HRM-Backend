@@ -3,6 +3,7 @@ import {
   saveFCMToken,
   removeFCMToken,
   fetchMyNotifications,
+  getNotificationById,
   markNotificationAsRead,
   markAllNotificationsAsRead
 } from '../../controllers/mobile/mobileNotificationController';
@@ -60,6 +61,7 @@ router.use(authenticateToken);
  *         description: Server error
  */
 router.get('/', fetchMyNotifications);
+router.get('/:notificationId', getNotificationById);
 
 /**
  * @swagger
@@ -86,6 +88,7 @@ router.get('/', fetchMyNotifications);
  *         description: Server error
  */
 router.put('/:notificationId/read', markNotificationAsRead);
+router.patch('/:notificationId/read', markNotificationAsRead);
 
 /**
  * @swagger
@@ -104,6 +107,7 @@ router.put('/:notificationId/read', markNotificationAsRead);
  *         description: Server error
  */
 router.put('/read-all', markAllNotificationsAsRead);
+router.patch('/read-all', markAllNotificationsAsRead);
 
 /**
  * @swagger

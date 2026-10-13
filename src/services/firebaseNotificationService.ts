@@ -35,10 +35,13 @@ export class FirebaseNotificationService {
       return { responses: [], successCount: 0, failureCount: tokens.length };
     }
 
+    const imageUrl = options?.imageUrl || data?.imageUrl || data?.image || undefined;
+
     const message: FirebaseMessagePayload = {
       notification: {
         title,
         body,
+        ...(imageUrl ? { imageUrl } : {}),
         icon: '/favicon.svg',
         sound: 'default',
         badge: '1',
@@ -46,16 +49,18 @@ export class FirebaseNotificationService {
       },
       data: {
         ...data,
+        ...(imageUrl ? { imageUrl, image: imageUrl } : {}),
         timestamp: new Date().toISOString(),
         type: data?.type || 'general',
       },
       android: {
         priority: options?.priority?.high ? 'high' : 'normal',
-        ttl: options?.ttl ? options.ttl * 1000 : 3600000, // Convert to milliseconds
+        ttl: options?.ttl ? options.ttl * 1000 : 3600000,
         notification: {
           sound: 'default',
           clickAction: data?.click_action && !data.click_action.startsWith('/') ? data.click_action : 'FLUTTER_NOTIFICATION_CLICK',
           color: '#4CAF50',
+          ...(imageUrl ? { imageUrl } : {}),
         },
       },
       apns: {
@@ -64,16 +69,19 @@ export class FirebaseNotificationService {
             sound: 'default',
             badge: 1,
             contentAvailable: options?.contentAvailable || false,
+            ...(imageUrl ? { 'mutable-content': 1 } : {}),
           },
         },
         headers: {
           'apns-priority': options?.priority?.high ? '10' : '5',
         },
+        ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
       },
       webpush: {
         notification: {
           title,
           body,
+          ...(imageUrl ? { image: imageUrl } : {}),
           icon: '/favicon.svg',
           badge: '/favicon.svg',
           requireInteraction: true,
@@ -91,31 +99,43 @@ export class FirebaseNotificationService {
     };
 
     try {
-      const response = await messagingInstance.sendEachForMulticast({
-        tokens,
-        ...message,
-      });
+      // Chunk tokens in batches of 500 (FCM sendEachForMulticast max limit)
+      const CHUNK_SIZE = 500;
+      const combinedResponses: any[] = [];
+      let totalSuccess = 0;
+      let totalFailure = 0;
 
-      // Log results for debugging
+      for (let i = 0; i < tokens.length; i += CHUNK_SIZE) {
+        const tokenBatch = tokens.slice(i, i + CHUNK_SIZE);
+        const batchResponse = await messagingInstance.sendEachForMulticast({
+          tokens: tokenBatch,
+          ...message,
+        });
+
+        combinedResponses.push(...batchResponse.responses);
+        totalSuccess += batchResponse.successCount;
+        totalFailure += batchResponse.failureCount;
+
+        if (batchResponse.failureCount > 0) {
+          const failedTokens = batchResponse.responses
+            .filter((resp: any) => !resp.success)
+            .map((_: any, index: number) => tokenBatch[index]);
+
+          await this.removeInvalidTokens(failedTokens);
+        }
+      }
+
       console.log(`📱 Firebase Notification Sent:`, {
-        successCount: response.successCount,
-        failureCount: response.failureCount,
+        successCount: totalSuccess,
+        failureCount: totalFailure,
         totalTokens: tokens.length,
       });
 
-      // Handle failed tokens
-      if (response.failureCount > 0) {
-        const failedTokens = response.responses
-          .filter((resp: any, index: number) => !resp.success)
-          .map((_: any, index: number) => tokens[index]);
-        
-        console.warn('⚠️ Failed tokens:', failedTokens);
-        
-        // Optionally remove invalid tokens from database
-        await this.removeInvalidTokens(failedTokens);
-      }
-
-      return response;
+      return {
+        responses: combinedResponses,
+        successCount: totalSuccess,
+        failureCount: totalFailure,
+      };
     } catch (error) {
       console.error('❌ Firebase notification error:', error);
       throw new Error(`Failed to send notification: ${(error as Error).message}`);
