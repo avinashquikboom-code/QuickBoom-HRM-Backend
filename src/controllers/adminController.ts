@@ -7013,14 +7013,40 @@ export const downloadAttendanceReport = async (
 // ==========================================
 // 8. Admin Notifications Management
 // ==========================================
+// ADMIN NOTIFICATION CONTROLLERS
+// ==========================================
 
 export const fetchAdminNotifications = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
+    let numericUserId: number | undefined;
+    if (typeof req.user?.id === 'number') {
+      numericUserId = req.user.id;
+    } else if (typeof req.user?.id === 'string') {
+      const parsed = parseInt(req.user.id, 10);
+      if (!isNaN(parsed)) {
+        numericUserId = parsed;
+      }
+    }
+
+    if (!numericUserId) {
+      const foundUser = await prisma.user.findFirst({
+        where: {
+          OR: [
+            ...(req.user?.email ? [{ email: req.user.email }] : []),
+            ...(req.user?.id ? [{ employeeID: String(req.user.id) }] : [])
+          ]
+        },
+        select: { id: true }
+      });
+      if (foundUser) {
+        numericUserId = foundUser.id;
+      }
+    }
+
+    if (!numericUserId) {
       res.status(401).json({ success: false, message: 'Unauthorized' });
       return;
     }
@@ -7028,35 +7054,89 @@ export const fetchAdminNotifications = async (
     const {
       page = '1',
       limit = '10',
-      status = 'all', // 'all' | 'unread' | 'read'
+      status = 'all',
       category = 'ALL',
       type,
+      storeId,
     } = req.query;
 
-    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
-    const take = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 10));
+    const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+    const take = Math.min(100, Math.max(1, parseInt(String(limit), 10) || 10));
     const skip = (pageNum - 1) * take;
 
-    // Filter by user (strictly targeted to this authenticated admin/HR user)
-    const baseWhere: Prisma.NotificationWhereInput = {
-      userId,
-    };
+    const userRole = req.user?.role || 'ADMIN';
+    let scopedStoreId: number | undefined;
 
-    const andConditions: Prisma.NotificationWhereInput[] = [baseWhere];
+    if (userRole === 'STORE_MANAGER') {
+      const managerEmp = await prisma.employee.findFirst({
+        where: { userId: numericUserId },
+        select: { id: true, storeId: true }
+      });
+      if (managerEmp?.storeId) {
+        scopedStoreId = managerEmp.storeId;
+      }
+    } else if (storeId) {
+      const parsedStore = parseInt(String(storeId), 10);
+      if (!isNaN(parsedStore)) {
+        scopedStoreId = parsedStore;
+      }
+    }
+
+    // Determine recipient scope to prevent cross-store / cross-employee leakage
+    let recipientCondition: Prisma.NotificationWhereInput;
+    if (userRole === 'STORE_MANAGER' && scopedStoreId) {
+      recipientCondition = {
+        OR: [
+          { userId: numericUserId },
+          {
+            employee: {
+              storeId: scopedStoreId
+            }
+          }
+        ]
+      };
+    } else {
+      const adminEmp = await prisma.employee.findFirst({
+        where: { userId: numericUserId },
+        select: { id: true }
+      });
+
+      recipientCondition = {
+        OR: [
+          { userId: numericUserId },
+          { userId: null },
+          ...(adminEmp ? [{ employeeId: adminEmp.id }] : [])
+        ]
+      };
+    }
+
+    const andConditions: Prisma.NotificationWhereInput[] = [recipientCondition];
+
+    if (scopedStoreId && userRole !== 'STORE_MANAGER') {
+      andConditions.push({
+        employee: {
+          storeId: scopedStoreId
+        }
+      });
+    }
 
     // Status filter
-    if (status === 'unread') {
+    const statusParam = String(status || 'all').trim().toLowerCase();
+    if (statusParam === 'unread' || statusParam === 'false' || statusParam === '0') {
       andConditions.push({ isRead: false });
-    } else if (status === 'read') {
+    } else if (statusParam === 'read' || statusParam === 'true' || statusParam === '1') {
       andConditions.push({ isRead: true });
     }
 
     // Category / Type filter
-    const activeCategory = (category !== 'ALL' && category !== 'All' && category !== 'all' ? category : type) as string | undefined;
-    if (activeCategory && activeCategory.toUpperCase() !== 'ALL') {
+    const rawCategory = (category && category !== 'ALL' && category !== 'all' && category !== 'undefined' && category !== 'null')
+      ? String(category).trim()
+      : (type && type !== 'ALL' && type !== 'all' && type !== 'undefined' && type !== 'null' ? String(type).trim() : undefined);
+
+    if (rawCategory && rawCategory.toUpperCase() !== 'ALL') {
       andConditions.push({
         category: {
-          equals: activeCategory.toUpperCase(),
+          equals: rawCategory.toUpperCase(),
           mode: 'insensitive',
         },
       });
@@ -7066,14 +7146,17 @@ export const fetchAdminNotifications = async (
       AND: andConditions,
     };
 
+    const unreadWhere: Prisma.NotificationWhereInput = {
+      AND: [
+        recipientCondition,
+        ...(scopedStoreId && userRole !== 'STORE_MANAGER' ? [{ employee: { storeId: scopedStoreId } }] : []),
+        { isRead: false }
+      ]
+    };
+
     const [total, unreadCount, notifications] = await Promise.all([
       prisma.notification.count({ where }),
-      prisma.notification.count({
-        where: {
-          userId,
-          isRead: false,
-        },
-      }),
+      prisma.notification.count({ where: unreadWhere }),
       prisma.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -7086,6 +7169,16 @@ export const fetchAdminNotifications = async (
               employeeCode: true,
               firstName: true,
               lastName: true,
+              storeId: true,
+            },
+          },
+          campaign: {
+            select: {
+              id: true,
+              title: true,
+              notificationType: true,
+              imageUrl: true,
+              actionUrl: true,
             },
           },
         },
@@ -7094,19 +7187,24 @@ export const fetchAdminNotifications = async (
 
     const mapped = notifications.map((n) => ({
       id: n.id.toString(),
-      title: n.title,
-      message: n.body,
-      type: n.category.toLowerCase(),
-      category: n.category.toUpperCase(),
-      isRead: n.isRead,
-      actionId: n.actionId,
-      actionType: n.actionType,
-      createdAt: n.createdAt.toISOString(),
+      title: n.title || 'Notification',
+      message: n.body || '',
+      body: n.body || '',
+      type: (n.category || 'general').toLowerCase(),
+      category: (n.category || 'GENERAL').toUpperCase(),
+      isRead: Boolean(n.isRead),
+      actionId: n.actionId ? String(n.actionId) : null,
+      actionType: n.actionType || null,
+      imageUrl: n.imageUrl || n.campaign?.imageUrl || null,
+      actionUrl: n.actionUrl || n.campaign?.actionUrl || null,
+      campaignId: n.campaignId || null,
+      createdAt: n.createdAt ? n.createdAt.toISOString() : new Date().toISOString(),
+      readAt: n.readAt ? n.readAt.toISOString() : null,
       employee: n.employee
         ? {
             id: n.employee.id.toString(),
-            employeeCode: n.employee.employeeCode,
-            name: `${n.employee.firstName} ${n.employee.lastName}`.trim(),
+            employeeCode: n.employee.employeeCode || '',
+            name: `${n.employee.firstName || ''} ${n.employee.lastName || ''}`.trim() || 'Employee',
           }
         : null,
     }));
@@ -7114,14 +7212,19 @@ export const fetchAdminNotifications = async (
     res.json({
       success: true,
       notifications: mapped,
-      total,
-      unreadCount,
+      total: total || 0,
+      unreadCount: unreadCount || 0,
       page: pageNum,
       limit: take,
-      totalPages: Math.ceil(total / take) || 1,
+      totalPages: Math.ceil((total || 0) / take) || 1,
     });
   } catch (error) {
-    console.error('Fetch admin notifications error:', error);
+    console.error('Fetch admin notifications error:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      user: req.user,
+      query: req.query,
+    });
     res.status(500).json({ success: false, message: 'Failed to load notifications.' });
   }
 };
@@ -7133,13 +7236,21 @@ export const fetchAdminNotificationById = async (
   const { id } = req.params;
 
   try {
-    const userId = req.user?.id;
-    if (!userId) {
+    let numericUserId: number | undefined;
+    if (typeof req.user?.id === 'number') {
+      numericUserId = req.user.id;
+    } else if (typeof req.user?.id === 'string') {
+      const parsed = parseInt(req.user.id, 10);
+      if (!isNaN(parsed)) numericUserId = parsed;
+    }
+
+    if (!numericUserId) {
       res.status(401).json({ success: false, message: 'Unauthorized' });
       return;
     }
 
-    const notificationId = parseInt(id as string, 10);
+    const targetId = Array.isArray(id) ? id[0] : id;
+    const notificationId = parseInt(String(targetId), 10);
     if (isNaN(notificationId)) {
       res.status(400).json({ success: false, message: 'Invalid notification ID' });
       return;
@@ -7148,7 +7259,11 @@ export const fetchAdminNotificationById = async (
     const notif = await prisma.notification.findFirst({
       where: {
         id: notificationId,
-        userId,
+        OR: [
+          { userId: numericUserId },
+          { userId: null },
+          { user: { id: numericUserId } }
+        ]
       },
       include: {
         employee: {
@@ -7159,6 +7274,15 @@ export const fetchAdminNotificationById = async (
             lastName: true,
           },
         },
+        campaign: {
+          select: {
+            id: true,
+            title: true,
+            notificationType: true,
+            imageUrl: true,
+            actionUrl: true,
+          }
+        }
       },
     });
 
@@ -7171,34 +7295,43 @@ export const fetchAdminNotificationById = async (
     if (!notif.isRead) {
       await prisma.notification.update({
         where: { id: notificationId },
-        data: { isRead: true },
+        data: { isRead: true, readAt: new Date() },
       });
       notif.isRead = true;
+      notif.readAt = new Date();
     }
 
     res.json({
       success: true,
       notification: {
         id: notif.id.toString(),
-        title: notif.title,
-        message: notif.body,
-        type: notif.category.toLowerCase(),
-        category: notif.category.toUpperCase(),
+        title: notif.title || 'Notification',
+        message: notif.body || '',
+        body: notif.body || '',
+        type: (notif.category || 'general').toLowerCase(),
+        category: (notif.category || 'GENERAL').toUpperCase(),
         isRead: notif.isRead,
-        actionId: notif.actionId,
-        actionType: notif.actionType,
-        createdAt: notif.createdAt.toISOString(),
+        actionId: notif.actionId ? String(notif.actionId) : null,
+        actionType: notif.actionType || null,
+        imageUrl: notif.imageUrl || notif.campaign?.imageUrl || null,
+        actionUrl: notif.actionUrl || notif.campaign?.actionUrl || null,
+        campaignId: notif.campaignId || null,
+        createdAt: notif.createdAt ? notif.createdAt.toISOString() : new Date().toISOString(),
+        readAt: notif.readAt ? notif.readAt.toISOString() : null,
         employee: notif.employee
           ? {
               id: notif.employee.id.toString(),
-              employeeCode: notif.employee.employeeCode,
-              name: `${notif.employee.firstName} ${notif.employee.lastName}`.trim(),
+              employeeCode: notif.employee.employeeCode || '',
+              name: `${notif.employee.firstName || ''} ${notif.employee.lastName || ''}`.trim() || 'Employee',
             }
           : null,
       },
     });
   } catch (error) {
-    console.error('Fetch admin notification by ID error:', error);
+    console.error('Fetch admin notification by ID error:', {
+      error: error instanceof Error ? error.message : error,
+      id,
+    });
     res.status(500).json({ success: false, message: 'Failed to load notification.' });
   }
 };
@@ -7210,13 +7343,21 @@ export const markAdminNotificationRead = async (
   const { id } = req.params;
 
   try {
-    const userId = req.user?.id;
-    if (!userId) {
+    let numericUserId: number | undefined;
+    if (typeof req.user?.id === 'number') {
+      numericUserId = req.user.id;
+    } else if (typeof req.user?.id === 'string') {
+      const parsed = parseInt(req.user.id, 10);
+      if (!isNaN(parsed)) numericUserId = parsed;
+    }
+
+    if (!numericUserId) {
       res.status(401).json({ success: false, message: 'Unauthorized' });
       return;
     }
 
-    const notificationId = parseInt(id as string, 10);
+    const targetId = Array.isArray(id) ? id[0] : id;
+    const notificationId = parseInt(String(targetId), 10);
     if (isNaN(notificationId)) {
       res.status(400).json({ success: false, message: 'Invalid notification ID' });
       return;
@@ -7225,7 +7366,10 @@ export const markAdminNotificationRead = async (
     const notif = await prisma.notification.findFirst({
       where: {
         id: notificationId,
-        userId,
+        OR: [
+          { userId: numericUserId },
+          { userId: null },
+        ]
       },
     });
 
@@ -7236,12 +7380,15 @@ export const markAdminNotificationRead = async (
 
     const notification = await prisma.notification.update({
       where: { id: notificationId },
-      data: { isRead: true },
+      data: { isRead: true, readAt: new Date() },
     });
 
     res.json({ success: true, message: 'Notification marked as read.', notification });
   } catch (error) {
-    console.error('Mark admin notification read error:', error);
+    console.error('Mark admin notification read error:', {
+      error: error instanceof Error ? error.message : error,
+      id,
+    });
     res.status(500).json({ success: false, message: 'Failed to mark notification as read.' });
   }
 };
@@ -7251,23 +7398,58 @@ export const markAllAdminNotificationsRead = async (
   res: Response
 ): Promise<void> => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
+    let numericUserId: number | undefined;
+    if (typeof req.user?.id === 'number') {
+      numericUserId = req.user.id;
+    } else if (typeof req.user?.id === 'string') {
+      const parsed = parseInt(req.user.id, 10);
+      if (!isNaN(parsed)) numericUserId = parsed;
+    }
+
+    if (!numericUserId) {
       res.status(401).json({ success: false, message: 'Unauthorized' });
       return;
     }
 
+    const userRole = req.user?.role || 'ADMIN';
+    let recipientCondition: Prisma.NotificationWhereInput;
+
+    if (userRole === 'STORE_MANAGER') {
+      const managerEmp = await prisma.employee.findFirst({
+        where: { userId: numericUserId },
+        select: { id: true, storeId: true }
+      });
+      recipientCondition = {
+        OR: [
+          { userId: numericUserId },
+          ...(managerEmp?.storeId ? [{ employee: { storeId: managerEmp.storeId } }] : [])
+        ]
+      };
+    } else {
+      recipientCondition = {
+        OR: [
+          { userId: numericUserId },
+          { userId: null },
+        ]
+      };
+    }
+
     await prisma.notification.updateMany({
       where: {
-        userId,
-        isRead: false,
+        AND: [
+          recipientCondition,
+          { isRead: false },
+        ]
       },
-      data: { isRead: true },
+      data: { isRead: true, readAt: new Date() },
     });
 
     res.json({ success: true, message: 'All notifications marked as read.' });
   } catch (error) {
-    console.error('Mark all admin notifications read error:', error);
+    console.error('Mark all admin notifications read error:', {
+      error: error instanceof Error ? error.message : error,
+      user: req.user,
+    });
     res.status(500).json({ success: false, message: 'Failed to mark all notifications as read.' });
   }
 };

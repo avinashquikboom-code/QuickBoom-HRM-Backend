@@ -582,23 +582,63 @@ export class CampaignService {
 
   /**
    * Get employees celebrating their birthday today
+   * Accurately supports IANA timezones, leap day (Feb 29 on non-leap years), missing dates, and store/branch scoping
    */
-  async getTodayBirthdays(timezone: string = 'Asia/Kolkata') {
-    // Current date in target timezone
+  async getTodayBirthdays(options?: string | {
+    timezone?: string;
+    storeId?: number;
+    branchId?: number;
+  }) {
+    let targetTz = 'Asia/Kolkata';
+    let storeId: number | undefined;
+    let branchId: number | undefined;
+
+    if (typeof options === 'string' && options.trim()) {
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone: options.trim() });
+        targetTz = options.trim();
+      } catch {
+        targetTz = 'Asia/Kolkata';
+      }
+    } else if (typeof options === 'object' && options !== null) {
+      if (options.timezone && typeof options.timezone === 'string') {
+        const candidate = options.timezone.trim();
+        if (candidate && candidate !== 'undefined' && candidate !== 'null') {
+          try {
+            new Intl.DateTimeFormat(undefined, { timeZone: candidate });
+            targetTz = candidate;
+          } catch {
+            targetTz = 'Asia/Kolkata';
+          }
+        }
+      }
+      storeId = typeof options.storeId === 'number' && !isNaN(options.storeId) ? options.storeId : undefined;
+      branchId = typeof options.branchId === 'number' && !isNaN(options.branchId) ? options.branchId : undefined;
+    }
+
+    // Determine current calendar day in the target timezone
     const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
+    const todayFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: targetTz,
+      year: 'numeric',
       month: 'numeric',
       day: 'numeric',
     });
-    const parts = formatter.formatToParts(now);
-    const month = parseInt(parts.find(p => p.type === 'month')?.value || '1', 10);
-    const day = parseInt(parts.find(p => p.type === 'day')?.value || '1', 10);
+    const todayParts = todayFormatter.formatToParts(now);
+    const currentYear = parseInt(todayParts.find(p => p.type === 'year')?.value || String(now.getFullYear()), 10);
+    const currentMonth = parseInt(todayParts.find(p => p.type === 'month')?.value || '1', 10);
+    const currentDay = parseInt(todayParts.find(p => p.type === 'day')?.value || '1', 10);
 
+    const isLeapYear = (year: number) => (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+    const currentIsLeap = isLeapYear(currentYear);
+
+    // Query active employees with date of birth
     const activeEmployees = await prisma.employee.findMany({
       where: {
-        status: 'active',
+        status: { in: ['active', 'ACTIVE'] },
         dateOfBirth: { not: null },
+        ...(storeId ? { storeId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
       select: {
         id: true,
@@ -606,8 +646,12 @@ export class CampaignService {
         lastName: true,
         employeeCode: true,
         dateOfBirth: true,
-        department: { select: { name: true } },
-        store: { select: { name: true } },
+        storeId: true,
+        branchId: true,
+        departmentId: true,
+        department: { select: { id: true, name: true } },
+        store: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true } },
         user: { select: { id: true, email: true } },
       },
     });
@@ -615,10 +659,57 @@ export class CampaignService {
     const birthdayEmployees = activeEmployees.filter(emp => {
       if (!emp.dateOfBirth) return false;
       const dob = new Date(emp.dateOfBirth);
-      return dob.getMonth() + 1 === month && dob.getDate() === day;
+      if (isNaN(dob.getTime())) return false;
+
+      // Extract month and day in target timezone
+      const dobFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: targetTz,
+        month: 'numeric',
+        day: 'numeric',
+      });
+      const dobParts = dobFormatter.formatToParts(dob);
+      const dobMonth = parseInt(dobParts.find(p => p.type === 'month')?.value || '0', 10);
+      const dobDay = parseInt(dobParts.find(p => p.type === 'day')?.value || '0', 10);
+
+      // Extract month and day in UTC fallback
+      const utcMonth = dob.getUTCMonth() + 1;
+      const utcDay = dob.getUTCDate();
+
+      // Standard birthday match
+      const isRegularBirthday =
+        (dobMonth === currentMonth && dobDay === currentDay) ||
+        (utcMonth === currentMonth && utcDay === currentDay);
+
+      // Leap day handling: if born on Feb 29 and current year is non-leap, celebrate on Feb 28
+      const isBornOnLeapDay = (dobMonth === 2 && dobDay === 29) || (utcMonth === 2 && utcDay === 29);
+      const isLeapCelebrationToday = isBornOnLeapDay && !currentIsLeap && (currentMonth === 2 && currentDay === 28);
+
+      return isRegularBirthday || isLeapCelebrationToday;
     });
 
-    return birthdayEmployees;
+    // Check if birthday wishes were already sent today to avoid duplicate notifications
+    const matchedEmployeeIds = birthdayEmployees.map(e => e.id);
+    const dayStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const alreadySentRecipients = matchedEmployeeIds.length > 0
+      ? await prisma.campaignRecipient.findMany({
+          where: {
+            employeeId: { in: matchedEmployeeIds },
+            createdAt: { gte: dayStart },
+            campaign: {
+              notificationType: 'BIRTHDAY_WISHES',
+            },
+          },
+          select: { employeeId: true },
+        })
+      : [];
+
+    const alreadySentSet = new Set(alreadySentRecipients.map(r => r.employeeId));
+
+    return birthdayEmployees.map(emp => ({
+      ...emp,
+      alreadyWished: alreadySentSet.has(emp.id),
+    }));
   }
 
   /**
@@ -643,19 +734,18 @@ export class CampaignService {
       return { message: 'No eligible employees celebrating birthdays today.', count: 0 };
     }
 
-    const todayStr = new Date().toISOString().slice(0, 10);
     const sentResults = [];
 
     for (const emp of targetEmployees) {
       // Check if birthday wish was already sent today to avoid duplicate notifications
-      const alreadySent = await prisma.campaign.findFirst({
+      const alreadySent = await prisma.campaignRecipient.findFirst({
         where: {
-          notificationType: 'BIRTHDAY_WISHES',
+          employeeId: emp.id,
           createdAt: {
-            gte: new Date(new Date().setHours(0, 0, 0, 0)),
+            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
           },
-          recipients: {
-            some: { employeeId: emp.id },
+          campaign: {
+            notificationType: 'BIRTHDAY_WISHES',
           },
         },
       });

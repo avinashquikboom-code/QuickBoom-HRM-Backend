@@ -348,10 +348,33 @@ export const getTargetOptions = async (req: AuthenticatedRequest, res: Response)
  */
 export const getTodayBirthdays = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { timezone } = req.query;
-    const birthdays = await campaignService.getTodayBirthdays(
-      timezone ? String(timezone) : 'Asia/Kolkata'
-    );
+    const { timezone, storeId, branchId } = req.query;
+
+    let scopedStoreId = storeId ? parseInt(String(storeId), 10) : undefined;
+    if (isNaN(scopedStoreId!)) scopedStoreId = undefined;
+
+    let scopedBranchId = branchId ? parseInt(String(branchId), 10) : undefined;
+    if (isNaN(scopedBranchId!)) scopedBranchId = undefined;
+
+    // Store manager scoping
+    if (req.user?.role === 'STORE_MANAGER' && req.user?.id) {
+      const managerEmp = await prisma.employee.findFirst({
+        where: { userId: Number(req.user.id) },
+        select: { storeId: true, branchId: true },
+      });
+      if (managerEmp?.storeId) {
+        scopedStoreId = managerEmp.storeId;
+      }
+      if (managerEmp?.branchId) {
+        scopedBranchId = managerEmp.branchId;
+      }
+    }
+
+    const birthdays = await campaignService.getTodayBirthdays({
+      timezone: timezone ? String(timezone) : 'Asia/Kolkata',
+      storeId: scopedStoreId,
+      branchId: scopedBranchId,
+    });
 
     res.json({
       success: true,
@@ -359,17 +382,24 @@ export const getTodayBirthdays = async (req: AuthenticatedRequest, res: Response
         count: birthdays.length,
         birthdays: birthdays.map(b => ({
           id: b.id,
-          name: `${b.firstName} ${b.lastName}`.trim(),
-          employeeCode: b.employeeCode,
-          department: b.department?.name,
-          store: b.store?.name,
-          dateOfBirth: b.dateOfBirth,
+          name: `${b.firstName || ''} ${b.lastName || ''}`.trim() || 'Employee',
+          employeeCode: b.employeeCode || '',
+          department: b.department?.name || 'General',
+          store: b.store?.name || 'Headquarters',
+          branch: b.branch?.name || null,
+          dateOfBirth: b.dateOfBirth ? b.dateOfBirth.toISOString() : null,
+          alreadyWished: Boolean(b.alreadyWished),
         })),
       },
     });
   } catch (error: any) {
-    console.error('Get today birthdays error:', error);
-    res.status(500).json({ success: false, message: error.message || 'Failed to fetch birthdays.' });
+    console.error('Get today birthdays error:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      user: req.user,
+      query: req.query,
+    });
+    res.status(500).json({ success: false, message: 'Failed to fetch birthdays.' });
   }
 };
 

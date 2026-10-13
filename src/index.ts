@@ -542,3 +542,4 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 
 // webSocketService is available via getWebSocketInstance() from utils/websocketSingleton
+export { app, server };
