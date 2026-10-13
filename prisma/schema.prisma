@@ -100,7 +100,6 @@ model Employee {
   lastName         String
   designation      String?
   mobileNumber     String?
-  dateOfBirth      DateTime?
   joiningDate      DateTime?
   reportingManagerId Int?
   designationId    Int?
