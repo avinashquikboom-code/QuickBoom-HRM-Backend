@@ -20,13 +20,10 @@ function logManagementError(operation: string, error: unknown) {
 }
 
 /**
- * Seed standard default HRM notification rules & templates if none exist
+ * Explicitly initialize standard defaults, preserving existing rules and templates.
  */
 export async function ensureDefaultNotificationRules(): Promise<void> {
   try {
-    const count = await prisma.notificationRule.count();
-    if (count > 0) return;
-
     const defaultRules = [
       {
         event: 'EMPLOYEE_BIRTHDAY',
@@ -121,36 +118,43 @@ export async function ensureDefaultNotificationRules(): Promise<void> {
       }
     ];
 
-    for (const item of defaultRules) {
-      await prisma.notificationRule.upsert({
-        where: { event: item.event },
-        update: {},
-        create: {
-          event: item.event,
-          category: item.category,
-          recipients: item.recipients,
-          inApp: item.inApp,
-          push: item.push,
-          status: item.status,
-        }
-      });
+    // Explicit initialization only. Check both tables before writing and roll back
+    // the complete seed if any rule/template write fails.
+    await prisma.$transaction(async tx => {
+      await tx.notificationRule.count();
+      await tx.notificationTemplate.count();
+      for (const item of defaultRules) {
+        await tx.notificationRule.upsert({
+          where: { event: item.event },
+          update: {},
+          create: {
+            event: item.event,
+            category: item.category,
+            recipients: item.recipients,
+            inApp: item.inApp,
+            push: item.push,
+            status: item.status,
+          }
+        });
 
-      await prisma.notificationTemplate.upsert({
-        where: { event: item.event },
-        update: {},
-        create: {
-          event: item.event,
-          channel: item.template.channel,
-          language: 'English',
-          title: item.template.title,
-          message: item.template.message,
-          status: 'ACTIVE'
-        }
-      });
-    }
+        await tx.notificationTemplate.upsert({
+          where: { event: item.event },
+          update: {},
+          create: {
+            event: item.event,
+            channel: item.template.channel,
+            language: 'English',
+            title: item.template.title,
+            message: item.template.message,
+            status: 'ACTIVE'
+          }
+        });
+      }
+    });
     console.log('✅ [NotificationManagement] Seeded default notification rules & templates.');
   } catch (error) {
-    console.warn('⚠️ [NotificationManagement] Default rules seeding notice:', error);
+    logManagementError('seed notification defaults', error);
+    throw error;
   }
 }
 
