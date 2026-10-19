@@ -8,6 +8,17 @@ const router = express.Router();
 // Middleware to ensure only authorized roles can access management endpoints
 const managementAuth = [authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'])];
 
+// Log causal codes and stack frames, without Prisma query arguments or connection strings.
+function logManagementError(operation: string, error: unknown) {
+  const e = error as { name?: string; message?: string; code?: string; stack?: string; meta?: { modelName?: string; table?: string; column?: string } };
+  console.error('[NotificationManagement] Request failed', {
+    operation, name: e?.name, code: e?.code,
+    message: e?.message?.replace(/postgres(?:ql)?:\/\/[^\s]+/gi, '[redacted database URL]').slice(0, 2000),
+    model: e?.meta?.modelName, table: e?.meta?.table, column: e?.meta?.column,
+    stack: e?.stack?.split('\n').filter(line => /^\s+at /.test(line)).join('\n')
+  });
+}
+
 /**
  * Seed standard default HRM notification rules & templates if none exist
  */
@@ -172,17 +183,14 @@ router.get('/stats', managementAuth, async (req: Request, res: Response) => {
 // NOTIFICATION RULES
 // ----------------------------------------------------
 
-// GET all rules (auto-seeds defaults if empty)
+// Read-only: an empty rules table is a valid successful response.
 router.get('/rules', managementAuth, async (req: Request, res: Response) => {
   try {
-    await ensureDefaultNotificationRules();
-
-    const [rules, templates] = await Promise.all([
-      prisma.notificationRule.findMany({
-        orderBy: { createdAt: 'desc' }
-      }),
-      prisma.notificationTemplate.findMany()
-    ]);
+    const rules = await prisma.notificationRule.findMany({ orderBy: { createdAt: 'desc' } });
+    if (!rules.length) { res.json([]); return; }
+    const templates = await prisma.notificationTemplate.findMany({
+      where: { event: { in: rules.map(rule => rule.event) } }
+    });
 
     const templateMap = new Map<string, typeof templates[0]>();
     for (const t of templates) {
@@ -201,8 +209,8 @@ router.get('/rules', managementAuth, async (req: Request, res: Response) => {
 
     res.json(rulesWithTemplates);
   } catch (error) {
-    console.error('Failed to fetch notification rules:', error);
-    res.status(500).json({ error: 'Failed to fetch rules' });
+    logManagementError('GET /rules', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch rules', message: 'Unable to load notification rules. Please try again or contact your administrator.' });
   }
 });
 
@@ -342,7 +350,6 @@ router.post('/rules/:id/trigger', managementAuth, async (req: Request, res: Resp
 // GET all templates
 router.get('/templates', managementAuth, async (req: Request, res: Response) => {
   try {
-    await ensureDefaultNotificationRules();
     const templates = await prisma.notificationTemplate.findMany({
       orderBy: { createdAt: 'desc' }
     });
