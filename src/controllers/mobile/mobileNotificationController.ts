@@ -24,6 +24,7 @@ export const fetchMyNotifications = async (
       title: n.title,
       body: n.body,
       category: n.category,
+      deliveryStatus: n.deliveryStatus,
       imageUrl: n.imageUrl || null,
       actionUrl: n.actionUrl || null,
       actionId: n.actionId || null,

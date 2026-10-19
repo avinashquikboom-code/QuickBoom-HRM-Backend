@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma, ensureBankEditTable } from '../utils/db';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
+import { persistAndPush, deliveryMessage } from '../services/employeePushDelivery';
 import ExcelJS from 'exceljs';
 import bcrypt from 'bcryptjs';
 import { pushNotificationService } from '../services/pushNotificationService';
@@ -7317,6 +7318,8 @@ export const fetchAdminNotifications = async (
       body: n.body || '',
       type: (n.category || 'general').toLowerCase(),
       category: (n.category || 'GENERAL').toUpperCase(),
+      deliveryStatus: n.deliveryStatus,
+      failureReason: n.failureReason,
       isRead: Boolean(n.isRead),
       actionId: n.actionId ? String(n.actionId) : null,
       actionType: n.actionType || null,
@@ -8251,132 +8254,36 @@ export const changeOwnPassword = async (
 // Send Notifications by Department/Role
 // ==========================================
 
-export const sendNotificationToDepartment = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
+export const sendNotificationToDepartment = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { departmentId, title, body, category = 'info' } = req.body;
-
-  if (!departmentId || !title || !body) {
-    res.status(400).json({ success: false, message: 'Department ID, title, and body are required.' });
-    return;
+  const id = Number(departmentId);
+  if (!Number.isSafeInteger(id) || id <= 0 || typeof title !== 'string' || !title.trim() || typeof body !== 'string' || !body.trim() || typeof category !== 'string') {
+    res.status(400).json({ success: false, message: 'Valid department ID, title, and body are required.' }); return;
   }
-
   try {
-    // Get all employees in the department
-    const employees = await prisma.employee.findMany({
-      where: { departmentId: parseInt(departmentId) },
-      include: { user: true }
-    });
-
-    if (employees.length === 0) {
-      res.status(404).json({ success: false, message: 'No employees found in this department.' });
-      return;
-    }
-
-    // Create notifications for all employees
-    const notifications = await Promise.all(
-      employees.map(employee =>
-        prisma.notification.create({
-          data: {
-            title,
-            body,
-            category,
-            userId: employee.userId
-          }
-        })
-      )
-    );
-
-    // Send push notifications via Firebase (if available)
-    try {
-      const firebaseNotificationService = require('../services/firebaseNotificationService').firebaseNotificationService;
-      await firebaseNotificationService.sendNotificationToDepartment(
-        parseInt(departmentId),
-        title,
-        body,
-        { category }
-      );
-    } catch (firebaseError) {
-      console.error('Firebase notification error:', firebaseError);
-      // Continue even if Firebase fails
-    }
-
-    res.json({
-      success: true,
-      message: `Notification sent to ${employees.length} employees in the department.`,
-      data: {
-        employeeCount: employees.length,
-        notificationsCreated: notifications.length
-      }
-    });
-  } catch (error) {
-    console.error('Send notification to department error:', error);
-    res.status(500).json({ success: false, message: 'Failed to send notification to department.' });
+    const employees = await prisma.employee.findMany({ where: { departmentId: id, status: { equals: 'active', mode: 'insensitive' }, user: { isActive: true } }, select: { id: true, userId: true } });
+    if (!employees.length) { res.status(404).json({ success: false, message: 'No active employees found in this department.' }); return; }
+    const delivery = await persistAndPush(employees, { title, body, category });
+    res.json({ success: true, message: deliveryMessage(delivery), delivery, data: { employeeCount: employees.length, notificationsCreated: delivery.notificationsCreated } });
+  } catch (error: any) {
+    console.error('[NotificationDelivery] Department request failed', { code: error?.code, name: error?.name });
+    res.status(500).json({ success: false, message: 'Notification processing failed. Check history before retrying.' });
   }
 };
 
-export const sendNotificationToRole = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
+export const sendNotificationToRole = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const { role, title, body, category = 'info' } = req.body;
-
-  if (!role || !title || !body) {
-    res.status(400).json({ success: false, message: 'Role, title, and body are required.' });
-    return;
+  if (!Object.values(Role).includes(role) || typeof title !== 'string' || !title.trim() || typeof body !== 'string' || !body.trim() || typeof category !== 'string') {
+    res.status(400).json({ success: false, message: 'Valid role, title, and body are required.' }); return;
   }
-
   try {
-    // Get all users with the specified role
-    const users = await prisma.user.findMany({
-      where: { role: role as any, isActive: true }
-    });
-
-    if (users.length === 0) {
-      res.status(404).json({ success: false, message: 'No users found with this role.' });
-      return;
-    }
-
-    // Create notifications for all users
-    const notifications = await Promise.all(
-      users.map(user =>
-        prisma.notification.create({
-          data: {
-            title,
-            body,
-            category,
-            userId: user.id
-          }
-        })
-      )
-    );
-
-    // Send push notifications via Firebase (if available)
-    try {
-      const firebaseNotificationService = require('../services/firebaseNotificationService').firebaseNotificationService;
-      await firebaseNotificationService.sendNotificationToRole(
-        role,
-        title,
-        body,
-        { category }
-      );
-    } catch (firebaseError) {
-      console.error('Firebase notification error:', firebaseError);
-      // Continue even if Firebase fails
-    }
-
-    res.json({
-      success: true,
-      message: `Notification sent to ${users.length} users with role ${role}.`,
-      data: {
-        userCount: users.length,
-        notificationsCreated: notifications.length
-      }
-    });
-  } catch (error) {
-    console.error('Send notification to role error:', error);
-    res.status(500).json({ success: false, message: 'Failed to send notification to role.' });
+    const users = await prisma.user.findMany({ where: { role, isActive: true, OR: [{ employee: { is: null } }, { employee: { status: { equals: 'active', mode: 'insensitive' } } }] }, select: { id: true, employee: { select: { id: true } } } });
+    if (!users.length) { res.status(404).json({ success: false, message: 'No active users found with this role.' }); return; }
+    const delivery = await persistAndPush(users.map(u => ({ userId: u.id, id: u.employee?.id })), { title, body, category });
+    res.json({ success: true, message: deliveryMessage(delivery), delivery, data: { userCount: users.length, notificationsCreated: delivery.notificationsCreated } });
+  } catch (error: any) {
+    console.error('[NotificationDelivery] Role request failed', { code: error?.code, name: error?.name });
+    res.status(500).json({ success: false, message: 'Notification processing failed. Check history before retrying.' });
   }
 };
 

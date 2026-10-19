@@ -12,7 +12,7 @@ export class FirebaseNotificationService {
     try {
       return getMessaging();
     } catch (e) {
-      console.warn('⚠️ [FirebaseNotificationService] Messaging service unavailable:', e);
+      console.warn('[FirebaseNotificationService] Messaging unavailable', { code: (e as any)?.code });
       return null;
     }
   }
@@ -32,7 +32,7 @@ export class FirebaseNotificationService {
     const messagingInstance = this.getMessagingInstance();
     if (!messagingInstance) {
       console.warn('⚠️ [FirebaseNotificationService] FCM not initialized. Skipping notification.');
-      return { responses: [], successCount: 0, failureCount: tokens.length };
+      throw Object.assign(new Error('Firebase messaging is not configured'), { code: 'messaging/not-configured' });
     }
 
     const imageUrl = options?.imageUrl || data?.imageUrl || data?.image || undefined;
@@ -137,8 +137,8 @@ export class FirebaseNotificationService {
         failureCount: totalFailure,
       };
     } catch (error) {
-      console.error('❌ Firebase notification error:', error);
-      throw new Error(`Failed to send notification: ${(error as Error).message}`);
+      console.error('[FirebaseNotificationService] Send failed', { code: (error as any)?.code });
+      throw error;
     }
   }
 
@@ -283,6 +283,7 @@ export class FirebaseNotificationService {
     if (tokens.length === 0) return;
 
     try {
+      await prisma.device.deleteMany({ where: { fcmToken: { in: tokens } } });
       // Deactivate invalid tokens
       await prisma.fCMToken.updateMany({
         where: {
@@ -297,7 +298,7 @@ export class FirebaseNotificationService {
 
       console.log(`🗑️ Deactivated ${tokens.length} invalid FCM tokens from database`);
     } catch (error) {
-      console.error('❌ Error removing invalid tokens:', error);
+      console.error('[FirebaseNotificationService] Invalid-token cleanup failed', { code: (error as any)?.code });
     }
   }
 

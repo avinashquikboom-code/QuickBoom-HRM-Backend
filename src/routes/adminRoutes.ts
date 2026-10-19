@@ -680,8 +680,8 @@ router.put('/change-password', changeOwnPassword);
  */
 
 // Notification Management - Send by Department/Role
-router.post('/notifications/send-department', sendNotificationToDepartment);
-router.post('/notifications/send-role', sendNotificationToRole);
+router.post('/notifications/send-department', roleMiddleware(adminOnlyRoles), sendNotificationToDepartment);
+router.post('/notifications/send-role', roleMiddleware(adminOnlyRoles), sendNotificationToRole);
 
 // Shift Management
 router.get('/shifts', fetchShifts);

@@ -45,32 +45,47 @@ router.use(authMiddleware);
 router.post('/register', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { token, platform } = req.body;
+    const { token, platform, previousToken } = req.body;
 
     if (!userId) {
       res.status(401).json({ success: false, message: 'Unauthorized' });
       return;
     }
 
-    if (!token || !platform) {
+    if (typeof token !== 'string' || !token.trim() || token.length > 4096 || typeof platform !== 'string' || !['android', 'ios', 'web'].includes(platform.toLowerCase())) {
       res.status(400).json({ success: false, message: 'token and platform are required' });
       return;
     }
 
     // Upsert the device token globally (since one device token belongs to one user at a time)
-    const device = await prisma.device.upsert({
-      where: { fcmToken: token },
-      update: {
-        userId,
-        platform: platform.toLowerCase(),
-        updatedAt: new Date(),
-      },
-      create: {
-        userId,
-        fcmToken: token,
-        platform: platform.toLowerCase(),
-        updatedAt: new Date(),
-      },
+    const device = await prisma.$transaction(async tx => {
+      const device = await tx.device.upsert({
+        where: { fcmToken: token },
+        update: {
+          userId,
+          platform: platform.toLowerCase(),
+          updatedAt: new Date(),
+        },
+        create: {
+          userId,
+          fcmToken: token,
+          platform: platform.toLowerCase(),
+          updatedAt: new Date(),
+        },
+      });
+
+      if (typeof previousToken === 'string' && previousToken !== token && previousToken.length <= 4096) {
+        await tx.device.deleteMany({ where: { fcmToken: previousToken, userId } });
+        await tx.fCMToken.updateMany({ where: { token: previousToken, userId }, data: { isActive: false } });
+      }
+      // A token belongs to the currently authenticated account across both stores.
+      await tx.fCMToken.updateMany({ where: { token, userId: { not: userId } }, data: { isActive: false } });
+      await tx.fCMToken.upsert({
+        where: { userId_token: { userId, token } },
+        update: { isActive: true, platform: platform.toLowerCase(), lastUsedAt: new Date() },
+        create: { userId, token, platform: platform.toLowerCase() }
+      });
+      return device;
     });
 
     console.log(`[DeviceRoutes] Registered token for user ${userId} on platform ${platform}`);
@@ -78,10 +93,10 @@ router.post('/register', async (req: AuthenticatedRequest, res: Response) => {
     res.json({
       success: true,
       message: 'Device registered successfully',
-      device
+      device: { id: device.id, userId: device.userId, platform: device.platform, createdAt: device.createdAt, updatedAt: device.updatedAt }
     });
   } catch (error) {
-    console.error('[DeviceRoutes] Failed to register device:', error);
+    console.error('[DeviceRoutes] Failed to register device', { code: (error as any)?.code });
     res.status(500).json({ success: false, message: 'Failed to register device' });
   }
 });
@@ -90,23 +105,24 @@ const unregisterDevice = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { token } = req.body;
 
-    if (!token) {
+    if (typeof token !== 'string' || !token.trim()) {
       res.status(400).json({ success: false, message: 'token is required' });
       return;
     }
 
-    await prisma.device.deleteMany({
-      where: { fcmToken: token }
-    });
-
-    console.log(`[DeviceRoutes] Unregistered token: ${token}`);
+    const userId = req.user!.id;
+    await prisma.$transaction([
+      prisma.device.deleteMany({ where: { fcmToken: token, userId } }),
+      prisma.fCMToken.updateMany({ where: { token, userId }, data: { isActive: false } })
+    ]);
+    console.log('[DeviceRoutes] Device unregistered', { userId });
 
     res.json({
       success: true,
       message: 'Device unregistered successfully'
     });
   } catch (error) {
-    console.error('[DeviceRoutes] Failed to unregister device:', error);
+    console.error('[DeviceRoutes] Failed to unregister device', { code: (error as any)?.code });
     res.status(500).json({ success: false, message: 'Failed to unregister device' });
   }
 };

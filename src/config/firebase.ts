@@ -43,7 +43,7 @@ export const initializeFirebase = (): App => {
     console.log('✅ [FirebaseInit] Firebase Admin SDK initialized successfully');
     return firebaseApp;
   } catch (error) {
-    console.error('❌ [FirebaseInit] Failed to initialize Firebase:', error);
+    console.error('[FirebaseInit] Initialization failed', { code: (error as any)?.code, name: (error as any)?.name });
     firebaseApp = getApps().length > 0 ? getApps()[0] : initializeApp({ projectId: 'mock-project' });
     return firebaseApp;
   }
@@ -56,6 +56,9 @@ export const getFirebaseApp = (): App => {
 
 export const getMessaging = (): Messaging => {
   const app = getFirebaseApp();
+  if (app.options.projectId === 'mock-project') {
+    throw Object.assign(new Error('Firebase credentials are not configured'), { code: 'messaging/not-configured' });
+  }
   return getAdminMessaging(app);
 };
 
