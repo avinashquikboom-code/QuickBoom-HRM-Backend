@@ -1,4 +1,4 @@
-import { Messaging, BatchResponse } from 'firebase-admin/messaging';
+import { Messaging, BatchResponse, BaseMessage } from 'firebase-admin/messaging';
 import { prisma } from '../utils/db';
 import { getMessaging, FirebaseMessagePayload, FirebaseUserTarget, NotificationOptions } from '../config/firebase';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -37,15 +37,11 @@ export class FirebaseNotificationService {
 
     const imageUrl = options?.imageUrl || data?.imageUrl || data?.image || undefined;
 
-    const message: FirebaseMessagePayload = {
+    const message: BaseMessage = {
       notification: {
         title,
         body,
         ...(imageUrl ? { imageUrl } : {}),
-        icon: '/favicon.svg',
-        sound: 'default',
-        badge: '1',
-        color: '#4CAF50',
       },
       data: {
         ...data,
@@ -54,10 +50,11 @@ export class FirebaseNotificationService {
         type: data?.type || 'general',
       },
       android: {
-        priority: options?.priority?.high ? 'high' : 'normal',
+        priority: options?.priority?.normal ? 'normal' : 'high',
         ttl: options?.ttl ? options.ttl * 1000 : 3600000,
         notification: {
           sound: 'default',
+          channelId: 'general_notifications',
           clickAction: data?.click_action && !data.click_action.startsWith('/') ? data.click_action : 'FLUTTER_NOTIFICATION_CLICK',
           color: '#4CAF50',
           ...(imageUrl ? { imageUrl } : {}),
@@ -73,7 +70,8 @@ export class FirebaseNotificationService {
           },
         },
         headers: {
-          'apns-priority': options?.priority?.high ? '10' : '5',
+          'apns-priority': '10',
+          'apns-push-type': 'alert',
         },
         ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
       },
@@ -118,8 +116,10 @@ export class FirebaseNotificationService {
 
         if (batchResponse.failureCount > 0) {
           const failedTokens = batchResponse.responses
-            .filter((resp: any) => !resp.success)
-            .map((_: any, index: number) => tokenBatch[index]);
+            .flatMap((resp, index) =>
+              !resp.success && ['messaging/invalid-registration-token', 'messaging/registration-token-not-registered'].includes(resp.error?.code || '')
+                ? [tokenBatch[index]] : []
+            );
 
           await this.removeInvalidTokens(failedTokens);
         }
@@ -199,10 +199,8 @@ export class FirebaseNotificationService {
       select: { token: true }
     });
 
-    let tokens = fcmTokens.map(t => t.token);
-
-    if (tokens.length === 0) {
-      const devices = await prisma.device.findMany({
+    // Include devices even when some users of this role already have FCMToken rows.
+    const devices = await prisma.device.findMany({
         where: {
           user: {
             role: roleUpper as any,
@@ -211,8 +209,10 @@ export class FirebaseNotificationService {
         },
         select: { fcmToken: true }
       });
-      tokens = devices.map(d => d.fcmToken).filter((t): t is string => Boolean(t));
-    }
+    const tokens = Array.from(new Set([
+      ...fcmTokens.map(t => t.token),
+      ...devices.map(d => d.fcmToken),
+    ].filter((token): token is string => Boolean(token?.trim()))));
 
     if (tokens.length === 0) {
       console.warn(`[FirebaseNotificationService] No active users with FCM tokens found for role: ${role}`);

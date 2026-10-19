@@ -1,4 +1,5 @@
 import { prisma } from '../utils/db';
+import { firebaseNotificationService } from './firebaseNotificationService';
 import { getWebSocketInstance } from '../utils/websocketSingleton';
 
 export interface NotificationTemplate {
@@ -130,7 +131,7 @@ class NotificationService {
           const processedBody = this.processTemplate(body, variables, employee);
 
           // Create notification
-          await prisma.notification.create({
+          const savedNotification = await prisma.notification.create({
             data: {
               employeeId: recipientId,
               userId: employee.user.id,
@@ -146,6 +147,7 @@ class NotificationService {
           // Send real-time notification
           try {
             await getWebSocketInstance().broadcastNotification(recipientId, {
+              id: String(savedNotification.id),
               title: processedTitle,
               body: processedBody,
               category,
@@ -155,6 +157,23 @@ class NotificationService {
             });
           } catch (wsError) {
             console.error('❌ Failed to send real-time notification:', wsError);
+          }
+
+          // Persisted in-app notifications also need FCM delivery when the app is closed.
+          try {
+            await firebaseNotificationService.sendNotificationToUser(
+              employee.user.id, processedTitle, processedBody,
+              {
+                id: String(savedNotification.id),
+                type: actionType || category || 'GENERAL',
+                category,
+                actionId: actionId || '',
+                click_action: 'FLUTTER_NOTIFICATION_CLICK',
+              },
+              { priority: { high: true } },
+            );
+          } catch {
+            console.warn('Push delivery failed for a saved notification', { notificationId: savedNotification.id });
           }
 
           sentCount++;
