@@ -9072,9 +9072,17 @@ export const fetchUpcomingLeaves = async (
         fromDate: { lte: endOfTomorrow },
         toDate: { gte: startOfToday }
       },
-      include: {
+      select: {
+        id: true,
+        type: true,
+        fromDate: true,
+        toDate: true,
         employee: {
-          include: { office: true }
+          select: {
+            firstName: true,
+            lastName: true,
+            office: { select: { name: true } }
+          }
         }
       },
       orderBy: { fromDate: 'asc' }
@@ -9091,7 +9099,7 @@ export const fetchUpcomingLeaves = async (
     res.json({ success: true, leaves: formattedLeaves });
   } catch (error) {
     console.error('Fetch upcoming leaves error:', error);
-    res.json({ success: true, leaves: [] });
+    res.status(500).json({ success: false, message: 'Failed to fetch upcoming leaves' });
   }
 };
 
