@@ -183,9 +183,17 @@ class PayrollService {
       const dailySalary = Math.round((monthlySalary / workingDays) * 100) / 100;
 
       // Attendance Deductions (decimal-safe)
-      const absentDeduction = Math.round((attendanceData.absentDays * dailySalary) * 100) / 100;
-      const halfDayDeduction = Math.round((attendanceData.halfDays * 0.5 * dailySalary) * 100) / 100;
-      const unpaidLeaveDeduction = Math.round((attendanceData.unpaidLeaveDays * dailySalary) * 100) / 100;
+      // Any scheduled working day not covered by present, approved paid leave, or half-day is unworked
+      const paidWorkingDays = attendanceData.presentDays + (attendanceData.halfDays * 0.5) + attendanceData.paidLeaveDays;
+      const totalUnpaidWorkingDays = Math.max(0, workingDays - paidWorkingDays);
+      const halfDaysDeductionDays = attendanceData.halfDays * 0.5;
+      const unpaidLeaveDays = attendanceData.unpaidLeaveDays;
+      const computedAbsentDays = Math.max(0, Math.round((totalUnpaidWorkingDays - halfDaysDeductionDays - unpaidLeaveDays) * 100) / 100);
+      const absentDays = Math.max(attendanceData.absentDays, computedAbsentDays);
+
+      const absentDeduction = Math.round((absentDays * dailySalary) * 100) / 100;
+      const halfDayDeduction = Math.round((halfDaysDeductionDays * dailySalary) * 100) / 100;
+      const unpaidLeaveDeduction = Math.round((unpaidLeaveDays * dailySalary) * 100) / 100;
 
       // Extra Payouts for Holiday / Weekly-Off Work (default multiplier 1.0x)
       const extraHolidayPayout = Math.round((attendanceData.holidayWorkedCount * dailySalary * 1.0) * 100) / 100;
@@ -263,13 +271,37 @@ class PayrollService {
         orderBy: { approvedAt: 'asc' }
       });
 
+      // Find all finalized (PAID) payslips before this period to prevent duplicate recovery
+      const priorPaidPayslips = await prisma.payslip.findMany({
+        where: {
+          employeeId,
+          status: { in: ['Paid', 'PAID'] },
+          OR: [
+            { year: { lt: year } },
+            { year, month: { lt: month } }
+          ]
+        },
+        select: { advanceDeduction: true }
+      });
+      let priorRecoveredPool = priorPaidPayslips.reduce((sum, p) => sum + (p.advanceDeduction || 0), 0);
+
       let advanceDeduction = 0;
       for (const adv of activeAdvances) {
+        // Track unrecovered amount accounting for both explicit paidAmount and prior payslip deductions
+        const alreadyPaid = Math.max(adv.paidAmount || 0, Math.min(adv.amount, priorRecoveredPool));
+        priorRecoveredPool = Math.max(0, priorRecoveredPool - alreadyPaid);
+        const effectiveRemaining = Math.max(0, adv.amount - alreadyPaid);
+
+        if (effectiveRemaining <= 0) {
+          continue; // Already fully recovered in previous payroll runs
+        }
+
         const standardEmi = adv.monthlyEmi > 0 
           ? adv.monthlyEmi 
           : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
-        const remaining = adv.remainingAmount > 0 ? adv.remainingAmount : Math.max(0, adv.amount - (adv.paidAmount || 0));
-        advanceDeduction += Math.min(standardEmi, remaining);
+
+        const emiToDeduct = Math.min(standardEmi, effectiveRemaining);
+        advanceDeduction += emiToDeduct;
       }
       advanceDeduction = Math.round(advanceDeduction * 100) / 100;
 
@@ -474,7 +506,7 @@ class PayrollService {
       let totalAmount = 0;
 
       for (const emp of activeEmployees) {
-        // Idempotency check: Check if payslip already exists for this period
+        // Idempotency check: Only preserve finalized (PAID) records
         const existingPayslip = await prisma.payslip.findUnique({
           where: {
             employeeId_month_year: {
@@ -485,9 +517,10 @@ class PayrollService {
           }
         });
 
-        if (existingPayslip) {
+        const isPaid = existingPayslip && String(existingPayslip.status).toUpperCase() === 'PAID';
+        if (isPaid) {
           skipped++;
-          console.log(`ℹ️ [AutoPayroll] Payslip for employee #${emp.id} (${emp.employeeCode}) for ${month}/${year} already exists. Skipping.`);
+          console.log(`ℹ️ [AutoPayroll] Payslip for employee #${emp.id} (${emp.employeeCode}) for ${month}/${year} is already PAID. Skipping.`);
           continue;
         }
 
@@ -1656,12 +1689,27 @@ class PayrollService {
         },
         orderBy: { approvedAt: 'asc' }
       });
+      const priorPaidPayslips = await prisma.payslip.findMany({
+        where: {
+          employeeId: ps.employeeId,
+          status: { in: ['Paid', 'PAID'] },
+          OR: [
+            { year: { lt: ps.year } },
+            { year: ps.year, month: { lt: ps.month } }
+          ]
+        },
+        select: { advanceDeduction: true }
+      });
+      let priorRecoveredPool = priorPaidPayslips.reduce((sum, p) => sum + (p.advanceDeduction || 0), 0);
       for (const adv of activeAdvances) {
+        const alreadyPaid = Math.max(adv.paidAmount || 0, Math.min(adv.amount, priorRecoveredPool));
+        priorRecoveredPool = Math.max(0, priorRecoveredPool - alreadyPaid);
+        const effectiveRemaining = Math.max(0, adv.amount - alreadyPaid);
+        if (effectiveRemaining <= 0) continue;
         const standardEmi = adv.monthlyEmi > 0 
           ? adv.monthlyEmi 
           : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
-        const remaining = adv.remainingAmount > 0 ? adv.remainingAmount : Math.max(0, adv.amount - (adv.paidAmount || 0));
-        advanceDeduction += Math.min(standardEmi, remaining);
+        advanceDeduction += Math.min(standardEmi, effectiveRemaining);
       }
       advanceDeduction = Math.round(advanceDeduction * 100) / 100;
     }

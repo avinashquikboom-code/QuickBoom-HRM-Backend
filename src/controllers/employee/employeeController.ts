@@ -9,6 +9,7 @@ import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { getActiveApprovedLeaveForDate, cancelLeaveRequest } from '../../services/leaveCancellationService';
 import { sendHRNotification, notifyEmployee } from '../../utils/hrNotificationHelper';
 import { computeGrossSalary, isCommissionEligibleEmployee } from '../../utils/salaryGross';
+import payrollService from '../../services/payrollService';
 
 // Helper to fetch active Employee profile associated with the authenticated user
 const getEmployeeFromRequest = async (req: AuthenticatedRequest) => {
@@ -1680,15 +1681,21 @@ export const fetchEmployeeWallet = async (
       currentCommission = Math.round(monthMetrics.commission || 0);
     }
 
-    const isCurrentMonthPayslip = latestPayslip && latestPayslip.month === currentMonth && latestPayslip.year === currentYear;
+    let currentCalc = null;
+    try {
+      currentCalc = await payrollService.calculatePayroll(employee.id, currentMonth, currentYear);
+    } catch (e) {
+      console.warn('Error calculating current month payroll for wallet:', e);
+    }
 
-    const upcomingSalary = isCurrentMonthPayslip
-      ? latestPayslip.netSalary
-      : estimatedNetSalary;
+    const isCurrentMonthPayslip = Boolean(latestPayslip && latestPayslip.month === currentMonth && latestPayslip.year === currentYear);
 
-    const upcomingSalaryWithCommission = isCurrentMonthPayslip
-      ? Math.round(latestPayslip.netSalary)
-      : Math.round(estimatedNetSalary + currentCommission);
+    const currentNetSalary = currentCalc 
+      ? currentCalc.netSalary 
+      : (isCurrentMonthPayslip && latestPayslip ? latestPayslip.netSalary : estimatedNetSalary);
+
+    const upcomingSalary = currentNetSalary;
+    const upcomingSalaryWithCommission = Math.round(currentNetSalary + currentCommission);
 
     const allAdvances = await prisma.salaryAdvance.findMany({
       where: {

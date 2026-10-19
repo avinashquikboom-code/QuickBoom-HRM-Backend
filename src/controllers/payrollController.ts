@@ -849,6 +849,35 @@ export const approveAdminPayslip = async (
   }
 };
 
+async function applyAdvanceRecoveryForPaidPayslip(employeeId: number, advanceDeduction: number): Promise<void> {
+  if (!advanceDeduction || advanceDeduction <= 0) return;
+  let remainingToRecover = advanceDeduction;
+  const advances = await prisma.salaryAdvance.findMany({
+    where: {
+      wallet: { employeeId },
+      status: 'APPROVED',
+      remainingAmount: { gt: 0 }
+    },
+    orderBy: { approvedAt: 'asc' }
+  });
+  for (const adv of advances) {
+    if (remainingToRecover <= 0) break;
+    const rec = Math.min(remainingToRecover, adv.remainingAmount);
+    remainingToRecover -= rec;
+    const newRemaining = Math.max(0, Math.round((adv.remainingAmount - rec) * 100) / 100);
+    const newPaid = Math.round(((adv.paidAmount || 0) + rec) * 100) / 100;
+    const newPaidEmis = (adv.paidEmis || 0) + 1;
+    await prisma.salaryAdvance.update({
+      where: { id: adv.id },
+      data: {
+        remainingAmount: newRemaining,
+        paidAmount: newPaid,
+        paidEmis: newPaidEmis,
+      }
+    });
+  }
+}
+
 export const bulkDisbursePayroll = async (
   req: AuthenticatedRequest,
   res: Response
@@ -879,8 +908,11 @@ export const bulkDisbursePayroll = async (
       }
     });
 
-    // 1. Notify Each Affected Employee
+    // 1. Process advance recovery and notify Each Affected Employee
     for (const p of approvedPayslips) {
+      if (p.advanceDeduction && p.advanceDeduction > 0) {
+        await applyAdvanceRecoveryForPaidPayslip(p.employeeId, p.advanceDeduction);
+      }
       notifyEmployee({
         employeeId: p.employeeId,
         title: 'Salary Paid',
@@ -935,6 +967,13 @@ export const disburseAdminPayslip = async (
         errorCode: 'MISSING_REQUIRED_FIELDS'
       });
       return;
+    }
+
+    const targetPayslips = await prisma.payslip.findMany({ where: whereClause });
+    for (const p of targetPayslips) {
+      if (p.advanceDeduction && p.advanceDeduction > 0) {
+        await applyAdvanceRecoveryForPaidPayslip(p.employeeId, p.advanceDeduction);
+      }
     }
 
     const updateRes = await prisma.payslip.updateMany({
