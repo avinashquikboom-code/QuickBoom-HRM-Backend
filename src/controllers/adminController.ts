@@ -4557,7 +4557,7 @@ export const updateAdminLeaveStatus = async (
   res: Response
 ): Promise<void> => {
   const { id } = req.params;
-  const { status, reviewNote } = req.body; // e.g. "Approved" or "Rejected"
+  const { status, reviewNote, remarks } = req.body;
   
   const leaveIdInt = parseInt(id as string, 10);
   if (isNaN(leaveIdInt)) {
@@ -4565,8 +4565,20 @@ export const updateAdminLeaveStatus = async (
     return;
   }
 
+  // 1. Status validation
+  if (!status || typeof status !== 'string') {
+    res.status(400).json({ success: false, message: 'Status is required and must be a string (APPROVED, REJECTED, or CANCELLED).' });
+    return;
+  }
+
+  const targetStatus = status.trim().toUpperCase();
+  if (!['APPROVED', 'REJECTED', 'CANCELLED'].includes(targetStatus)) {
+    res.status(400).json({ success: false, message: 'Invalid status. Must be APPROVED, REJECTED, or CANCELLED.' });
+    return;
+  }
+
   try {
-    // Get leave request details before updating
+    // 2. Fetch existing leave request with employee and user relations
     const existingLeave = await prisma.leaveRequest.findUnique({
       where: { id: leaveIdInt },
       include: {
@@ -4583,6 +4595,13 @@ export const updateAdminLeaveStatus = async (
       return;
     }
 
+    // Validate employee relation exists
+    if (!existingLeave.employee) {
+      res.status(404).json({ success: false, message: 'Employee associated with this leave request was not found.' });
+      return;
+    }
+
+    // Role-based authorization for store managers
     if (req.user?.role === 'STORE_MANAGER') {
       const storeManager = await prisma.employee.findFirst({
         where: { userId: req.user.id }
@@ -4593,72 +4612,112 @@ export const updateAdminLeaveStatus = async (
       }
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: req.user!.id },
-      include: { profile: true },
-    });
-    const reviewerName = user?.profile?.fullName || 'HR Manager';
+    // Resolve reviewer identity safely
+    let reviewerName = 'HR Manager';
+    if (req.user?.id) {
+      try {
+        const reviewerUser = await prisma.user.findUnique({
+          where: { id: req.user.id },
+          include: { profile: true },
+        });
+        reviewerName = reviewerUser?.profile?.fullName || reviewerUser?.email || 'HR Manager';
+      } catch (userErr) {
+        console.warn('[updateAdminLeaveStatus] Failed to load reviewer details:', userErr);
+      }
+    }
 
-    if (status.toUpperCase() === 'CANCELLED') {
-      const updated = await cancelLeaveRequest(leaveIdInt, {
-        id: req.user!.id,
-        email: req.user?.email,
-        role: req.user?.role
-      }, reviewNote);
-      res.json({
-        success: true,
-        message: 'Leave request cancelled successfully. Date is now available for attendance.',
-        leave: updated
+    const reviewNoteText = (reviewNote || remarks || '').trim() || (targetStatus === 'APPROVED' ? 'Approved by Administrator' : targetStatus === 'REJECTED' ? 'Rejected by Administrator' : 'Cancelled by Administrator');
+
+    // 3. Handle CANCELLED status
+    if (targetStatus === 'CANCELLED') {
+      try {
+        const updated = await cancelLeaveRequest(
+          leaveIdInt,
+          {
+            id: req.user?.id || 0,
+            email: req.user?.email,
+            role: req.user?.role
+          },
+          reviewNoteText
+        );
+        res.json({
+          success: true,
+          message: 'Leave request cancelled successfully. Date is now available for attendance.',
+          leave: updated
+        });
+        return;
+      } catch (cancelErr: any) {
+        res.status(400).json({
+          success: false,
+          message: cancelErr?.message || 'Failed to cancel leave request.'
+        });
+        return;
+      }
+    }
+
+    // Guard against modifying already CANCELLED leaves
+    if (existingLeave.status === 'CANCELLED') {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot modify a leave request that has already been cancelled.'
       });
       return;
     }
 
-    const isApproved = status.toUpperCase() === 'APPROVED';
-
-    const updated = await prisma.leaveRequest.update({
-      where: { id: leaveIdInt },
-      data: {
-        status: isApproved ? 'APPROVED' : 'REJECTED',
-        reviewedBy: reviewerName,
-        reviewNote: reviewNote || 'Processed by Administrator',
-        reviewedAt: new Date(),
-      },
-      include: {
-        employee: {
-          include: {
-            user: true
-          }
-        }
-      }
-    });
-
-    if (isApproved && existingLeave.status !== 'APPROVED') {
-      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
-    } else if (!isApproved && existingLeave.status === 'APPROVED') {
-      const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, -days).catch(err => console.error('Update used leave error:', err));
+    // 4. Idempotency check: prevent duplicate deductions or processing on retries
+    if (existingLeave.status === targetStatus) {
+      res.json({
+        success: true,
+        message: `Leave request is already ${targetStatus.toLowerCase()}.`,
+        leave: existingLeave
+      });
+      return;
     }
 
-      // Auto update attendance records to LEAVE for approved dates
-      try {
+    const isApproved = targetStatus === 'APPROVED';
+    const days = Math.max(1, Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+
+    // 5. Execute database changes transactionally
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedLeave = await tx.leaveRequest.update({
+        where: { id: leaveIdInt },
+        data: {
+          status: targetStatus,
+          reviewedBy: reviewerName,
+          reviewNote: reviewNoteText,
+          reviewedAt: new Date(),
+        },
+        include: {
+          employee: {
+            include: {
+              user: true
+            }
+          }
+        }
+      });
+
+      if (isApproved && existingLeave.status !== 'APPROVED') {
+        // Deduct leave balance
+        await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days, tx);
+
+        // Auto update attendance records to LEAVE for approved dates
         const curr = new Date(existingLeave.fromDate);
         const end = new Date(existingLeave.toDate);
         while (curr <= end) {
           const dateStr = curr.toISOString().split('T')[0];
-          const existingAtt = await prisma.attendance.findFirst({
+          const existingAtt = await tx.attendance.findFirst({
             where: { employeeId: existingLeave.employeeId, date: dateStr }
           });
           if (existingAtt) {
-            await prisma.attendance.update({
+            await tx.attendance.update({
               where: { id: existingAtt.id },
               data: { status: 'LEAVE', notes: `Approved leave request #${existingLeave.id}` }
             });
           } else {
-            await prisma.attendance.create({
+            await tx.attendance.create({
               data: {
                 employeeId: existingLeave.employeeId,
-                officeId: existingLeave.employee.officeId,
+                officeId: existingLeave.employee?.officeId || null,
                 date: dateStr,
                 status: 'LEAVE',
                 notes: `Approved leave request #${existingLeave.id}`
@@ -4667,46 +4726,88 @@ export const updateAdminLeaveStatus = async (
           }
           curr.setDate(curr.getDate() + 1);
         }
-      } catch (attErr) {
-        console.error('Failed to sync attendance for approved leave:', attErr);
+      } else if (!isApproved && existingLeave.status === 'APPROVED') {
+        // Revert deducted used days if moving from APPROVED -> REJECTED
+        await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, -days, tx);
+
+        // Revert auto-created placeholder attendance records with no punch activity
+        const curr = new Date(existingLeave.fromDate);
+        const end = new Date(existingLeave.toDate);
+        while (curr <= end) {
+          const dateStr = curr.toISOString().split('T')[0];
+          const placeholderAtt = await tx.attendance.findFirst({
+            where: {
+              employeeId: existingLeave.employeeId,
+              date: dateStr,
+              checkIn: null,
+              checkOut: null
+            }
+          });
+          if (placeholderAtt && placeholderAtt.status === 'LEAVE') {
+            await tx.attendance.delete({
+              where: { id: placeholderAtt.id }
+            });
+          }
+          curr.setDate(curr.getDate() + 1);
+        }
       }
 
-    // Send notification to employee
+      return updatedLeave;
+    });
+
+    // 6. Asynchronous Side Effects: Notifications & WebSockets (isolated from response)
     const notificationTitle = isApproved ? 'Leave Request Approved' : 'Leave Request Rejected';
     const notificationBody = isApproved 
       ? `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been approved by ${reviewerName}.`
-      : `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been rejected. Reason: ${reviewNote || 'No reason provided'}`;
+      : `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been rejected. Reason: ${reviewNoteText}`;
 
-    await prisma.notification.create({
-      data: {
-        employeeId: existingLeave.employeeId,
-        userId: existingLeave.employee.userId,
-        title: notificationTitle,
-        body: notificationBody,
-        category: 'LEAVE',
-        actionId: existingLeave.id.toString(),
-        actionType: isApproved ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
-        isRead: false,
-      },
-    });
+    // Notify employee safely via helper (handles missing user account, FCM push & in-app gracefully)
+    notifyEmployee({
+      employeeId: existingLeave.employeeId,
+      userId: existingLeave.employee?.userId || undefined,
+      title: notificationTitle,
+      message: notificationBody,
+      category: 'LEAVE',
+      actionType: isApproved ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
+      actionId: existingLeave.id.toString(),
+    }).catch(err => console.error('[notifyEmployee] Leave review notice error:', err));
 
+    // Notify HR / Admins
     sendHRNotification({
-      title: isApproved ? 'Leave Request Approved' : 'Leave Request Rejected',
-      message: `${existingLeave.employee.firstName} ${existingLeave.employee.lastName}'s leave request (${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()}) was ${status.toLowerCase()} by ${reviewerName}.`,
+      title: notificationTitle,
+      message: `${existingLeave.employee?.firstName || 'Employee'} ${existingLeave.employee?.lastName || ''}'s leave request (${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()}) was ${targetStatus.toLowerCase()} by ${reviewerName}.`,
       category: 'LEAVE',
       actionType: isApproved ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
       actionId: existingLeave.id.toString(),
       employeeId: existingLeave.employeeId,
-    }).catch(err => console.error('[HR Notification] Leave review notice:', err));
+    }).catch(err => console.error('[HR Notification] Leave review notice error:', err));
 
-    console.log(`✅ Admin Panel: Leave request ${existingLeave.id} ${status.toLowerCase()} and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
+    // WebSocket real-time update
+    try {
+      const { getWebSocketInstance } = require('../utils/websocketSingleton');
+      const ws = getWebSocketInstance();
+      if (ws) {
+        const io = ws.getServer();
+        if (io) {
+          io.emit('leave_status_updated', {
+            leaveId: updated.id,
+            employeeId: updated.employeeId,
+            status: updated.status,
+          });
+        }
+      }
+    } catch (wsErr) {
+      // Non-fatal
+    }
+
+    console.log(`✅ Admin Panel: Leave request ${existingLeave.id} ${targetStatus.toLowerCase()} processed for employee ${existingLeave.employee?.firstName || ''} ${existingLeave.employee?.lastName || ''}`);
 
     res.json({
       success: true,
-      message: `Leave request ${status.toLowerCase()} successfully!`,
+      message: `Leave request ${targetStatus.toLowerCase()} successfully!`,
       leave: updated,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Update leave status error:', error);
     res.status(500).json({ success: false, message: 'Failed to update leave request.' });
   }

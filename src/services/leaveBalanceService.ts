@@ -1,5 +1,5 @@
 import { prisma } from '../utils/db';
-import { Role } from '@prisma/client';
+import { Role, Prisma } from '@prisma/client';
 
 export interface LeaveAllocationData {
   employeeId: number;
@@ -23,8 +23,9 @@ class LeaveBalanceService {
   /**
    * Create or update leave balance for an employee
    */
-  async createOrUpdateLeaveBalance(data: LeaveAllocationData): Promise<any> {
+  async createOrUpdateLeaveBalance(data: LeaveAllocationData, tx?: Prisma.TransactionClient): Promise<any> {
     try {
+      const client = (tx as any) || prisma;
       const {
         employeeId,
         departmentId,
@@ -49,7 +50,7 @@ class LeaveBalanceService {
         }
       }
 
-      const leaveBalance = await prisma.leaveBalance.upsert({
+      const leaveBalance = await client.leaveBalance.upsert({
         where: { employeeId },
         update: {
           fiscalYear,
@@ -182,11 +183,12 @@ class LeaveBalanceService {
   /**
    * Update used leave count when a leave is approved or reverted
    */
-  async updateUsedLeave(employeeId: number, leaveType: string, days: number): Promise<void> {
+  async updateUsedLeave(employeeId: number, leaveType: string, days: number, tx?: Prisma.TransactionClient): Promise<void> {
     try {
+      const client = (tx as any) || prisma;
       const fiscalYear = new Date().getFullYear().toString();
       
-      let leaveBalance = await prisma.leaveBalance.findFirst({
+      let leaveBalance = await client.leaveBalance.findFirst({
         where: {
           employeeId,
           fiscalYear
@@ -195,11 +197,15 @@ class LeaveBalanceService {
 
       if (!leaveBalance) {
         // Create balance if not found
-        leaveBalance = await this.createOrUpdateLeaveBalance({ employeeId, fiscalYear });
+        leaveBalance = await this.createOrUpdateLeaveBalance({ employeeId, fiscalYear }, tx);
       }
       if (!leaveBalance) return;
 
       const typeUpper = (leaveType || '').toUpperCase().trim();
+      if (['WEEK_OFF', 'WEEKOFF'].includes(typeUpper)) {
+        return;
+      }
+
       const updateData: any = {};
 
       if (['CASUAL', 'CASUAL LEAVE', 'CL', 'CASUAL_LEAVE'].includes(typeUpper)) {
@@ -212,7 +218,7 @@ class LeaveBalanceService {
         updateData.casualUsed = Math.max(0, leaveBalance.casualUsed + days);
       }
 
-      const updated = await prisma.leaveBalance.update({
+      const updated = await client.leaveBalance.update({
         where: { id: leaveBalance.id },
         data: updateData
       });
