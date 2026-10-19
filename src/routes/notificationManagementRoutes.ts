@@ -2,7 +2,10 @@ import express, { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { authenticateToken, requireRole } from '../middlewares/authMiddleware';
 
+import campaignRoutes from './campaignRoutes';
+
 const router = express.Router();
+router.use('/campaigns', campaignRoutes);
 
 // Middleware to ensure only authorized roles can access management endpoints
 const managementAuth = [authenticateToken, requireRole(['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN'])];

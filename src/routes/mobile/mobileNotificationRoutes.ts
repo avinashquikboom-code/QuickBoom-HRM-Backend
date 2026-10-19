@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import {
+  markNotificationAsUnread,
   saveFCMToken,
   removeFCMToken,
   fetchMyNotifications,
@@ -87,6 +88,9 @@ router.get('/:notificationId', getNotificationById);
  *       500:
  *         description: Server error
  */
+router.put('/:notificationId/unread', markNotificationAsUnread);
+router.patch('/:notificationId/unread', markNotificationAsUnread);
+
 router.put('/:notificationId/read', markNotificationAsRead);
 router.patch('/:notificationId/read', markNotificationAsRead);
 

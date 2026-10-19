@@ -283,6 +283,8 @@ export class FirebaseNotificationService {
     if (tokens.length === 0) return;
 
     try {
+      // Remove stale device tokens too, so the fallback device table cannot resurrect them.
+      await prisma.device.deleteMany({ where: { fcmToken: { in: tokens } } });
       // Deactivate invalid tokens
       await prisma.fCMToken.updateMany({
         where: {

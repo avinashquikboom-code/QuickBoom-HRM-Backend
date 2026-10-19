@@ -62,9 +62,18 @@ export async function ensureDatabaseConstraints(): Promise<void> {
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "newAmount" DOUBLE PRECISION DEFAULT 0;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "oldCommission" DOUBLE PRECISION DEFAULT 0;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "newCommission" DOUBLE PRECISION DEFAULT 0;
-      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "commissionDifference" DOUBLE PRECISION DEFAULT 0;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "productBreakdown" JSONB;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "eventType" TEXT DEFAULT 'INVOICE_CREATED';
+
+      -- Ensure Employee dateOfBirth and Notification columns for Campaign system
+      ALTER TABLE "Employee" ADD COLUMN IF NOT EXISTS "dateOfBirth" TIMESTAMP(3);
+      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT;
+      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "actionUrl" TEXT;
+      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "campaignId" TEXT;
+      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "deliveryStatus" TEXT NOT NULL DEFAULT 'SENT';
+      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "failureReason" TEXT;
+      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "fcmMessageId" TEXT;
+      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "readAt" TIMESTAMP(3);
     `);
 
     // 2. Ensure unique constraints exist for idempotency and relations

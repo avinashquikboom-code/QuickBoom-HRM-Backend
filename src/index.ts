@@ -147,6 +147,7 @@ import commissionReportController from './controllers/commissionReportController
 import dashboardController from './controllers/dashboardController';
 
 import activityLogsRoutes from './routes/activityLogsRoutes';
+import campaignRoutes from './routes/campaignRoutes';
 
 // Routes
 app.use('/api', homeRoutes);
@@ -156,6 +157,12 @@ app.use('/api/admin/activity-logs', activityLogsRoutes);
 app.use('/api/admin/commission', commissionReportController);
 app.use('/api/admin/dashboard', dashboardController);
 app.use('/api/admin/notification-management', notificationManagementRoutes);
+app.use('/api/admin/notification-management/campaigns', campaignRoutes);
+app.use('/api/v1/admin/notification-management/campaigns', campaignRoutes);
+app.use('/api/admin/campaigns', campaignRoutes);
+app.use('/api/v1/admin/campaigns', campaignRoutes);
+app.use('/api/admin/notifications/campaigns', campaignRoutes);
+app.use('/api/v1/admin/notifications/campaigns', campaignRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
@@ -440,7 +447,10 @@ import { initFeatureExpiryCron } from './scripts/featureExpiryCron';
 import { initPayrollCron } from './services/payrollCronService';
 import { initAutoPunchOutCron } from './services/autoPunchOutService';
 
+import { initCampaignCron } from './services/campaignScheduler';
+
 // Initialize cron jobs
+initCampaignCron();
 initFeatureExpiryCron();
 initPayrollCron();
 initAutoPunchOutCron();
