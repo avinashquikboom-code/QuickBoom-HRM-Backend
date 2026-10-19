@@ -439,11 +439,15 @@ async function initRolePermissions() {
 import { initFeatureExpiryCron } from './scripts/featureExpiryCron';
 import { initPayrollCron } from './services/payrollCronService';
 import { initAutoPunchOutCron } from './services/autoPunchOutService';
+import { initNotificationRuleCron } from './services/notificationRuleScheduler';
+import { ensureDefaultNotificationRules } from './routes/notificationManagementRoutes';
 
 // Initialize cron jobs
 initFeatureExpiryCron();
 initPayrollCron();
 initAutoPunchOutCron();
+initNotificationRuleCron();
+ensureDefaultNotificationRules().catch((err: unknown) => console.warn('⚠️ Default rules init notice:', err));
 
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);
