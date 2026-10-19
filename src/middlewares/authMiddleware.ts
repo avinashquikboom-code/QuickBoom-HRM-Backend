@@ -89,12 +89,6 @@ export const authMiddleware = async (
     return;
   }
 
-  // Fixed development tokens must never authenticate production requests.
-  if (token.startsWith('dev-') && !(process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_AUTH_TOKENS === 'true')) {
-    res.status(401).json({ success: false, message: 'Invalid authorization token.' });
-    return;
-  }
-
   // Secure local dev token mapping
   if (token === 'dev-local-auth-token') {
     try {

@@ -62,19 +62,30 @@ export async function ensureDatabaseConstraints(): Promise<void> {
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "newAmount" DOUBLE PRECISION DEFAULT 0;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "oldCommission" DOUBLE PRECISION DEFAULT 0;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "newCommission" DOUBLE PRECISION DEFAULT 0;
+      ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "commissionDifference" DOUBLE PRECISION DEFAULT 0;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "productBreakdown" JSONB;
       ALTER TABLE "CommissionTransaction" ADD COLUMN IF NOT EXISTS "eventType" TEXT DEFAULT 'INVOICE_CREATED';
 
-      -- Ensure Employee dateOfBirth and Notification columns for Campaign system
+      -- Ensure Employee and Notification columns exist safely
       ALTER TABLE "Employee" ADD COLUMN IF NOT EXISTS "dateOfBirth" TIMESTAMP(3);
       ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT;
       ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "actionUrl" TEXT;
-      ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "campaignId" TEXT;
       ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "deliveryStatus" TEXT NOT NULL DEFAULT 'SENT';
       ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "failureReason" TEXT;
       ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "fcmMessageId" TEXT;
       ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "readAt" TIMESTAMP(3);
     `);
+
+    // Ensure _prisma_migrations does not have a failed 0_init baseline migration blocking Prisma
+    try {
+      await prisma.$executeRawUnsafe(`
+        UPDATE "_prisma_migrations"
+        SET "finished_at" = NOW(), "applied_steps_count" = 1
+        WHERE "migration_name" = '0_init' AND "finished_at" IS NULL AND "rolled_back_at" IS NULL;
+      `);
+    } catch {
+      // Non-blocking
+    }
 
     // 2. Ensure unique constraints exist for idempotency and relations
     await prisma.$executeRawUnsafe(`

@@ -21,8 +21,6 @@ model User {
   assignedTasks  Task[]          @relation("AssignedByTasks")
   userPermission UserPermission?
   notifications  Notification[]
-  campaigns      Campaign[] @relation("CampaignCreator")
-  campaignRecipients CampaignRecipient[]
   fcmTokens      FCMToken[]
   sessions       UserSession[]
   devices        Device[]
@@ -102,8 +100,6 @@ model Employee {
   lastName         String
   designation      String?
   mobileNumber     String?
-  dateOfBirth      DateTime?
-  campaignRecipients CampaignRecipient[]
   joiningDate      DateTime?
   reportingManagerId Int?
   designationId    Int?
@@ -337,8 +333,6 @@ model ShiftAssignment {
 }
 
 model Notification {
-  campaignId     String?
-  campaign       Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   id             Int       @id @default(autoincrement())
   employeeId     Int?
   userId         Int?
@@ -359,10 +353,8 @@ model Notification {
   employee       Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   user           User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([campaignId, employeeId])
   @@index([employeeId])
   @@index([userId])
-  @@index([campaignId])
   @@index([isRead])
   @@index([createdAt])
 }
@@ -1466,67 +1458,4 @@ model NotificationTemplate {
   status     String   @default("ACTIVE")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-}
-
-model Campaign {
-  id               String               @id @default(uuid())
-  title            String
-  message          String
-  description      String?
-  notificationType String               @default("GENERAL_ANNOUNCEMENT")
-  imageUrl         String?
-  actionUrl        String?
-  audienceType     String               @default("ALL_EMPLOYEES")
-  audienceCriteria Json?
-  status           String               @default("DRAFT")
-  scheduledAt      DateTime?
-  sentAt           DateTime?
-  totalRecipients  Int                  @default(0)
-  sentCount        Int                  @default(0)
-  failedCount      Int                  @default(0)
-  readCount        Int                  @default(0)
-  createdBy        String?
-  createdById      Int?
-  companyId        String?
-  dedupeKey        String?              @unique
-  lockedAt         DateTime?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-
-  creator          User?                @relation("CampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  recipients       CampaignRecipient[]
-  notifications    Notification[]
-
-  @@index([companyId])
-  @@index([status])
-  @@index([scheduledAt])
-  @@index([createdAt])
-  @@index([createdById])
-}
-
-model CampaignRecipient {
-  id             String    @id @default(uuid())
-  campaignId     String
-  employeeId     Int
-  userId         Int?
-  deliveryStatus String    @default("PENDING")
-  isRead         Boolean   @default(false)
-  readAt         DateTime?
-  failureReason  String?
-  fcmMessageId   String?
-  tokenStates    Json?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  campaign       Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  employee       Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  user           User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@unique([campaignId, employeeId])
-  @@index([campaignId])
-  @@index([employeeId])
-  @@index([userId])
-  @@index([deliveryStatus])
-  @@index([isRead])
-  @@index([createdAt])
 }

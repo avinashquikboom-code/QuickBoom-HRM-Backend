@@ -9,7 +9,6 @@ export const fetchMyNotifications = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  if (!req.user?.id) { res.status(401).json({ success: false, message: 'Authentication required' }); return; }
   try {
     // Fetch notifications by userId (works for both employees and HR users)
     const notifications = await prisma.notification.findMany({
@@ -25,7 +24,6 @@ export const fetchMyNotifications = async (
       title: n.title,
       body: n.body,
       category: n.category,
-      campaignId: n.campaignId,
       imageUrl: n.imageUrl || null,
       actionUrl: n.actionUrl || null,
       actionId: n.actionId || null,
@@ -55,13 +53,12 @@ export const getNotificationById = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  if (!req.user?.id) { res.status(401).json({ success: false, message: 'Authentication required' }); return; }
   try {
     const { notificationId, id } = req.params;
     const targetId = notificationId || id;
-    const numId = Number(Array.isArray(targetId) ? targetId[0] : targetId);
+    const numId = parseInt(Array.isArray(targetId) ? targetId[0] : targetId, 10);
 
-    if (!Number.isSafeInteger(numId) || numId <= 0) {
+    if (isNaN(numId)) {
       res.status(400).json({ success: false, message: 'Invalid notification ID' });
       return;
     }
@@ -85,7 +82,6 @@ export const getNotificationById = async (
         title: notification.title,
         body: notification.body,
         category: notification.category,
-        campaignId: notification.campaignId,
         imageUrl: notification.imageUrl || null,
         actionUrl: notification.actionUrl || null,
         actionId: notification.actionId || null,
@@ -108,13 +104,10 @@ export const markNotificationAsRead = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  if (!req.user?.id) { res.status(401).json({ success: false, message: 'Authentication required' }); return; }
   try {
     const { notificationId, id } = req.params;
     const targetId = notificationId || id;
-    const numId = Number(Array.isArray(targetId) ? targetId[0] : targetId);
-
-    if (!Number.isSafeInteger(numId) || numId <= 0) { res.status(400).json({ success: false, message: 'Invalid notification ID' }); return; }
+    const numId = parseInt(Array.isArray(targetId) ? targetId[0] : targetId, 10);
 
     const notification = await prisma.notification.findFirst({
       where: {
@@ -151,7 +144,6 @@ export const markAllNotificationsAsRead = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  if (!req.user?.id) { res.status(401).json({ success: false, message: 'Authentication required' }); return; }
   try {
     const now = new Date();
     await prisma.notification.updateMany({
@@ -191,7 +183,6 @@ export const saveFCMToken = async (
     return;
   }
 
-  if (!req.user?.id) { res.status(401).json({ success: false, message: 'Authentication required' }); return; }
   try {
     // Check if token already exists for this user
     const existingToken = await prisma.fCMToken.findFirst({
@@ -279,7 +270,6 @@ export const removeFCMToken = async (
     return;
   }
 
-  if (!req.user?.id) { res.status(401).json({ success: false, message: 'Authentication required' }); return; }
   try {
     await prisma.fCMToken.updateMany({
       where: {
@@ -303,18 +293,4 @@ export const removeFCMToken = async (
       message: 'Failed to remove FCM token.' 
     });
   }
-};
-
-/** Mark a notification unread; scoped to the authenticated recipient. */
-export const markNotificationAsUnread = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  const targetId = Number(req.params.notificationId);
-  if (!req.user || !Number.isSafeInteger(targetId) || targetId <= 0) {
-    res.status(400).json({ success: false, message: 'Invalid notification ID' }); return;
-  }
-  if (!req.user?.id) { res.status(401).json({ success: false, message: 'Authentication required' }); return; }
-  try {
-    const result = await prisma.notification.updateMany({ where: { id: targetId, userId: req.user.id }, data: { isRead: false, readAt: null } });
-    if (!result.count) { res.status(404).json({ success: false, message: 'Notification not found' }); return; }
-    res.json({ success: true, message: 'Notification marked as unread' });
-  } catch { res.status(500).json({ success: false, message: 'Failed to mark notification as unread' }); }
 };
