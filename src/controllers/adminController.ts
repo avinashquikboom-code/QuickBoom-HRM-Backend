@@ -478,6 +478,14 @@ export const fetchEmployees = async (
       ];
     }
 
+    // Match the individual notification endpoint without replacing search or office scope.
+    if (req.query.notificationEligible === 'true') {
+      whereClause.AND = [
+        { status: { equals: 'active', mode: 'insensitive' } },
+        { OR: [{ userId: null }, { user: { isActive: true } }] },
+      ];
+    }
+
     const [employees, total] = await Promise.all([
       prisma.employee.findMany({
         where: whereClause,

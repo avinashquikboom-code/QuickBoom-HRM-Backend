@@ -1,17 +1,19 @@
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 require('ts-node/register/transpile-only');
+let missingEmployee = false;
 let records = [], calls = [], queries = [], outcome = { responses: [{ success: true, messageId: 'mock-id' }], successCount: 1, failureCount: 0 };
 const fake = {
   notification: { create: async ({data}) => { const row = { id: records.length+1,...data }; records.push(row); return row; }, update: async ({where,data}) => Object.assign(records.find(n=>n.id===where.id),data) },
-  employee: { findFirst: async q => { queries.push(q); return { id: 10, userId: 100 }; }, findMany: async q => { queries.push(q); return [{id:10,userId:100},{id:11,userId:101}]; } },
+  employee: { findFirst: async q => { queries.push(q); return missingEmployee ? null : { id: 10, userId: 100 }; }, findMany: async q => { queries.push(q); return [{id:10,userId:100},{id:11,userId:101}]; }, count: async()=>2 },
   user: { findMany: async q => { queries.push(q); return [{id:100,employee:{id:10}}]; } },
   announcement: { create: async ({data}) => ({id:5,...data}) },
 };
 const sender = { sendNotificationToUser: async (...args) => { calls.push(args); if (outcome instanceof Error) throw outcome; return outcome; } };
 const load = Module._load;
 Module._load = function(request,parent,isMain){
-  if (/\/utils\/db$/.test(request)) return { prisma:fake };
+  if (/protectedAccounts$/.test(request)) return { ...load.call(this,request,parent,isMain), ensureSuperAdminEmployee: async()=>{} };
+ if (/\/utils\/db$/.test(request)) return { prisma:fake };
   if (/(?:^|\/)firebaseNotificationService$/.test(request)) return {firebaseNotificationService:sender};
   return load.call(this,request,parent,isMain);
 };
@@ -35,5 +37,7 @@ async function test(name,fn){records=[];calls=[];queries=[];await fn();passed++;
  await test('role targets resolved users rather than a second unrelated recipient query',async()=>{let r=res();await admin.sendNotificationToRole({body:{role:'EMPLOYEE',...content}},r);assert.equal(r.statusCode,200);assert.deepEqual(calls.map(c=>c[0]),[100]);assert.equal(records[0].employeeId,10);});
  await test('broadcast targets all eligible resolved employees including non-EMPLOYEE roles',async()=>{let r=res();await hr.broadcastAnnouncement({user:{email:'test@example.test'},body:content},r);assert.equal(r.statusCode,201);assert.deepEqual(calls.map(c=>c[0]),[100,101]);assert.equal(records[0].actionType,'ANNOUNCEMENT');});
  await test('invalid role and employee IDs are rejected before persistence',async()=>{let r=res();await admin.sendNotificationToRole({body:{role:'INVALID',...content}},r);assert.equal(r.statusCode,400);r=res();await hr.sendNotification({body:{employeeId:'10bad',...content}},r);assert.equal(r.statusCode,400);assert.equal(records.length,0);});
+ await test('missing or newly inactive employee is rejected before delivery',async()=>{missingEmployee=true;try{const r=res();await hr.sendNotification({body:{employeeId:10,...content}},r);assert.equal(r.statusCode,404);assert.equal(records.length,0);assert.equal(calls.length,0);assert.deepEqual(queries[0].where,{id:10,status:{equals:'active',mode:'insensitive'},OR:[{userId:null},{user:{isActive:true}}]});}finally{missingEmployee=false;}});
+ await test('eligible employee list keeps search and office scope and returns canonical IDs',async()=>{const r=res();await admin.fetchEmployees({user:{role:'PLATFORM_ADMIN'},query:{notificationEligible:'true',search:'086',officeId:'3',page:'2',limit:'50'}},r);assert.equal(r.statusCode,200);assert.equal(r.body.employees[0].id,10);const query=queries[0];assert.equal(query.where.officeId,3);assert(query.where.OR.some(filter=>filter.employeeCode?.contains==='086'));assert.deepEqual(query.where.AND,[{status:{equals:'active',mode:'insensitive'}},{OR:[{userId:null},{user:{isActive:true}}]}]);assert.equal(query.skip,50);assert.equal(query.take,50);});
  console.log(`${passed} push flow checks passed. FCM was mocked; no real pushes or database writes occurred.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
