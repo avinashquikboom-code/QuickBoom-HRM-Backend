@@ -1,23 +1,74 @@
-// Read-only CLI: node dist/scripts/notificationPushDiagnostics.js EMPLOYEE_ID
+// Read-only: node dist/scripts/notificationPushDiagnostics.js --employee-code 030
+// Legacy integer employee ID usage is also supported. Never sends a message.
+import { createHash } from 'crypto';
 import { prisma } from '../utils/db';
-async function main() {
-  const id = Number(process.argv[2]);
-  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Supply the test employee integer ID');
-  const employee = await prisma.employee.findUnique({ where: { id }, select: { id: true, status: true, userId: true, user: { select: { isActive: true } } } });
-  if (!employee) throw new Error('Employee not found');
-  const tokens = employee.userId ? await prisma.fCMToken.findMany({ where: { userId: employee.userId, isActive: true }, select: { token: true } }) : [];
-  const devices = employee.userId ? await prisma.device.findMany({ where: { userId: employee.userId }, select: { fcmToken: true } }) : [];
-  console.info('[PushDiagnostics]', {
-    employeeId: employee.id, employeeActive: employee.status.toLowerCase() === 'active', accountActive: employee.user?.isActive === true,
-    registeredFcmRows: tokens.length, registeredDeviceRows: devices.length,
-    uniqueTokenCount: new Set([...tokens.map(t => t.token), ...devices.map(d => d.fcmToken)].filter(t => t.trim())).size,
-    firebaseProjectId: process.env.FIREBASE_PROJECT_ID || null,
-    clientEmailConfigured: !!process.env.FIREBASE_CLIENT_EMAIL,
-    privateKeyConfigured: !!process.env.FIREBASE_PRIVATE_KEY,
-    expectedMobileProjectId: 'quickboom-hrm',
+import { getMessaging } from '../config/firebase';
+
+const safeCode = (value: unknown): string | null =>
+  typeof value === 'string' && /^[a-zA-Z0-9/_-]+$/.test(value) ? value : null;
+
+export async function diagnosePush(args: string[]) {
+  const byCode = args[0] === '--employee-code';
+  const value = byCode ? args[1] : args[0];
+  const id = Number(value);
+  if (!value || (byCode ? args.length !== 2 : args.length !== 1 || !Number.isSafeInteger(id) || id <= 0)) {
+    throw Object.assign(new Error('Supply --employee-code CODE or an integer employee ID'), { code: 'diagnostics/invalid-target' });
+  }
+  const employee = await prisma.employee.findUnique({
+    where: byCode ? { employeeCode: value } : { id },
+    select: { id: true, employeeCode: true, status: true, userId: true, user: { select: { isActive: true } } },
   });
+  if (!employee) throw Object.assign(new Error('Employee not found'), { code: 'diagnostics/employee-not-found' });
+  const [tokens, devices, history] = await Promise.all([
+    employee.userId == null ? [] : prisma.fCMToken.findMany({ where: { userId: employee.userId }, select: { token: true, isActive: true, platform: true, updatedAt: true } }),
+    employee.userId == null ? [] : prisma.device.findMany({ where: { userId: employee.userId }, select: { fcmToken: true, platform: true, updatedAt: true } }),
+    prisma.notification.findMany({
+      where: { OR: [{ employeeId: employee.id }, ...(employee.userId == null ? [] : [{ userId: employee.userId }])] },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 10,
+      select: { id: true, createdAt: true, deliveryStatus: true, failureReason: true, fcmMessageId: true },
+    }),
+  ]);
+  let messagingInitialized = false;
+  let initializationErrorCode: string | null = null;
+  try { getMessaging(); messagingInitialized = true; }
+  catch (error) { initializationErrorCode = safeCode((error as { code?: unknown })?.code) || 'diagnostics/initialization-failed'; }
+  const describeToken = (token: string) => ({
+    fingerprint: createHash('sha256').update(token).digest('hex').slice(0, 16),
+    length: token.length, empty: !token.trim(), surroundingWhitespace: token !== token.trim(),
+  });
+  return {
+    employeeId: employee.id, employeeCode: employee.employeeCode, userId: employee.userId,
+    employeeActive: employee.status.toLowerCase() === 'active', accountActive: employee.user?.isActive ?? null,
+    firebase: {
+      configuredProjectId: process.env.FIREBASE_PROJECT_ID || null,
+      clientEmailConfigured: !!process.env.FIREBASE_CLIENT_EMAIL,
+      privateKeyConfigured: !!process.env.FIREBASE_PRIVATE_KEY,
+      applicationCredentialsPathConfigured: !!process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      expectedMobileProjectId: 'quickboom-hrm',
+      projectMatchesMobile: process.env.FIREBASE_PROJECT_ID === 'quickboom-hrm',
+      messagingInitialized, initializationErrorCode,
+      // SDK initialization does not make an authenticated Firebase request.
+      firebaseApiAccessVerified: false,
+    },
+    registrations: {
+      fcm: tokens.map(({ token, ...metadata }) => ({ ...metadata, ...describeToken(token) })),
+      devices: devices.map(({ fcmToken, ...metadata }) => ({ ...metadata, ...describeToken(fcmToken) })),
+      uniqueActiveTokens: new Set([...tokens.filter(t => t.isActive).map(t => t.token), ...devices.map(d => d.fcmToken)].filter(t => t.trim())).size,
+    },
+    recentAttempts: history.map(({ failureReason, fcmMessageId, ...attempt }) => ({
+      ...attempt,
+      errorCodes: failureReason ? failureReason.split(',').map(code => safeCode(code.trim()) || 'diagnostics/unstructured-error-omitted') : [],
+      fcmMessageId,
+      deviceReceiptVerified: false,
+    })),
+  };
 }
-main().then(async () => { await prisma.$disconnect(); process.exit(0); }).catch(async (error) => {
-  console.error('[PushDiagnostics] Failed', { code: error?.code, name: error?.name });
-  await prisma.$disconnect(); process.exit(1);
-});
+
+if (require.main === module) {
+  diagnosePush(process.argv.slice(2)).then(result => {
+    console.info('[PushDiagnostics]', JSON.stringify(result, null, 2));
+  }).catch(error => {
+    console.error('[PushDiagnostics] Failed', { code: safeCode(error?.code) || 'diagnostics/failed' });
+    process.exitCode = 1;
+  }).finally(async () => { await prisma.$disconnect(); });
+}
