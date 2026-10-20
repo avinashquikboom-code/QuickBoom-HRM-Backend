@@ -45,6 +45,7 @@ export function computeGrossSalary(c: SalaryGrossComponents): number {
 export function resolveApplicableGross(c: SalaryGrossComponents & {
   extraHolidayPayout?: number | null;
   extraWeeklyOffPayout?: number | null;
+  extraAttendancePayout?: number | null;
   storedGross?: number | null;
 }): number {
   const structure = computeGrossSalary(c);
@@ -92,6 +93,7 @@ export type PayrollSettlement = {
  */
 export function computePayrollSettlement(input: {
   baseGrossEarnings: number;
+  extraAttendancePay?: number | null;
   holidayWeeklyOffPay?: number | null;
   overtime?: number | null;
   periodBonus?: number | null;
@@ -102,7 +104,7 @@ export function computePayrollSettlement(input: {
   const baseGrossEarnings = money(input.baseGrossEarnings);
   const holidayWeeklyOffPay = money(input.holidayWeeklyOffPay);
   const additionalEarnings = money(
-    holidayWeeklyOffPay + n(input.overtime) + n(input.periodBonus)
+    holidayWeeklyOffPay + n(input.extraAttendancePay) + n(input.overtime) + n(input.periodBonus)
   );
   const totalEarnings = money(baseGrossEarnings + additionalEarnings);
   const totalDeductions = normalizeDeduction(input.totalDeductions);
@@ -141,6 +143,7 @@ export function buildPayslipEarningLines(input: {
   travelMedicalAllowance?: number | null;
   extraHolidayPayout?: number | null;
   extraWeeklyOffPayout?: number | null;
+  extraAttendancePayout?: number | null;
 }): { lines: PayslipEarningLine[]; extraPayout: number; displayedGrossEarnings: number } {
   const lines: PayslipEarningLine[] = [];
   const push = (name: string, amount: number | null | undefined, always = false) => {
@@ -163,6 +166,7 @@ export function buildPayslipEarningLines(input: {
   if (extraPayout > 0) {
     push('Holiday / Weekly Off Payout', extraPayout);
   }
+  push('Approved Extra Attendance Pay', input.extraAttendancePayout);
   const displayedGrossEarnings = money(lines.reduce((sum, line) => sum + line.amount, 0));
   return { lines, extraPayout, displayedGrossEarnings };
 }
@@ -178,13 +182,15 @@ export function reconcileOfficialPayslipDisplay(input: {
   travelMedicalAllowance?: number | null;
   extraHolidayPayout?: number | null;
   extraWeeklyOffPayout?: number | null;
+  extraAttendancePayout?: number | null;
   totalDeductions?: number | null;
   reimbursements?: number | null;
   commissionEarned?: number | null;
 }) {
   const breakdown = buildPayslipEarningLines(input);
   const settlement = computePayrollSettlement({
-    baseGrossEarnings: money(breakdown.displayedGrossEarnings - breakdown.extraPayout),
+    baseGrossEarnings: money(breakdown.displayedGrossEarnings - breakdown.extraPayout - n(input.extraAttendancePayout)),
+    extraAttendancePay: input.extraAttendancePayout,
     holidayWeeklyOffPay: breakdown.extraPayout,
     totalDeductions: input.totalDeductions,
     reimbursements: input.reimbursements,

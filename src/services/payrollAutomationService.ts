@@ -1,3 +1,4 @@
+import { lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { prisma } from '../utils/db';
 
 const ones = [
@@ -33,6 +34,8 @@ export class PayrollAutomationService {
     year: number,
     status: string = 'Pending Approval'
   ) {
+    const existing = await prisma.payslip.findUnique({ where: { employeeId_month_year: { employeeId, month, year } } });
+    if (existing && lockedPayslip(existing.status)) return existing;
     const employee = await prisma.employee.findUnique({
       where: { id: employeeId },
       include: {
@@ -79,6 +82,8 @@ export class PayrollAutomationService {
         weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
         extraHolidayPayout: calculation.extraHolidayPayout,
         extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+        extraAttendanceDays: calculation.extraAttendanceDays || 0,
+        extraAttendancePayout: calculation.extraAttendancePayout || 0,
         dailySalary: calculation.dailySalary,
         workingDays: calculation.workingDays,
         totalCalendarDays: calculation.totalCalendarDays,
@@ -114,6 +119,8 @@ export class PayrollAutomationService {
         weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
         extraHolidayPayout: calculation.extraHolidayPayout,
         extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+        extraAttendanceDays: calculation.extraAttendanceDays || 0,
+        extraAttendancePayout: calculation.extraAttendancePayout || 0,
         dailySalary: calculation.dailySalary,
         workingDays: calculation.workingDays,
         totalCalendarDays: calculation.totalCalendarDays,

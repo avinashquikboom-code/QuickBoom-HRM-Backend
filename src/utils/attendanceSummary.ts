@@ -39,11 +39,12 @@ export type AttendanceClassificationInput = {
 };
 
 export type AttendanceClassification = {
+  payableDayRecords?: Array<{ date: string; units: number; worked: boolean; nonWorkingDay: boolean }>;
   periodStart: string;
   periodEnd: string;
   joiningYmd: string | null;
   totalCalendarDays: number;
-  /** Scheduled working days in the whole month; payroll divides gross by this. */
+  /** Scheduled working days in the whole month; salary divisor is separately fixed at 30. */
   monthWorkingDays: number;
   /** Scheduled working days inside the employment window (on/after joining). */
   scheduledWorkingDays: number;
@@ -75,9 +76,9 @@ export type AttendanceSummary = {
   periodStart: string;
   periodEnd: string;
   totalCalendarDays: number;
-  /** Total scheduled working days in the entire month (divisor). */
+  /** Total scheduled working days in the entire month (attendance schedule). */
   totalScheduledWorkingDays: number;
-  /** Scheduled working days in whole month; payroll divides gross by this. */
+  /** Scheduled working days in whole month; salary divisor is separately fixed at 30. */
   monthWorkingDays: number;
   /** Scheduled working days inside employment window (on/after joining). */
   totalWorkingDays: number;
@@ -276,6 +277,7 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
   const joiningYmd = input.joiningYmd || null;
 
   const result: AttendanceClassification = {
+    payableDayRecords: [],
     periodStart,
     periodEnd,
     joiningYmd,
@@ -351,11 +353,13 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
     result.overtimeMinutes += overtimeMinutesForDay(att, shiftMinutes);
 
     if (isHoliday) {
+      result.payableDayRecords!.push({ date: dateStr, units: 1, worked: isPresent || status === 'HOLIDAY_WORKED' || punched, nonWorkingDay: true });
       if (isPresent || status === 'HOLIDAY_WORKED' || punched) result.holidayWorkedCount++;
       else result.holidayCount++;
       continue;
     }
     if (isWeeklyOff) {
+      result.payableDayRecords!.push({ date: dateStr, units: 1, worked: isPresent || status === 'WEEKLY_OFF_WORKED' || punched, nonWorkingDay: true });
       if (isPresent || status === 'WEEKLY_OFF_WORKED' || punched) result.weeklyOffWorkedCount++;
       else result.weeklyOffCount++;
       continue;
@@ -364,15 +368,20 @@ export function classifyPayrollAttendance(input: AttendanceClassificationInput):
     result.scheduledWorkingDays++;
     if (isHalfDay) {
       result.halfDays++;
+      result.payableDayRecords!.push({ date: dateStr, units: 0.5, worked: true, nonWorkingDay: false });
     } else if (isPresent) {
       result.presentDays++;
+      result.payableDayRecords!.push({ date: dateStr, units: 1, worked: true, nonWorkingDay: false });
       if (att && input.isLateCheckIn?.(att)) result.lateMarks++;
-    } else if (approvedLeave || isLeaveStatus) {
+    } else if (approvedLeave) {
       const isUnpaid =
-        (approvedLeave && (approvedLeave.type === 'UNPAID' || approvedLeave.type === 'LOP' || approvedLeave.leaveCategory === 'UNPAID')) ||
+        (approvedLeave && (['UNPAID', 'LOP'].includes(String(approvedLeave.type).toUpperCase()) || String(approvedLeave.leaveCategory).toUpperCase() === 'UNPAID')) ||
         status === 'UNPAID_LEAVE';
-      if (isUnpaid) result.unpaidLeaveDays++;
-      else result.paidLeaveDays++;
+      if (isUnpaid || result.paidLeaveDays >= 4) result.unpaidLeaveDays++;
+      else {
+        result.paidLeaveDays++;
+        result.payableDayRecords!.push({ date: dateStr, units: 1, worked: false, nonWorkingDay: false });
+      }
     } else if (isExplicitAbsent || isPastMonth || dateStr <= input.todayYmd) {
       result.absentDays++;
     } else {

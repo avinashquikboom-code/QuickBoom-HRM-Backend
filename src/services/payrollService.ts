@@ -1,3 +1,4 @@
+import { fixedThirtyDaySalary, lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
@@ -22,6 +23,11 @@ export interface PayrollCalculation {
   monthlySalary: number;
   fixedGrossSalary?: number;
   dailySalary: number;
+  salaryBasisDays?: number;
+  standardPayableDays?: number;
+  extraAttendanceDays?: number;
+  extraAttendancePayout?: number;
+  eligibleExtraAttendanceDates?: string[];
   allowance: number;
   deductions: number;
   statutoryDeductions: number;
@@ -179,21 +185,16 @@ class PayrollService {
       const workingDays = attendanceData.workingDays || 26;
       const totalCalendarDays = attendanceData.totalCalendarDays || new Date(year, month, 0).getDate();
 
-      // Daily Salary formula: Monthly Salary / Scheduled Working Days
-      const dailySalary = Math.round((monthlySalary / workingDays) * 100) / 100;
-
-      // Attendance Deductions (decimal-safe)
-      // Any scheduled working day not covered by present, approved paid leave, or half-day is unworked
-      const paidWorkingDays = attendanceData.presentDays + (attendanceData.halfDays * 0.5) + attendanceData.paidLeaveDays;
-      const totalUnpaidWorkingDays = Math.max(0, workingDays - paidWorkingDays);
-      const halfDaysDeductionDays = attendanceData.halfDays * 0.5;
-      const unpaidLeaveDays = attendanceData.unpaidLeaveDays;
-      const computedAbsentDays = Math.max(0, Math.round((totalUnpaidWorkingDays - halfDaysDeductionDays - unpaidLeaveDays) * 100) / 100);
-      const absentDays = Math.max(attendanceData.absentDays, computedAbsentDays);
-
-      const absentDeduction = Math.round((absentDays * dailySalary) * 100) / 100;
-      const halfDayDeduction = Math.round((halfDaysDeductionDays * dailySalary) * 100) / 100;
-      const unpaidLeaveDeduction = Math.round((unpaidLeaveDays * dailySalary) * 100) / 100;
+      const existingApproval = await prisma.payslip.findUnique({ where: { employeeId_month_year: { employeeId, month, year } }, select: { extraAttendanceApproval: true } });
+      const approval = existingApproval?.extraAttendanceApproval as { dates?: string[]; rateMultiplier?: number; approvedBy?: number } | null;
+      const basis = fixedThirtyDaySalary(monthlySalary, attendanceData.classification,
+        approval?.approvedBy && Array.isArray(approval.dates) ? approval.dates : [], approval?.rateMultiplier ?? 1);
+      const dailySalary = basis.dailySalary;
+      const unpaidLeaveDays = basis.unpaidLeaveDays;
+      const absentDays = attendanceData.absentDays;
+      const halfDayDeduction = Math.min(basis.attendanceDeduction, Math.round(attendanceData.halfDays * 0.5 * monthlySalary / 30 * 100) / 100);
+      const unpaidLeaveDeduction = Math.min(Math.max(0, basis.attendanceDeduction - halfDayDeduction), Math.round(unpaidLeaveDays * monthlySalary / 30 * 100) / 100);
+      const absentDeduction = Math.round(Math.max(0, basis.attendanceDeduction - halfDayDeduction - unpaidLeaveDeduction) * 100) / 100;
 
       // Extra Payouts for Holiday / Weekly-Off Work (default multiplier 1.0x)
       const extraHolidayPayout = Math.round((attendanceData.holidayWorkedCount * dailySalary * 1.0) * 100) / 100;
@@ -311,6 +312,7 @@ class PayrollService {
       const settlement = computePayrollSettlement({
         baseGrossEarnings: monthlySalary,
         holidayWeeklyOffPay: extraHolidayPayout + extraWeeklyOffPayout,
+        extraAttendancePay: basis.extraAttendancePayout,
         totalDeductions,
         reimbursements: approvedExpenses,
         commissionEarned,
@@ -326,6 +328,11 @@ class PayrollService {
         monthlySalary,
         fixedGrossSalary: monthlySalary,
         dailySalary,
+        salaryBasisDays: 30,
+        standardPayableDays: basis.standardPayableDays,
+        eligibleExtraAttendanceDates: basis.eligibleExtraAttendanceDates,
+        extraAttendanceDays: basis.extraAttendanceDays,
+        extraAttendancePayout: basis.extraAttendancePayout,
         allowance: totalAllowance,
         deductions: totalDeductions,
         statutoryDeductions,
@@ -342,8 +349,8 @@ class PayrollService {
         absentDays: attendanceData.absentDays,
         leaveDays: attendanceData.paidLeaveDays + attendanceData.unpaidLeaveDays,
         halfDays: attendanceData.halfDays,
-        paidLeaveDays: attendanceData.paidLeaveDays,
-        unpaidLeaveDays: attendanceData.unpaidLeaveDays,
+        paidLeaveDays: basis.paidLeaveDays,
+        unpaidLeaveDays: basis.unpaidLeaveDays,
         holidayCount: attendanceData.holidayCount,
         weeklyOffCount: attendanceData.weeklyOffCount,
         holidayWorkedCount: attendanceData.holidayWorkedCount,
@@ -561,6 +568,7 @@ class PayrollService {
     specialAllowance?: number | null;
     incentive?: number | null;
     bonus?: number | null;
+    status?: string | null;
   }): Promise<{ baseSalary: number; allowance: number; grossEarnings: number; components: PayslipSalaryComponents }> {
     const round2 = (n: number) => Math.round(n * 100) / 100;
     const sumOf = (c: PayslipSalaryComponents) => round2((c.hra || 0) + (c.travelAllowance || 0) + (c.medicalAllowance || 0) + (c.specialAllowance || 0) + (c.incentive || 0) + (c.bonus || 0));
@@ -579,6 +587,14 @@ class PayrollService {
       return { baseSalary: ps.baseSalary, allowance, grossEarnings: round2(ps.baseSalary + allowance), components };
     }
 
+    if (lockedPayslip(ps.status)) {
+      const allowance = ps.allowance || 0;
+      return { baseSalary: ps.baseSalary, allowance,
+        grossEarnings: round2(ps.baseSalary + allowance),
+        components: { hra: 0, travelAllowance: 0, medicalAllowance: 0,
+          specialAllowance: allowance, incentive: 0, bonus: 0 } };
+    }
+
     const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     const isCurrentMonth = ps.year === ist.getUTCFullYear() && ps.month === ist.getUTCMonth() + 1;
     const structure = await this.getSalaryStructure(ps.employeeId, new Date(ps.year, ps.month - 1, 1));
@@ -592,7 +608,7 @@ class PayrollService {
     };
     const structureAllowance = sumOf(structureComponents);
 
-    if (isCurrentMonth && structure.id !== 0) {
+    if (isCurrentMonth && structure.id !== 0 && !lockedPayslip(ps.status)) {
       const baseSalary = structure.baseSalary || ps.baseSalary;
       await prisma.payslip.update({
         where: { id: ps.id },
@@ -1277,7 +1293,7 @@ class PayrollService {
       });
 
       // Preserve status if already finalized ('Paid')
-      if (existingSlip && String(existingSlip.status).toUpperCase() === 'PAID') {
+      if (existingSlip && lockedPayslip(existingSlip.status)) {
         console.log(`[savePayslip] Payslip for emp #${calculation.employeeId} (${calculation.month}/${calculation.year}) is already PAID. Preserving finalized record.`);
         return;
       }
@@ -1313,6 +1329,8 @@ class PayrollService {
           weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
           extraHolidayPayout: calculation.extraHolidayPayout,
           extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+          extraAttendanceDays: calculation.extraAttendanceDays || 0,
+          extraAttendancePayout: calculation.extraAttendancePayout || 0,
           dailySalary: calculation.dailySalary,
           workingDays: calculation.workingDays,
           totalCalendarDays: calculation.totalCalendarDays,
@@ -1351,6 +1369,8 @@ class PayrollService {
           weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
           extraHolidayPayout: calculation.extraHolidayPayout,
           extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
+          extraAttendanceDays: calculation.extraAttendanceDays || 0,
+          extraAttendancePayout: calculation.extraAttendancePayout || 0,
           dailySalary: calculation.dailySalary,
           workingDays: calculation.workingDays,
           totalCalendarDays: calculation.totalCalendarDays,
@@ -1438,6 +1458,7 @@ class PayrollService {
     const settlement = computePayrollSettlement({
       baseGrossEarnings: calc.fixedGrossSalary || calc.monthlySalary || calc.grossEarnings || calc.grossSalary,
       holidayWeeklyOffPay: extraHolidayPayout + extraWeeklyOffPayout,
+      extraAttendancePay: calc.extraAttendancePayout || 0,
       totalDeductions,
       reimbursements: expenseReimbursement,
       commissionEarned,
@@ -1465,42 +1486,7 @@ class PayrollService {
     const deptName = ps.department || employee?.department?.name || '';
     const desigName = ps.designation || employee?.designation || '';
 
-    if (ps.id && !isPaid) {
-      const patch: any = {};
-      if ((ps.deductions || 0) !== totalDeductions) patch.deductions = totalDeductions;
-      if ((ps.netSalary || 0) !== netSalary) patch.netSalary = netSalary;
-      if ((ps.advanceDeduction || 0) !== advanceDeduction) patch.advanceDeduction = advanceDeduction;
-      if ((ps.halfDays || 0) !== calc.halfDays) patch.halfDays = calc.halfDays;
-      if ((ps.absentDays || 0) !== calc.absentDays) patch.absentDays = calc.absentDays;
-      if ((ps.presentDays || 0) !== calc.presentDays) patch.presentDays = calc.presentDays;
-      if ((ps.unpaidLeaveDays || 0) !== calc.unpaidLeaveDays) patch.unpaidLeaveDays = calc.unpaidLeaveDays;
-      if ((ps.paidLeaveDays || 0) !== calc.paidLeaveDays) patch.paidLeaveDays = calc.paidLeaveDays;
-      if ((ps.extraHolidayPayout || 0) !== extraHolidayPayout) patch.extraHolidayPayout = extraHolidayPayout;
-      if ((ps.extraWeeklyOffPayout || 0) !== extraWeeklyOffPayout) patch.extraWeeklyOffPayout = extraWeeklyOffPayout;
-      if ((ps.commissionEarned || 0) !== commissionEarned) patch.commissionEarned = commissionEarned;
-      if ((ps.expenseReimbursement || 0) !== expenseReimbursement) patch.expenseReimbursement = expenseReimbursement;
-      if ((ps.dailySalary || 0) !== calc.dailySalary) patch.dailySalary = calc.dailySalary;
-      if ((ps.workingDays || 0) !== calc.workingDays) patch.workingDays = calc.workingDays;
-      if (ps.baseSalary !== calc.baseSalary) patch.baseSalary = calc.baseSalary;
-      if (ps.allowance !== calc.allowance) patch.allowance = calc.allowance;
-      if (components.hra !== undefined && ps.hra !== components.hra) patch.hra = components.hra;
-      if (components.travelAllowance !== undefined && ps.travelAllowance !== components.travelAllowance) patch.travelAllowance = components.travelAllowance;
-      if (components.medicalAllowance !== undefined && ps.medicalAllowance !== components.medicalAllowance) patch.medicalAllowance = components.medicalAllowance;
-      if (components.specialAllowance !== undefined && ps.specialAllowance !== components.specialAllowance) patch.specialAllowance = components.specialAllowance;
-      if (components.bonus !== undefined && ps.bonus !== components.bonus) patch.bonus = components.bonus;
-      if (components.incentive !== undefined && ps.incentive !== components.incentive) patch.incentive = components.incentive;
-      if (!ps.employeeName && empName) patch.employeeName = empName;
-      if (!ps.officeName && offName) patch.officeName = offName;
-      if (!ps.department && deptName) patch.department = deptName;
-      if (!ps.designation && desigName) patch.designation = desigName;
-
-      if (Object.keys(patch).length > 0) {
-        patch.netInWords = netInWords;
-        await prisma.payslip.update({ where: { id: ps.id }, data: patch }).catch((err) =>
-          console.warn(`[viewFromPayrollCalculation] Failed to sync payslip #${ps.id}:`, err),
-        );
-      }
-    }
+    // Reading a draft projects the calculation; saving is an explicit payroll action.
 
     const fixedGrossSalary = round2(calc.fixedGrossSalary || calc.monthlySalary || (calc.baseSalary + (components.hra || 0) + (components.medicalAllowance || 0) + (components.travelAllowance || 0) + (components.specialAllowance || 0)));
 
@@ -1521,6 +1507,7 @@ class PayrollService {
       incentive: components.incentive,
       extraHolidayPayout,
       extraWeeklyOffPayout,
+      extraAttendancePayout: calc.extraAttendancePayout || 0,
       extraPayout: settlement.holidayWeeklyOffPay,
       additionalEarnings: settlement.additionalEarnings,
       totalEarnings: settlement.totalEarnings,
@@ -1617,6 +1604,10 @@ class PayrollService {
       totalEarnings: settlement.totalEarnings,
       displayedGrossEarnings: settlement.totalEarnings,
       holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
+      extraAttendanceDays: calc.extraAttendanceDays || 0,
+      extraAttendancePayout: calc.extraAttendancePayout || 0,
+      salaryBasisDays: 30,
+      standardPayableDays: calc.standardPayableDays,
       dailySalary: calc.dailySalary,
       workingDays: calc.workingDays,
       totalCalendarDays: calc.totalCalendarDays,
@@ -1650,7 +1641,7 @@ class PayrollService {
       include: { office: true, salaryStructure: true, department: true, user: true }
     });
 
-    const isFinalized = String(ps.status || '').toUpperCase() === 'PAID';
+    const isFinalized = lockedPayslip(ps.status);
     if (!isFinalized) {
       try {
         const calc = await this.calculatePayroll(ps.employeeId, ps.month, ps.year);
@@ -1673,66 +1664,14 @@ class PayrollService {
     const halfDayDeduction = ps.halfDays ? Math.round((ps.halfDays * 0.5 * dSalary) * 100) / 100 : 0;
     const leaveDeduction = ps.unpaidLeaveDays ? Math.round((ps.unpaidLeaveDays * dSalary) * 100) / 100 : 0;
 
-    let advanceDeduction = ps.advanceDeduction || 0;
-    if (advanceDeduction === 0) {
-      const monthEnd = new Date(ps.year, ps.month, 0, 23, 59, 59, 999);
-      const activeAdvances = await prisma.salaryAdvance.findMany({
-        where: {
-          wallet: { employeeId: ps.employeeId },
-          status: 'APPROVED',
-          remainingAmount: { gt: 0 },
-          OR: [
-            { approvedAt: { lte: monthEnd } },
-            { approvedAt: null, requestedOn: { lte: monthEnd } },
-            { approvedAt: null, createdAt: { lte: monthEnd } }
-          ]
-        },
-        orderBy: { approvedAt: 'asc' }
-      });
-      const priorPaidPayslips = await prisma.payslip.findMany({
-        where: {
-          employeeId: ps.employeeId,
-          status: { in: ['Paid', 'PAID'] },
-          OR: [
-            { year: { lt: ps.year } },
-            { year: ps.year, month: { lt: ps.month } }
-          ]
-        },
-        select: { advanceDeduction: true }
-      });
-      let priorRecoveredPool = priorPaidPayslips.reduce((sum, p) => sum + (p.advanceDeduction || 0), 0);
-      for (const adv of activeAdvances) {
-        const alreadyPaid = Math.max(adv.paidAmount || 0, Math.min(adv.amount, priorRecoveredPool));
-        priorRecoveredPool = Math.max(0, priorRecoveredPool - alreadyPaid);
-        const effectiveRemaining = Math.max(0, adv.amount - alreadyPaid);
-        if (effectiveRemaining <= 0) continue;
-        const standardEmi = adv.monthlyEmi > 0 
-          ? adv.monthlyEmi 
-          : (adv.months > 0 ? Math.round((adv.amount / adv.months) * 100) / 100 : adv.amount);
-        advanceDeduction += Math.min(standardEmi, effectiveRemaining);
-      }
-      advanceDeduction = Math.round(advanceDeduction * 100) / 100;
-    }
-
-    // Gross excludes commission; net = gross - deductions.
-    const structureGross = employee?.salaryStructure
-      ? mapStructureGrossFields(employee.salaryStructure).grossSalary
-      : 0;
-    const applicableGross = structureGross > 0 ? structureGross : fixedGrossSalary;
-    const grossSalary = applicableGross;
-
-    const ss = employee?.salaryStructure;
-    const pf = ss?.pfEnabled ? Math.round(earnings.baseSalary * (ss.employeePfRate / 100)) : 0;
-    const esic = ss?.esicEnabled ? Math.round(grossSalary * (ss.employeeEsicRate / 100)) : 0;
-
-    const itemizedDeductions = pf + esic + absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
-
-    let cleanDeductions = ps.deductions || 0;
-    const isCorrupted = cleanDeductions > 0 && (cleanDeductions - itemizedDeductions > 5000);
-
-    if (cleanDeductions === 0 || isCorrupted || cleanDeductions < itemizedDeductions) {
-      cleanDeductions = itemizedDeductions;
-    }
+    // Stored payroll is an accounting snapshot. Never infer recoveries from
+    // today's loans or replace authorized deductions using a size heuristic.
+    const advanceDeduction = ps.advanceDeduction || 0;
+    const grossSalary = fixedGrossSalary;
+    const pf = 0;
+    const esic = 0;
+    const itemizedDeductions = absentDeduction + halfDayDeduction + leaveDeduction + advanceDeduction;
+    const cleanDeductions = ps.deductions || 0;
 
     const extraHolidayPayout = ps.extraHolidayPayout || 0;
     const extraWeeklyOffPayout = ps.extraWeeklyOffPayout || 0;
@@ -1745,35 +1684,20 @@ class PayrollService {
       reimbursements: ps.expenseReimbursement || 0,
       commissionEarned,
     });
-    const extraPay = extraHolidayPayout + extraWeeklyOffPayout;
-    const storedNet = Math.round((ps.netSalary || 0) * 100) / 100;
-    const storedExcludesHoliday = extraPay > 0 && storedNet > 0
-      && Math.abs(storedNet - Math.round((grossSalary - cleanDeductions) * 100) / 100) < 0.02;
-    // Keep true historical PAID nets unless they omitted additional holiday pay.
-    const netSalary = isFinalized && storedNet > 0 && !storedExcludesHoliday
-      ? storedNet
-      : settlement.netSalary;
-    const totalTakeHomePay = netSalary === settlement.netSalary
-      ? settlement.totalTakeHomePay
-      : Math.round((netSalary + (ps.expenseReimbursement || 0) + commissionEarned) * 100) / 100;
+    const netSalary = Number(ps.netSalary ?? settlement.netSalary);
+    const totalTakeHomePay = Math.round((netSalary + (ps.expenseReimbursement || 0) + commissionEarned) * 100) / 100;
+    if (Math.abs(netSalary - settlement.netSalary) > 0.01) {
+      console.warn('[payroll-reconciliation]', {
+        payslipId: ps.id, employeeId: ps.employeeId, month: ps.month, year: ps.year,
+        reason: 'Stored net differs from earnings minus stored deductions; authorized review required',
+      });
+    }
     const otherDeductions = Math.max(0, Math.round((cleanDeductions - itemizedDeductions) * 100) / 100);
 
     const empName = ps.employeeName || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim();
     const offName = ps.officeName || employee?.office?.name || '';
     const deptName = ps.department || employee?.department?.name || '';
     const desigName = ps.designation || employee?.designation || '';
-
-    if (!isFinalized && ps.id && (isCorrupted || ps.netSalary !== netSalary || ps.deductions !== cleanDeductions || (ps.advanceDeduction || 0) !== advanceDeduction)) {
-      await prisma.payslip.update({
-        where: { id: ps.id },
-        data: {
-          deductions: cleanDeductions,
-          netSalary,
-          advanceDeduction,
-          netInWords: `${numToWords(Math.round(totalTakeHomePay))} Rupees Only`
-        }
-      }).catch(err => console.warn(`[resolveFullPayslipView] Failed to heal payslip #${ps.id}:`, err));
-    }
 
     const payPeriod = new Date(ps.year, ps.month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
     const documentId = `HR-PAY-${ps.employeeCode}-${ps.year}${String(ps.month).padStart(2, '0')}`;

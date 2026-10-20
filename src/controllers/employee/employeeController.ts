@@ -1650,52 +1650,25 @@ export const fetchEmployeeWallet = async (
       });
     }
 
-    // Get latest payslip for upcoming salary info
-    const latestPayslip = await prisma.payslip.findFirst({
-      where: { employeeId: employee.id },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    const now = new Date(Date.now() + 330 * 60 * 1000);
+    const currentMonth = Number(req.query.month ?? now.getUTCMonth() + 1);
+    const currentYear = Number(req.query.year ?? now.getUTCFullYear());
+    if (!Number.isInteger(currentMonth) || currentMonth < 1 || currentMonth > 12 ||
+        !Number.isInteger(currentYear) || currentYear < 1900 || currentYear > 9999) {
+      res.status(400).json({ success: false, message: 'Invalid payroll period.' });
+      return;
+    }
+    const payslip = await prisma.payslip.findFirst({
+      where: { employeeId: employee.id, month: currentMonth, year: currentYear },
     });
-
-    const registeredSalary = salaryStructure
-      ? computeGrossSalary(salaryStructure)
-      : 0;
-
-    let estimatedNetSalary = 0;
-    if (salaryStructure && registeredSalary > 0) {
-      const gross = registeredSalary;
-      const basic = salaryStructure.basicSalary || Math.round(gross * 0.5);
-      const pf = salaryStructure.pfEnabled ? Math.round(basic * ((salaryStructure.employeePfRate || 12) / 100)) : 0;
-      const esic = salaryStructure.esicEnabled ? Math.round(gross * ((salaryStructure.employeeEsicRate || 0.75) / 100)) : 0;
-      estimatedNetSalary = Math.max(0, gross - (pf + esic));
-    }
-
-    const now = new Date();
-    const currentMonth = now.getMonth() + 1;
-    const currentYear = now.getFullYear();
-
-    // Calculate current month commission for this employee using the unified source of truth (CommissionService)
-    const isCommissionEligible = isCommissionEligibleEmployee(employee);
-    let currentCommission = 0;
-    if (isCommissionEligible) {
-      const monthMetrics = await CommissionService.getMonthlyMetrics(employee.id);
-      currentCommission = Math.round(monthMetrics.commission || 0);
-    }
-
-    let currentCalc = null;
-    try {
-      currentCalc = await payrollService.calculatePayroll(employee.id, currentMonth, currentYear);
-    } catch (e) {
-      console.warn('Error calculating current month payroll for wallet:', e);
-    }
-
-    const isCurrentMonthPayslip = Boolean(latestPayslip && latestPayslip.month === currentMonth && latestPayslip.year === currentYear);
-
-    const currentNetSalary = currentCalc 
-      ? currentCalc.netSalary 
-      : (isCurrentMonthPayslip && latestPayslip ? latestPayslip.netSalary : estimatedNetSalary);
-
-    const upcomingSalary = currentNetSalary;
-    const upcomingSalaryWithCommission = Math.round(currentNetSalary + currentCommission);
+    const payroll = await payrollService.resolveFullPayslipView(payslip ?? {
+      employeeId: employee.id, month: currentMonth, year: currentYear, status: 'PENDING',
+    });
+    const registeredSalary = payroll.fixedGrossSalary;
+    const isCommissionEligible = payroll.isCommissionEligible;
+    const currentCommission = payroll.commissionEarned;
+    const upcomingSalary = payroll.netSalary;
+    const upcomingSalaryWithCommission = payroll.totalTakeHomePay;
 
     const allAdvances = await prisma.salaryAdvance.findMany({
       where: {
@@ -1757,8 +1730,15 @@ export const fetchEmployeeWallet = async (
         baseUpcomingSalary: upcomingSalary,
         isCommissionEligible,
         commissionAmount: currentCommission,
-        grossSalary: registeredSalary,
-        netSalary: upcomingSalaryWithCommission,
+        payroll,
+        payrollId: payslip?.id ?? null,
+        payrollMonth: currentMonth,
+        payrollYear: currentYear,
+        grossSalary: payroll.totalEarnings,
+        totalDeductions: payroll.totalDeductions,
+        expenseReimbursement: payroll.expenseReimbursement,
+        totalTakeHomePay: payroll.totalTakeHomePay,
+        netSalary: payroll.netSalary,
         activeAdvance: activeAdvance ? {
           id: activeAdvance.id.toString(),
           amount: activeAdvance.amount,
