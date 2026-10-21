@@ -1,3 +1,4 @@
+import { transitionLeaveReview } from '../../services/leaveReviewTransition';
 import { Response } from 'express';
 import { Role } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
@@ -1018,23 +1019,28 @@ export const approveLeave = async (
       return;
     }
 
-    // Update leave request status
-    const leave = await prisma.leaveRequest.update({
-      where: { id: parseInt(id as string, 10) },
-      data: {
-        status: 'APPROVED',
-        reviewedBy: reviewerName || req.user?.email || 'HR',
-        reviewNote: reviewNote || 'Approved',
-        reviewedAt: new Date(),
-      },
-      include: {
-        employee: {
-          include: {
-            user: true
-          }
-        }
-      }
-    });
+    if (existingLeave.status === 'APPROVED') {
+      res.json({ success: true, message: 'Leave request is already approved.', leave: { id: existingLeave.id, status: existingLeave.status },
+        data: { id: String(existingLeave.id), status: existingLeave.status } });
+      return;
+    }
+    if (existingLeave.status === 'CANCELLED') {
+      res.status(409).json({ success: false, message: 'Cancelled leave cannot be reviewed.' });
+      return;
+    }
+    const transition = await transitionLeaveReview(
+      existingLeave.id, existingLeave.status, 'APPROVED',
+      reviewerName || req.user?.email || 'HR', reviewNote || 'Approved',
+    );
+    if (!transition.changed) {
+      res.status(transition.leave.status === 'APPROVED' ? 200 : 409).json({
+        success: transition.leave.status === 'APPROVED',
+        message: 'Leave review was already processed. Refresh before making another change.',
+        leave: { id: transition.leave.id, status: transition.leave.status }, data: { id: String(transition.leave.id), status: transition.leave.status },
+      });
+      return;
+    }
+    const leave = transition.leave;
 
     // Update leave balance used days
     if (existingLeave.status !== 'APPROVED') {
@@ -1074,14 +1080,14 @@ export const approveLeave = async (
     }
 
     // Send notification and FCM push to employee via authoritative helper
-    await notifyEmployee({
+    const notificationDelivery = await notifyEmployee({
       targetUserId: leave.employee.userId,
       targetEmployeeId: leave.employee.id,
       title: 'Leave Request Approved',
       body: `Your ${leave.type.toLowerCase()} leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been approved by ${reviewerName || 'HR'}.`,
       category: 'LEAVE',
       actionId: leave.id.toString(),
-      actionType: 'leave_request',
+      actionType: 'LEAVE_APPROVED',
     });
     console.log(`✅ Leave request ${leave.id} approved and notification processed for employee ${leave.employee.firstName} ${leave.employee.lastName}`);
     
@@ -1125,7 +1131,7 @@ export const approveLeave = async (
       console.error('❌ Failed to broadcast leave update:', wsError);
     }
 
-    res.json({ success: true, message: 'Leave approved.', leave });
+    res.json({ success: true, notificationDelivery: notificationDelivery || { deliveryStatus: 'UNKNOWN' }, message: 'Leave approved.', leave });
   } catch (error) {
     console.error('Approve leave error:', error);
     res.status(500).json({ success: false, message: 'Failed to approve leave.' });
@@ -1157,23 +1163,28 @@ export const rejectLeave = async (
       return;
     }
 
-    // Update leave request status
-    const leave = await prisma.leaveRequest.update({
-      where: { id: parseInt(id as string, 10) },
-      data: {
-        status: 'REJECTED',
-        reviewedBy: reviewerName || req.user?.email || 'HR',
-        reviewNote: reviewNote || 'Rejected',
-        reviewedAt: new Date(),
-      },
-      include: {
-        employee: {
-          include: {
-            user: true
-          }
-        }
-      }
-    });
+    if (existingLeave.status === 'REJECTED') {
+      res.json({ success: true, message: 'Leave request is already rejected.', leave: { id: existingLeave.id, status: existingLeave.status },
+        data: { id: String(existingLeave.id), status: existingLeave.status } });
+      return;
+    }
+    if (existingLeave.status === 'CANCELLED') {
+      res.status(409).json({ success: false, message: 'Cancelled leave cannot be reviewed.' });
+      return;
+    }
+    const transition = await transitionLeaveReview(
+      existingLeave.id, existingLeave.status, 'REJECTED',
+      reviewerName || req.user?.email || 'HR', reviewNote || 'Rejected',
+    );
+    if (!transition.changed) {
+      res.status(transition.leave.status === 'REJECTED' ? 200 : 409).json({
+        success: transition.leave.status === 'REJECTED',
+        message: 'Leave review was already processed. Refresh before making another change.',
+        leave: { id: transition.leave.id, status: transition.leave.status }, data: { id: String(transition.leave.id), status: transition.leave.status },
+      });
+      return;
+    }
+    const leave = transition.leave;
 
     if (existingLeave.status === 'APPROVED') {
       const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -1181,14 +1192,14 @@ export const rejectLeave = async (
     }
 
     // Send notification and FCM push to employee via authoritative helper
-    await notifyEmployee({
+    const notificationDelivery = await notifyEmployee({
       targetUserId: leave.employee.userId,
       targetEmployeeId: leave.employee.id,
       title: 'Leave Request Rejected',
       body: `Your ${leave.type.toLowerCase()} leave request from ${leave.fromDate.toDateString()} to ${leave.toDate.toDateString()} has been rejected by ${reviewerName || 'HR'}.${reviewNote ? ` Reason: ${reviewNote}` : ''}`,
       category: 'LEAVE',
       actionId: leave.id.toString(),
-      actionType: 'leave_request',
+      actionType: 'LEAVE_REJECTED',
     });
     console.log(`❌ Leave request ${leave.id} rejected and notification processed for employee ${leave.employee.firstName} ${leave.employee.lastName}`);
     
@@ -1232,7 +1243,7 @@ export const rejectLeave = async (
       console.error('❌ Failed to broadcast leave update:', wsError);
     }
 
-    res.json({ success: true, message: 'Leave rejected.', leave });
+    res.json({ success: true, notificationDelivery: notificationDelivery || { deliveryStatus: 'UNKNOWN' }, message: 'Leave rejected.', leave });
   } catch (error) {
     console.error('Reject leave error:', error);
     res.status(500).json({ success: false, message: 'Failed to reject leave.' });

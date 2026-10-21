@@ -1,3 +1,5 @@
+import { transitionLeaveReview } from './leaveReviewTransition';
+import { notifyEmployee } from '../utils/hrNotificationHelper';
 import { prisma } from '../utils/db';
 const { getWebSocketInstance } = require('../utils/websocketSingleton');
 
@@ -284,7 +286,7 @@ class LeaveManagementService {
         include: { employee: true }
       });
 
-      if (!leaveRequest) {
+      if (!leaveRequest || leaveRequest.status !== 'PENDING') {
         return false;
       }
 
@@ -310,26 +312,16 @@ class LeaveManagementService {
         return false;
       }
 
-      // Auto-approve the leave
-      await prisma.leaveRequest.update({
-        where: { id: leaveRequestId },
-        data: {
-          status: 'APPROVED',
-          reviewedBy: 'System Auto-Approval'
-        }
-      });
-
-      // Send notification
-      await prisma.notification.create({
-        data: {
-          employeeId: leaveRequest.employeeId,
-          userId: leaveRequest.employee.userId,
-          title: 'Leave Auto-Approved',
-          body: `Your leave request from ${leaveRequest.fromDate.toDateString()} to ${leaveRequest.toDate.toDateString()} has been auto-approved.`,
-          category: 'LEAVE',
-          actionId: leaveRequestId.toString(),
-          actionType: 'LEAVE_AUTO_APPROVED'
-        }
+      const transition = await transitionLeaveReview(
+        leaveRequestId, 'PENDING', 'APPROVED', 'System Auto-Approval', 'Auto-approved by policy',
+      );
+      if (!transition.changed) return false;
+      await notifyEmployee({
+        employeeId: leaveRequest.employeeId,
+        userId: leaveRequest.employee.userId || undefined,
+        title: 'Leave Request Approved',
+        body: `Your leave request from ${leaveRequest.fromDate.toDateString()} to ${leaveRequest.toDate.toDateString()} has been auto-approved.`,
+        category: 'LEAVE', actionId: String(leaveRequestId), actionType: 'LEAVE_AUTO_APPROVED',
       });
 
       // Broadcast real-time update

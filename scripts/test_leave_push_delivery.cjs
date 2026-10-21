@@ -1,5 +1,7 @@
 const assert = require('assert');
 const { test } = require('node:test');
+const Module = require('node:module');
+require('ts-node/register/transpile-only');
 
 // Test suite verifying leave request push notification pipeline:
 // 1. Initial status PENDING
@@ -49,84 +51,18 @@ test('Leave request notification pipeline verification', async (t) => {
     },
   };
 
-  // Helper simulating notifyEmployee with the mocked services
+  const originalLoad = Module._load;
+  Module._load = function(request, parent, isMain) {
+    if (request === './db') return { prisma: mockPrisma };
+    if (request === '../services/firebaseNotificationService') return { firebaseNotificationService: mockFirebaseService };
+    if (request === './websocketSingleton') return { getWebSocketInstance: () => ({ sendToUser() {} }) };
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  const { notifyEmployee } = require('../src/utils/hrNotificationHelper');
+  Module._load = originalLoad;
   async function runNotifyEmployee(params) {
-    const targetUserId = params.targetUserId || 100;
-    const targetEmployeeId = params.targetEmployeeId || 11884;
-    const { category = 'LEAVE', actionType, actionId, title, body } = params;
-
-    const notification = await mockPrisma.notification.create({
-      data: {
-        userId: targetUserId,
-        employeeId: targetEmployeeId,
-        title,
-        body: body || '',
-        category: category.toUpperCase(),
-        actionType: actionType || 'GENERAL',
-        actionId: actionId ? String(actionId) : null,
-        isRead: false,
-        deliveryStatus: 'PENDING',
-      },
-    });
-
-    let deliveryStatus = 'IN_APP_ONLY';
-    let failureReason = null;
-    let fcmMessageId = null;
-
-    try {
-      const result = await mockFirebaseService.sendNotificationToUser(
-        targetUserId,
-        title,
-        body || '',
-        {
-          id: String(notification.id),
-          notificationId: String(notification.id),
-          title,
-          body: body || '',
-          type: actionType || 'GENERAL',
-          notificationType: actionType || 'GENERAL',
-          actionType: actionType || 'GENERAL',
-          actionId: actionId ? String(actionId) : '',
-          entityType: category.toUpperCase(),
-          category: category.toUpperCase(),
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        },
-        { priority: { high: true } }
-      );
-
-      const totalAttempted = result.successCount + result.failureCount;
-      const unverified = result.responses.length !== totalAttempted;
-      if (totalAttempted === 0) {
-        deliveryStatus = 'IN_APP_ONLY';
-      } else if (unverified) {
-        deliveryStatus = 'UNKNOWN';
-      } else if (result.failureCount > 0) {
-        deliveryStatus = result.successCount > 0 ? 'PARTIAL' : 'FAILED';
-      } else if (result.successCount > 0) {
-        deliveryStatus = 'SENT';
-      } else {
-        deliveryStatus = 'IN_APP_ONLY';
-      }
-
-      fcmMessageId = result.responses.find((r) => r.success)?.messageId || null;
-      const codes = [
-        ...new Set(result.responses.filter((r) => !r.success).map((r) => r.error?.code || 'messaging/unknown-error')),
-      ];
-      if (codes.length) {
-        failureReason = codes.join(', ');
-      }
-    } catch (fcmErr) {
-      const code = typeof fcmErr?.code === 'string' && /^[a-zA-Z0-9/_-]+$/.test(fcmErr.code) ? fcmErr.code : 'messaging/unknown-outcome';
-      deliveryStatus = ['messaging/not-configured', 'messaging/mismatched-credential', 'app/invalid-credential'].includes(code)
-        ? 'FAILED'
-        : 'UNKNOWN';
-      failureReason = code;
-    }
-
-    return await mockPrisma.notification.update({
-      where: { id: notification.id },
-      data: { deliveryStatus, failureReason, fcmMessageId },
-    });
+    await notifyEmployee(params);
+    return updatedNotification;
   }
 
   // 1. Successful FCM dispatch sets deliveryStatus = 'SENT'
@@ -241,6 +177,22 @@ test('Leave request notification pipeline verification', async (t) => {
     assert.equal(saved.deliveryStatus, 'UNKNOWN');
     assert.equal(saved.failureReason, 'messaging/unknown-outcome');
     assert.notEqual(saved.deliveryStatus, 'SENT');
+  });
+
+  await t.test('Success without a provider message ID is UNKNOWN, never SENT', async () => {
+    fcmOutcome = { responses: [{ success: true }], successCount: 1, failureCount: 0 };
+    const saved = await runNotifyEmployee({ targetUserId: 100, targetEmployeeId: 11884,
+      title: 'Leave Request Submitted', body: 'Test', category: 'LEAVE', actionId: 207 });
+    assert.equal(saved.deliveryStatus, 'UNKNOWN');
+    assert.equal(saved.fcmMessageId, null);
+  });
+
+  await t.test('An unreadable production credential path is a known failure', async () => {
+    fcmOutcome = Object.assign(new Error('Credential path is unreadable'), { code: 'firebase/credential-file-unreadable' });
+    const saved = await runNotifyEmployee({ targetUserId: 100, targetEmployeeId: 11884,
+      title: 'Leave Request Submitted', body: 'Test', category: 'LEAVE', actionId: 207 });
+    assert.equal(saved.deliveryStatus, 'FAILED');
+    assert.equal(saved.failureReason, 'firebase/credential-file-unreadable');
   });
 
   // 6. Device acknowledgement transitions status from SENT to DELIVERED

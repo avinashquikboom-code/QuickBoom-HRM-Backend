@@ -4688,21 +4688,20 @@ export const updateAdminLeaveStatus = async (
 
     // 5. Execute database changes transactionally
     const updated = await prisma.$transaction(async (tx) => {
-      const updatedLeave = await tx.leaveRequest.update({
-        where: { id: leaveIdInt },
+      const reviewClaim = await tx.leaveRequest.updateMany({
+        where: { id: leaveIdInt, status: existingLeave.status },
         data: {
           status: targetStatus,
           reviewedBy: reviewerName,
           reviewNote: reviewNoteText,
           reviewedAt: new Date(),
         },
-        include: {
-          employee: {
-            include: {
-              user: true
-            }
-          }
-        }
+      });
+      if (reviewClaim.count !== 1) {
+        throw Object.assign(new Error('Leave was already reviewed; refresh before retrying.'), { code: 'leave/review-conflict' });
+      }
+      const updatedLeave = await tx.leaveRequest.findUniqueOrThrow({
+        where: { id: leaveIdInt }, include: { employee: { include: { user: true } } },
       });
 
       if (isApproved && existingLeave.status !== 'APPROVED') {
@@ -4771,7 +4770,7 @@ export const updateAdminLeaveStatus = async (
       : `Your leave request from ${existingLeave.fromDate.toDateString()} to ${existingLeave.toDate.toDateString()} has been rejected. Reason: ${reviewNoteText}`;
 
     // Notify employee safely via helper (handles missing user account, FCM push & in-app gracefully)
-    notifyEmployee({
+    const notificationDelivery = await notifyEmployee({
       employeeId: existingLeave.employeeId,
       userId: existingLeave.employee?.userId || undefined,
       title: notificationTitle,
@@ -4779,7 +4778,7 @@ export const updateAdminLeaveStatus = async (
       category: 'LEAVE',
       actionType: isApproved ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED',
       actionId: existingLeave.id.toString(),
-    }).catch(err => console.error('[notifyEmployee] Leave review notice error:', err));
+    });
 
     // Notify HR / Admins
     sendHRNotification({
@@ -4815,8 +4814,13 @@ export const updateAdminLeaveStatus = async (
       success: true,
       message: `Leave request ${targetStatus.toLowerCase()} successfully!`,
       leave: updated,
+      notificationDelivery: notificationDelivery || { deliveryStatus: 'UNKNOWN' },
     });
   } catch (error: any) {
+    if ((error as any)?.code === 'leave/review-conflict') {
+      res.status(409).json({ success: false, message: 'Leave was already reviewed. Refresh before retrying.' });
+      return;
+    }
     console.error('Update leave status error:', error);
     res.status(500).json({ success: false, message: 'Failed to update leave request.' });
   }

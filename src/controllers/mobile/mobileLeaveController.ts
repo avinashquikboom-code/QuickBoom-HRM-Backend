@@ -1,3 +1,4 @@
+import { transitionLeaveReview } from '../../services/leaveReviewTransition';
 import { Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
@@ -694,23 +695,28 @@ export const approveLeaveRequest = async (
       return;
     }
 
-    // Update leave request status
-    const leave = await prisma.leaveRequest.update({
-      where: { id: parseInt(id as string, 10) },
-      data: {
-        status: 'APPROVED',
-        reviewedBy: reviewerName || req.user?.email || 'HR',
-        reviewNote: reviewNote || 'Approved via mobile',
-        reviewedAt: new Date(),
-      },
-      include: {
-        employee: {
-          include: {
-            user: true
-          }
-        }
-      }
-    });
+    if (existingLeave.status === 'APPROVED') {
+      res.json({ success: true, message: 'Leave request is already approved.', leave: { id: existingLeave.id, status: existingLeave.status },
+        data: { id: String(existingLeave.id), status: existingLeave.status } });
+      return;
+    }
+    if (existingLeave.status === 'CANCELLED') {
+      res.status(409).json({ success: false, message: 'Cancelled leave cannot be reviewed.' });
+      return;
+    }
+    const transition = await transitionLeaveReview(
+      existingLeave.id, existingLeave.status, 'APPROVED',
+      reviewerName || req.user?.email || 'HR', reviewNote || 'Approved',
+    );
+    if (!transition.changed) {
+      res.status(transition.leave.status === 'APPROVED' ? 200 : 409).json({
+        success: transition.leave.status === 'APPROVED',
+        message: 'Leave review was already processed. Refresh before making another change.',
+        leave: { id: transition.leave.id, status: transition.leave.status }, data: { id: String(transition.leave.id), status: transition.leave.status },
+      });
+      return;
+    }
+    const leave = transition.leave;
 
     if (existingLeave.status !== 'APPROVED') {
       const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -719,19 +725,15 @@ export const approveLeaveRequest = async (
 
     // Send role-specific notification to employee (in-app + FCM push)
     const isWeekOff = existingLeave.type === 'WEEK_OFF' || existingLeave.type === 'WEEKOFF';
-    await notifyEmployee({
+    const notificationDelivery = await notifyEmployee({
       employeeId: existingLeave.employee.id,
       userId: existingLeave.employee.userId || undefined,
-      title: isWeekOff ? 'Week Off Approved' : 'Leave Approved',
+      title: isWeekOff ? 'Week Off Approved' : 'Leave Request Approved',
       message: `Your ${isWeekOff ? 'week off' : `${existingLeave.type.toLowerCase()} leave`} request from ${leave.fromDate.toISOString().split('T')[0]} to ${leave.toDate.toISOString().split('T')[0]} has been approved.`,
       category: 'LEAVE',
       actionType: isWeekOff ? 'WEEK_OFF_APPROVED' : 'LEAVE_APPROVED',
       actionId: leave.id.toString(),
     });
-
-    // Deduct leave balance & sync attendance
-    const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    await leaveBalanceService.updateUsedLeave(existingLeave.employeeId, existingLeave.type, days).catch(err => console.error('Update used leave error:', err));
 
     // Auto update attendance records to LEAVE for approved dates
     try {
@@ -764,7 +766,7 @@ export const approveLeaveRequest = async (
       console.error('Failed to sync attendance for approved leave:', attErr);
     }
 
-    console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
+    console.log(`✅ Mobile HR: Leave request ${leave.id} approved and notification dispatch processed for employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     // Broadcast real-time leave balance update after approval
     try {
@@ -785,7 +787,7 @@ export const approveLeaveRequest = async (
     }
 
     res.json({
-      success: true,
+      success: true, notificationDelivery: notificationDelivery || { deliveryStatus: 'UNKNOWN' },
       message: 'Leave request approved successfully',
       data: {
         id: leave.id.toString(),
@@ -838,23 +840,28 @@ export const rejectLeaveRequest = async (
       return;
     }
 
-    // Update leave request status
-    const leave = await prisma.leaveRequest.update({
-      where: { id: parseInt(id as string, 10) },
-      data: {
-        status: 'REJECTED',
-        reviewedBy: reviewerName || req.user?.email || 'HR',
-        reviewNote: reviewNote.trim(),
-        reviewedAt: new Date(),
-      },
-      include: {
-        employee: {
-          include: {
-            user: true
-          }
-        }
-      }
-    });
+    if (existingLeave.status === 'REJECTED') {
+      res.json({ success: true, message: 'Leave request is already rejected.', leave: { id: existingLeave.id, status: existingLeave.status },
+        data: { id: String(existingLeave.id), status: existingLeave.status } });
+      return;
+    }
+    if (existingLeave.status === 'CANCELLED') {
+      res.status(409).json({ success: false, message: 'Cancelled leave cannot be reviewed.' });
+      return;
+    }
+    const transition = await transitionLeaveReview(
+      existingLeave.id, existingLeave.status, 'REJECTED',
+      reviewerName || req.user?.email || 'HR', reviewNote.trim(),
+    );
+    if (!transition.changed) {
+      res.status(transition.leave.status === 'REJECTED' ? 200 : 409).json({
+        success: transition.leave.status === 'REJECTED',
+        message: 'Leave review was already processed. Refresh before making another change.',
+        leave: { id: transition.leave.id, status: transition.leave.status }, data: { id: String(transition.leave.id), status: transition.leave.status },
+      });
+      return;
+    }
+    const leave = transition.leave;
 
     if (existingLeave.status === 'APPROVED') {
       const days = Math.ceil((existingLeave.toDate.getTime() - existingLeave.fromDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -863,17 +870,17 @@ export const rejectLeaveRequest = async (
 
     // Send role-specific notification to employee (in-app + FCM push)
     const isWeekOff = existingLeave.type === 'WEEK_OFF' || existingLeave.type === 'WEEKOFF';
-    await notifyEmployee({
+    const notificationDelivery = await notifyEmployee({
       employeeId: existingLeave.employee.id,
       userId: existingLeave.employee.userId || undefined,
-      title: isWeekOff ? 'Week Off Rejected' : 'Leave Rejected',
+      title: isWeekOff ? 'Week Off Rejected' : 'Leave Request Rejected',
       message: `Your ${isWeekOff ? 'week off' : `${existingLeave.type.toLowerCase()} leave`} request from ${leave.fromDate.toISOString().split('T')[0]} to ${leave.toDate.toISOString().split('T')[0]} has been rejected.${reviewNote ? ` Reason: ${reviewNote}` : ''}`,
       category: 'LEAVE',
       actionType: isWeekOff ? 'WEEK_OFF_REJECTED' : 'LEAVE_REJECTED',
       actionId: leave.id.toString(),
     });
 
-    console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification sent to employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
+    console.log(`✅ Mobile HR: Leave request ${leave.id} rejected and notification dispatch processed for employee ${existingLeave.employee.firstName} ${existingLeave.employee.lastName}`);
 
     // Broadcast real-time leave balance update after rejection
     try {
@@ -894,7 +901,7 @@ export const rejectLeaveRequest = async (
     }
 
     res.json({
-      success: true,
+      success: true, notificationDelivery: notificationDelivery || { deliveryStatus: 'UNKNOWN' },
       message: 'Leave request rejected successfully',
       data: {
         id: leave.id.toString(),
