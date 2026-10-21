@@ -1,6 +1,6 @@
 import { Server as HTTPServer } from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
-import jwt from 'jsonwebtoken';
+import { verifyToken } from '../utils/jwt';
 import { prisma } from '../utils/db';
 import leaveBalanceService from './leaveBalanceService';
 
@@ -36,16 +36,16 @@ class WebSocketService {
         }
 
         // Verify JWT token
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
+        const decoded = verifyToken(token);
         
         // Get user and employee info
         const user = await prisma.user.findUnique({
-          where: { id: decoded.userId },
+          where: { id: decoded.id },
           include: { employee: true }
         });
 
-        if (!user) {
-          return next(new Error('User not found'));
+        if (!user || !user.isActive || (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN' && user.employee?.status && user.employee.status.toLowerCase() !== 'active')) {
+          return next(new Error('Account unavailable or inactive'));
         }
 
         socket.userId = user.id;

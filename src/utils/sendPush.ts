@@ -1,5 +1,4 @@
-import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
+import { getFirebaseApp, getMessaging } from '../config/firebase';
 
 /** Send a notification directly to one FCM registration token. */
 export async function sendPush(
@@ -9,11 +8,11 @@ export async function sendPush(
   data: Record<string, string> = {},
 ): Promise<{ success: true; messageId: string }> {
   try {
-    const app = getApps()[0] ?? initializeApp({
-      credential: applicationDefault(),
-    });
+    // Reuses the established Firebase Admin initialization
+    getFirebaseApp();
+    const messaging = getMessaging();
 
-    const messageId = await getMessaging(app).send({
+    const messageId = await messaging.send({
       token,
       notification: { title, body },
       data,
@@ -21,6 +20,7 @@ export async function sendPush(
         priority: 'high',
         notification: {
           channelId: 'general_notifications',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
         },
       },
     });

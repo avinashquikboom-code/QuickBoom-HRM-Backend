@@ -5,7 +5,9 @@ import {
   fetchMyNotifications,
   getNotificationById,
   markNotificationAsRead,
-  markAllNotificationsAsRead
+  markNotificationAsUnread,
+  markAllNotificationsAsRead,
+  acknowledgeDelivery
 } from '../../controllers/mobile/mobileNotificationController';
 import { authenticateToken } from '../../middlewares/authMiddleware';
 
@@ -13,6 +15,10 @@ const router = Router();
 
 // Apply auth middleware to all routes
 router.use(authenticateToken);
+
+// Device delivery receipt acknowledgement
+router.post('/:notificationId/ack', acknowledgeDelivery);
+router.post('/ack', acknowledgeDelivery);
 
 /**
  * @swagger
@@ -89,6 +95,8 @@ router.get('/:notificationId', getNotificationById);
  */
 router.put('/:notificationId/read', markNotificationAsRead);
 router.patch('/:notificationId/read', markNotificationAsRead);
+// Same recipient-scoped contract as /read; unread also clears readAt.
+router.put('/:notificationId/unread', markNotificationAsUnread);
 
 /**
  * @swagger

@@ -98,45 +98,44 @@ export const getNotificationById = async (
   }
 };
 
-/**
- * Mark notification as read
- */
-export const markNotificationAsRead = async (
+/** Update only the authenticated recipient's read state. */
+const setNotificationReadState = (isRead: boolean) => async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
+  if (!req.user?.id) {
+    res.status(401).json({ success: false, message: 'Authentication required.' });
+    return;
+  }
+
+  const targetId = req.params.notificationId || req.params.id;
+  const rawId = Array.isArray(targetId) ? targetId[0] : targetId;
+  const notificationId = Number(rawId);
+  if (!rawId || !/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(notificationId) || notificationId > 2147483647) {
+    res.status(400).json({ success: false, message: 'Invalid notification ID' });
+    return;
+  }
+
   try {
-    const { notificationId, id } = req.params;
-    const targetId = notificationId || id;
-    const numId = parseInt(Array.isArray(targetId) ? targetId[0] : targetId, 10);
-
-    const notification = await prisma.notification.findFirst({
-      where: {
-        id: numId,
-        userId: req.user?.id,
-      },
+    // Keep ownership in the write predicate, including during concurrent updates.
+    const result = await prisma.notification.updateMany({
+      where: { id: notificationId, userId: req.user.id },
+      data: { isRead, readAt: isRead ? new Date() : null },
     });
-
-    if (!notification) {
+    if (result.count === 0) {
+      // Match existing recipient-scoped lookup semantics; do not expose other users' IDs.
       res.status(404).json({ success: false, message: 'Notification not found' });
       return;
     }
-
-    const now = new Date();
-    await prisma.notification.update({
-      where: { id: numId },
-      data: {
-        isRead: true,
-        readAt: now,
-      },
-    });
-
-    res.json({ success: true, message: 'Notification marked as read' });
+    res.json({ success: true, message: `Notification marked as ${isRead ? 'read' : 'unread'}` });
   } catch (error) {
-    console.error('Mark notification as read error:', error);
-    res.status(500).json({ success: false, message: 'Failed to mark notification as read' });
+    console.error('Update notification read state error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update notification read state' });
   }
 };
+
+export const markNotificationAsRead = setNotificationReadState(true);
+export const markNotificationAsUnread = setNotificationReadState(false);
 
 /**
  * Mark all notifications as read
@@ -295,3 +294,51 @@ export const removeFCMToken = async (
     });
   }
 };
+
+/**
+ * Acknowledge receipt of a notification on device (updates deliveryStatus to 'DELIVERED')
+ */
+export const acknowledgeDelivery = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { notificationId, id } = req.params;
+    const targetId = notificationId || id;
+    const numId = parseInt(Array.isArray(targetId) ? targetId[0] : targetId, 10);
+
+    if (isNaN(numId)) {
+      res.status(400).json({ success: false, message: 'Invalid notification ID' });
+      return;
+    }
+
+    const notification = await prisma.notification.findFirst({
+      where: {
+        id: numId,
+        userId: req.user?.id,
+      },
+    });
+
+    if (!notification) {
+      res.status(404).json({ success: false, message: 'Notification not found' });
+      return;
+    }
+
+    const updated = await prisma.notification.update({
+      where: { id: numId },
+      data: {
+        deliveryStatus: 'DELIVERED',
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Delivery acknowledged',
+      deliveryStatus: updated.deliveryStatus,
+    });
+  } catch (error) {
+    console.error('Acknowledge notification delivery error:', error);
+    res.status(500).json({ success: false, message: 'Failed to acknowledge delivery' });
+  }
+};
+

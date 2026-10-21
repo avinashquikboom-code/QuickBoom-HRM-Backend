@@ -128,7 +128,7 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
     }
 
     // 1. In-App Notification (Database) - strictly tied to this employee's userId
-    await prisma.notification.create({
+    const notification = await prisma.notification.create({
       data: {
         userId: targetUserId,
         employeeId: targetEmployeeId || null,
@@ -138,6 +138,7 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
         actionType: actionType || 'GENERAL',
         actionId: actionId ? String(actionId) : null,
         isRead: false,
+        deliveryStatus: 'PENDING',
       },
     });
 
@@ -146,28 +147,72 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
     const targetWebRoute = clickRoute || defaultRoute;
 
     // 2. FCM Push Notification (both mobile & web tokens for this employee)
-    await firebaseNotificationService.sendNotificationToUser(
-      targetUserId,
-      title,
-      message,
-      {
+    let deliveryStatus = 'IN_APP_ONLY';
+    let failureReason: string | null = null;
+    let fcmMessageId: string | null = null;
+
+    try {
+      const result = await firebaseNotificationService.sendNotificationToUser(
+        targetUserId,
         title,
-        body: message,
-        type: actionType || 'GENERAL',
-        notificationType: actionType || 'GENERAL',
-        entityType: category.toUpperCase(),
-        ...(actionId ? { entityId: String(actionId), referenceId: String(actionId), actionId: String(actionId) } : {}),
-        category: category.toUpperCase(),
-        screen: targetScreen,
-        route: targetWebRoute,
-        click_action: targetWebRoute,
-        web_url: targetWebRoute,
-        ...(targetEmployeeId ? { employeeId: String(targetEmployeeId) } : {}),
-        ...extraData,
-      },
-      { priority: { high: true } }
-    ).catch((fcmErr) => {
-      // Non-fatal if push fails
+        message,
+        {
+          id: String(notification.id),
+          notificationId: String(notification.id),
+          title,
+          body: message,
+          type: actionType || 'GENERAL',
+          notificationType: actionType || 'GENERAL',
+          actionType: actionType || 'GENERAL',
+          actionId: actionId ? String(actionId) : '',
+          entityType: category.toUpperCase(),
+          ...(actionId ? { entityId: String(actionId), referenceId: String(actionId) } : {}),
+          category: category.toUpperCase(),
+          screen: targetScreen,
+          route: targetWebRoute,
+          click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          web_url: targetWebRoute,
+          ...(targetEmployeeId ? { employeeId: String(targetEmployeeId) } : {}),
+          ...extraData,
+        },
+        { priority: { high: true } }
+      );
+
+      const totalAttempted = result.successCount + result.failureCount;
+      const unverified = result.responses.length !== totalAttempted;
+      if (totalAttempted === 0) {
+        deliveryStatus = 'IN_APP_ONLY';
+      } else if (unverified) {
+        deliveryStatus = 'UNKNOWN';
+      } else if (result.failureCount > 0) {
+        deliveryStatus = result.successCount > 0 ? 'PARTIAL' : 'FAILED';
+      } else if (result.successCount > 0) {
+        deliveryStatus = 'SENT';
+      } else {
+        deliveryStatus = 'IN_APP_ONLY';
+      }
+
+      fcmMessageId = result.responses.find((r) => r.success)?.messageId || null;
+      const codes = [
+        ...new Set(result.responses.filter((r) => !r.success).map((r) => r.error?.code || 'messaging/unknown-error')),
+      ];
+      if (codes.length) {
+        failureReason = codes.join(', ');
+        console.warn('[notifyEmployee] FCM rejected token(s)', { notificationId: notification.id, codes });
+      }
+    } catch (fcmErr: any) {
+      const code = typeof fcmErr?.code === 'string' && /^[a-zA-Z0-9/_-]+$/.test(fcmErr.code) ? fcmErr.code : 'messaging/unknown-outcome';
+      deliveryStatus = ['messaging/not-configured', 'messaging/mismatched-credential', 'app/invalid-credential'].includes(code)
+        ? 'FAILED'
+        : 'UNKNOWN';
+      failureReason = code;
+      console.warn('[notifyEmployee] Push dispatch failed', { notificationId: notification.id, code });
+    }
+
+    // Persist actual delivery status & provider details
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: { deliveryStatus, failureReason, fcmMessageId },
     });
 
     // 3. Emit real-time WebSocket notification to employee if connected
@@ -267,6 +312,7 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
     const targetRoute = getHRTargetRoute(category, actionType);
 
     // 1. In-App Notification (Database) - strictly 1 record per authorized recipient user
+    const actionIdStr = actionId ? String(actionId) : null;
     await prisma.notification.createMany({
       data: authorizedUserIds.map((userId) => ({
         userId,
@@ -275,8 +321,9 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
         body: message,
         category: category.toUpperCase(),
         actionType: actionType || 'GENERAL',
-        actionId: actionId ? String(actionId) : null,
+        actionId: actionIdStr,
         isRead: false,
+        deliveryStatus: 'PENDING',
       })),
       skipDuplicates: true,
     });
@@ -288,13 +335,13 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
           userId: { in: authorizedUserIds },
           isActive: true,
         },
-        select: { token: true },
+        select: { token: true, userId: true },
       }),
       prisma.device.findMany({
         where: {
           userId: { in: authorizedUserIds },
         },
-        select: { fcmToken: true },
+        select: { fcmToken: true, userId: true },
       }),
     ]);
 
@@ -306,31 +353,71 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
 
     const uniqueTokens = Array.from(new Set(allTokens));
 
+    const updateWhere = {
+      userId: { in: authorizedUserIds },
+      actionType: actionType || 'GENERAL',
+      actionId: actionIdStr,
+      deliveryStatus: 'PENDING',
+    };
+
     if (uniqueTokens.length === 0) {
+      await prisma.notification.updateMany({
+        where: updateWhere,
+        data: { deliveryStatus: 'IN_APP_ONLY' },
+      });
       return;
     }
 
     // 3. Send Single Multicast FCM Push Notification to all authorized tokens
-    await firebaseNotificationService.sendNotificationToTokens(
-      uniqueTokens,
-      title,
-      message,
-      {
+    try {
+      const result = await firebaseNotificationService.sendNotificationToTokens(
+        uniqueTokens,
         title,
-        body: message,
-        type: actionType || 'GENERAL',
-        notificationType: actionType || 'GENERAL',
-        entityType: category.toUpperCase(),
-        ...(actionId ? { entityId: String(actionId), referenceId: String(actionId), actionId: String(actionId) } : {}),
-        category: category.toUpperCase(),
-        screen: targetRoute,
-        route: targetRoute,
-        click_action: targetRoute,
-        web_url: targetRoute,
-        ...(employeeId ? { employeeId: String(employeeId) } : {}),
-      },
-      { priority: { high: true } }
-    );
+        message,
+        {
+          title,
+          body: message,
+          type: actionType || 'GENERAL',
+          notificationType: actionType || 'GENERAL',
+          entityType: category.toUpperCase(),
+          ...(actionId ? { entityId: String(actionId), referenceId: String(actionId), actionId: String(actionId) } : {}),
+          category: category.toUpperCase(),
+          screen: targetRoute,
+          route: targetRoute,
+          click_action: targetRoute,
+          web_url: targetRoute,
+          ...(employeeId ? { employeeId: String(employeeId) } : {}),
+        },
+        { priority: { high: true } }
+      );
+
+      const fcmMessageId = result.responses.find((r) => r.success)?.messageId || null;
+      const codes = [
+        ...new Set(result.responses.filter((r) => !r.success).map((r) => r.error?.code || 'messaging/unknown-error')),
+      ];
+      const deliveryStatus = result.failureCount > 0
+        ? (result.successCount > 0 ? 'PARTIAL' : 'FAILED')
+        : (result.successCount > 0 ? 'SENT' : 'IN_APP_ONLY');
+
+      await prisma.notification.updateMany({
+        where: updateWhere,
+        data: {
+          deliveryStatus,
+          fcmMessageId,
+          failureReason: codes.length ? codes.join(', ') : null,
+        },
+      });
+    } catch (pushErr: any) {
+      const code = typeof pushErr?.code === 'string' && /^[a-zA-Z0-9/_-]+$/.test(pushErr.code) ? pushErr.code : 'messaging/unknown-outcome';
+      const deliveryStatus = ['messaging/not-configured', 'messaging/mismatched-credential', 'app/invalid-credential'].includes(code)
+        ? 'FAILED'
+        : 'UNKNOWN';
+      await prisma.notification.updateMany({
+        where: updateWhere,
+        data: { deliveryStatus, failureReason: code },
+      });
+      console.warn('[notifyHRAndAdmins] Multicast push failed:', code);
+    }
   } catch (err) {
     console.error('⚠️ [notifyHRAndAdmins] Error sending HR/Admin notification:', err);
   }
