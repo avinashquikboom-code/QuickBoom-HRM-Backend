@@ -1,3 +1,4 @@
+import { createExpenseOnce, notifyExpenseSubmitted } from '../../services/expenseNotificationWorkflow';
 import { Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
@@ -991,10 +992,18 @@ export const createEmployeeExpense = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const { category, amount, description, date, imageBase64 } = req.body;
+  const { category, amount, description, date, imageBase64, requestId } = req.body;
 
   if (!category || amount === undefined || !description || !date) {
     res.status(400).json({ success: false, message: 'Category, amount, description, and date are required.' });
+    return;
+  }
+
+  const requestedKey = req.get('Idempotency-Key') || requestId;
+  if ((requestedKey !== undefined && (typeof requestedKey !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(requestedKey))) ||
+      !Number.isFinite(Number(amount)) || Number(amount) <= 0 || !Number.isFinite(new Date(date).getTime()) ||
+      typeof category !== 'string' || typeof description !== 'string' || !description.trim()) {
+    res.status(400).json({ success: false, message: 'Invalid expense fields or submission request ID' });
     return;
   }
 
@@ -1047,8 +1056,7 @@ export const createEmployeeExpense = async (
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    const expense = await prisma.expense.create({
-      data: {
+    const { expense, created } = await createExpenseOnce({
         employeeId: employee.id,
         category: category.toUpperCase(),
         amount: parseFloat(amount),
@@ -1057,11 +1065,15 @@ export const createEmployeeExpense = async (
         status: 'PENDING',
         hasReceipt: !!savedReceiptUrl,
         receiptUrl: savedReceiptUrl,
-      },
-    });
+    }, requestedKey);
+    // Dispatch only after the committed insert; unique-key replays never send again.
+    const notificationDelivery = created
+      ? await notifyExpenseSubmitted(expense, `${employee.firstName} ${employee.lastName}`.trim()) : undefined;
 
     res.status(201).json({
       success: true,
+      replayed: !created,
+      notificationDelivery: notificationDelivery || (created ? { deliveryStatus: 'UNKNOWN' } : { deliveryStatus: 'NOT_RETRIED' }),
       message: 'Expense filed successfully!',
       expense: {
         id: expense.id.toString(),
@@ -1080,6 +1092,10 @@ export const createEmployeeExpense = async (
       },
     });
   } catch (error) {
+    if ((error as any)?.code === 'expense/idempotency-conflict') {
+      res.status(409).json({ success: false, message: 'Submission request ID was already used for another claim' });
+      return;
+    }
     console.error('Create expense error:', error);
     res.status(500).json({ success: false, message: 'Failed to file expense.' });
   }

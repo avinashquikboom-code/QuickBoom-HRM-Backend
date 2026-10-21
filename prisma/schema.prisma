@@ -258,6 +258,7 @@ model LeaveBalance {
 }
 
 model Expense {
+  submissionKey String? @unique
   id          Int      @id @default(autoincrement())
   employeeId  Int
   category    String

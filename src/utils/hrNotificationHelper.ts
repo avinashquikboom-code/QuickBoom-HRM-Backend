@@ -48,6 +48,7 @@ export function getHRTargetRoute(category: string, actionType?: string): string 
   if (cat === 'PAYROLL' || act.includes('PAYROLL') || act.includes('SALARY') || act.includes('ADVANCE')) {
     return '/payroll';
   }
+  if (cat === 'EXPENSE' || act.includes('EXPENSE')) return '/expenses';
   if (cat === 'EMPLOYEE' || act.includes('EMPLOYEE')) {
     return '/employees';
   }
@@ -70,6 +71,7 @@ export function getEmployeeTargetRoute(category: string, actionType?: string): s
   if (cat === 'PAYROLL' || act.includes('PAYROLL') || act.includes('SALARY') || act.includes('ADVANCE')) {
     return '/payroll';
   }
+  if (cat === 'EXPENSE' || act.includes('EXPENSE')) return '/expenses';
   return '/profile';
 }
 
@@ -92,6 +94,7 @@ export function getModuleIdForCategory(category: string, actionType?: string): s
   if (cat === 'EMPLOYEE' || act.includes('EMPLOYEE')) {
     return 'pa-employees';
   }
+  if (cat === 'EXPENSE' || act.includes('EXPENSE')) return 'pa-payroll';
   return 'pa-notifications';
 }
 
@@ -249,7 +252,7 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
  * Targets ONLY authorized HR and Admin users who have permission for this module.
  * Standard employees receive NOTHING.
  */
-export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promise<void> {
+export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promise<NonNullable<Awaited<ReturnType<typeof notifyEmployee>>>[] | undefined> {
   const { category = 'GENERAL', actionType, actionId, employeeId, requiredModuleId } = params;
   const title = params.title;
   const message = params.body || params.message || '';
@@ -266,7 +269,7 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
     });
 
     if (hrUsers.length === 0) {
-      return;
+      return [];
     }
 
     const moduleId = requiredModuleId || getModuleIdForCategory(category, actionType);
@@ -311,14 +314,15 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
     }
 
     if (authorizedUsers.length === 0) {
-      return;
+      return [];
     }
 
     const targetRoute = getHRTargetRoute(category, actionType);
     // Record and dispatch per authorized recipient. A rejected token must never
     // mark another recipient's notification FAILED or attach their message ID.
+    const outcomes: NonNullable<Awaited<ReturnType<typeof notifyEmployee>>>[] = [];
     for (let offset = 0; offset < authorizedUsers.length; offset += 10) {
-      await Promise.all(authorizedUsers.slice(offset, offset + 10).map(user => notifyEmployee({
+      const batch = await Promise.all(authorizedUsers.slice(offset, offset + 10).map(user => notifyEmployee({
         userId: user.id,
         employeeId: employeeId || undefined,
         title,
@@ -329,7 +333,9 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
         screen: targetRoute,
         clickRoute: targetRoute,
       })));
+      for (const result of batch) if (result) outcomes.push(result);
     }
+    return outcomes;
   } catch (err) {
     console.error('⚠️ [notifyHRAndAdmins] Error sending HR/Admin notification:', err);
   }
@@ -338,7 +344,7 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
 /**
  * Backward-compatible alias for notifyHRAndAdmins
  */
-export async function sendHRNotification(params: SendHRNotificationParams): Promise<void> {
+export async function sendHRNotification(params: SendHRNotificationParams) {
   return notifyHRAndAdmins(params);
 }
 

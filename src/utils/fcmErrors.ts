@@ -3,6 +3,14 @@ import { createHash } from 'crypto';
 export const tokenFingerprint = (token: string): string =>
   createHash('sha256').update(token).digest('hex').slice(0, 16);
 
+/** Only provider-confirmed permanent registration failures may retire a token. */
+export function isPermanentFcmTokenError(error: unknown): boolean {
+  const value = error as { code?: string; message?: string } | null;
+  return ['messaging/invalid-registration-token', 'messaging/registration-token-not-registered'].includes(value?.code || '') ||
+    (value?.code === 'messaging/invalid-argument' && typeof value.message === 'string' &&
+      /^The registration token is not a valid FCM registration token\.?$/i.test(value.message.trim()));
+}
+
 export function classifyFcmError(code: string): 'token' | 'credentials' | 'permission' | 'configuration' | 'transient' | 'unknown' {
   if (['messaging/invalid-registration-token', 'messaging/registration-token-not-registered'].includes(code)) return 'token';
   if (['app/invalid-credential', 'app/invalid-app-options', 'messaging/authentication-error', 'messaging/mismatched-credential', 'messaging/third-party-auth-error'].includes(code)) return 'credentials';
@@ -25,5 +33,5 @@ export function safeFcmError(error: unknown, tokens: string[] = []) {
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[redacted-email]')
     .replace(/[\r\n\t]+/g, ' ')
     .slice(0, 700);
-  return { code, category: classifyFcmError(code), message };
+  return { code, category: isPermanentFcmTokenError(error) ? 'token' as const : classifyFcmError(code), message };
 }

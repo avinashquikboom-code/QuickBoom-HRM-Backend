@@ -1,3 +1,4 @@
+import { transitionExpenseReview, notifyExpenseReviewed } from '../../services/expenseNotificationWorkflow';
 import { transitionLeaveReview } from '../../services/leaveReviewTransition';
 import { Response } from 'express';
 import { Role } from '@prisma/client';
@@ -830,16 +831,19 @@ export const approveExpense = async (
     const reviewer = reviewerName || req.user?.email || String(req.user?.id || 'HR');
     const noteText = reviewNote || (targetStatus === 'REJECTED' ? 'Rejected' : 'Approved');
 
-    const expense = await prisma.expense.update({
-      where: { id: expenseId },
-      data: {
-        status: targetStatus,
-        reviewedBy: reviewer,
-        reviewNote: noteText,
-        updatedAt: new Date(),
-      },
-      include: { employee: true },
-    });
+    if (existing.status === targetStatus) {
+      res.json({ success: true, message: 'Expense already reviewed.', expense: existing, data: existing, replayed: true });
+      return;
+    }
+    const transition = await transitionExpenseReview(expenseId, existing.status, targetStatus, reviewer, noteText);
+    if (!transition.changed) {
+      res.status(transition.expense.status === targetStatus ? 200 : 409).json({
+        success: transition.expense.status === targetStatus, message: 'Expense was already reviewed. Refresh before retrying.',
+        expense: transition.expense, data: transition.expense, replayed: true,
+      });
+      return;
+    }
+    const expense = transition.expense;
 
     let receiptPdfUrl: string | undefined = undefined;
 
@@ -873,36 +877,12 @@ export const approveExpense = async (
       }
     }
 
-    // Send FCM notification to employee
-    try {
-      const empUserId = expense.employee?.userId;
-      if (empUserId) {
-        const notifTitle = targetStatus === 'REJECTED'
-          ? '❌ Expense Claim Rejected'
-          : `✅ Expense ${targetStatus}`;
-        const notifBody = targetStatus === 'REJECTED'
-          ? `❌ Rejected: ${noteText}`
-          : `✅ Expense approved: ₹${expense.amount.toLocaleString('en-IN')}.${receiptPdfUrl ? ' [Download Receipt]' : ''}`;
-
-        await firebaseNotificationService.sendNotificationToUser(
-          empUserId,
-          notifTitle,
-          notifBody,
-          {
-            type: 'EXPENSE_UPDATE',
-            expenseId: String(expense.id),
-            status: targetStatus,
-            receiptPdfUrl: receiptPdfUrl || '',
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          }
-        );
-      }
-    } catch (fcmErr) {
-      console.warn('Expense review FCM notification warning:', fcmErr);
-    }
+    // Status is committed before notification persistence and provider dispatch.
+    const notificationDelivery = await notifyExpenseReviewed(expense);
 
     res.json({
       success: true,
+      notificationDelivery: notificationDelivery || { deliveryStatus: 'UNKNOWN' },
       message: `Expense ${targetStatus.toLowerCase()} successfully.${receiptPdfUrl ? ' Receipt generated.' : ''}`,
       data: {
         ...expense,
@@ -947,39 +927,26 @@ export const rejectExpense = async (
     const reviewer = reviewerName || req.user?.email || String(req.user?.id || 'HR');
     const noteText = reviewNote || 'Rejected';
 
-    const expense = await prisma.expense.update({
-      where: { id: expenseId },
-      data: {
-        status: 'REJECTED',
-        reviewedBy: reviewer,
-        reviewNote: noteText,
-        updatedAt: new Date(),
-      },
-      include: { employee: true },
-    });
-
-    // Send FCM notification to employee
-    try {
-      const empUserId = expense.employee?.userId;
-      if (empUserId) {
-        await firebaseNotificationService.sendNotificationToUser(
-          empUserId,
-          '❌ Expense Claim Rejected',
-          `❌ Rejected: ${noteText}`,
-          {
-            type: 'EXPENSE_UPDATE',
-            expenseId: String(expense.id),
-            status: 'REJECTED',
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          }
-        );
-      }
-    } catch (fcmErr) {
-      console.warn('Expense reject FCM notification warning:', fcmErr);
+    if (existing.status === 'REJECTED') {
+      res.json({ success: true, message: 'Expense already reviewed.', expense: existing, data: existing, replayed: true });
+      return;
     }
+    const transition = await transitionExpenseReview(expenseId, existing.status, 'REJECTED', reviewer, noteText);
+    if (!transition.changed) {
+      res.status(transition.expense.status === 'REJECTED' ? 200 : 409).json({
+        success: transition.expense.status === 'REJECTED', message: 'Expense was already reviewed. Refresh before retrying.',
+        expense: transition.expense, data: transition.expense, replayed: true,
+      });
+      return;
+    }
+    const expense = transition.expense;
+
+    // Status is committed before notification persistence and provider dispatch.
+    const notificationDelivery = await notifyExpenseReviewed(expense);
 
     res.json({
       success: true,
+      notificationDelivery: notificationDelivery || { deliveryStatus: 'UNKNOWN' },
       message: 'Expense rejected successfully.',
       data: expense,
       expense

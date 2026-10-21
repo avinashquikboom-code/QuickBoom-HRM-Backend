@@ -1,7 +1,7 @@
 import { Messaging, BatchResponse, BaseMessage } from 'firebase-admin/messaging';
 import { prisma } from '../utils/db';
 import { getMessaging, FirebaseMessagePayload, FirebaseUserTarget, NotificationOptions } from '../config/firebase';
-import { safeFcmError, tokenFingerprint } from '../utils/fcmErrors';
+import { safeFcmError, tokenFingerprint, isPermanentFcmTokenError } from '../utils/fcmErrors';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export class FirebaseNotificationService {
@@ -117,7 +117,7 @@ export class FirebaseNotificationService {
         if (batchResponse.failureCount > 0) {
           const failedTokens = batchResponse.responses
             .flatMap((resp, index) =>
-              !resp.success && ['messaging/invalid-registration-token', 'messaging/registration-token-not-registered'].includes(resp.error?.code || '')
+              !resp.success && isPermanentFcmTokenError(resp.error)
                 ? [tokenBatch[index]] : []
             );
 

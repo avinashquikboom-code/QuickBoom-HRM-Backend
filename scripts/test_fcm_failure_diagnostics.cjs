@@ -34,6 +34,10 @@ const { FirebaseNotificationService } = require('../src/services/firebaseNotific
     error = { code: 'messaging/registration-token-not-registered', message: 'Unregistered token' };
     await service.sendNotificationToTokens(['private-device-token'], 'Test', 'Test');
     assert.equal(cleanup, 2);
+    error = { code: 'messaging/invalid-argument', message: 'The registration token is not a valid FCM registration token' };
+    await service.sendNotificationToTokens(['private-device-token'], 'Test', 'Test');
+    assert.equal(cleanup, 4, 'Explicit provider-confirmed malformed token is retired from both stores');
+    assert.equal(logs.at(-1)[1].category, 'token');
     initializationError = Object.assign(new Error('Bad runtime credential path'), { code: 'firebase/credential-file-unreadable' });
     await assert.rejects(() => service.sendNotificationToTokens(['private-device-token'], 'Test', 'Test'), e => e === initializationError);
     console.log('PASS original credential error preserved, zero acceptance on Firebase rejection, safe per-device diagnostics and permanent-token-only cleanup. FCM mocked.');
