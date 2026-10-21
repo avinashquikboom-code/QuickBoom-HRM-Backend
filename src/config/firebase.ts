@@ -1,99 +1,35 @@
 import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
 import { getMessaging as getAdminMessaging, Messaging } from 'firebase-admin/messaging';
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { loadFirebaseCredentials } from './firebaseCredentials';
+import { safeFcmError } from '../utils/fcmErrors';
 
 let firebaseApp: App | null = null;
-let isRealAppInitialized = false;
 
 export const initializeFirebase = (): App => {
   if (firebaseApp) return firebaseApp;
-
   try {
-    if (getApps().length > 0) {
-      firebaseApp = getApps()[0];
-      return firebaseApp;
-    }
-
-    let serviceAccount: any = null;
-
-    // 1. Check explicit file path in env or default secrets locations
-    const candidatePaths = [
-      process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
-      process.env.GOOGLE_APPLICATION_CREDENTIALS,
-      join(__dirname, '../../secrets/firebase-service-account.json'),
-      join(process.cwd(), 'secrets/firebase-service-account.json'),
-      join(process.cwd(), 'firebase-service-account.json'),
-    ].filter(Boolean) as string[];
-
-    for (const filePath of candidatePaths) {
-      if (existsSync(filePath)) {
-        try {
-          const raw = readFileSync(filePath, 'utf-8');
-          serviceAccount = JSON.parse(raw);
-          console.log(`🔑 [FirebaseInit] Loaded service account credentials from: ${filePath}`);
-          break;
-        } catch (err) {
-          console.warn(`⚠️ [FirebaseInit] Failed to parse credentials at ${filePath}:`, err);
-        }
+    const existing = getApps()[0];
+    if (existing) {
+      const projectId = existing.options.projectId || (existing.options.credential as any)?.projectId;
+      if (projectId !== 'quickboom-hrm') {
+        throw Object.assign(new Error('Existing Firebase app does not match the Android Firebase project'), { code: 'firebase/project-mismatch' });
       }
+      firebaseApp = existing;
+      return existing;
     }
-
-    // 2. Check JSON string in env
-    if (!serviceAccount && process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-      try {
-        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
-      } catch (err) {
-        console.warn('⚠️ [FirebaseInit] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON env var:', err);
-      }
-    }
-
-    // 3. Check individual env variables
-    if (
-      !serviceAccount &&
-      process.env.FIREBASE_PROJECT_ID &&
-      process.env.FIREBASE_PRIVATE_KEY &&
-      process.env.FIREBASE_CLIENT_EMAIL
-    ) {
-      serviceAccount = {
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      };
-    }
-
-    if (!serviceAccount) {
-      console.warn('⚠️ No Firebase credentials found. Using mock app.');
-      firebaseApp = initializeApp({ projectId: 'mock-project' });
-      return firebaseApp;
-    }
-
-    firebaseApp = initializeApp({
-      credential: cert(serviceAccount)
-    });
-    
-    isRealAppInitialized = true;
-    console.log('✅ [FirebaseInit] Firebase Admin SDK initialized successfully');
+    const { credential, diagnostics } = loadFirebaseCredentials();
+    firebaseApp = initializeApp({ credential: cert(credential), projectId: credential.projectId });
+    console.info('[FirebaseInit] Initialized', { source: diagnostics.source, projectId: diagnostics.projectId });
     return firebaseApp;
   } catch (error) {
-    console.error('[FirebaseInit] Initialization failed', { code: (error as any)?.code, name: (error as any)?.name });
-    firebaseApp = getApps().length > 0 ? getApps()[0] : initializeApp({ projectId: 'mock-project' });
-    return firebaseApp;
+    console.error('[FirebaseInit] Initialization failed', safeFcmError(error));
+    // Preserve the actual cause; never cache a mock app or silently ignore a bad path.
+    throw error;
   }
 };
 
-export const getFirebaseApp = (): App => {
-  if (!firebaseApp) return initializeFirebase();
-  return firebaseApp;
-};
-
-export const getMessaging = (): Messaging => {
-  const app = getFirebaseApp();
-  if (app.options.projectId === 'mock-project') {
-    throw Object.assign(new Error('Firebase credentials are not configured'), { code: 'messaging/not-configured' });
-  }
-  return getAdminMessaging(app);
-};
+export const getFirebaseApp = (): App => firebaseApp || initializeFirebase();
+export const getMessaging = (): Messaging => getAdminMessaging(getFirebaseApp());
 
 // Exporting required types for other services
 export interface FirebaseNotification {

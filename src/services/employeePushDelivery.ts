@@ -1,3 +1,4 @@
+import { safeFcmError } from '../utils/fcmErrors';
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 
@@ -26,9 +27,10 @@ export async function persistAndPush(targets: PushTarget[], content: PushContent
         }
       } catch (error: any) {
         const code = typeof error?.code === 'string' && /^[a-zA-Z0-9/_-]+$/.test(error.code) ? error.code : 'messaging/unknown-outcome';
-        deliveryStatus = ['messaging/not-configured', 'messaging/mismatched-credential', 'app/invalid-credential'].includes(code) ? 'FAILED' : 'UNKNOWN';
+        const diagnostic = safeFcmError(error);
+        deliveryStatus = ['configuration', 'credentials', 'permission', 'token'].includes(diagnostic.category) ? 'FAILED' : 'UNKNOWN';
         failureReason = code;
-        console.warn('[NotificationDelivery] Push failed', { notificationId: notification.id, code });
+        console.warn('[NotificationDelivery] Push failed', { notificationId: notification.id, ...safeFcmError(error) });
       }
       if (deliveryStatus === 'IN_APP_ONLY') summary.noTokenRecipients++;
       if (deliveryStatus === 'FAILED' || deliveryStatus === 'PARTIAL') summary.failedRecipients++;

@@ -1,3 +1,4 @@
+import { safeFcmError } from './fcmErrors';
 import { getFirebaseApp, getMessaging } from '../config/firebase';
 
 /** Send a notification directly to one FCM registration token. */
@@ -27,7 +28,7 @@ export async function sendPush(
 
     return { success: true, messageId };
   } catch (error) {
-    console.error('FCM send failed:', error);
+    console.error('FCM send failed:', safeFcmError(error, [token]));
     throw error;
   }
 }

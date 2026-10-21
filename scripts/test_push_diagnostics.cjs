@@ -15,6 +15,7 @@ const fake = {
 const load = Module._load;
 Module._load = function(request, parent, isMain) {
   if (/\/utils\/db$/.test(request)) return { prisma: fake };
+  if (request === '../config/firebaseCredentials') return { loadFirebaseCredentials: () => ({ diagnostics: { source: 'FIREBASE_SERVICE_ACCOUNT_PATH', projectId: 'quickboom-hrm', projectMatchesMobile: true } }) };
   if (request === '../config/firebase') return { getMessaging: () => { if (configError) throw configError; return {}; } };
   return load.call(this, request, parent, isMain);
 };

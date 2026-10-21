@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
-import { pushNotificationService } from '../services/pushNotificationService';
+import { firebaseNotificationService } from '../services/firebaseNotificationService';
+import { safeFcmError } from '../utils/fcmErrors';
 
 const router = Router();
 
@@ -139,22 +140,32 @@ router.post('/test-push', async (req: AuthenticatedRequest, res: Response) => {
     }
 
     const { targetUserId, title, body, data } = req.body;
-    const recipientIds = targetUserId ? [parseInt(String(targetUserId), 10)] : [userId];
-
-    await pushNotificationService.sendPush(
-      recipientIds,
+    const recipientId = targetUserId == null ? userId : Number(targetUserId);
+    if (!Number.isSafeInteger(recipientId) || recipientId <= 0) {
+      res.status(400).json({ success: false, message: 'Invalid targetUserId' });
+      return;
+    }
+    if (recipientId !== userId && !['HR', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_ADMIN'].includes(req.user!.role)) {
+      res.status(403).json({ success: false, message: 'Not authorized to send a test push to another account' });
+      return;
+    }
+    const result = await firebaseNotificationService.sendNotificationToUser(
+      recipientId,
       title || 'Test Notification',
       body || 'This is a test push notification from Hopkid HRM server',
       data || { type: 'test' }
     );
-
-    res.json({
-      success: true,
-      message: `Test push notification sent to user(s): ${recipientIds.join(', ')}`,
+    res.status(result.failureCount && !result.successCount ? 502 : 200).json({
+      success: result.successCount > 0,
+      message: `FCM accepted ${result.successCount} device message(s); ${result.failureCount} rejected. Device delivery is not verified.`,
+      acceptedTokens: result.successCount,
+      failedTokens: result.failureCount,
+      errorCodes: [...new Set(result.responses.filter(r => !r.success).map(r => safeFcmError(r.error).code))],
     });
   } catch (error) {
-    console.error('[DeviceRoutes] Test push failed:', error);
-    res.status(500).json({ success: false, message: 'Failed to send test push notification' });
+    const diagnostic = safeFcmError(error);
+    console.error('[DeviceRoutes] Test push failed:', diagnostic);
+    res.status(502).json({ success: false, acceptedTokens: 0, message: 'FCM test push failed', error: diagnostic });
   }
 });
 

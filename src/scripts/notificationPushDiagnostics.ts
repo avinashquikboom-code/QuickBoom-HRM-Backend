@@ -3,11 +3,50 @@
 import { createHash } from 'crypto';
 import { prisma } from '../utils/db';
 import { getMessaging } from '../config/firebase';
+import { loadFirebaseCredentials } from '../config/firebaseCredentials';
+import { safeFcmError } from '../utils/fcmErrors';
 
 const safeCode = (value: unknown): string | null =>
   typeof value === 'string' && /^[a-zA-Z0-9/_-]+$/.test(value) ? value : null;
 
+export function diagnoseFirebaseConfiguration() {
+  let credentialDiagnostics: ReturnType<typeof loadFirebaseCredentials>['diagnostics'] | null = null;
+  let credentialError: ReturnType<typeof safeFcmError> | null = null;
+  try { credentialDiagnostics = loadFirebaseCredentials().diagnostics; }
+  catch (error) { credentialError = safeFcmError(error); }
+  let messagingInitialized = false;
+  let initializationErrorCode: string | null = null;
+  try { getMessaging(); messagingInitialized = true; }
+  catch (error) { initializationErrorCode = safeCode((error as { code?: unknown })?.code) || 'diagnostics/initialization-failed'; }
+  return {
+    configuredProjectId: credentialDiagnostics?.projectId || null,
+    serviceAccountPathConfigured: !!process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+    credentialDiagnostics, credentialError,
+    clientEmailConfigured: !!process.env.FIREBASE_CLIENT_EMAIL,
+    privateKeyConfigured: !!process.env.FIREBASE_PRIVATE_KEY,
+    applicationCredentialsPathConfigured: !!process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    expectedMobileProjectId: 'quickboom-hrm',
+    projectMatchesMobile: credentialDiagnostics?.projectMatchesMobile ?? false,
+    messagingInitialized, initializationErrorCode,
+    firebaseApiAccessVerified: false,
+  };
+}
+
 export async function diagnosePush(args: string[]) {
+  if (args.length === 1 && args[0] === '--configuration') {
+    return { firebase: diagnoseFirebaseConfiguration() };
+  }
+  if (args.length === 1 && args[0] === '--recent-failures') {
+    const attempts = await prisma.notification.findMany({
+      where: { deliveryStatus: { in: ['FAILED', 'PARTIAL', 'UNKNOWN'] } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 10,
+      select: { id: true, employeeId: true, userId: true, createdAt: true, deliveryStatus: true, failureReason: true },
+    });
+    return { firebase: diagnoseFirebaseConfiguration(), recentFailures: attempts.map(({ failureReason, ...attempt }) => ({
+      ...attempt,
+      errorCodes: failureReason ? failureReason.split(',').map(code => safeCode(code.trim()) || 'diagnostics/unstructured-error-omitted') : [],
+    })) };
+  }
   const byCode = args[0] === '--employee-code';
   const value = byCode ? args[1] : args[0];
   const id = Number(value);
@@ -28,10 +67,6 @@ export async function diagnosePush(args: string[]) {
       select: { id: true, createdAt: true, deliveryStatus: true, failureReason: true, fcmMessageId: true },
     }),
   ]);
-  let messagingInitialized = false;
-  let initializationErrorCode: string | null = null;
-  try { getMessaging(); messagingInitialized = true; }
-  catch (error) { initializationErrorCode = safeCode((error as { code?: unknown })?.code) || 'diagnostics/initialization-failed'; }
   const describeToken = (token: string) => ({
     fingerprint: createHash('sha256').update(token).digest('hex').slice(0, 16),
     length: token.length, empty: !token.trim(), surroundingWhitespace: token !== token.trim(),
@@ -39,17 +74,7 @@ export async function diagnosePush(args: string[]) {
   return {
     employeeId: employee.id, employeeCode: employee.employeeCode, userId: employee.userId,
     employeeActive: employee.status.toLowerCase() === 'active', accountActive: employee.user?.isActive ?? null,
-    firebase: {
-      configuredProjectId: process.env.FIREBASE_PROJECT_ID || null,
-      clientEmailConfigured: !!process.env.FIREBASE_CLIENT_EMAIL,
-      privateKeyConfigured: !!process.env.FIREBASE_PRIVATE_KEY,
-      applicationCredentialsPathConfigured: !!process.env.GOOGLE_APPLICATION_CREDENTIALS,
-      expectedMobileProjectId: 'quickboom-hrm',
-      projectMatchesMobile: process.env.FIREBASE_PROJECT_ID === 'quickboom-hrm',
-      messagingInitialized, initializationErrorCode,
-      // SDK initialization does not make an authenticated Firebase request.
-      firebaseApiAccessVerified: false,
-    },
+    firebase: diagnoseFirebaseConfiguration(),
     registrations: {
       fcm: tokens.map(({ token, ...metadata }) => ({ ...metadata, ...describeToken(token) })),
       devices: devices.map(({ fcmToken, ...metadata }) => ({ ...metadata, ...describeToken(fcmToken) })),

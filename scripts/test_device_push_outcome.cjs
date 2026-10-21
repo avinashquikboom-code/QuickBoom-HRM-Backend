@@ -1,0 +1,33 @@
+const assert = require('node:assert/strict');
+const Module = require('node:module');
+require('ts-node/register/transpile-only');
+let outcome;
+let calls = 0;
+const originalLoad = Module._load;
+Module._load = function(r,p,i) {
+  if (/\/utils\/db$/.test(r)) return { prisma: {} };
+  if (r === '../services/firebaseNotificationService') return { firebaseNotificationService: { sendNotificationToUser: async () => { calls++; if (outcome instanceof Error) throw outcome; return outcome; } } };
+  return originalLoad.call(this,r,p,i);
+};
+const router = require('../src/routes/deviceRoutes').default;
+const handle = router.stack.find(l=>l.route?.path === '/test-push').route.stack.at(-1).handle;
+const response = () => ({code:200,body:null,status(c){this.code=c;return this;},json(b){this.body=b;return this;}});
+(async () => {
+  outcome={successCount:0,failureCount:1,responses:[{success:false,error:{code:'messaging/mismatched-credential'}}]};
+  let r=response();await handle({user:{id:1,role:'EMPLOYEE'},body:{}},r);
+  assert.equal(r.code,502);assert.equal(r.body.success,false);assert.equal(r.body.acceptedTokens,0);
+  assert.deepEqual(r.body.errorCodes,['messaging/mismatched-credential']);
+  outcome={successCount:0,failureCount:0,responses:[]};
+  r=response();await handle({user:{id:1,role:'EMPLOYEE'},body:{}},r);
+  assert.equal(r.body.success,false);assert.equal(r.body.acceptedTokens,0);
+  outcome={successCount:1,failureCount:0,responses:[{success:true,messageId:'test'}]};
+  r=response();await handle({user:{id:1,role:'EMPLOYEE'},body:{}},r);
+  assert.equal(r.body.success,true);assert.equal(r.body.acceptedTokens,1);
+  const before=calls;
+  r=response();await handle({user:{id:1,role:'EMPLOYEE'},body:{targetUserId:2}},r);
+  assert.equal(r.code,403);assert.equal(calls,before);
+  outcome=Object.assign(new Error('Unreadable credential file'),{code:'firebase/credential-file-unreadable'});
+  r=response();await handle({user:{id:1,role:'EMPLOYEE'},body:{}},r);
+  assert.equal(r.code,502);assert.equal(r.body.success,false);assert.equal(r.body.error.code,outcome.code);
+  console.log('PASS existing test-push API reflects FCM rejection, empty registrations, acceptance and configuration failures, and scopes employee tests to own account. No network calls.');
+})().catch(e=>{console.error(e);process.exitCode=1;});

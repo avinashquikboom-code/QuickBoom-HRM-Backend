@@ -1,4 +1,5 @@
 import { Messaging, BatchResponse } from 'firebase-admin/messaging';
+import { safeFcmError } from '../utils/fcmErrors';
 import { prisma } from '../utils/db';
 import { getMessaging } from '../config/firebase';
 
@@ -99,13 +100,12 @@ export class PushNotificationService {
           if (!resp.success && resp.error) {
             const errorCode = resp.error.code;
             const token = tokens[idx];
-            console.error(`[PushNotificationService] FCM token delivery failed. Error code: ${errorCode}, Message: ${resp.error.message}`);
+            console.error('[PushNotificationService] FCM token delivery failed', safeFcmError(resp.error, tokens));
             
             // Delete token on invalid / unregistered errors
             if (
               errorCode === 'messaging/registration-token-not-registered' ||
-              errorCode === 'messaging/invalid-registration-token' ||
-              errorCode === 'messaging/mismatched-credential'
+              errorCode === 'messaging/invalid-registration-token'
             ) {
               tokensToDelete.push(token);
             }
@@ -122,7 +122,7 @@ export class PushNotificationService {
         }
       }
     } catch (error) {
-      console.error('[PushNotificationService] Failed to send multicast push notifications:', error);
+      console.error('[PushNotificationService] Failed to send multicast push notifications:', safeFcmError(error));
     }
   }
 }

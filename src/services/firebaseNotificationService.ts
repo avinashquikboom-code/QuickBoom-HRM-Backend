@@ -1,6 +1,7 @@
 import { Messaging, BatchResponse, BaseMessage } from 'firebase-admin/messaging';
 import { prisma } from '../utils/db';
 import { getMessaging, FirebaseMessagePayload, FirebaseUserTarget, NotificationOptions } from '../config/firebase';
+import { safeFcmError, tokenFingerprint } from '../utils/fcmErrors';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 export class FirebaseNotificationService {
@@ -8,13 +9,9 @@ export class FirebaseNotificationService {
     throw new Error('Method not implemented.');
   }
 
-  private getMessagingInstance(): Messaging | null {
-    try {
-      return getMessaging();
-    } catch (e) {
-      console.warn('[FirebaseNotificationService] Messaging unavailable', { code: (e as any)?.code });
-      return null;
-    }
+  private getMessagingInstance(): Messaging {
+    // Initialization failures must retain their original configuration error.
+    return getMessaging();
   }
 
   // Send notification to specific FCM tokens
@@ -30,11 +27,6 @@ export class FirebaseNotificationService {
     }
 
     const messagingInstance = this.getMessagingInstance();
-    if (!messagingInstance) {
-      console.warn('⚠️ [FirebaseNotificationService] FCM not initialized. Skipping notification.');
-      throw Object.assign(new Error('Firebase messaging is not configured'), { code: 'messaging/not-configured' });
-    }
-
     const imageUrl = options?.imageUrl || data?.imageUrl || data?.image || undefined;
 
     const message: BaseMessage = {
@@ -110,6 +102,13 @@ export class FirebaseNotificationService {
           ...message,
         });
 
+        batchResponse.responses.forEach((response, index) => {
+          if (!response.success) console.warn('[FirebaseNotificationService] FCM rejected device', {
+            notificationId: data?.id || null,
+            tokenFingerprint: tokenFingerprint(tokenBatch[index]),
+            ...safeFcmError(response.error, tokenBatch),
+          });
+        });
         combinedResponses.push(...batchResponse.responses);
         totalSuccess += batchResponse.successCount;
         totalFailure += batchResponse.failureCount;
@@ -137,7 +136,7 @@ export class FirebaseNotificationService {
         failureCount: totalFailure,
       };
     } catch (error) {
-      console.error('[FirebaseNotificationService] Send failed', { code: (error as any)?.code });
+      console.error('[FirebaseNotificationService] Send failed', safeFcmError(error, tokens));
       throw error;
     }
   }
