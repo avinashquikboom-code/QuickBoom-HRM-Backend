@@ -17,7 +17,40 @@ export const initializeFirebase = (): App => {
 
     let serviceAccount: any = null;
 
+    // 1. Check explicit file path in env or default secrets locations
+    const candidatePaths = [
+      process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+      process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      join(__dirname, '../../secrets/firebase-service-account.json'),
+      join(process.cwd(), 'secrets/firebase-service-account.json'),
+      join(process.cwd(), 'firebase-service-account.json'),
+    ].filter(Boolean) as string[];
+
+    for (const filePath of candidatePaths) {
+      if (existsSync(filePath)) {
+        try {
+          const raw = readFileSync(filePath, 'utf-8');
+          serviceAccount = JSON.parse(raw);
+          console.log(`🔑 [FirebaseInit] Loaded service account credentials from: ${filePath}`);
+          break;
+        } catch (err) {
+          console.warn(`⚠️ [FirebaseInit] Failed to parse credentials at ${filePath}:`, err);
+        }
+      }
+    }
+
+    // 2. Check JSON string in env
+    if (!serviceAccount && process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      } catch (err) {
+        console.warn('⚠️ [FirebaseInit] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON env var:', err);
+      }
+    }
+
+    // 3. Check individual env variables
     if (
+      !serviceAccount &&
       process.env.FIREBASE_PROJECT_ID &&
       process.env.FIREBASE_PRIVATE_KEY &&
       process.env.FIREBASE_CLIENT_EMAIL
