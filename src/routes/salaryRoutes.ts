@@ -4,13 +4,18 @@ import {
   getSalaryStructureList, 
   getSalaryStructureByEmployeeId,
   getMySalaryStructure,
-  updateSalaryStructureById 
+  updateSalaryStructureById,
+  getDateWiseSalaryBreakdown
 } from '../controllers/salaryController';
 import { authenticateToken } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
 
 const router = Router();
 const hrRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
+
+// GET /api/salary/date-wise
+router.get('/date-wise', authenticateToken, getDateWiseSalaryBreakdown);
+router.get('/datewise', authenticateToken, getDateWiseSalaryBreakdown);
 
 // GET /api/salary/slip
 router.get('/slip', authenticateToken, getSalarySlip);

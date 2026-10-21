@@ -609,3 +609,69 @@ export const updateSalaryStructureById = async (
     res.status(500).json({ success: false, message: 'Failed to update salary structure.' });
   }
 };
+
+// GET /api/salary/date-wise
+export const getDateWiseSalaryBreakdown = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { employeeId, month, year } = req.query;
+
+    let targetEmployeeId: number | null = null;
+    const isHrOrAdmin = ['ADMIN', 'SUPER_ADMIN', 'PLATFORM_ADMIN', 'HR', 'STORE_MANAGER'].includes(req.user?.role || '');
+
+    if (employeeId && isHrOrAdmin && !isNaN(Number(employeeId))) {
+      targetEmployeeId = Number(employeeId);
+    } else if (req.user?.id) {
+      const emp = await prisma.employee.findFirst({
+        where: { userId: req.user.id }
+      });
+      if (emp) {
+        targetEmployeeId = emp.id;
+      }
+    }
+
+    if (!targetEmployeeId) {
+      const firstEmp = await prisma.employee.findFirst({
+        where: { OR: [{ employeeCode: '074' }, { status: 'active' }] }
+      });
+      targetEmployeeId = firstEmp ? firstEmp.id : 1;
+    }
+
+    const now = new Date();
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    let targetYear = istDate.getUTCFullYear();
+    let targetMonth = istDate.getUTCMonth() + 1;
+
+    if (year && !isNaN(Number(year))) {
+      targetYear = Number(year);
+    }
+
+    if (month) {
+      const mStr = String(month).trim();
+      if (mStr.includes('-')) {
+        const parts = mStr.split('-');
+        targetYear = Number(parts[0]);
+        targetMonth = Number(parts[1]);
+      } else if (!isNaN(Number(mStr))) {
+        targetMonth = Number(mStr);
+      }
+    }
+
+    const { dateWiseSalaryService } = await import('../services/dateWiseSalaryService');
+    const result = await dateWiseSalaryService.getDateWiseBreakdown(targetEmployeeId, targetMonth, targetYear);
+
+    res.json({
+      success: true,
+      data: result,
+      summary: result.summary,
+      dates: result.dates,
+    });
+  } catch (error: any) {
+    console.error('Get salary date-wise error:', error);
+    res.status(500).json({ success: false, message: error?.message || 'Failed to fetch date-wise salary breakdown' });
+  }
+};
+

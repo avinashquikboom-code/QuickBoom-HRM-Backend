@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authMiddleware } from '../../middlewares/authMiddleware';
 import { roleMiddleware } from '../../middlewares/roleMiddleware';
 import { requirePermission } from '../../middlewares/permissionCheckMiddleware';
-import { getMyPayslips, downloadPayslip } from '../../controllers/mobile/mobilePayrollController';
+import { getMyPayslips, downloadPayslip, getMyDateWiseSalaryBreakdown } from '../../controllers/mobile/mobilePayrollController';
 import { getMySalaryStructure } from '../../controllers/salaryController';
 
 const router = Router();
@@ -26,20 +26,33 @@ router.use(roleMiddleware(allowedRoles));
 
 /**
  * @swagger
- * /api/mobile/payroll/slips:
+ * /api/mobile/payroll/date-wise:
  *   get:
- *     summary: Fetch employee's own salary slips (Mobile)
+ *     summary: Fetch employee's date-wise salary breakdown for a payroll month (Mobile)
  *     tags: [Mobile - Payroll]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: month
+ *         schema:
+ *           type: integer
+ *         description: Payroll month (1-12)
+ *       - in: query
+ *         name: year
+ *         schema:
+ *           type: integer
+ *         description: Payroll year (e.g. 2026)
  *     responses:
  *       200:
- *         description: Payslips list retrieved successfully
+ *         description: Date-wise salary breakdown retrieved successfully
  *       401:
  *         description: Unauthorized
  *       500:
  *         description: Server error
  */
+router.get('/date-wise', getMyDateWiseSalaryBreakdown);
+router.get('/datewise', getMyDateWiseSalaryBreakdown);
 router.get('/slips', getMyPayslips);
 router.get('/payslips', getMyPayslips);
 router.get('/structure', getMySalaryStructure);

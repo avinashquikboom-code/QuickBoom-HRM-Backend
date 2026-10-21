@@ -260,3 +260,65 @@ export const downloadPayslip = async (
     });
   }
 };
+
+// Fetch date-wise salary breakdown for the logged-in employee (Mobile)
+export const getMyDateWiseSalaryBreakdown = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { month, year, employeeId: qEmpId } = req.query;
+
+    let targetEmployeeId: number | null = null;
+    const isHrOrAdmin = ['ADMIN', 'SUPER_ADMIN', 'PLATFORM_ADMIN', 'HR', 'STORE_MANAGER'].includes(req.user?.role || '');
+
+    if (qEmpId && isHrOrAdmin && !isNaN(Number(qEmpId))) {
+      targetEmployeeId = Number(qEmpId);
+    } else if (req.user?.id) {
+      const emp = await prisma.employee.findFirst({
+        where: { userId: req.user.id },
+      });
+      if (emp) {
+        targetEmployeeId = emp.id;
+      }
+    }
+
+    if (!targetEmployeeId) {
+      res.status(404).json({
+        success: false,
+        message: 'No employee record linked to this account.',
+      });
+      return;
+    }
+
+    const now = new Date();
+    const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(istTime);
+    let targetYear = istDate.getUTCFullYear();
+    let targetMonth = istDate.getUTCMonth() + 1;
+
+    if (year && !isNaN(Number(year))) {
+      targetYear = Number(year);
+    }
+    if (month && !isNaN(Number(month))) {
+      targetMonth = Number(month);
+    }
+
+    const { dateWiseSalaryService } = await import('../../services/dateWiseSalaryService');
+    const result = await dateWiseSalaryService.getDateWiseBreakdown(targetEmployeeId, targetMonth, targetYear);
+
+    res.json({
+      success: true,
+      data: result,
+      summary: result.summary,
+      dates: result.dates,
+    });
+  } catch (error: any) {
+    console.error('Get date-wise salary breakdown error:', error);
+    res.status(500).json({
+      success: false,
+      message: error?.message || 'Failed to fetch date-wise salary breakdown',
+    });
+  }
+};
+

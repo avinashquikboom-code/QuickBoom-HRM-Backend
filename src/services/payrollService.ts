@@ -1901,6 +1901,11 @@ class PayrollService {
       console.error('Send payroll notification error:', error);
     }
   }
+
+  async getDateWiseSalaryBreakdown(employeeId: number, month: number, year: number) {
+    const { dateWiseSalaryService } = await import('./dateWiseSalaryService');
+    return dateWiseSalaryService.getDateWiseBreakdown(employeeId, month, year);
+  }
 }
 
 export default new PayrollService();
