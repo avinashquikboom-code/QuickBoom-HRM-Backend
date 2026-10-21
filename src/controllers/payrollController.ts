@@ -1029,3 +1029,81 @@ export const disburseAdminPayslip = async (
     });
   }
 };
+
+export const getExtraAttendancePayRule = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const settings = await prisma.systemSetting.findFirst();
+    const payrollConfig = (settings?.payroll as any) || {};
+    const extraAttendancePay = payrollConfig.extraAttendancePay || {
+      enabled: false,
+      type: 'PER_DAY_RATE',
+      rateMultiplier: 1.0,
+      fixedAmount: 0,
+      minimumPresentDays: 30,
+    };
+
+    res.json({
+      success: true,
+      data: extraAttendancePay,
+    });
+  } catch (error) {
+    console.error('getExtraAttendancePayRule error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve extra attendance pay rule.',
+    });
+  }
+};
+
+export const updateExtraAttendancePayRule = async (
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { enabled, type, rateMultiplier, fixedAmount, minimumPresentDays } = req.body || {};
+
+    const validatedRule = {
+      enabled: Boolean(enabled),
+      type: type === 'FIXED_AMOUNT' ? 'FIXED_AMOUNT' : 'PER_DAY_RATE',
+      rateMultiplier: Number.isFinite(Number(rateMultiplier)) && Number(rateMultiplier) >= 0 ? Number(rateMultiplier) : 1.0,
+      fixedAmount: Number.isFinite(Number(fixedAmount)) && Number(fixedAmount) >= 0 ? Number(fixedAmount) : 0,
+      minimumPresentDays: Number.isFinite(Number(minimumPresentDays)) && Number(minimumPresentDays) >= 0 ? Number(minimumPresentDays) : 30,
+    };
+
+    let settings = await prisma.systemSetting.findFirst();
+    const currentPayroll = (settings?.payroll as any) || {};
+    const updatedPayroll = {
+      ...currentPayroll,
+      extraAttendancePay: validatedRule,
+    };
+
+    if (settings) {
+      await prisma.systemSetting.update({
+        where: { id: settings.id },
+        data: { payroll: updatedPayroll },
+      });
+    } else {
+      await prisma.systemSetting.create({
+        data: {
+          id: 1,
+          payroll: updatedPayroll,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Extra attendance pay rule updated successfully.',
+      data: validatedRule,
+    });
+  } catch (error) {
+    console.error('updateExtraAttendancePayRule error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update extra attendance pay rule.',
+    });
+  }
+};

@@ -1,4 +1,4 @@
-import { fixedThirtyDaySalary, lockedPayslip } from '../utils/fixedThirtyDaySalary';
+import { fixedThirtyDaySalary, lockedPayslip, ExtraAttendancePayRule } from '../utils/fixedThirtyDaySalary';
 import { prisma } from '../utils/db';
 import { firebaseNotificationService } from './firebaseNotificationService';
 import { getIstMonthRange } from '../utils/commissionHelper';
@@ -25,6 +25,12 @@ export interface PayrollCalculation {
   dailySalary: number;
   salaryBasisDays?: number;
   standardPayableDays?: number;
+  paidLeavesUsed?: number;
+  remainingPaidLeaves?: number;
+  unpaidAbsences?: number;
+  unpaidDeductions?: number;
+  minAttendanceRequirement?: number;
+  minAttendanceMet?: boolean;
   extraAttendanceDays?: number;
   extraAttendancePayout?: number;
   eligibleExtraAttendanceDates?: string[];
@@ -185,10 +191,22 @@ class PayrollService {
       const workingDays = attendanceData.workingDays || 26;
       const totalCalendarDays = attendanceData.totalCalendarDays || new Date(year, month, 0).getDate();
 
+      let extraAttendanceRule: ExtraAttendancePayRule | undefined;
+      try {
+        const systemSettings = await prisma.systemSetting.findFirst();
+        const payrollConfig = (systemSettings?.payroll as any) || {};
+        if (payrollConfig.extraAttendancePay) {
+          extraAttendanceRule = payrollConfig.extraAttendancePay;
+        }
+      } catch (err) {
+        console.warn('[calculatePayroll] failed to load system setting payroll config:', err);
+      }
+
       const existingApproval = await prisma.payslip.findUnique({ where: { employeeId_month_year: { employeeId, month, year } }, select: { extraAttendanceApproval: true } });
-      const approval = existingApproval?.extraAttendanceApproval as { dates?: string[]; rateMultiplier?: number; approvedBy?: number } | null;
+      const approval = existingApproval?.extraAttendanceApproval as { dates?: string[]; rateMultiplier?: number; approvedBy?: number; rule?: ExtraAttendancePayRule } | null;
+      const ruleToUse = approval?.rule || extraAttendanceRule || (approval?.rateMultiplier !== undefined ? { enabled: true, rateMultiplier: approval.rateMultiplier } : { enabled: false });
       const basis = fixedThirtyDaySalary(monthlySalary, attendanceData.classification,
-        approval?.approvedBy && Array.isArray(approval.dates) ? approval.dates : [], approval?.rateMultiplier ?? 1);
+        approval?.approvedBy && Array.isArray(approval.dates) ? approval.dates : [], ruleToUse);
       const dailySalary = basis.dailySalary;
       const unpaidLeaveDays = basis.unpaidLeaveDays;
       const absentDays = attendanceData.absentDays;
@@ -330,6 +348,12 @@ class PayrollService {
         dailySalary,
         salaryBasisDays: 30,
         standardPayableDays: basis.standardPayableDays,
+        paidLeavesUsed: basis.paidLeavesUsed,
+        remainingPaidLeaves: basis.remainingPaidLeaves,
+        unpaidAbsences: basis.unpaidAbsences,
+        unpaidDeductions: basis.unpaidDeduction,
+        minAttendanceRequirement: basis.minAttendanceRequirement,
+        minAttendanceMet: basis.minAttendanceMet,
         eligibleExtraAttendanceDates: basis.eligibleExtraAttendanceDates,
         extraAttendanceDays: basis.extraAttendanceDays,
         extraAttendancePayout: basis.extraAttendancePayout,
@@ -1609,6 +1633,12 @@ class PayrollService {
       salaryBasisDays: 30,
       standardPayableDays: calc.standardPayableDays,
       dailySalary: calc.dailySalary,
+      paidLeavesUsed: calc.paidLeavesUsed ?? calc.paidLeaveDays,
+      remainingPaidLeaves: calc.remainingPaidLeaves ?? Math.max(0, 4 - (calc.paidLeavesUsed ?? calc.paidLeaveDays)),
+      unpaidAbsences: calc.unpaidAbsences ?? Math.max(0, 30 - (calc.standardPayableDays || 30)),
+      unpaidDeductions: calc.unpaidDeductions ?? (calc.absentDeduction + calc.leaveDeduction),
+      minAttendanceRequirement: calc.minAttendanceRequirement ?? 24,
+      minAttendanceMet: calc.minAttendanceMet ?? (calc.presentDays >= 24),
       workingDays: calc.workingDays,
       totalCalendarDays: calc.totalCalendarDays,
       overtimeHours: calc.overtimeHours,
@@ -1624,6 +1654,12 @@ class PayrollService {
         totalEarnings: settlement.totalEarnings,
         displayedGrossEarnings: settlement.totalEarnings,
         holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
+        paidLeavesUsed: calc.paidLeavesUsed ?? calc.paidLeaveDays,
+        remainingPaidLeaves: calc.remainingPaidLeaves ?? Math.max(0, 4 - (calc.paidLeavesUsed ?? calc.paidLeaveDays)),
+        unpaidAbsences: calc.unpaidAbsences ?? Math.max(0, 30 - (calc.standardPayableDays || 30)),
+        unpaidDeductions: calc.unpaidDeductions ?? (calc.absentDeduction + calc.leaveDeduction),
+        minAttendanceRequirement: calc.minAttendanceRequirement ?? 24,
+        minAttendanceMet: calc.minAttendanceMet ?? (calc.presentDays >= 24),
         totalDeductions,
         netSalary,
         totalTakeHomePay,
@@ -1800,6 +1836,12 @@ class PayrollService {
       },
       halfDays: ps.halfDays || 0,
       paidLeaveDays: ps.paidLeaveDays || 0,
+      paidLeavesUsed: Math.min(4, ps.paidLeaveDays || 0),
+      remainingPaidLeaves: Math.max(0, 4 - Math.min(4, ps.paidLeaveDays || 0)),
+      unpaidAbsences: Math.max(0, 30 - (ps.standardPayableDays || Math.min(30, (ps.presentDays || 0) + (ps.halfDays || 0) * 0.5 + Math.min(4, ps.paidLeaveDays || 0) + (ps.holidayCount || 0) + (ps.weeklyOffCount || 0)))),
+      unpaidDeductions: absentDeduction + leaveDeduction,
+      minAttendanceRequirement: 24,
+      minAttendanceMet: (ps.presentDays || 0) >= 24,
       unpaidLeaveDays: ps.unpaidLeaveDays || 0,
       holidayCount: ps.holidayCount || 0,
       weeklyOffCount: ps.weeklyOffCount || 0,

@@ -1,6 +1,6 @@
 import { prisma } from '../utils/db';
 import payrollService from './payrollService';
-import { fixedThirtyDaySalary, SALARY_BASIS_DAYS, MONTHLY_PAID_LEAVE_LIMIT } from '../utils/fixedThirtyDaySalary';
+import { fixedThirtyDaySalary, SALARY_BASIS_DAYS, MONTHLY_PAID_LEAVE_LIMIT, lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { computeGrossSalary } from '../utils/salaryGross';
 import { normalizeDayName } from '../utils/attendanceSummary';
@@ -29,6 +29,7 @@ export interface DateWiseDayRecord {
   deduction: number;
   extraPayout: number;
   earnedAmount: number;
+  explanation: string;
   isPaidLeave: boolean;
   isUnpaid: boolean;
   isHoliday: boolean;
@@ -62,7 +63,10 @@ export interface DateWiseSalarySummary {
   presentDays: number;
   halfDays: number;
   paidLeaveDays: number;
+  paidLeavesUsed: number;
+  remainingPaidLeaves: number;
   unpaidLeaveDays: number;
+  unpaidAbsences: number;
   absentDays: number;
   weeklyOffDays: number;
   weeklyOffWorkedDays: number;
@@ -72,6 +76,8 @@ export interface DateWiseSalarySummary {
   pendingDays: number;
   totalCreditedDays: number;
   standardPayableDays: number;
+  baseSalary: number;
+  unpaidDeductions: number;
   totalEarnedFromDates: number;
   totalDateWiseBaseEarned: number;
   extraAttendancePayout: number;
@@ -94,6 +100,10 @@ export interface DateWiseSalarySummary {
   totalTakeHomePay: number;
   paymentStatus: string;
   reconciled: boolean;
+  isFinalized: boolean;
+  statusLabel: string;
+  minAttendanceRequirement: number;
+  minAttendanceMet: boolean;
 }
 
 export interface DateWiseSalaryResponse {
@@ -487,6 +497,36 @@ export class DateWiseSalaryService {
       totalDateWiseExtraPayout += extraPayout;
       totalDateWiseDeductions += deduction;
 
+      // Explanation of daily salary calculation
+      let explanation = '';
+      if (status === 'NOT_JOINED') {
+        explanation = `Not joined yet (before employee joining date: ${joiningYmd})`;
+      } else if (status === 'HOLIDAY_WORKED') {
+        explanation = `Worked on public holiday: 1.0 day payable (₹${dailySalary.toFixed(2)}) + extra holiday payout (₹${extraPayout.toFixed(2)})`;
+      } else if (status === 'HOLIDAY') {
+        explanation = `Public holiday: covered under 30-day salary basis (credited ₹${dailySalary.toFixed(2)})`;
+      } else if (status === 'WEEKLY_OFF_WORKED') {
+        explanation = `Worked on weekly off: 1.0 day payable (₹${dailySalary.toFixed(2)}) + extra weekly-off payout (₹${extraPayout.toFixed(2)})`;
+      } else if (status === 'WEEKLY_OFF') {
+        explanation = `Weekly off: covered under 30-day salary basis (credited ₹${dailySalary.toFixed(2)})`;
+      } else if (status === 'HALF_DAY') {
+        explanation = `Half-day attendance: 0.5 day payable (credited ₹${(dailySalary * 0.5).toFixed(2)}, deducted ₹${(dailySalary * 0.5).toFixed(2)})`;
+      } else if (status === 'LATE' || status === 'PRESENT') {
+        explanation = `Full day present: 1.0 day payable (credited ₹${dailySalary.toFixed(2)})`;
+      } else if (status === 'PAID_LEAVE') {
+        explanation = `Approved paid leave (within 4-day monthly allowance): 1.0 day payable (credited ₹${dailySalary.toFixed(2)})`;
+      } else if (status === 'UNPAID_LEAVE') {
+        explanation = `Unpaid leave (exceeds 4-day allowance or LOP): deducted ₹${dailySalary.toFixed(2)}`;
+      } else if (status === 'ABSENT') {
+        explanation = `Unpaid absence: deducted ₹${dailySalary.toFixed(2)} from 30-day salary basis`;
+      } else {
+        explanation = `Upcoming date: awaiting attendance record`;
+      }
+
+      if (extraPayout > 0 && !status.includes('WORKED')) {
+        explanation += ` + approved extra attendance pay ₹${extraPayout.toFixed(2)}`;
+      }
+
       dates.push({
         date: dateStr,
         dayOfWeek,
@@ -499,6 +539,7 @@ export class DateWiseSalaryService {
         deduction,
         extraPayout,
         earnedAmount: Math.round(earnedAmount * 100) / 100,
+        explanation,
         isPaidLeave,
         isUnpaid,
         isHoliday,
@@ -568,6 +609,16 @@ export class DateWiseSalaryService {
 
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
 
+    const paidLeavesUsed = Math.min(MONTHLY_PAID_LEAVE_LIMIT, paidLeaveCount);
+    const remainingPaidLeaves = Math.max(0, MONTHLY_PAID_LEAVE_LIMIT - paidLeavesUsed);
+    const unpaidAbsences = Math.max(0, SALARY_BASIS_DAYS - standardPayableDays);
+    const unpaidDeductions = attendanceDeductions;
+    const baseSalary = Math.round(standardPayableDays * dailySalary * 100) / 100;
+    const isFinalized = lockedPayslip(storedPayslip?.status);
+    const statusLabel = isFinalized ? 'Finalized Payroll' : 'Estimated Salary (Live Attendance)';
+    const minAttendanceRequirement = 24;
+    const minAttendanceMet = presentCount >= 24;
+
     const summary: DateWiseSalarySummary = {
       month: targetMonth,
       year: targetYear,
@@ -587,7 +638,10 @@ export class DateWiseSalaryService {
       presentDays: presentCount,
       halfDays: halfDayCount,
       paidLeaveDays: paidLeaveCount,
+      paidLeavesUsed,
+      remainingPaidLeaves,
       unpaidLeaveDays: unpaidLeaveCount,
+      unpaidAbsences,
       absentDays: absentCount,
       weeklyOffDays: weeklyOffCount,
       weeklyOffWorkedDays: weeklyOffWorkedCount,
@@ -597,6 +651,8 @@ export class DateWiseSalaryService {
       pendingDays: pendingCount,
       totalCreditedDays: creditedDays,
       standardPayableDays,
+      baseSalary,
+      unpaidDeductions,
       totalEarnedFromDates,
       totalDateWiseBaseEarned: Math.round(totalDateWiseBaseEarned * 100) / 100,
       extraAttendancePayout: Math.round(extraAttendancePayout * 100) / 100,
@@ -619,6 +675,10 @@ export class DateWiseSalaryService {
       totalTakeHomePay,
       paymentStatus,
       reconciled: true,
+      isFinalized,
+      statusLabel,
+      minAttendanceRequirement,
+      minAttendanceMet,
     };
 
     return {

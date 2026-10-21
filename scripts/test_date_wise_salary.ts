@@ -240,23 +240,160 @@ function runTests() {
   }
 
   // --------------------------------------------------------------------------
-  // Scenario 8: Full Financial Reconciliation
+  // Scenario 9: Section 2 - Case 1: 26 Present Days + 4 Paid Leaves = 30 Payable Days (₹15,000)
   // --------------------------------------------------------------------------
-  console.log('\n--- Scenario 8: Full Financial Reconciliation with Settlement ---');
+  console.log('\n--- Scenario 9: Case 1 - 26 Present Days + 4 Paid Leaves ---');
   {
-    const settlement = computePayrollSettlement({
-      baseGrossEarnings: 15000,
-      holidayWeeklyOffPay: 500, // worked on holiday
-      totalDeductions: 500 + 1000, // 1 day absent (500) + advance deduction (1000)
-      reimbursements: 750, // expense claim
-      commissionEarned: 1200, // sales commission
-    });
+    const classification: any = {
+      presentDays: 26,
+      halfDays: 0,
+      paidLeaveDays: 4,
+      unpaidLeaveDays: 0,
+      absentDays: 0,
+      holidayCount: 0,
+      weeklyOffCount: 0,
+      holidayWorkedCount: 0,
+      weeklyOffWorkedCount: 0,
+      totalCalendarDays: 30,
+      payableDayRecords: [],
+    };
+    const basis = fixedThirtyDaySalary(15000, classification);
+    check('Case 1: Total payable days = 30', basis.standardPayableDays === 30);
+    check('Case 1: Paid leaves used = 4', basis.paidLeavesUsed === 4);
+    check('Case 1: Remaining paid leaves = 0', basis.remainingPaidLeaves === 0);
+    check('Case 1: Unpaid absences = 0', basis.unpaidAbsences === 0);
+    check('Case 1: Base salary = ₹15,000', basis.baseSalary === 15000);
+    check('Case 1: Min attendance requirement met (26 >= 24)', basis.minAttendanceMet === true);
+  }
 
-    check('Base Gross = 15,000', settlement.baseGrossEarnings === 15000);
-    check('Total Earnings = 15,500 (15000 + 500)', settlement.totalEarnings === 15500);
-    check('Total Deductions = 1,500 (500 absence + 1000 advance)', settlement.totalDeductions === 1500);
-    check('Net Salary = 14,000 (15500 - 1500)', settlement.netSalary === 14000);
-    check('Take-Home Pay = 15,950 (14000 net + 750 exp + 1200 comm)', settlement.totalTakeHomePay === 15950);
+  // --------------------------------------------------------------------------
+  // Scenario 10: Section 2 - Case 2: 28 Present Days + 2 Paid Leaves = 30 Payable Days (₹15,000)
+  // --------------------------------------------------------------------------
+  console.log('\n--- Scenario 10: Case 2 - 28 Present Days + 2 Paid Leaves ---');
+  {
+    const classification: any = {
+      presentDays: 28,
+      halfDays: 0,
+      paidLeaveDays: 2,
+      unpaidLeaveDays: 0,
+      absentDays: 0,
+      holidayCount: 0,
+      weeklyOffCount: 0,
+      holidayWorkedCount: 0,
+      weeklyOffWorkedCount: 0,
+      totalCalendarDays: 30,
+      payableDayRecords: [],
+    };
+    const basis = fixedThirtyDaySalary(15000, classification);
+    check('Case 2: Total payable days = 30', basis.standardPayableDays === 30);
+    check('Case 2: Paid leaves used = 2', basis.paidLeavesUsed === 2);
+    check('Case 2: Remaining paid leaves = 2', basis.remainingPaidLeaves === 2);
+    check('Case 2: Unpaid absences = 0', basis.unpaidAbsences === 0);
+    check('Case 2: Base salary = ₹15,000', basis.baseSalary === 15000);
+    check('Case 2: Min attendance requirement met (28 >= 24)', basis.minAttendanceMet === true);
+  }
+
+  // --------------------------------------------------------------------------
+  // Scenario 11: Section 2 - Case 3: 24 Present Days, 4 Paid Leaves, 2 Unpaid Absences = 28 Payable Days (₹14,000)
+  // --------------------------------------------------------------------------
+  console.log('\n--- Scenario 11: Case 3 - 24 Present Days, 4 Paid Leaves, 2 Unpaid Absences ---');
+  {
+    const classification: any = {
+      presentDays: 24,
+      halfDays: 0,
+      paidLeaveDays: 4,
+      unpaidLeaveDays: 2,
+      absentDays: 0,
+      holidayCount: 0,
+      weeklyOffCount: 0,
+      holidayWorkedCount: 0,
+      weeklyOffWorkedCount: 0,
+      totalCalendarDays: 30,
+      payableDayRecords: [],
+    };
+    const basis = fixedThirtyDaySalary(15000, classification);
+    check('Case 3: Total payable days = 28', basis.standardPayableDays === 28);
+    check('Case 3: Unpaid absences = 2', basis.unpaidAbsences === 2);
+    check('Case 3: Unpaid deduction = ₹1,000 (2 * 500)', basis.unpaidDeduction === 1000);
+    check('Case 3: Base salary = ₹14,000 (28 * 500)', basis.baseSalary === 14000);
+    check('Case 3: Base salary + Unpaid deduction = Monthly salary (14000 + 1000 = 15000)', basis.baseSalary + basis.unpaidDeduction === 15000);
+    check('Case 3: Min attendance requirement met (24 >= 24)', basis.minAttendanceMet === true);
+  }
+
+  // --------------------------------------------------------------------------
+  // Scenario 12: Section 2 - Case 4: 30 Present Days, 0 Leaves (Configurable Extra Attendance Pay)
+  // --------------------------------------------------------------------------
+  console.log('\n--- Scenario 12: Case 4 - 30 Present Days (Configurable Extra Attendance Pay) ---');
+  {
+    const classification: any = {
+      presentDays: 30,
+      halfDays: 0,
+      paidLeaveDays: 0,
+      unpaidLeaveDays: 0,
+      absentDays: 0,
+      holidayCount: 0,
+      weeklyOffCount: 0,
+      holidayWorkedCount: 0,
+      weeklyOffWorkedCount: 0,
+      totalCalendarDays: 30,
+      payableDayRecords: [],
+    };
+
+    // Case 4a: Extra Attendance Pay Rule disabled
+    const basisDisabled = fixedThirtyDaySalary(15000, classification, [], { enabled: false });
+    check('Case 4a: Base salary = ₹15,000', basisDisabled.baseSalary === 15000);
+    check('Case 4a: Extra pay rule disabled -> extraAttendancePayout = 0', basisDisabled.extraAttendancePayout === 0);
+    check('Case 4a: Remaining paid leaves = 4', basisDisabled.remainingPaidLeaves === 4);
+
+    // Case 4b: Extra Attendance Pay Rule enabled with fixed amount ₹500
+    const basisFixed = fixedThirtyDaySalary(15000, classification, [], {
+      enabled: true,
+      type: 'FIXED_AMOUNT',
+      fixedAmount: 500,
+      minimumPresentDays: 30,
+    });
+    check('Case 4b: Base salary = ₹15,000', basisFixed.baseSalary === 15000);
+    check('Case 4b: Extra attendance payout = ₹500.00', basisFixed.extraAttendancePayout === 500);
+
+    // Case 4c: Extra Attendance Pay Rule enabled with per-day rate multiplier (1.0x)
+    const basisMultiplier = fixedThirtyDaySalary(15000, classification, [], {
+      enabled: true,
+      type: 'PER_DAY_RATE',
+      rateMultiplier: 1.0,
+      minimumPresentDays: 30,
+    });
+    check('Case 4c: Extra attendance payout = ₹500.00 (1 day * 500 * 1.0)', basisMultiplier.extraAttendancePayout === 500);
+  }
+
+  // --------------------------------------------------------------------------
+  // Scenario 13: 24-Day Minimum Attendance Requirement Check
+  // --------------------------------------------------------------------------
+  console.log('\n--- Scenario 13: 24-Day Minimum Attendance Requirement ---');
+  {
+    const underAttClassification: any = {
+      presentDays: 23,
+      halfDays: 0,
+      paidLeaveDays: 4,
+      unpaidLeaveDays: 3,
+      absentDays: 0,
+      holidayCount: 0,
+      weeklyOffCount: 0,
+      holidayWorkedCount: 0,
+      weeklyOffWorkedCount: 0,
+      totalCalendarDays: 30,
+      payableDayRecords: [],
+    };
+    const basisUnder = fixedThirtyDaySalary(15000, underAttClassification);
+    check('Present 23 days: minAttendanceMet = false', basisUnder.minAttendanceMet === false);
+    check('Min attendance threshold = 24', basisUnder.minAttendanceRequirement === 24);
+
+    const metAttClassification: any = {
+      ...underAttClassification,
+      presentDays: 24,
+      unpaidLeaveDays: 2,
+    };
+    const basisMet = fixedThirtyDaySalary(15000, metAttClassification);
+    check('Present 24 days: minAttendanceMet = true', basisMet.minAttendanceMet === true);
   }
 
   console.log('\n===============================================================');
