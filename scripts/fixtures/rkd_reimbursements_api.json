@@ -1,0 +1,2178 @@
+{
+  "admin": {
+    "id": 1,
+    "employeeId": 10,
+    "month": 10,
+    "year": 2026,
+    "baseSalary": 15000,
+    "allowance": 0,
+    "deductions": 0,
+    "netSalary": 15000,
+    "advanceDeduction": 0,
+    "expenseReimbursement": 250,
+    "status": "Pending Approval",
+    "employeeCode": "HK-SALES-01",
+    "employeeName": "Test Sales",
+    "designation": "Sales Executive",
+    "department": "Sales",
+    "officeName": "Main",
+    "presentDays": 30,
+    "absentDays": 0,
+    "halfDays": 0,
+    "paidLeaveDays": 0,
+    "unpaidLeaveDays": 0,
+    "holidayCount": 0,
+    "weeklyOffCount": 0,
+    "holidayWorkedCount": 0,
+    "weeklyOffWorkedCount": 0,
+    "extraHolidayPayout": 0,
+    "extraWeeklyOffPayout": 0,
+    "extraAttendanceDays": 0,
+    "extraAttendancePayout": 0,
+    "dailySalary": 500,
+    "workingDays": 30,
+    "totalCalendarDays": 31,
+    "commissionEarned": 200,
+    "hra": 0,
+    "travelAllowance": 0,
+    "medicalAllowance": 0,
+    "specialAllowance": 0,
+    "incentive": 0,
+    "bonus": 0,
+    "netInWords": "Seventeen Thousand Two Hundred Rupees Only",
+    "createdAt": "2026-10-22T08:51:36.216Z",
+    "updatedAt": "2026-10-22T08:51:36.216Z",
+    "employee": {
+      "id": 10,
+      "userId": 100,
+      "employeeCode": "HK-SALES-01",
+      "firstName": "Test",
+      "lastName": "Sales",
+      "designation": "Sales Executive",
+      "department": {
+        "name": "Sales"
+      },
+      "office": {
+        "name": "Main",
+        "workingDays": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday"
+        ]
+      },
+      "user": {
+        "role": "SALESMAN"
+      }
+    },
+    "name": "Test Sales",
+    "departmentName": "Sales",
+    "office": "Main",
+    "paymentStatus": "PENDING",
+    "payrollStatus": "Pending Approval",
+    "fixedGrossSalary": 15000,
+    "monthlySalary": 15000,
+    "basicSalary": 15000,
+    "travelMedicalAllowance": 0,
+    "grossSalary": 15000,
+    "grossEarnings": 15000,
+    "totalDeductions": 0,
+    "advanceSalary": 0,
+    "totalAdvanceSalary": 0,
+    "pf": 0,
+    "esic": 0,
+    "absentDeduction": 0,
+    "halfDayDeduction": 0,
+    "leaveDeduction": 0,
+    "otherDeductions": 0,
+    "otherDeduction": 0,
+    "totalTakeHomePay": 17200,
+    "documentId": "HR-PAY-HK-SALES-01-202610",
+    "payPeriod": "October 2026",
+    "totalReimbursements": 2000,
+    "approvedExpenses": 250,
+    "approvedExpenseAmount": 250,
+    "totalExpenses": 2000,
+    "expenses": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "expensesByCategory": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "isCommissionEligible": true,
+    "pendingRkdAdjustments": [],
+    "rkdIncentive": 1750,
+    "rkdReferences": [
+      "RKD-1",
+      "RKD-2"
+    ],
+    "rkdRequests": [
+      {
+        "id": 1,
+        "reference": "RKD-1",
+        "amount": 500,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      },
+      {
+        "id": 2,
+        "reference": "RKD-2",
+        "amount": 1250,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      }
+    ],
+    "commission": 200,
+    "deductionsObj": {
+      "deductions": 0,
+      "totalDeductions": 0,
+      "advanceDeduction": 0,
+      "advanceSalary": 0,
+      "pf": 0,
+      "esic": 0,
+      "absentDeduction": 0,
+      "halfDayDeduction": 0,
+      "leaveDeduction": 0,
+      "otherDeductions": 0
+    },
+    "additionalEarnings": 0,
+    "totalEarnings": 15000,
+    "displayedGrossEarnings": 15000,
+    "holidayWeeklyOffPay": 0,
+    "salaryBasisDays": 30,
+    "standardPayableDays": 30,
+    "paidLeavesUsed": 0,
+    "remainingPaidLeaves": 4,
+    "unpaidAbsences": 0,
+    "unpaidDeductions": 0,
+    "minAttendanceRequirement": 24,
+    "minAttendanceMet": true,
+    "overtimeHours": 0,
+    "attendanceSummary": {
+      "periodStart": "2026-10-01",
+      "periodEnd": "2026-10-31",
+      "totalCalendarDays": 31,
+      "totalScheduledWorkingDays": 30,
+      "monthWorkingDays": 30,
+      "totalWorkingDays": 30,
+      "eligibleWorkingDays": 30,
+      "workingDaysBeforeJoining": 0,
+      "notJoinedDays": 0,
+      "presentDays": 30,
+      "absentDays": 0,
+      "halfDays": 0,
+      "paidLeaveDays": 0,
+      "unpaidLeaveDays": 0,
+      "weeklyOffDays": 0,
+      "weeklyOffWorkedDays": 0,
+      "holidays": 0,
+      "holidayWorkedDays": 0,
+      "remainingWorkingDays": 0,
+      "overtimeMinutes": 0,
+      "overtimeLabel": "0h 00m",
+      "rows": [
+        {
+          "label": "Total Calendar Days",
+          "value": "31"
+        },
+        {
+          "label": "Total Scheduled Working Days",
+          "value": "30"
+        },
+        {
+          "label": "Weekly Off Days",
+          "value": "0"
+        },
+        {
+          "label": "Holidays",
+          "value": "0"
+        },
+        {
+          "label": "Working Days Before Joining",
+          "value": "0"
+        },
+        {
+          "label": "Eligible Working Days After Joining",
+          "value": "30"
+        },
+        {
+          "label": "Present Days",
+          "value": "30"
+        },
+        {
+          "label": "Absent Days",
+          "value": "0"
+        },
+        {
+          "label": "Half Days",
+          "value": "0"
+        },
+        {
+          "label": "Paid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Unpaid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Remaining Working Days",
+          "value": "0"
+        },
+        {
+          "label": "Overtime Hours",
+          "value": "0h 00m"
+        }
+      ]
+    },
+    "expenseCategories": {
+      "Travel": 250
+    },
+    "earnings": {
+      "baseSalary": 15000,
+      "basicSalary": 15000,
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "hra": 0,
+      "medical": 0,
+      "medicalAllowance": 0,
+      "travel": 0,
+      "travelAllowance": 0,
+      "travelMedicalAllowance": 0,
+      "special": 0,
+      "specialAllowance": 0,
+      "bonus": 0,
+      "incentive": 0,
+      "extraHolidayPayout": 0,
+      "extraWeeklyOffPayout": 0,
+      "extraAttendancePayout": 0,
+      "extraPayout": 0,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "grossSalary": 15000,
+      "grossTotal": 15000,
+      "grossEarnings": 15000,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "rkdRequests": [
+        {
+          "id": 1,
+          "reference": "RKD-1",
+          "amount": 500,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        },
+        {
+          "id": 2,
+          "reference": "RKD-2",
+          "amount": 1250,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        }
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "totalReimbursements": 2000,
+      "expenses": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expensesByCategory": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expenseCategories": {
+        "Travel": 250
+      }
+    },
+    "summary": {
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "grossSalary": 15000,
+      "grossEarnings": 15000,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "paidLeavesUsed": 0,
+      "remainingPaidLeaves": 4,
+      "unpaidAbsences": 0,
+      "unpaidDeductions": 0,
+      "minAttendanceRequirement": 24,
+      "minAttendanceMet": true,
+      "totalDeductions": 0,
+      "netSalary": 15000,
+      "totalTakeHomePay": 17200,
+      "isCommissionEligible": true,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "netInWords": "Seventeen Thousand Two Hundred Rupees Only"
+    }
+  },
+  "mobile": {
+    "id": 1,
+    "employeeId": 10,
+    "month": 10,
+    "year": 2026,
+    "baseSalary": 15000,
+    "allowance": 0,
+    "deductions": 0,
+    "netSalary": 15000,
+    "advanceDeduction": 0,
+    "expenseReimbursement": 250,
+    "status": "Pending Approval",
+    "employeeCode": "HK-SALES-01",
+    "employeeName": "Test Sales",
+    "designation": "Sales Executive",
+    "department": "Sales",
+    "officeName": "Main",
+    "presentDays": 30,
+    "absentDays": 0,
+    "halfDays": 0,
+    "paidLeaveDays": 0,
+    "unpaidLeaveDays": 0,
+    "holidayCount": 0,
+    "weeklyOffCount": 0,
+    "holidayWorkedCount": 0,
+    "weeklyOffWorkedCount": 0,
+    "extraHolidayPayout": 0,
+    "extraWeeklyOffPayout": 0,
+    "extraAttendanceDays": 0,
+    "extraAttendancePayout": 0,
+    "dailySalary": 500,
+    "workingDays": 30,
+    "totalCalendarDays": 31,
+    "commissionEarned": 200,
+    "hra": 0,
+    "travelAllowance": 0,
+    "medicalAllowance": 0,
+    "specialAllowance": 0,
+    "incentive": 0,
+    "bonus": 0,
+    "netInWords": "Seventeen Thousand Two Hundred Rupees Only",
+    "createdAt": "2026-10-22T08:51:36.216Z",
+    "updatedAt": "2026-10-22T08:51:36.216Z",
+    "employee": {
+      "id": 10,
+      "userId": 100,
+      "employeeCode": "HK-SALES-01",
+      "firstName": "Test",
+      "lastName": "Sales",
+      "designation": "Sales Executive",
+      "department": {
+        "name": "Sales"
+      },
+      "office": {
+        "name": "Main",
+        "workingDays": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday"
+        ]
+      },
+      "user": {
+        "role": "SALESMAN"
+      }
+    },
+    "name": "Test Sales",
+    "departmentName": "Sales",
+    "office": "Main",
+    "paymentStatus": "PENDING",
+    "payrollStatus": "Pending Approval",
+    "fixedGrossSalary": 15000,
+    "monthlySalary": 15000,
+    "basicSalary": 15000,
+    "travelMedicalAllowance": 0,
+    "grossSalary": 15000,
+    "grossEarnings": 15000,
+    "totalDeductions": 0,
+    "advanceSalary": 0,
+    "totalAdvanceSalary": 0,
+    "pf": 0,
+    "esic": 0,
+    "absentDeduction": 0,
+    "halfDayDeduction": 0,
+    "leaveDeduction": 0,
+    "otherDeductions": 0,
+    "otherDeduction": 0,
+    "totalTakeHomePay": 17200,
+    "documentId": "HR-PAY-HK-SALES-01-202610",
+    "payPeriod": "October 2026",
+    "totalReimbursements": 2000,
+    "approvedExpenses": 250,
+    "approvedExpenseAmount": 250,
+    "totalExpenses": 2000,
+    "expenses": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "expensesByCategory": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "isCommissionEligible": true,
+    "pendingRkdAdjustments": [],
+    "rkdIncentive": 1750,
+    "rkdReferences": [
+      "RKD-1",
+      "RKD-2"
+    ],
+    "rkdRequests": [
+      {
+        "id": 1,
+        "reference": "RKD-1",
+        "amount": 500,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      },
+      {
+        "id": 2,
+        "reference": "RKD-2",
+        "amount": 1250,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      }
+    ],
+    "commission": 200,
+    "deductionsObj": {
+      "deductions": 0,
+      "totalDeductions": 0,
+      "advanceDeduction": 0,
+      "advanceSalary": 0,
+      "pf": 0,
+      "esic": 0,
+      "absentDeduction": 0,
+      "halfDayDeduction": 0,
+      "leaveDeduction": 0,
+      "otherDeductions": 0
+    },
+    "additionalEarnings": 0,
+    "totalEarnings": 15000,
+    "displayedGrossEarnings": 15000,
+    "holidayWeeklyOffPay": 0,
+    "salaryBasisDays": 30,
+    "standardPayableDays": 30,
+    "paidLeavesUsed": 0,
+    "remainingPaidLeaves": 4,
+    "unpaidAbsences": 0,
+    "unpaidDeductions": 0,
+    "minAttendanceRequirement": 24,
+    "minAttendanceMet": true,
+    "overtimeHours": 0,
+    "attendanceSummary": {
+      "periodStart": "2026-10-01",
+      "periodEnd": "2026-10-31",
+      "totalCalendarDays": 31,
+      "totalScheduledWorkingDays": 30,
+      "monthWorkingDays": 30,
+      "totalWorkingDays": 30,
+      "eligibleWorkingDays": 30,
+      "workingDaysBeforeJoining": 0,
+      "notJoinedDays": 0,
+      "presentDays": 30,
+      "absentDays": 0,
+      "halfDays": 0,
+      "paidLeaveDays": 0,
+      "unpaidLeaveDays": 0,
+      "weeklyOffDays": 0,
+      "weeklyOffWorkedDays": 0,
+      "holidays": 0,
+      "holidayWorkedDays": 0,
+      "remainingWorkingDays": 0,
+      "overtimeMinutes": 0,
+      "overtimeLabel": "0h 00m",
+      "rows": [
+        {
+          "label": "Total Calendar Days",
+          "value": "31"
+        },
+        {
+          "label": "Total Scheduled Working Days",
+          "value": "30"
+        },
+        {
+          "label": "Weekly Off Days",
+          "value": "0"
+        },
+        {
+          "label": "Holidays",
+          "value": "0"
+        },
+        {
+          "label": "Working Days Before Joining",
+          "value": "0"
+        },
+        {
+          "label": "Eligible Working Days After Joining",
+          "value": "30"
+        },
+        {
+          "label": "Present Days",
+          "value": "30"
+        },
+        {
+          "label": "Absent Days",
+          "value": "0"
+        },
+        {
+          "label": "Half Days",
+          "value": "0"
+        },
+        {
+          "label": "Paid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Unpaid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Remaining Working Days",
+          "value": "0"
+        },
+        {
+          "label": "Overtime Hours",
+          "value": "0h 00m"
+        }
+      ]
+    },
+    "expenseCategories": {
+      "Travel": 250
+    },
+    "earnings": {
+      "baseSalary": 15000,
+      "basicSalary": 15000,
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "hra": 0,
+      "medical": 0,
+      "medicalAllowance": 0,
+      "travel": 0,
+      "travelAllowance": 0,
+      "travelMedicalAllowance": 0,
+      "special": 0,
+      "specialAllowance": 0,
+      "bonus": 0,
+      "incentive": 0,
+      "extraHolidayPayout": 0,
+      "extraWeeklyOffPayout": 0,
+      "extraAttendancePayout": 0,
+      "extraPayout": 0,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "grossSalary": 15000,
+      "grossTotal": 15000,
+      "grossEarnings": 15000,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "rkdRequests": [
+        {
+          "id": 1,
+          "reference": "RKD-1",
+          "amount": 500,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        },
+        {
+          "id": 2,
+          "reference": "RKD-2",
+          "amount": 1250,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        }
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "totalReimbursements": 2000,
+      "expenses": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expensesByCategory": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expenseCategories": {
+        "Travel": 250
+      }
+    },
+    "summary": {
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "grossSalary": 15000,
+      "grossEarnings": 15000,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "paidLeavesUsed": 0,
+      "remainingPaidLeaves": 4,
+      "unpaidAbsences": 0,
+      "unpaidDeductions": 0,
+      "minAttendanceRequirement": 24,
+      "minAttendanceMet": true,
+      "totalDeductions": 0,
+      "netSalary": 15000,
+      "totalTakeHomePay": 17200,
+      "isCommissionEligible": true,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "netInWords": "Seventeen Thousand Two Hundred Rupees Only"
+    }
+  },
+  "salary": {
+    "id": 1,
+    "employeeId": 10,
+    "month": "October",
+    "year": 2026,
+    "baseSalary": 15000,
+    "allowance": 0,
+    "deductions": 0,
+    "netSalary": 15000,
+    "advanceDeduction": 0,
+    "expenseReimbursement": 250,
+    "status": "Pending Approval",
+    "employeeCode": "HK-SALES-01",
+    "employeeName": "Test Sales",
+    "designation": "Sales Executive",
+    "department": "Sales",
+    "officeName": "Main",
+    "presentDays": 30,
+    "absentDays": 0,
+    "halfDays": 0,
+    "paidLeaveDays": 0,
+    "unpaidLeaveDays": 0,
+    "holidayCount": 0,
+    "weeklyOffCount": 0,
+    "holidayWorkedCount": 0,
+    "weeklyOffWorkedCount": 0,
+    "extraHolidayPayout": 0,
+    "extraWeeklyOffPayout": 0,
+    "extraAttendanceDays": 0,
+    "extraAttendancePayout": 0,
+    "dailySalary": 500,
+    "workingDays": 30,
+    "totalCalendarDays": 31,
+    "commissionEarned": 200,
+    "hra": 0,
+    "travelAllowance": 0,
+    "medicalAllowance": 0,
+    "specialAllowance": 0,
+    "incentive": 0,
+    "bonus": 0,
+    "netInWords": "Seventeen Thousand Two Hundred Rupees Only",
+    "createdAt": "2026-10-22T08:51:36.216Z",
+    "updatedAt": "2026-10-22T08:51:36.216Z",
+    "name": "Test Sales",
+    "departmentName": "Sales",
+    "office": "Main",
+    "paymentStatus": "PENDING",
+    "payrollStatus": "Pending Approval",
+    "fixedGrossSalary": 15000,
+    "monthlySalary": 15000,
+    "basicSalary": 15000,
+    "travelMedicalAllowance": 0,
+    "grossSalary": 15000,
+    "grossEarnings": 15000,
+    "totalDeductions": 0,
+    "advanceSalary": 0,
+    "totalAdvanceSalary": 0,
+    "pf": 0,
+    "esic": 0,
+    "absentDeduction": 0,
+    "halfDayDeduction": 0,
+    "leaveDeduction": 0,
+    "otherDeductions": 0,
+    "otherDeduction": 0,
+    "totalTakeHomePay": 17200,
+    "documentId": "HR-PAY-HK-SALES-01-202610",
+    "payPeriod": "October 2026",
+    "totalReimbursements": 2000,
+    "approvedExpenses": 250,
+    "approvedExpenseAmount": 250,
+    "totalExpenses": 2000,
+    "expenses": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "expensesByCategory": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "isCommissionEligible": true,
+    "pendingRkdAdjustments": [],
+    "rkdIncentive": 1750,
+    "rkdReferences": [
+      "RKD-1",
+      "RKD-2"
+    ],
+    "rkdRequests": [
+      {
+        "id": 1,
+        "reference": "RKD-1",
+        "amount": 500,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      },
+      {
+        "id": 2,
+        "reference": "RKD-2",
+        "amount": 1250,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      }
+    ],
+    "commission": 200,
+    "deductionsObj": {
+      "deductions": 0,
+      "totalDeductions": 0,
+      "advanceDeduction": 0,
+      "advanceSalary": 0,
+      "pf": 0,
+      "esic": 0,
+      "absentDeduction": 0,
+      "halfDayDeduction": 0,
+      "leaveDeduction": 0,
+      "otherDeductions": 0
+    },
+    "additionalEarnings": 0,
+    "totalEarnings": 15000,
+    "displayedGrossEarnings": 15000,
+    "holidayWeeklyOffPay": 0,
+    "salaryBasisDays": 30,
+    "standardPayableDays": 30,
+    "paidLeavesUsed": 0,
+    "remainingPaidLeaves": 4,
+    "unpaidAbsences": 0,
+    "unpaidDeductions": 0,
+    "minAttendanceRequirement": 24,
+    "minAttendanceMet": true,
+    "overtimeHours": 0,
+    "attendanceSummary": {
+      "periodStart": "2026-10-01",
+      "periodEnd": "2026-10-31",
+      "totalCalendarDays": 31,
+      "totalScheduledWorkingDays": 30,
+      "monthWorkingDays": 30,
+      "totalWorkingDays": 30,
+      "eligibleWorkingDays": 30,
+      "workingDaysBeforeJoining": 0,
+      "notJoinedDays": 0,
+      "presentDays": 30,
+      "absentDays": 0,
+      "halfDays": 0,
+      "paidLeaveDays": 0,
+      "unpaidLeaveDays": 0,
+      "weeklyOffDays": 0,
+      "weeklyOffWorkedDays": 0,
+      "holidays": 0,
+      "holidayWorkedDays": 0,
+      "remainingWorkingDays": 0,
+      "overtimeMinutes": 0,
+      "overtimeLabel": "0h 00m",
+      "rows": [
+        {
+          "label": "Total Calendar Days",
+          "value": "31"
+        },
+        {
+          "label": "Total Scheduled Working Days",
+          "value": "30"
+        },
+        {
+          "label": "Weekly Off Days",
+          "value": "0"
+        },
+        {
+          "label": "Holidays",
+          "value": "0"
+        },
+        {
+          "label": "Working Days Before Joining",
+          "value": "0"
+        },
+        {
+          "label": "Eligible Working Days After Joining",
+          "value": "30"
+        },
+        {
+          "label": "Present Days",
+          "value": "30"
+        },
+        {
+          "label": "Absent Days",
+          "value": "0"
+        },
+        {
+          "label": "Half Days",
+          "value": "0"
+        },
+        {
+          "label": "Paid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Unpaid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Remaining Working Days",
+          "value": "0"
+        },
+        {
+          "label": "Overtime Hours",
+          "value": "0h 00m"
+        }
+      ]
+    },
+    "expenseCategories": {
+      "Travel": 250
+    },
+    "earnings": {
+      "baseSalary": 15000,
+      "basicSalary": 15000,
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "hra": 0,
+      "medical": 0,
+      "medicalAllowance": 0,
+      "travel": 0,
+      "travelAllowance": 0,
+      "travelMedicalAllowance": 0,
+      "special": 0,
+      "specialAllowance": 0,
+      "bonus": 0,
+      "incentive": 0,
+      "extraHolidayPayout": 0,
+      "extraWeeklyOffPayout": 0,
+      "extraAttendancePayout": 0,
+      "extraPayout": 0,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "grossSalary": 15000,
+      "grossTotal": 15000,
+      "grossEarnings": 15000,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "rkdRequests": [
+        {
+          "id": 1,
+          "reference": "RKD-1",
+          "amount": 500,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        },
+        {
+          "id": 2,
+          "reference": "RKD-2",
+          "amount": 1250,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        }
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "totalReimbursements": 2000,
+      "expenses": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expensesByCategory": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expenseCategories": {
+        "Travel": 250
+      }
+    },
+    "summary": {
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "grossSalary": 15000,
+      "grossEarnings": 15000,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "paidLeavesUsed": 0,
+      "remainingPaidLeaves": 4,
+      "unpaidAbsences": 0,
+      "unpaidDeductions": 0,
+      "minAttendanceRequirement": 24,
+      "minAttendanceMet": true,
+      "totalDeductions": 0,
+      "netSalary": 15000,
+      "totalTakeHomePay": 17200,
+      "isCommissionEligible": true,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "netInWords": "Seventeen Thousand Two Hundred Rupees Only"
+    },
+    "monthStr": "2026-10",
+    "details": {
+      "presentDays": 30,
+      "absentDays": 0,
+      "halfDays": 0,
+      "paidLeaveDays": 0,
+      "unpaidLeaveDays": 0,
+      "holidayCount": 0,
+      "weeklyOffCount": 0,
+      "holidayWorkedCount": 0,
+      "weeklyOffWorkedCount": 0,
+      "workingDays": 30,
+      "totalCalendarDays": 31,
+      "dailySalary": 500,
+      "commissionRate": 0,
+      "salaryAdvanceLimit": 0,
+      "salaryAdvanceUsed": 0,
+      "salaryAdvanceRemaining": 0,
+      "advanceDeduction": 0
+    }
+  },
+  "wallet": {
+    "id": "1",
+    "availableBalance": 123,
+    "rkdEarnings": [
+      {
+        "id": "RKD-1",
+        "requestId": 1,
+        "reference": "RKD-1",
+        "description": "RKD Incentive",
+        "amount": 500,
+        "approvedAt": "2026-10-22T08:51:36.215Z",
+        "status": "APPROVED_EARNING",
+        "salaryMonth": 10,
+        "salaryYear": 2026,
+        "payrollId": 1,
+        "includedInPayslip": true,
+        "withdrawable": false
+      },
+      {
+        "id": "RKD-2",
+        "requestId": 2,
+        "reference": "RKD-2",
+        "description": "RKD Incentive",
+        "amount": 1250,
+        "approvedAt": "2026-10-22T08:51:36.215Z",
+        "status": "APPROVED_EARNING",
+        "salaryMonth": 10,
+        "salaryYear": 2026,
+        "payrollId": 1,
+        "includedInPayslip": true,
+        "withdrawable": false
+      },
+      {
+        "id": "RKD-30",
+        "requestId": 30,
+        "reference": "RKD-30",
+        "description": "RKD Incentive",
+        "amount": 999,
+        "approvedAt": null,
+        "status": "APPROVED_EARNING",
+        "salaryMonth": 10,
+        "salaryYear": 2026,
+        "payrollId": 999,
+        "includedInPayslip": true,
+        "withdrawable": false
+      }
+    ],
+    "advanceLimit": 0,
+    "usedAmount": 0,
+    "usedAdvance": 0,
+    "pendingAmount": 0,
+    "pendingAdvance": 0,
+    "approvedAmount": 0,
+    "approvedAdvance": 0,
+    "remainingAmount": 0,
+    "remainingAdvance": 0,
+    "remainingAdvanceLimit": 0,
+    "canApply": false,
+    "pendingClaims": 0,
+    "registeredSalary": 15000,
+    "fixedGrossSalary": 15000,
+    "monthlySalary": 15000,
+    "upcomingSalary": 17200,
+    "baseUpcomingSalary": 15000,
+    "isCommissionEligible": true,
+    "commissionAmount": 200,
+    "rkdIncentive": 1750,
+    "rkdReferences": [
+      "RKD-1",
+      "RKD-2"
+    ],
+    "rkdRequests": [
+      {
+        "id": 1,
+        "reference": "RKD-1",
+        "amount": 500,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      },
+      {
+        "id": 2,
+        "reference": "RKD-2",
+        "amount": 1250,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      }
+    ],
+    "payroll": {
+      "id": 1,
+      "employeeId": 10,
+      "month": 10,
+      "year": 2026,
+      "baseSalary": 15000,
+      "allowance": 0,
+      "deductions": 0,
+      "netSalary": 15000,
+      "advanceDeduction": 0,
+      "expenseReimbursement": 250,
+      "status": "Pending Approval",
+      "employeeCode": "HK-SALES-01",
+      "employeeName": "Test Sales",
+      "designation": "Sales Executive",
+      "department": "Sales",
+      "officeName": "Main",
+      "presentDays": 30,
+      "absentDays": 0,
+      "halfDays": 0,
+      "paidLeaveDays": 0,
+      "unpaidLeaveDays": 0,
+      "holidayCount": 0,
+      "weeklyOffCount": 0,
+      "holidayWorkedCount": 0,
+      "weeklyOffWorkedCount": 0,
+      "extraHolidayPayout": 0,
+      "extraWeeklyOffPayout": 0,
+      "extraAttendanceDays": 0,
+      "extraAttendancePayout": 0,
+      "dailySalary": 500,
+      "workingDays": 30,
+      "totalCalendarDays": 31,
+      "commissionEarned": 200,
+      "hra": 0,
+      "travelAllowance": 0,
+      "medicalAllowance": 0,
+      "specialAllowance": 0,
+      "incentive": 0,
+      "bonus": 0,
+      "netInWords": "Seventeen Thousand Two Hundred Rupees Only",
+      "createdAt": "2026-10-22T08:51:36.216Z",
+      "updatedAt": "2026-10-22T08:51:36.216Z",
+      "name": "Test Sales",
+      "departmentName": "Sales",
+      "office": "Main",
+      "paymentStatus": "PENDING",
+      "payrollStatus": "Pending Approval",
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "basicSalary": 15000,
+      "travelMedicalAllowance": 0,
+      "grossSalary": 15000,
+      "grossEarnings": 15000,
+      "totalDeductions": 0,
+      "advanceSalary": 0,
+      "totalAdvanceSalary": 0,
+      "pf": 0,
+      "esic": 0,
+      "absentDeduction": 0,
+      "halfDayDeduction": 0,
+      "leaveDeduction": 0,
+      "otherDeductions": 0,
+      "otherDeduction": 0,
+      "totalTakeHomePay": 17200,
+      "documentId": "HR-PAY-HK-SALES-01-202610",
+      "payPeriod": "October 2026",
+      "totalReimbursements": 2000,
+      "approvedExpenses": 250,
+      "approvedExpenseAmount": 250,
+      "totalExpenses": 2000,
+      "expenses": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expensesByCategory": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "isCommissionEligible": true,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "rkdRequests": [
+        {
+          "id": 1,
+          "reference": "RKD-1",
+          "amount": 500,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        },
+        {
+          "id": 2,
+          "reference": "RKD-2",
+          "amount": 1250,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        }
+      ],
+      "commission": 200,
+      "deductionsObj": {
+        "deductions": 0,
+        "totalDeductions": 0,
+        "advanceDeduction": 0,
+        "advanceSalary": 0,
+        "pf": 0,
+        "esic": 0,
+        "absentDeduction": 0,
+        "halfDayDeduction": 0,
+        "leaveDeduction": 0,
+        "otherDeductions": 0
+      },
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "salaryBasisDays": 30,
+      "standardPayableDays": 30,
+      "paidLeavesUsed": 0,
+      "remainingPaidLeaves": 4,
+      "unpaidAbsences": 0,
+      "unpaidDeductions": 0,
+      "minAttendanceRequirement": 24,
+      "minAttendanceMet": true,
+      "overtimeHours": 0,
+      "attendanceSummary": {
+        "periodStart": "2026-10-01",
+        "periodEnd": "2026-10-31",
+        "totalCalendarDays": 31,
+        "totalScheduledWorkingDays": 30,
+        "monthWorkingDays": 30,
+        "totalWorkingDays": 30,
+        "eligibleWorkingDays": 30,
+        "workingDaysBeforeJoining": 0,
+        "notJoinedDays": 0,
+        "presentDays": 30,
+        "absentDays": 0,
+        "halfDays": 0,
+        "paidLeaveDays": 0,
+        "unpaidLeaveDays": 0,
+        "weeklyOffDays": 0,
+        "weeklyOffWorkedDays": 0,
+        "holidays": 0,
+        "holidayWorkedDays": 0,
+        "remainingWorkingDays": 0,
+        "overtimeMinutes": 0,
+        "overtimeLabel": "0h 00m",
+        "rows": [
+          {
+            "label": "Total Calendar Days",
+            "value": "31"
+          },
+          {
+            "label": "Total Scheduled Working Days",
+            "value": "30"
+          },
+          {
+            "label": "Weekly Off Days",
+            "value": "0"
+          },
+          {
+            "label": "Holidays",
+            "value": "0"
+          },
+          {
+            "label": "Working Days Before Joining",
+            "value": "0"
+          },
+          {
+            "label": "Eligible Working Days After Joining",
+            "value": "30"
+          },
+          {
+            "label": "Present Days",
+            "value": "30"
+          },
+          {
+            "label": "Absent Days",
+            "value": "0"
+          },
+          {
+            "label": "Half Days",
+            "value": "0"
+          },
+          {
+            "label": "Paid Leave Days",
+            "value": "0"
+          },
+          {
+            "label": "Unpaid Leave Days",
+            "value": "0"
+          },
+          {
+            "label": "Remaining Working Days",
+            "value": "0"
+          },
+          {
+            "label": "Overtime Hours",
+            "value": "0h 00m"
+          }
+        ]
+      },
+      "expenseCategories": {
+        "Travel": 250
+      },
+      "earnings": {
+        "baseSalary": 15000,
+        "basicSalary": 15000,
+        "fixedGrossSalary": 15000,
+        "monthlySalary": 15000,
+        "hra": 0,
+        "medical": 0,
+        "medicalAllowance": 0,
+        "travel": 0,
+        "travelAllowance": 0,
+        "travelMedicalAllowance": 0,
+        "special": 0,
+        "specialAllowance": 0,
+        "bonus": 0,
+        "incentive": 0,
+        "extraHolidayPayout": 0,
+        "extraWeeklyOffPayout": 0,
+        "extraAttendancePayout": 0,
+        "extraPayout": 0,
+        "additionalEarnings": 0,
+        "totalEarnings": 15000,
+        "displayedGrossEarnings": 15000,
+        "holidayWeeklyOffPay": 0,
+        "grossSalary": 15000,
+        "grossTotal": 15000,
+        "grossEarnings": 15000,
+        "pendingRkdAdjustments": [],
+        "rkdIncentive": 1750,
+        "rkdReferences": [
+          "RKD-1",
+          "RKD-2"
+        ],
+        "rkdRequests": [
+          {
+            "id": 1,
+            "reference": "RKD-1",
+            "amount": 500,
+            "productName": "Product",
+            "particulars": "Reimbursement parity test",
+            "description": "RKD Incentive",
+            "status": "Credited in Payroll",
+            "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+            "isSalaryCredited": true,
+            "payrollId": 1
+          },
+          {
+            "id": 2,
+            "reference": "RKD-2",
+            "amount": 1250,
+            "productName": "Product",
+            "particulars": "Reimbursement parity test",
+            "description": "RKD Incentive",
+            "status": "Credited in Payroll",
+            "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+            "isSalaryCredited": true,
+            "payrollId": 1
+          }
+        ],
+        "commission": 200,
+        "expenseReimbursement": 250,
+        "totalReimbursements": 2000,
+        "expenses": [
+          {
+            "category": "Travel",
+            "amount": 250
+          }
+        ],
+        "expensesByCategory": [
+          {
+            "category": "Travel",
+            "amount": 250
+          }
+        ],
+        "expenseCategories": {
+          "Travel": 250
+        }
+      },
+      "summary": {
+        "fixedGrossSalary": 15000,
+        "monthlySalary": 15000,
+        "grossSalary": 15000,
+        "grossEarnings": 15000,
+        "additionalEarnings": 0,
+        "totalEarnings": 15000,
+        "displayedGrossEarnings": 15000,
+        "holidayWeeklyOffPay": 0,
+        "paidLeavesUsed": 0,
+        "remainingPaidLeaves": 4,
+        "unpaidAbsences": 0,
+        "unpaidDeductions": 0,
+        "minAttendanceRequirement": 24,
+        "minAttendanceMet": true,
+        "totalDeductions": 0,
+        "netSalary": 15000,
+        "totalTakeHomePay": 17200,
+        "isCommissionEligible": true,
+        "pendingRkdAdjustments": [],
+        "rkdIncentive": 1750,
+        "rkdReferences": [
+          "RKD-1",
+          "RKD-2"
+        ],
+        "commission": 200,
+        "expenseReimbursement": 250,
+        "netInWords": "Seventeen Thousand Two Hundred Rupees Only"
+      }
+    },
+    "payrollId": 1,
+    "payrollMonth": 10,
+    "payrollYear": 2026,
+    "grossSalary": 15000,
+    "totalDeductions": 0,
+    "expenseReimbursement": 250,
+    "totalReimbursements": 2000,
+    "totalTakeHomePay": 17200,
+    "netSalary": 15000,
+    "activeAdvance": null,
+    "advances": [],
+    "transactions": [],
+    "salary": {
+      "monthlySalary": 15000,
+      "salaryAdvanceLimit": 0
+    }
+  },
+  "payrollHistory": {
+    "id": 1,
+    "employeeId": 10,
+    "month": 10,
+    "year": 2026,
+    "baseSalary": 15000,
+    "allowance": 0,
+    "deductions": 0,
+    "netSalary": 15000,
+    "advanceDeduction": 0,
+    "expenseReimbursement": 250,
+    "status": "Pending Approval",
+    "employeeCode": "HK-SALES-01",
+    "employeeName": "Test Sales",
+    "designation": "Sales Executive",
+    "department": "Sales",
+    "officeName": "Main",
+    "presentDays": 30,
+    "absentDays": 0,
+    "halfDays": 0,
+    "paidLeaveDays": 0,
+    "unpaidLeaveDays": 0,
+    "holidayCount": 0,
+    "weeklyOffCount": 0,
+    "holidayWorkedCount": 0,
+    "weeklyOffWorkedCount": 0,
+    "extraHolidayPayout": 0,
+    "extraWeeklyOffPayout": 0,
+    "extraAttendanceDays": 0,
+    "extraAttendancePayout": 0,
+    "dailySalary": 500,
+    "workingDays": 30,
+    "totalCalendarDays": 31,
+    "commissionEarned": 200,
+    "hra": 0,
+    "travelAllowance": 0,
+    "medicalAllowance": 0,
+    "specialAllowance": 0,
+    "incentive": 0,
+    "bonus": 0,
+    "netInWords": "Seventeen Thousand Two Hundred Rupees Only",
+    "createdAt": "2026-10-22T08:51:36.216Z",
+    "updatedAt": "2026-10-22T08:51:36.216Z",
+    "employee": {
+      "id": 10,
+      "userId": 100,
+      "employeeCode": "HK-SALES-01",
+      "firstName": "Test",
+      "lastName": "Sales",
+      "designation": "Sales Executive",
+      "department": {
+        "name": "Sales"
+      },
+      "office": {
+        "name": "Main",
+        "workingDays": [
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday"
+        ]
+      },
+      "user": {
+        "role": "SALESMAN"
+      }
+    },
+    "name": "Test Sales",
+    "departmentName": "Sales",
+    "office": "Main",
+    "paymentStatus": "PENDING",
+    "payrollStatus": "Pending Approval",
+    "fixedGrossSalary": 15000,
+    "monthlySalary": 15000,
+    "basicSalary": 15000,
+    "travelMedicalAllowance": 0,
+    "grossSalary": 15000,
+    "grossEarnings": 15000,
+    "totalDeductions": 0,
+    "advanceSalary": 0,
+    "totalAdvanceSalary": 0,
+    "pf": 0,
+    "esic": 0,
+    "absentDeduction": 0,
+    "halfDayDeduction": 0,
+    "leaveDeduction": 0,
+    "otherDeductions": 0,
+    "otherDeduction": 0,
+    "totalTakeHomePay": 17200,
+    "documentId": "HR-PAY-HK-SALES-01-202610",
+    "payPeriod": "October 2026",
+    "totalReimbursements": 2000,
+    "approvedExpenses": 250,
+    "approvedExpenseAmount": 250,
+    "totalExpenses": 2000,
+    "expenses": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "expensesByCategory": [
+      {
+        "category": "Travel",
+        "amount": 250
+      }
+    ],
+    "isCommissionEligible": true,
+    "pendingRkdAdjustments": [],
+    "rkdIncentive": 1750,
+    "rkdReferences": [
+      "RKD-1",
+      "RKD-2"
+    ],
+    "rkdRequests": [
+      {
+        "id": 1,
+        "reference": "RKD-1",
+        "amount": 500,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      },
+      {
+        "id": 2,
+        "reference": "RKD-2",
+        "amount": 1250,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      }
+    ],
+    "commission": 200,
+    "deductionsObj": {
+      "deductions": 0,
+      "totalDeductions": 0,
+      "advanceDeduction": 0,
+      "advanceSalary": 0,
+      "pf": 0,
+      "esic": 0,
+      "absentDeduction": 0,
+      "halfDayDeduction": 0,
+      "leaveDeduction": 0,
+      "otherDeductions": 0
+    },
+    "additionalEarnings": 0,
+    "totalEarnings": 15000,
+    "displayedGrossEarnings": 15000,
+    "holidayWeeklyOffPay": 0,
+    "salaryBasisDays": 30,
+    "standardPayableDays": 30,
+    "paidLeavesUsed": 0,
+    "remainingPaidLeaves": 4,
+    "unpaidAbsences": 0,
+    "unpaidDeductions": 0,
+    "minAttendanceRequirement": 24,
+    "minAttendanceMet": true,
+    "overtimeHours": 0,
+    "attendanceSummary": {
+      "periodStart": "2026-10-01",
+      "periodEnd": "2026-10-31",
+      "totalCalendarDays": 31,
+      "totalScheduledWorkingDays": 30,
+      "monthWorkingDays": 30,
+      "totalWorkingDays": 30,
+      "eligibleWorkingDays": 30,
+      "workingDaysBeforeJoining": 0,
+      "notJoinedDays": 0,
+      "presentDays": 30,
+      "absentDays": 0,
+      "halfDays": 0,
+      "paidLeaveDays": 0,
+      "unpaidLeaveDays": 0,
+      "weeklyOffDays": 0,
+      "weeklyOffWorkedDays": 0,
+      "holidays": 0,
+      "holidayWorkedDays": 0,
+      "remainingWorkingDays": 0,
+      "overtimeMinutes": 0,
+      "overtimeLabel": "0h 00m",
+      "rows": [
+        {
+          "label": "Total Calendar Days",
+          "value": "31"
+        },
+        {
+          "label": "Total Scheduled Working Days",
+          "value": "30"
+        },
+        {
+          "label": "Weekly Off Days",
+          "value": "0"
+        },
+        {
+          "label": "Holidays",
+          "value": "0"
+        },
+        {
+          "label": "Working Days Before Joining",
+          "value": "0"
+        },
+        {
+          "label": "Eligible Working Days After Joining",
+          "value": "30"
+        },
+        {
+          "label": "Present Days",
+          "value": "30"
+        },
+        {
+          "label": "Absent Days",
+          "value": "0"
+        },
+        {
+          "label": "Half Days",
+          "value": "0"
+        },
+        {
+          "label": "Paid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Unpaid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Remaining Working Days",
+          "value": "0"
+        },
+        {
+          "label": "Overtime Hours",
+          "value": "0h 00m"
+        }
+      ]
+    },
+    "expenseCategories": {
+      "Travel": 250
+    },
+    "earnings": {
+      "baseSalary": 15000,
+      "basicSalary": 15000,
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "hra": 0,
+      "medical": 0,
+      "medicalAllowance": 0,
+      "travel": 0,
+      "travelAllowance": 0,
+      "travelMedicalAllowance": 0,
+      "special": 0,
+      "specialAllowance": 0,
+      "bonus": 0,
+      "incentive": 0,
+      "extraHolidayPayout": 0,
+      "extraWeeklyOffPayout": 0,
+      "extraAttendancePayout": 0,
+      "extraPayout": 0,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "grossSalary": 15000,
+      "grossTotal": 15000,
+      "grossEarnings": 15000,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "rkdRequests": [
+        {
+          "id": 1,
+          "reference": "RKD-1",
+          "amount": 500,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        },
+        {
+          "id": 2,
+          "reference": "RKD-2",
+          "amount": 1250,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        }
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "totalReimbursements": 2000,
+      "expenses": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expensesByCategory": [
+        {
+          "category": "Travel",
+          "amount": 250
+        }
+      ],
+      "expenseCategories": {
+        "Travel": 250
+      }
+    },
+    "summary": {
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "grossSalary": 15000,
+      "grossEarnings": 15000,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "paidLeavesUsed": 0,
+      "remainingPaidLeaves": 4,
+      "unpaidAbsences": 0,
+      "unpaidDeductions": 0,
+      "minAttendanceRequirement": 24,
+      "minAttendanceMet": true,
+      "totalDeductions": 0,
+      "netSalary": 15000,
+      "totalTakeHomePay": 17200,
+      "isCommissionEligible": true,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "netInWords": "Seventeen Thousand Two Hundred Rupees Only"
+    },
+    "netPay": 15000,
+    "netTakeHomePay": 17200
+  },
+  "paid": {
+    "id": 1,
+    "employeeId": 10,
+    "month": 10,
+    "year": 2026,
+    "baseSalary": 15000,
+    "allowance": 0,
+    "deductions": 0,
+    "netSalary": 15000,
+    "advanceDeduction": 0,
+    "expenseReimbursement": 250,
+    "status": "PAID",
+    "employeeCode": "HK-SALES-01",
+    "employeeName": "Test Sales",
+    "designation": "Sales Executive",
+    "department": "Sales",
+    "officeName": "Main",
+    "presentDays": 30,
+    "absentDays": 0,
+    "halfDays": 0,
+    "paidLeaveDays": 0,
+    "unpaidLeaveDays": 0,
+    "holidayCount": 0,
+    "weeklyOffCount": 0,
+    "holidayWorkedCount": 0,
+    "weeklyOffWorkedCount": 0,
+    "extraHolidayPayout": 0,
+    "extraWeeklyOffPayout": 0,
+    "extraAttendanceDays": 0,
+    "extraAttendancePayout": 0,
+    "dailySalary": 500,
+    "workingDays": 30,
+    "totalCalendarDays": 31,
+    "commissionEarned": 200,
+    "hra": 0,
+    "travelAllowance": 0,
+    "medicalAllowance": 0,
+    "specialAllowance": 0,
+    "incentive": 0,
+    "bonus": 0,
+    "netInWords": "Seventeen Thousand Two Hundred Rupees Only",
+    "createdAt": "2026-10-22T08:51:36.216Z",
+    "updatedAt": "2026-10-22T08:51:36.216Z",
+    "name": "Test Sales",
+    "office": "Main",
+    "departmentName": "Sales",
+    "paymentStatus": "PAID",
+    "payrollStatus": "Paid",
+    "fixedGrossSalary": 15000,
+    "monthlySalary": 15000,
+    "basicSalary": 15000,
+    "travelMedicalAllowance": 0,
+    "grossSalary": 15000,
+    "grossEarnings": 15000,
+    "totalDeductions": 0,
+    "advanceSalary": 0,
+    "totalAdvanceSalary": 0,
+    "pf": 0,
+    "esic": 0,
+    "absentDeduction": 0,
+    "halfDayDeduction": 0,
+    "leaveDeduction": 0,
+    "otherDeductions": 0,
+    "otherDeduction": 0,
+    "totalTakeHomePay": 17200,
+    "documentId": "HR-PAY-HK-SALES-01-202610",
+    "payPeriod": "October 2026",
+    "totalReimbursements": 2000,
+    "approvedExpenses": 250,
+    "approvedExpenseAmount": 250,
+    "totalExpenses": 2000,
+    "isCommissionEligible": true,
+    "pendingRkdAdjustments": [],
+    "rkdIncentive": 1750,
+    "rkdReferences": [
+      "RKD-1",
+      "RKD-2"
+    ],
+    "rkdRequests": [
+      {
+        "id": 1,
+        "reference": "RKD-1",
+        "amount": 500,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      },
+      {
+        "id": 2,
+        "reference": "RKD-2",
+        "amount": 1250,
+        "productName": "Product",
+        "particulars": "Reimbursement parity test",
+        "description": "RKD Incentive",
+        "status": "Credited in Payroll",
+        "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+        "isSalaryCredited": true,
+        "payrollId": 1
+      }
+    ],
+    "commission": 200,
+    "deductionsObj": {
+      "deductions": 0,
+      "totalDeductions": 0,
+      "advanceDeduction": 0,
+      "advanceSalary": 0,
+      "pf": 0,
+      "esic": 0,
+      "absentDeduction": 0,
+      "halfDayDeduction": 0,
+      "leaveDeduction": 0,
+      "otherDeductions": 0
+    },
+    "paidLeavesUsed": 0,
+    "remainingPaidLeaves": 4,
+    "unpaidAbsences": 0,
+    "unpaidDeductions": 0,
+    "minAttendanceRequirement": 24,
+    "minAttendanceMet": true,
+    "additionalEarnings": 0,
+    "totalEarnings": 15000,
+    "displayedGrossEarnings": 15000,
+    "holidayWeeklyOffPay": 0,
+    "overtimeHours": 0,
+    "attendanceSummary": {
+      "periodStart": "2026-10-01",
+      "periodEnd": "2026-10-31",
+      "totalCalendarDays": 31,
+      "totalScheduledWorkingDays": 30,
+      "monthWorkingDays": 30,
+      "totalWorkingDays": 30,
+      "eligibleWorkingDays": 30,
+      "workingDaysBeforeJoining": 0,
+      "notJoinedDays": 0,
+      "presentDays": 30,
+      "absentDays": null,
+      "halfDays": 0,
+      "paidLeaveDays": 0,
+      "unpaidLeaveDays": 0,
+      "weeklyOffDays": 0,
+      "weeklyOffWorkedDays": 0,
+      "holidays": 0,
+      "holidayWorkedDays": 0,
+      "remainingWorkingDays": null,
+      "overtimeMinutes": 0,
+      "overtimeLabel": "0h 00m",
+      "rows": [
+        {
+          "label": "Total Calendar Days",
+          "value": "31"
+        },
+        {
+          "label": "Total Scheduled Working Days",
+          "value": "30"
+        },
+        {
+          "label": "Weekly Off Days",
+          "value": "0"
+        },
+        {
+          "label": "Holidays",
+          "value": "0"
+        },
+        {
+          "label": "Working Days Before Joining",
+          "value": "0"
+        },
+        {
+          "label": "Eligible Working Days After Joining",
+          "value": "30"
+        },
+        {
+          "label": "Present Days",
+          "value": "30"
+        },
+        {
+          "label": "Absent Days",
+          "value": "NaN"
+        },
+        {
+          "label": "Half Days",
+          "value": "0"
+        },
+        {
+          "label": "Paid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Unpaid Leave Days",
+          "value": "0"
+        },
+        {
+          "label": "Remaining Working Days",
+          "value": "NaN"
+        },
+        {
+          "label": "Overtime Hours",
+          "value": "0h 00m"
+        }
+      ]
+    },
+    "expenseCategories": {
+      "Travel": 250
+    },
+    "earnings": {
+      "baseSalary": 15000,
+      "basicSalary": 15000,
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "hra": 0,
+      "medical": 0,
+      "medicalAllowance": 0,
+      "travel": 0,
+      "travelAllowance": 0,
+      "travelMedicalAllowance": 0,
+      "special": 0,
+      "specialAllowance": 0,
+      "bonus": 0,
+      "incentive": 0,
+      "extraHolidayPayout": 0,
+      "extraWeeklyOffPayout": 0,
+      "extraPayout": 0,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "grossSalary": 15000,
+      "grossTotal": 15000,
+      "grossEarnings": 15000,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "rkdRequests": [
+        {
+          "id": 1,
+          "reference": "RKD-1",
+          "amount": 500,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        },
+        {
+          "id": 2,
+          "reference": "RKD-2",
+          "amount": 1250,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        }
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "totalReimbursements": 2000
+    },
+    "summary": {
+      "fixedGrossSalary": 15000,
+      "monthlySalary": 15000,
+      "grossSalary": 15000,
+      "grossEarnings": 15000,
+      "additionalEarnings": 0,
+      "totalEarnings": 15000,
+      "displayedGrossEarnings": 15000,
+      "holidayWeeklyOffPay": 0,
+      "totalDeductions": 0,
+      "netSalary": 15000,
+      "totalTakeHomePay": 17200,
+      "isCommissionEligible": true,
+      "pendingRkdAdjustments": [],
+      "rkdIncentive": 1750,
+      "rkdReferences": [
+        "RKD-1",
+        "RKD-2"
+      ],
+      "rkdRequests": [
+        {
+          "id": 1,
+          "reference": "RKD-1",
+          "amount": 500,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        },
+        {
+          "id": 2,
+          "reference": "RKD-2",
+          "amount": 1250,
+          "productName": "Product",
+          "particulars": "Reimbursement parity test",
+          "description": "RKD Incentive",
+          "status": "Credited in Payroll",
+          "adjustmentStatus": "ADJUSTED_IN_PAYROLL",
+          "isSalaryCredited": true,
+          "payrollId": 1
+        }
+      ],
+      "commission": 200,
+      "expenseReimbursement": 250,
+      "totalReimbursements": 2000,
+      "netInWords": "Seventeen Thousand Two Hundred Rupees Only"
+    }
+  }
+}

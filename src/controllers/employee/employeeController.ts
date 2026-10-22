@@ -1759,6 +1759,7 @@ export const fetchEmployeeWallet = async (
         grossSalary: payroll.totalEarnings,
         totalDeductions: payroll.totalDeductions,
         expenseReimbursement: payroll.expenseReimbursement,
+        totalReimbursements: payroll.totalReimbursements,
         totalTakeHomePay: payroll.totalTakeHomePay,
         netSalary: payroll.netSalary,
         activeAdvance: activeAdvance ? {

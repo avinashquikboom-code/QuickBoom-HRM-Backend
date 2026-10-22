@@ -5,22 +5,19 @@ import { prisma } from '../utils/db';
 export const payrollPeriodKey = (employeeId: number, month: number, year: number) =>
   `payroll-period:${employeeId}:${year}:${month}`;
 
-export async function getRkdPayrollEarnings(employeeId: number, month: number, year: number, db: Prisma.TransactionClient = prisma, payrollId?: number) {
+export async function getRkdPayrollEarnings(employeeId: number, month: number, year: number, db: Prisma.TransactionClient = prisma, payrollId?: number, includeUncredited = true) {
+  const targetPayrollId = payrollId ?? (await db.payslip.findUnique({
+    where: { employeeId_month_year: { employeeId, month, year } },
+    select: { id: true },
+  }))?.id;
+  const eligible: Prisma.RkdRequestWhereInput[] = [];
+  if (targetPayrollId !== undefined) eligible.push({ payrollId: targetPayrollId, isSalaryCredited: true });
+  if (includeUncredited) eligible.push({
+    salaryMonth: month, salaryYear: year, isSalaryCredited: false,
+    OR: [{ payrollId: null }, ...(targetPayrollId !== undefined ? [{ payrollId: targetPayrollId }] : [])],
+  });
   const whereClause: Prisma.RkdRequestWhereInput = {
-    employeeId,
-    status: 'APPROVED',
-    ...(payrollId !== undefined
-      ? {
-          OR: [
-            { payrollId, isSalaryCredited: true },
-            { salaryMonth: month, salaryYear: year, isSalaryCredited: false },
-            { salaryMonth: month, salaryYear: year, payrollId },
-          ],
-        }
-      : {
-          salaryMonth: month,
-          salaryYear: year,
-        }),
+    employeeId, status: 'APPROVED', OR: eligible,
   };
 
   const requests = await db.rkdRequest.findMany({

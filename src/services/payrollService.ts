@@ -1595,13 +1595,7 @@ class PayrollService {
       pendingRkdAdjustments,
       rkdIncentive: calc.rkdIncentive || 0,
       rkdReferences: calc.rkdReferences || (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
-      rkdRequests: calc.rkdRequests || (calc.rkdRequestIds || []).map(id => ({
-        id,
-        reference: `RKD-${id}`,
-        amount: (calc.rkdIncentive || 0) / (calc.rkdRequestIds?.length || 1),
-        description: 'RKD Incentive',
-        status: isPaid ? 'Credited in Payroll' : 'Approved',
-      })),
+      rkdRequests: calc.rkdRequests || [],
       commission: commissionEarned,
       expenseReimbursement,
       totalReimbursements: settlement.reimbursements,
@@ -1667,13 +1661,7 @@ class PayrollService {
       pendingRkdAdjustments,
       rkdIncentive: calc.rkdIncentive || 0,
       rkdReferences: calc.rkdReferences || (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
-      rkdRequests: calc.rkdRequests || (calc.rkdRequestIds || []).map(id => ({
-        id,
-        reference: `RKD-${id}`,
-        amount: (calc.rkdIncentive || 0) / (calc.rkdRequestIds?.length || 1),
-        description: 'RKD Incentive',
-        status: isPaid ? 'Credited in Payroll' : 'Approved',
-      })),
+      rkdRequests: calc.rkdRequests || [],
       commission: commissionEarned,
       commissionEarned,
       deductionsObj: {
@@ -1764,7 +1752,7 @@ class PayrollService {
     }
 
     const pendingRkdAdjustments = await getRkdPendingAdjustments(ps.employeeId, ps.month, ps.year);
-    const rkdSnapshot = await getRkdPayrollEarnings(ps.employeeId, ps.month, ps.year, prisma, ps.id);
+    const rkdSnapshot = await getRkdPayrollEarnings(ps.employeeId, ps.month, ps.year, prisma, ps.id, !isFinalized);
     const cal = calculateScheduledWorkingDays(ps.year, ps.month, employee?.office?.workingDays);
     const calendarDays = ps.totalCalendarDays || cal.totalCalendarDays;
     const schedWorkingDays = ps.workingDays || cal.workingDays;

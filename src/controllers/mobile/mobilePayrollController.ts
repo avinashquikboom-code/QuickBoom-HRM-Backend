@@ -238,6 +238,7 @@ export const downloadPayslip = async (
       unpaidLeaveDays: view.unpaidLeaveDays,
       expenseCategories: view.expenseCategories,
       expenseReimbursement: view.expenseReimbursement,
+      totalReimbursements: view.totalReimbursements,
       commissionEarned: view.commissionEarned,
       rkdIncentive: view.rkdIncentive,
       rkdReferences: view.rkdReferences,

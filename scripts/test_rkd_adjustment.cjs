@@ -21,7 +21,7 @@ const db={
  payslip:{findUnique:async({where})=>slips.find(s=>Object.entries(where.employeeId_month_year).every(([key,value])=>s[key]===value))||null},
 };
 let queue=Promise.resolve();db.$transaction=fn=>{const pending=queue.then(()=>fn(db));queue=pending.catch(()=>{});return pending;};
-const payroll={calculatePayroll:async(employeeId,month,year)=>{recalculations++;return{employeeId,month,year};},savePayslip:async calc=>{if(failRefresh)throw Error('CONTROLLED_REFRESH_FAILURE');requests.filter(r=>r.salaryMonth===calc.month&&r.salaryYear===calc.year).forEach(r=>Object.assign(r,{isSalaryCredited:true,payrollId:slips.find(s=>s.employeeId===calc.employeeId&&s.month===calc.month&&s.year===calc.year).id}));}};
+const payroll={resolveFullPayslipView:async row=>({...row,netSalary:row.netSalary||0,totalTakeHomePay:row.netSalary||0}),calculatePayroll:async(employeeId,month,year)=>{recalculations++;return{employeeId,month,year};},savePayslip:async calc=>{if(failRefresh)throw Error('CONTROLLED_REFRESH_FAILURE');requests.filter(r=>r.salaryMonth===calc.month&&r.salaryYear===calc.year).forEach(r=>Object.assign(r,{isSalaryCredited:true,payrollId:slips.find(s=>s.employeeId===calc.employeeId&&s.month===calc.month&&s.year===calc.year).id}));}};
 const load=Module._load;Module._load=function(name,parent,isMain){
  if(/(?:^|\/)utils\/db$/.test(name)||name==='./db')return{prisma:db,ensureRkdTable:async()=>{}};
  if(/services\/payrollService$/.test(name))return payroll;

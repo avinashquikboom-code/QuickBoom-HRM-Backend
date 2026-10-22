@@ -12,7 +12,7 @@ const db={
   findFirst:async({where})=>requests.find(r=>r.employeeId===where.employeeId&&r.saleReference===where.saleReference&&where.status.in.includes(r.status))||null,
   findUniqueOrThrow:async({where})=>({...requests.find(r=>r.id===where.id),employee}),
   findUnique:async({where})=>requests.find(r=>where.id?r.id===where.id:r.submissionKey===where.submissionKey)||null,
-  create:async({data})=>{const r={id:requests.length+1,createdAt:new Date(),...data};requests.push(r);return{...r,employee};},
+  create:async({data})=>{const r={id:requests.length+1,createdAt:new Date(),isSalaryCredited:false,payrollId:null,...data};requests.push(r);return{...r,employee};},
   update:async({where,data})=>{Object.assign(requests.find(r=>r.id===where.id),data);return{...requests.find(r=>r.id===where.id),employee};},
   findMany:async({where})=>requests.filter(r=>match(r,where)),
   updateMany:async({where,data})=>{const rows=requests.filter(r=>match(r,where));rows.forEach(r=>Object.assign(r,data));return{count:rows.length};},
@@ -122,6 +122,65 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
    require('node:fs').writeFileSync('../QuickBoom-HRM-App/test/fixtures/rkd_visibility_api.json',JSON.stringify({salarySlip:salary.body.salarySlip,wallet:wallet.body.wallet,finalizedSalarySlip:frozen.body.salarySlip,lateWallet:lateWallet.body.wallet},null,2)+'\n');
    console.log('PASS actual HTTP submission/authorized approval -> persisted draft refresh -> salary and SALESMAN wallet APIs; denied reviewer/foreign owner excluded, retry idempotency, finalized adjustment visibility. Synthetic API responses exported for Flutter rendering.');
   } finally { await new Promise(resolve=>server.close(resolve)); }
+ }
+ if(process.argv.includes('--reimbursements')) {
+  requests=[];commissions=[];slips=[];history=[];notifications=[];sends=[];
+  db.expense.findMany=async()=>[{id:1,amount:250,category:'Travel',status:'APPROVED'}];
+  for(const amount of [500,1250]){
+   const {rkd}=await workflow.createRkdRequestOnce({employeeId:10,productName:'Product',quantity:1,commissionAmount:amount,particulars:'Reimbursement parity test'},`parity-${amount}`);
+   await workflow.transitionRkdReview(rkd.id,'APPROVED',900,'HR');
+  }
+  const base={employeeId:10,salaryMonth:month,salaryYear:year,isSalaryCredited:false,payrollId:null,createdAt:new Date()};
+  requests.push(...['PENDING','REJECTED','CANCELLED'].map((status,i)=>({...base,id:20+i,status,commissionAmount:900})));
+  requests.push({...base,id:30,status:'APPROVED',commissionAmount:999,isSalaryCredited:true,payrollId:999});
+  requests.push({...base,id:31,employeeId:20,status:'APPROVED',commissionAmount:999});
+  let calculation=await payroll.calculatePayroll(10,month,year);
+  assert.equal(calculation.rkdIncentive,1750);assert.equal(calculation.totalReimbursements,2000);assert.equal(calculation.netSalary,15000);assert.equal(calculation.totalTakeHomePay,17200);
+  await payroll.savePayslip(calculation,'Pending Approval');
+  calculation=await payroll.calculatePayroll(10,month,year);
+  await payroll.savePayslip(calculation,'Pending Approval');
+  assert.equal(slips.length,1);assert.equal(commissions.length,2);assert.equal(history.length,2);
+  assert.equal(calculation.rkdIncentive,1750);
+  db.payslip.findMany=async({where={}}={})=>slips.filter(s=>Object.entries(where).every(([key,value])=>s[key]===value)).map(s=>({...s,employee}));
+  const express=require('express'),jwt=require('jsonwebtoken');
+  const app=express();app.use(express.json());
+  app.use('/api/payroll',require('../src/routes/payrollRoutes').default);
+  app.use('/api/mobile/payroll',require('../src/routes/mobile/mobilePayrollRoutes').default);
+  app.use('/api/salary',salaryRouter);app.use('/api/employee',employeeRouter);
+  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  let admin,mobile,salary,wallet,payrollHistory;
+  try{
+   const call=async(path,user=100)=>{const response=await fetch(`http://127.0.0.1:${server.address().port}${path}`,{headers:{Authorization:`Bearer ${jwt.sign({id:user,role:user===900?'HR':'SALESMAN'},process.env.JWT_SECRET,{expiresIn:60})}`}});const json=await response.json();assert.equal(response.status,200,JSON.stringify(json));return json;};
+   admin=(await call('/api/payroll/admin/slips?month=ALL',900)).slips[0];
+   mobile=(await call('/api/mobile/payroll/slips')).payslips[0];
+   payrollHistory=(await call('/api/payroll/history/10?limit=all',900)).payslips[0];
+   salary=(await call(`/api/salary/slip?month=${month}&year=${year}`)).salarySlip;
+   wallet=(await call(`/api/employee/wallet?month=${month}&year=${year}`)).wallet;
+   for(const view of [admin,mobile,payrollHistory,salary,wallet]){
+    assert.equal(view.rkdIncentive,1750);assert.equal(view.totalReimbursements,2000);assert.equal(view.netSalary,15000);assert.equal(view.totalTakeHomePay,17200);
+    assert.deepEqual(view.rkdRequests.map(r=>r.amount),[500,1250]);
+    assert.deepEqual(view.rkdReferences,['RKD-1','RKD-2']);
+   }
+  }finally{await new Promise(resolve=>server.close(resolve));}
+  const pdfInput={...admin,earnings:admin.earnings,deductionsObj:admin.deductionsObj};
+  const definition=buildSalarySlipDocDefinition(pdfInput);
+  assert.equal((JSON.stringify(definition).match(/"text":"RKD Incentive"/g)||[]).length,2,'Each request appears once in reimbursements, never in gross earnings');
+  const pdf=require('../src/utils/salarySlipPdfGenerator').generateSalarySlipPdfStream(pdfInput);
+  const bytes=await new Promise((resolve,reject)=>{const chunks=[];pdf.on('data',chunk=>chunks.push(chunk));pdf.on('end',()=>resolve(Buffer.concat(chunks)));pdf.on('error',reject);pdf.end();});
+  assert(bytes.subarray(0,4).equals(Buffer.from('%PDF')));
+  require('node:fs').writeFileSync('/tmp/rkd-reimbursements-salary-slip.pdf',bytes);
+  slips[0].status='Paid';
+  requests.push({...base,id:40,status:'APPROVED',commissionAmount:555});
+  const frozen=await payroll.resolveFullPayslipView(slips[0],employee);
+  assert.equal(frozen.rkdIncentive,1750);assert.equal(frozen.totalTakeHomePay,17200);
+  const snapshot=JSON.stringify(slips[0]);await payroll.savePayslip(calculation);assert.equal(JSON.stringify(slips[0]),snapshot);
+  const fixture={admin,mobile,salary,wallet,payrollHistory,paid:frozen};
+  require('node:fs').mkdirSync(require('node:path').join(__dirname,'fixtures'),{recursive:true});
+  require('node:fs').writeFileSync(require('node:path').join(__dirname,'fixtures/rkd_reimbursements_api.json'),JSON.stringify(fixture,null,2)+'\n');
+  slips=[];requests=requests.filter(r=>['PENDING','REJECTED','CANCELLED'].includes(r.status));
+  assert.equal((await payroll.calculatePayroll(10,month,year)).rkdIncentive,0);
+  requests=[];assert.equal((await payroll.calculatePayroll(10,month,year)).rkdIncentive,0);
+  console.log('PASS real HTTP admin/mobile/history/salary/wallet parity: RKD 500 + 1250, expense 250, reimbursements 2000, net 15000, take-home 17200; one PDF entry per request, recalculation, exclusions and frozen payroll protected. Synthetic API fixture and actual PDF exported.');
  }
  console.log('PASS submission -> concurrent approval -> payroll calculation/snapshot/PDF -> wallet earning; single accounting amount, references, finalization/manual-adjustment hold, rejection exclusion, no cash-credit/payment push. DB/FCM mocked.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

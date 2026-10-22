@@ -69,6 +69,7 @@ export interface GenerateSalarySlipPdfInput {
   remainingWorkingDays?: number | null;
   expenseCategories?: Record<string, number> | null;
   expenseReimbursement?: number | null;
+  totalReimbursements?: number | null;
   rkdIncentive?: number | null;
   rkdReferences?: string[];
   rkdRequests?: Array<{ id: number; reference: string; amount: number; productName?: string; particulars?: string; description?: string; status?: string }>;
@@ -138,12 +139,6 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     extraWeeklyOffPayout: input.extraWeeklyOffPayout,
   });
   const earningLines = [...earningBreakdown.lines];
-  if (input.rkdIncentive && input.rkdIncentive > 0) {
-    const refText = (input.rkdReferences && input.rkdReferences.length > 0)
-      ? ` (${input.rkdReferences.join(', ')})`
-      : '';
-    earningLines.push({ name: `RKD Incentive${refText}`, amount: money(input.rkdIncentive) });
-  }
   const grossEarnings = money(earningBreakdown.displayedGrossEarnings);
 
   // 2. Build Itemized Deduction Lines
@@ -282,7 +277,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
   // 5. Reimbursements Table
   const expenseReimbursement = money(input.expenseReimbursement);
   const rkdIncentive = money(input.rkdIncentive);
-  const totalReimbursements = money(expenseReimbursement + rkdIncentive);
+  const totalReimbursements = money(input.totalReimbursements ?? (expenseReimbursement + rkdIncentive));
   const catEntries = Object.entries(input.expenseCategories || {});
   const reimbTableBody: any[] = [
     [
