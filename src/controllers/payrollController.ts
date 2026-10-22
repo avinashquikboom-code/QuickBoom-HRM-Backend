@@ -419,12 +419,21 @@ export const approvePayslip = async (
 
     const payslipIdStr = Array.isArray(payslipId) ? payslipId[0] : payslipId;
 
-    const transition = await prisma.payslip.updateMany({
+    const transition = await prisma.$transaction(async tx => {
+      const target = await tx.payslip.findUnique({ where: { id: parseInt(payslipIdStr) } });
+      if (!target) return { count: 0 };
+      const key = payrollPeriodKey(target.employeeId, target.month, target.year);
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const eligible = await getRkdPayrollEarnings(target.employeeId, target.month, target.year, tx);
+      const included = await getRkdPayrollEarnings(target.employeeId, target.month, target.year, tx, target.id);
+      if (eligible.requestIds.join(',') !== included.requestIds.join(',')) throw new Error('Regenerate the salary slip before finalizing RKD earnings.');
+    return tx.payslip.updateMany({
       where: { id: parseInt(payslipIdStr), status: { notIn: ['Paid', 'PAID', 'paid'] } },
       data: {
         status: 'Approved',
         updatedAt: new Date()
       }
+    });
     });
     const payslip = await prisma.payslip.findUnique({ where: { id: parseInt(payslipIdStr) } });
     if (!payslip || !transition.count) {
@@ -798,7 +807,17 @@ export const approveAdminPayslip = async (
     }
 
     // Update payslip status
-    const payslip = await prisma.payslip.updateMany({
+    const payslip = await prisma.$transaction(async tx => {
+      const target = await tx.payslip.findUnique({ where: { employeeId_month_year: {
+        employeeId: parseInt(employeeId), month: parseInt(month), year: parseInt(year),
+      } } });
+      if (!target) return { count: 0 };
+      const key = payrollPeriodKey(target.employeeId, target.month, target.year);
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const eligible = await getRkdPayrollEarnings(target.employeeId, target.month, target.year, tx);
+      const included = await getRkdPayrollEarnings(target.employeeId, target.month, target.year, tx, target.id);
+      if (eligible.requestIds.join(',') !== included.requestIds.join(',')) throw new Error('Regenerate the salary slip before finalizing RKD earnings.');
+    return tx.payslip.updateMany({
       where: {
         employeeId: parseInt(employeeId),
         month: parseInt(month),
@@ -809,6 +828,7 @@ export const approveAdminPayslip = async (
         status: 'Approved',
         updatedAt: new Date()
       }
+    });
     });
 
     if (payslip.count === 0) {

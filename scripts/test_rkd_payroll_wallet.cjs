@@ -31,6 +31,11 @@ const load=Module._load;Module._load=function(r,p,i){
  if(/firebaseNotificationService$/.test(r))return{firebaseNotificationService:{sendNotificationToUser:async(...args)=>{sends.push(args);return{successCount:1,failureCount:0,responses:[{success:true,messageId:'accepted-test'}]};}}};
  return load.call(this,r,p,i);
 };
+db.wallet={findUnique:async()=>({id:1,availableBalance:123,advanceLimit:0,pendingClaims:0,transactions:[]})};
+db.salaryStructure={findUnique:async()=>({monthlySalary:15000,salaryAdvanceLimit:0})};
+db.expense.aggregate=async()=>({_sum:{amount:0}});
+db.payslip.findFirst=async({where})=>slips.find(p=>match(p,where))||null;
+const employeeController=require('../src/controllers/employee/employeeController');
 const workflow=require('../src/services/rkdNotificationWorkflow');
 const payroll=require('../src/services/payrollService').default;
 const {getRkdWalletEarnings,getRkdPayrollEarnings}=require('../src/services/rkdPayrollService');
@@ -40,6 +45,7 @@ const now=new Date(Date.now()+330*60000),month=now.getUTCMonth()+1,year=now.getU
 payroll.getSalaryStructure=async()=>({id:1,baseSalary:15000,pf:0,esi:0,professionalTax:0,tds:0});
 payroll.getAttendanceData=async()=>({workingDays:30,totalCalendarDays:31,presentDays:30,absentDays:0,halfDays:0,paidLeaveDays:0,unpaidLeaveDays:0,holidayWorkedCount:0,weeklyOffWorkedCount:0,holidayCount:0,weeklyOffCount:0,overtimeHours:0,
  classification:{periodStart:'2026-10-01',periodEnd:'2026-10-31',totalCalendarDays:31,monthWorkingDays:30,scheduledWorkingDays:30,presentDays:30,absentDays:0,halfDays:0,paidLeaveDays:0,unpaidLeaveDays:0,holidayCount:0,weeklyOffCount:0,holidayWorkedCount:0,weeklyOffWorkedCount:0,notJoinedWeeklyOffDays:0,notJoinedHolidayDays:0,notJoinedDays:0,remainingWorkingDays:0,overtimeMinutes:0,payableDayRecords:[],daysBeforeJoining:0}});
+payroll.getAttendanceSnapshot=async()=> (await payroll.getAttendanceData()).classification;
 payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyDeductionPolicies=async()=>0;
 (async()=>{
  const submission=await workflow.createRkdRequestOnce({employeeId:10,productName:'Product',quantity:1,commissionAmount:1500,saleReference:'SALE-1',particulars:'Controlled RKD'},'submission-1');
@@ -50,9 +56,13 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
  await workflow.notifyRkdReviewed(decisions.find(r=>r.changed).rkd);assert.equal(sends[0][3].actionType,'RKD_APPROVED');assert(!sends.some(s=>/SALARY_PAID|WALLET_CREDIT/.test(s[3].actionType)));
  const earning=(await getRkdWalletEarnings(10))[0];assert.equal(earning.reference,'RKD-1');assert.equal(earning.description,'RKD Incentive');assert.equal(earning.amount,1500);assert.equal(earning.withdrawable,false);assert.equal(earning.status,'APPROVED_EARNING');
  const calc=await payroll.calculatePayroll(10,month,year);assert.equal(calc.rkdIncentive,1500);assert.equal(calc.commissionEarned,200);assert.equal(calc.totalEarnings,16500);assert.equal(calc.netSalary,16500);assert.equal(calc.totalTakeHomePay,16700);
+ failSave=true;await assert.rejects(()=>payroll.savePayslip(calc));assert.equal(slips.length,0);assert.equal(requests[0].isSalaryCredited,false);failSave=false;
  await payroll.savePayslip(calc);assert.equal(slips[0].netSalary,16500);assert.equal(slips[0].commissionEarned,200);assert.equal(requests[0].payrollId,slips[0].id);assert.equal(requests[0].isSalaryCredited,true);
  assert(sends.some(s=>s[3].actionType==='PAYSLIP_GENERATED'));
  const view=await payroll.resolveFullPayslipView(slips[0],employee);assert.equal(view.rkdIncentive,1500);assert.deepEqual(view.rkdReferences,['RKD-1']);assert.equal(view.netSalary,16500);assert.equal(view.totalTakeHomePay,16700);
+ const walletResponse={status(code){this.code=code;return this;},json(body){this.body=body;return this;}};
+ await employeeController.fetchEmployeeWallet({user:{id:100},query:{month,year}},walletResponse);
+ assert.equal(walletResponse.body.success,true);assert.equal(walletResponse.body.wallet.availableBalance,123);assert.equal(walletResponse.body.wallet.netSalary,16500);assert.equal(walletResponse.body.wallet.totalTakeHomePay,16700);assert.equal(walletResponse.body.wallet.rkdEarnings[0].reference,'RKD-1');
  const definition=buildSalarySlipDocDefinition({employeeName:'Test Sales',employeeCode:'HK-SALES-01',month,year,paymentStatus:'PENDING',earnings:{baseSalary:15000},rkdIncentive:view.rkdIncentive,netSalary:view.netSalary,totalTakeHomePay:view.totalTakeHomePay,commissionEarned:200,isCommissionEligible:true});
  assert(JSON.stringify(definition).includes('RKD Incentive'));
  const before=JSON.stringify(slips[0]);await payroll.savePayslip(calc);assert.equal(JSON.stringify(slips[0]),before);

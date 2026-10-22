@@ -197,18 +197,21 @@ export function reconcileOfficialPayslipDisplay(input: {
     totalDeductions: input.totalDeductions,
     reimbursements: input.reimbursements,
     commissionEarned: input.commissionEarned,
+    rkdIncentive: input.rkdIncentive,
   });
+  const lines = input.rkdIncentive ? [...breakdown.lines, { name: 'RKD Incentive', amount: money(input.rkdIncentive) }] : breakdown.lines;
+  const displayedGrossEarnings = money(breakdown.displayedGrossEarnings + n(input.rkdIncentive));
   return {
-    lines: breakdown.lines,
+    lines,
     extraPayout: breakdown.extraPayout,
-    displayedGrossEarnings: breakdown.displayedGrossEarnings,
+    displayedGrossEarnings,
     totalDeductions: settlement.totalDeductions,
     netSalary: settlement.netSalary,
     totalTakeHomePay: settlement.totalTakeHomePay,
-    componentSumMatchesGross: Math.abs(breakdown.displayedGrossEarnings - settlement.totalEarnings) < 0.02,
+    componentSumMatchesGross: Math.abs(displayedGrossEarnings - settlement.totalEarnings) < 0.02,
     netReconciles:
       Math.abs(settlement.netSalary - money(
-        breakdown.displayedGrossEarnings - settlement.totalDeductions
+        displayedGrossEarnings - settlement.totalDeductions
       )) < 0.02,
     settlement,
   };

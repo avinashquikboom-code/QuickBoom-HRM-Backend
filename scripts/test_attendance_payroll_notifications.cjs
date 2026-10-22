@@ -5,6 +5,7 @@ let notifications = [], sends = [], correction, slip, failSave = false, failFcm 
 const employee = { id: 50, userId: 100, employeeCode: 'EMP50', firstName: 'Test', lastName: 'Employee' };
 const db = {
   $queryRaw: async () => [],
+  rkdRequest: { findMany: async () => [] },
   employee: { findUnique: async () => employee, findFirst: async () => employee },
   notification: {
     findFirst: async ({where}) => notifications.find(n => Object.entries(where).every(([k,v]) => n[k] === v)),
