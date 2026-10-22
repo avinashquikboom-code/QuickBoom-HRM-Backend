@@ -17,7 +17,7 @@ const controller = require('../src/controllers/rkdController');
 Module._load = load;
 const response = () => ({code:200, status(code){this.code=code;return this;},json(body){this.body=body;return this;}});
 (async () => {
-  for (const handler of [controller.getEmployeeRkdDetails, controller.getHrRkdDetails, controller.approveHrRkdRequest, controller.rejectHrRkdRequest]) {
+  for (const handler of [controller.getEmployeeRkdDetails, controller.getHrRkdDetails, controller.approveHrRkdRequest, controller.rejectHrRkdRequest, controller.adjustRkdPayrollPeriod]) {
     for (const id of [undefined, [], ['1'], ['1','2'], '', ' ', '1,2', '1extra', '1.5', '-1', '0', '2147483648', '9007199254740993']) {
       databaseCalls = 0;
       const res = response();

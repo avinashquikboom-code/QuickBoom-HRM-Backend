@@ -1,4 +1,5 @@
 import payrollService from '../services/payrollService';
+import { payrollPeriodKey } from '../services/rkdPayrollService';
 import { lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -827,77 +828,77 @@ export async function adjustRkdPayrollPeriod(
       return;
     }
 
-    await ensureRkdTable();
-
-    const { month, year } = req.body;
-    const m = parseInt(String(month), 10);
-    const y = parseInt(String(year), 10);
-
-    if (!m || m < 1 || m > 12 || !y || y < 2000 || y > 2100) {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      res.status(400).json({ success: false, message: 'A JSON object containing month and year is required.', errorCode: 'RKD_INVALID_PERIOD' });
+      return;
+    }
+    const m = parseRkdNumber(req.body.month);
+    const y = parseRkdNumber(req.body.year);
+    if (m === null || !Number.isInteger(m) || m < 1 || m > 12 ||
+        y === null || !Number.isInteger(y) || y < 2000 || y > 2100) {
       res.status(400).json({
         success: false,
-        message: 'A valid month (1-12) and year are required for payroll adjustment.',
-      });
-      return;
-    }
-
-    const rkd = await prisma.rkdRequest.findUnique({
-      where: { id },
-      include: { employee: true },
-    });
-
-    if (!rkd) {
-      res.status(404).json({ success: false, message: 'RKD request not found.' });
-      return;
-    }
-
-    if (rkd.status !== 'APPROVED') {
-      res.status(400).json({
-        success: false,
-        message: 'Only approved RKD requests can be adjusted for payroll.',
-      });
-      return;
-    }
-
-    // Check if target payroll period has already been finalized / paid
-    const slip = await prisma.payslip.findUnique({
-      where: {
-        employeeId_month_year: {
-          employeeId: rkd.employeeId,
-          month: m,
-          year: y,
+        errorCode: 'RKD_INVALID_PERIOD',
+        message: 'A valid month (1-12) and year (2000-2100) are required for payroll adjustment.',
+        errors: {
+          ...(m === null || !Number.isInteger(m) || m < 1 || m > 12 ? { month: 'Select a whole month from 1 to 12.' } : {}),
+          ...(y === null || !Number.isInteger(y) || y < 2000 || y > 2100 ? { year: 'Enter a whole year from 2000 to 2100.' } : {}),
         },
-      },
-    });
-
-    if (slip && lockedPayslip(slip.status)) {
-      res.status(400).json({
-        success: false,
-        message: `Payroll for ${m}/${y} is already finalized/paid. Please select an open payroll period.`,
       });
       return;
     }
-
-    // Update target payroll period on the RKD request
-    const updated = await prisma.rkdRequest.update({
-      where: { id },
-      data: {
-        salaryMonth: m,
-        salaryYear: y,
-        isSalaryCredited: false,
-      },
+    await ensureRkdTable();
+    // Use the same locks as review and payroll generation, so a period cannot
+    // become finalized between validation and allocation.
+    const allocation = await prisma.$transaction(async (tx) => {
+      const reviewLock = `rkd-review:${id}`;
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${reviewLock}, 0))`;
+      const rkd = await tx.rkdRequest.findUnique({ where: { id }, include: { employee: true } });
+      if (!rkd) return { error: { status: 404, code: 'RKD_NOT_FOUND', message: 'RKD request not found.' } };
+      if (rkd.status !== 'APPROVED') return { error: {
+        status: 400, code: 'RKD_NOT_APPROVED', message: 'Only approved RKD requests can be adjusted for payroll.',
+      } };
+      // A retry may arrive after the original request has refreshed its draft.
+      // Return that persisted result without resetting its accounting markers.
+      if (rkd.isSalaryCredited) {
+        if (rkd.salaryMonth === m && rkd.salaryYear === y && rkd.payrollId) {
+          return { updated: rkd, slip: null, employeeId: rkd.employeeId };
+        }
+        return { error: { status: 400, code: 'RKD_ALREADY_CREDITED', message: 'This RKD request is already credited to payroll and cannot be moved to another period.' } };
+      }
+      const periodLock = payrollPeriodKey(rkd.employeeId, m, y);
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${periodLock}, 0))`;
+      const slip = await tx.payslip.findUnique({ where: {
+        employeeId_month_year: { employeeId: rkd.employeeId, month: m, year: y },
+      } });
+      if (slip && lockedPayslip(slip.status)) return { error: {
+        status: 400, code: 'RKD_PAYROLL_LOCKED',
+        message: `Payroll for ${m}/${y} is already finalized/paid. Please select an open payroll period.`,
+      } };
+      const updated = await tx.rkdRequest.update({ where: { id }, data: {
+        salaryMonth: m, salaryYear: y, isSalaryCredited: false,
+      } });
+      return { updated, slip, employeeId: rkd.employeeId };
     });
+    if (allocation.error) {
+      res.status(allocation.error.status).json({ success: false, message: allocation.error.message, errorCode: allocation.error.code });
+      return;
+    }
+    const { slip, employeeId } = allocation;
+    let updated = allocation.updated;
 
     // If an open draft payslip exists for that period, recalculate and update it
     if (slip && !lockedPayslip(slip.status)) {
       try {
-        const calculation = await payrollService.calculatePayroll(rkd.employeeId, m, y);
+        const calculation = await payrollService.calculatePayroll(employeeId, m, y);
         await payrollService.savePayslip(calculation);
       } catch (err) {
         console.warn('[RKD] Draft payroll update after adjustment deferred:', err);
       }
     }
 
+    // Draft refresh may have credited it; return fresh persisted markers.
+    updated = await prisma.rkdRequest.findUniqueOrThrow({ where: { id } });
     res.json({
       success: true,
       message: `RKD request #${id} allocated to payroll period ${m}/${y} successfully.`,
