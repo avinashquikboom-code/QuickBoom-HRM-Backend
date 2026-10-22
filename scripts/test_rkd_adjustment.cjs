@@ -74,7 +74,7 @@ const app=express();app.use(express.json());app.use('/api/hr/rkd',hrRkdRouter);
   result=await call(2,{month:12,year:2026});assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,true);assert.equal(result.body.rkd.payrollId,63);assert.equal(requests[1].employeeId,10);
   const beforeRetries=updates;
   await Promise.all([call(2,{month:12,year:2026}),call(2,{month:12,year:2026})]);assert.equal(requests[1].commissionAmount,200);assert.equal(updates,beforeRetries);
-  result=await call(7,{month:4,year:2027});assert.equal(result.status,200);assert.equal(result.body.rkd.salaryMonth,4);assert.equal(result.body.rkd.salaryYear,2027);
+  result=await call(8,{month:4,year:2027});assert.equal(result.status,200);assert.equal(result.body.rkd.salaryMonth,4);assert.equal(result.body.rkd.salaryYear,2027);
   failRefresh=true;result=await call(7,{month:11,year:2026});assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,false);
   assert.deepEqual(requests.map(r=>r.commissionAmount),originalAmounts);
   assert(locks.includes('rkd-review:1'));assert(locks.includes('payroll-period:10:2026:11'));
