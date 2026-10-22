@@ -160,11 +160,12 @@ app.use('/api/admin/notification-management', notificationManagementRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
+// RKD authorizes sales employees itself; handle it before the broader employee role gate.
+app.use('/api/employee/rkd', employeeRkdRouter);
 app.use('/api/employee', employeeRoutes);
 app.use('/api/Employee', employeeLegacyRoutes);
 app.use('/api/Sales', salesLegacyRoutes);
 app.use('/api/employee/commission', employeeCommissionRoutes);
-app.use('/api/employee/rkd', employeeRkdRouter);
 app.use('/api/commission', commissionRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/webhooks', webhookRoutes);

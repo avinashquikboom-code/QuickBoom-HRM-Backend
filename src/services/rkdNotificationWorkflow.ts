@@ -59,6 +59,18 @@ export async function createRkdRequestOnce(
     if (found) return replay();
   }
 
+  // Check replay first so retrying a referenced sale returns the original row.
+  if (data.saleReference) {
+    const existingSaleRef = await prisma.rkdRequest.findFirst({ where: {
+      employeeId: data.employeeId, saleReference: data.saleReference,
+      status: { in: ['PENDING', 'APPROVED'] },
+    } });
+    if (existingSaleRef) throw Object.assign(
+      new Error(`An RKD request already exists for sale reference "${data.saleReference}".`),
+      { code: 'rkd/duplicate-sale-reference' },
+    );
+  }
+
   try {
     const rkd = await prisma.rkdRequest.create({
       data: {

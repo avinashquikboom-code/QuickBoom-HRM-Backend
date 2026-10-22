@@ -20,6 +20,13 @@ function parseRkdRequestId(value: string | string[] | undefined): number | null 
   return Number.isSafeInteger(id) && id > 0 && id <= 2147483647 ? id : null;
 }
 
+function parseRkdNumber(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  const parsed = typeof value === 'number' ? value : Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 // Helper to resolve employee from authenticated request
 async function getEmployeeFromReq(req: AuthenticatedRequest) {
   if (!req.user) return null;
@@ -79,6 +86,10 @@ export async function createRkdRequest(
   res: Response
 ): Promise<void> {
   try {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      res.status(400).json({ success: false, message: 'A JSON object is required.' });
+      return;
+    }
     await ensureRkdTable();
 
     const emp = await getEmployeeFromReq(req);
@@ -111,8 +122,8 @@ export async function createRkdRequest(
       return;
     }
 
-    const qty = parseInt(quantity, 10);
-    if (isNaN(qty) || qty <= 0) {
+    const qty = parseRkdNumber(quantity);
+    if (qty === null || !Number.isSafeInteger(qty) || qty <= 0 || qty > 2147483647) {
       res.status(400).json({
         success: false,
         message: 'Quantity sold must be a valid number greater than zero.',
@@ -120,11 +131,20 @@ export async function createRkdRequest(
       return;
     }
 
-    let parsedCommission = parseFloat(commissionAmount);
-    if (isNaN(parsedCommission) || parsedCommission < 0) {
-      // If client didn't supply valid commission, calculate using salesman rate or standard formula
-      const commissionRate = emp.commissionPercentage || 5.0; // default 5%
+    const commissionNotSupplied = commissionAmount == null || commissionAmount === '';
+    let parsedCommission = commissionNotSupplied ? null : parseRkdNumber(commissionAmount);
+    if (!commissionNotSupplied && parsedCommission === null) {
+      res.status(400).json({ success: false, message: 'Commission amount must be a finite number.' });
+      return;
+    }
+    if (parsedCommission === null || parsedCommission < 0) {
+      // Preserve the existing salesman-rate fallback when missing or negative.
+      const commissionRate = emp.commissionPercentage || 5.0;
       parsedCommission = Math.round(qty * 500 * (commissionRate / 100) * 100) / 100;
+    }
+    if (!Number.isFinite(parsedCommission)) {
+      res.status(400).json({ success: false, message: 'Commission amount must be a finite number.' });
+      return;
     }
 
     if (!particulars || typeof particulars !== 'string' || !particulars.trim()) {
@@ -132,28 +152,17 @@ export async function createRkdRequest(
       return;
     }
 
-    const cleanSaleRef = saleReference ? String(saleReference).trim() : null;
-
-    // Prevent duplicate RKD requests for the same sale reference if provided
-    if (cleanSaleRef) {
-      const existingSaleRef = await prisma.rkdRequest.findFirst({
-        where: {
-          employeeId: emp.id,
-          saleReference: cleanSaleRef,
-          status: { in: ['PENDING', 'APPROVED'] },
-        },
-      });
-
-      if (existingSaleRef) {
-        res.status(400).json({
-          success: false,
-          message: `An RKD request already exists for sale reference "${cleanSaleRef}".`,
-        });
-        return;
-      }
+    if (saleReference != null && typeof saleReference !== 'string') {
+      res.status(400).json({ success: false, message: 'Sale reference must be a string or null.' });
+      return;
     }
-
-    const subKey = requestId || req.get('x-request-id') || req.body.submissionKey;
+    const cleanSaleRef = typeof saleReference === 'string' ? saleReference.trim() || null : null;
+    const suppliedKey: unknown = requestId ?? req.get('x-request-id') ?? req.body.submissionKey;
+    if (suppliedKey != null && (typeof suppliedKey !== 'string' || !suppliedKey.trim())) {
+      res.status(400).json({ success: false, message: 'Request ID must be a nonempty string.' });
+      return;
+    }
+    const subKey = typeof suppliedKey === 'string' ? suppliedKey.trim() : undefined;
 
     const { rkd, created } = await createRkdRequestOnce(
       {
@@ -192,6 +201,10 @@ export async function createRkdRequest(
       notificationDelivery,
     });
   } catch (error: any) {
+    if (error?.code === 'rkd/duplicate-sale-reference') {
+      res.status(400).json({ success: false, message: error.message });
+      return;
+    }
     if (error?.code === 'rkd/idempotency-conflict') {
       res.status(409).json({ success: false, message: error.message });
       return;

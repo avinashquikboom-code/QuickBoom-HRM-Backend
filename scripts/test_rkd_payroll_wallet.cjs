@@ -6,6 +6,7 @@ const match=(r,w)=>Object.entries(w).every(([k,v])=>v&&typeof v==='object'&&'in'
 const db={
  $queryRaw:async()=>[],employee:{findUnique:async()=>employee},
  rkdRequest:{
+  findFirst:async({where})=>requests.find(r=>r.employeeId===where.employeeId&&r.saleReference===where.saleReference&&where.status.in.includes(r.status))||null,
   findUniqueOrThrow:async({where})=>({...requests.find(r=>r.id===where.id),employee}),
   findUnique:async({where})=>requests.find(r=>r.submissionKey===where.submissionKey)||null,
   create:async({data})=>{const r={id:requests.length+1,createdAt:new Date(),...data};requests.push(r);return{...r,employee};},
