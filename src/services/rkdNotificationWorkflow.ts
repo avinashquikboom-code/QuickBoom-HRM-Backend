@@ -59,33 +59,49 @@ export async function createRkdRequestOnce(
     if (found) return replay();
   }
 
-  // Check replay first so retrying a referenced sale returns the original row.
-  if (data.saleReference) {
-    const existingSaleRef = await prisma.rkdRequest.findFirst({ where: {
-      employeeId: data.employeeId, saleReference: data.saleReference,
-      status: { in: ['PENDING', 'APPROVED'] },
-    } });
-    if (existingSaleRef) throw Object.assign(
-      new Error(`An RKD request already exists for sale reference "${data.saleReference}".`),
-      { code: 'rkd/duplicate-sale-reference' },
-    );
-  }
-
   try {
-    const rkd = await prisma.rkdRequest.create({
-      data: {
-        employeeId: data.employeeId,
-        productName: data.productName,
-        quantity: data.quantity,
-        commissionAmount: data.commissionAmount,
-        saleReference: data.saleReference || null,
-        particulars: data.particulars,
-        status: 'PENDING',
-        submissionKey,
-      },
-      include: { employee: true },
+    return await prisma.$transaction(async (tx) => {
+      // Serialize submissions for the same employee/sale without altering schema.
+      // Idempotency remains separately enforced by submissionKey's unique index.
+      if (data.saleReference) {
+        const saleLock = `rkd-sale:${data.employeeId}:${data.saleReference}`;
+        await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${saleLock}, 0))`;
+        // A concurrent retry may have completed while this transaction waited.
+        if (submissionKey) {
+          const found = await tx.rkdRequest.findUnique({ where: { submissionKey }, include: { employee: true } });
+          if (found) {
+            if (!sameRequest(found)) throw Object.assign(new Error('Submission key was already used for a different RKD request'), { code: 'rkd/idempotency-conflict' });
+            return { rkd: found, created: false };
+          }
+        }
+      }
+      // Check replay first so retrying a referenced sale returns the original row.
+      if (data.saleReference) {
+        const existingSaleRef = await tx.rkdRequest.findFirst({ where: {
+          employeeId: data.employeeId, saleReference: data.saleReference,
+          status: { in: ['PENDING', 'APPROVED'] },
+        } });
+        if (existingSaleRef) throw Object.assign(
+          new Error(`An RKD request already exists for sale reference "${data.saleReference}".`),
+          { code: 'rkd/duplicate-sale-reference', existingRequestId: existingSaleRef.id },
+        );
+      }
+
+      const rkd = await tx.rkdRequest.create({
+        data: {
+          employeeId: data.employeeId,
+          productName: data.productName,
+          quantity: data.quantity,
+          commissionAmount: data.commissionAmount,
+          saleReference: data.saleReference || null,
+          particulars: data.particulars,
+          status: 'PENDING',
+          submissionKey,
+        },
+        include: { employee: true },
+      });
+      return { rkd, created: true };
     });
-    return { rkd, created: true };
   } catch (error) {
     if (submissionKey && (error as { code?: string }).code === 'P2002') {
       return replay();

@@ -5,18 +5,45 @@ import { prisma } from '../utils/db';
 export const payrollPeriodKey = (employeeId: number, month: number, year: number) =>
   `payroll-period:${employeeId}:${year}:${month}`;
 
-/** Approved request amount is authoritative; RKD commission rows are audit mirrors. */
 export async function getRkdPayrollEarnings(employeeId: number, month: number, year: number, db: Prisma.TransactionClient = prisma, payrollId?: number) {
+  const whereClause: Prisma.RkdRequestWhereInput = {
+    employeeId,
+    status: 'APPROVED',
+    ...(payrollId !== undefined
+      ? {
+          OR: [
+            { payrollId, isSalaryCredited: true },
+            { salaryMonth: month, salaryYear: year },
+          ],
+        }
+      : {
+          salaryMonth: month,
+          salaryYear: year,
+        }),
+  };
+
   const requests = await db.rkdRequest.findMany({
-    where: { employeeId, status: 'APPROVED',
-      ...(payrollId !== undefined ? { payrollId, isSalaryCredited: true } : { salaryMonth: month, salaryYear: year }),
-    },
+    where: whereClause,
     orderBy: { id: 'asc' },
   });
+
   return {
     amount: Math.round(requests.reduce((sum, request) => sum + request.commissionAmount, 0) * 100) / 100,
     requestIds: requests.map(request => request.id),
     references: requests.map(request => `RKD-${request.id}`),
+    requests: requests.map(request => ({
+      id: request.id,
+      reference: `RKD-${request.id}`,
+      amount: request.commissionAmount,
+      productName: request.productName,
+      particulars: request.particulars,
+      description: 'RKD Incentive',
+      status: request.isSalaryCredited && request.payrollId
+        ? 'Credited in Payroll'
+        : 'Approved',
+      isSalaryCredited: Boolean(request.isSalaryCredited),
+      payrollId: request.payrollId,
+    })),
   };
 }
 

@@ -31,8 +31,8 @@ class WebSocketService {
     this.io.use(async (socket: AuthenticatedSocket, next) => {
       try {
         const token = socket.handshake.auth.token;
-        if (!token) {
-          return next(new Error('Authentication token required'));
+        if (typeof token !== 'string' || !token.trim()) {
+          return next(Object.assign(new Error('Authentication token required'), { data: { code: 'AUTH_REQUIRED' } }));
         }
 
         // Verify JWT token
@@ -45,7 +45,7 @@ class WebSocketService {
         });
 
         if (!user || !user.isActive || (user.role !== 'SUPER_ADMIN' && user.role !== 'ADMIN' && user.employee?.status && user.employee.status.toLowerCase() !== 'active')) {
-          return next(new Error('Account unavailable or inactive'));
+          return next(Object.assign(new Error('Account unavailable or inactive'), { data: { code: 'ACCOUNT_INACTIVE' } }));
         }
 
         socket.userId = user.id;
@@ -54,7 +54,11 @@ class WebSocketService {
         
         next();
       } catch (error) {
-        next(new Error('Authentication failed'));
+        const name = error instanceof Error ? error.name : 'UnknownError';
+        const code = name === 'TokenExpiredError' ? 'TOKEN_EXPIRED'
+          : ['JsonWebTokenError', 'NotBeforeError'].includes(name) ? 'AUTH_INVALID' : 'AUTH_UNAVAILABLE';
+        console.warn('[WebSocket] Connection rejected', { code });
+        next(Object.assign(new Error('Authentication failed'), { data: { code } }));
       }
     });
   }

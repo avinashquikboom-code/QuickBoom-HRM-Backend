@@ -19,8 +19,21 @@ const db = {
   findFirst:async({where})=>rows.find(r=>r.employeeId===where.employeeId&&r.saleReference===where.saleReference&&where.status.in.includes(r.status))||null,
   findUnique:async({where})=>rows.find(r=>r.submissionKey===where.submissionKey)||null,
   findUniqueOrThrow:async({where})=>{const r=rows.find(r=>r.submissionKey===where.submissionKey);if(!r)throw Error('Missing fixture');return r;},
-  create:async({data})=>{if(failInsert)throw Error('TEST_INSERT_FAILED');const r={id:rows.length+1,createdAt:new Date(),isSalaryCredited:false,...data};rows.push(r);return{...r,employee:sales};},
+  create:async({data})=>{if(failInsert)throw Error('TEST_INSERT_FAILED');const r={id:rows.length+1,createdAt:new Date('2026-10-22T04:39:00.000Z'),isSalaryCredited:false,...data};rows.push(r);return{...r,employee:sales};},
  },
+};
+// Model transaction-scoped advisory lock blocking for concurrent route tests.
+const saleLocks = new Map();
+db.$transaction=async fn=>{
+ const releases=[];
+ const tx={...db,$queryRaw:async (_sql,key)=>{
+  const previous=saleLocks.get(key)||Promise.resolve();
+  let release;const held=new Promise(resolve=>{release=resolve;});
+  const tail=previous.then(()=>held);saleLocks.set(key,tail);
+  await previous;releases.push(()=>{release();if(saleLocks.get(key)===tail)saleLocks.delete(key);});
+  return [];
+ }};
+ try{return await fn(tx);}finally{releases.forEach(release=>release());}
 };
 const load=Module._load;
 Module._load=function(name,parent,isMain){
@@ -73,7 +86,14 @@ const token=id=>jwt.sign({id,role:id===100?'SALESMAN':'EMPLOYEE'},process.env.JW
   assert.equal((await post(body,null)).status,401);assert.equal(rows.length,0);
   assert.equal((await post(body,'invalid-test-token')).status,401);
   assert.equal((await post(body,token(200))).status,403);assert.equal(rows.length,0);
-  let response=await post(body);assert.equal(response.status,201,await response.text());
+  let response=await post(body);
+  const submissionText=await response.text();
+  assert.equal(response.status,201,submissionText);
+  const submission=JSON.parse(submissionText);
+  assert.equal(submission.rkd.createdAt,'2026-10-22T04:39:00.000Z');
+  if(process.argv.includes('--timestamp-fixture')) {
+   fs.writeFileSync(path.join(__dirname,'../../QuickBoom-HRM-App/test/fixtures/rkd_timestamp_api.json'),JSON.stringify(submission.rkd,null,2)+'\n');
+  }
   assert.equal(rows.length,1);assert.equal(rows[0].employeeId,10);assert.equal(rows[0].status,'PENDING');assert.equal(rows[0].saleReference,null);assert.equal(rows[0].isSalaryCredited,false);assert.equal(notifications.length,1);
   response=await post(body);assert.equal(response.status,201);assert.equal(rows.length,1);assert.equal(notifications.length,1);
   response=await post({...body,commissionAmount:600});assert.equal(response.status,409);assert.equal(rows.length,1);
@@ -85,9 +105,24 @@ const token=id=>jwt.sign({id,role:id===100?'SALESMAN':'EMPLOYEE'},process.env.JW
   const referenced = {...body,requestId:'referenced-request',saleReference:'SALE-ROUTE-1'};
   assert.equal((await post(referenced)).status,201);
   assert.equal((await post(referenced)).status,201);
-  assert.equal((await post({...referenced,requestId:'different-request'})).status,400);
+  const duplicate=await post({...referenced,requestId:'different-request'});
+  assert.equal(duplicate.status,400);
+  const duplicateBody=await duplicate.json();
+  assert.equal(duplicateBody.existingRequestId,3);
+  assert.equal(duplicateBody.errorCode,'rkd/duplicate-sale-reference');
+  assert.match(duplicateBody.message,/SALE-ROUTE-1/);
   assert.equal(rows.length,3);assert.equal(notifications.length,3);
-  failInsert=true;response=await post({...body,requestId:'insert-failure'});assert.equal(response.status,500);assert.equal(notifications.length,3);
+  const beforeConcurrent=rows.length;
+  const sameSale={...body,saleReference:'CONCURRENT-SALE',requestId:'concurrent-a'};
+  const competing=await Promise.all([post(sameSale),post({...sameSale,requestId:'concurrent-b'})]);
+  assert.deepEqual(competing.map(r=>r.status).sort(),[201,400]);
+  assert.equal(rows.length,beforeConcurrent+1);
+  const sameRetry={...body,saleReference:'CONCURRENT-RETRY',requestId:'concurrent-retry'};
+  const retries=await Promise.all([post(sameRetry),post(sameRetry)]);
+  assert.deepEqual(retries.map(r=>r.status),[201,201]);
+  assert.equal(rows.length,beforeConcurrent+2);
+  assert.equal(notifications.length,5);
+  failInsert=true;response=await post({...body,requestId:'insert-failure'});assert.equal(response.status,500);assert.equal(notifications.length,5);
   console.log('PASS real HTTP POST /api/employee/rkd using index.ts mount order, real router/auth/controller/service; exact Flutter body returns 201/PENDING, optional null reference, token-derived employee, sales authorization, validation, replay/conflict and failed-save notification checks. DB/FCM mocked; no external writes.');
  }finally{await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

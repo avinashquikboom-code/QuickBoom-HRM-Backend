@@ -71,6 +71,7 @@ export interface GenerateSalarySlipPdfInput {
   expenseReimbursement?: number | null;
   rkdIncentive?: number | null;
   rkdReferences?: string[];
+  rkdRequests?: Array<{ id: number; reference: string; amount: number; productName?: string; particulars?: string; description?: string; status?: string }>;
   commissionEarned?: number | null;
   isCommissionEligible?: boolean | null;
   netSalary: number;
@@ -137,9 +138,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     extraWeeklyOffPayout: input.extraWeeklyOffPayout,
   });
   const earningLines = earningBreakdown.lines;
-  const rkdIncentive = money(input.rkdIncentive);
-  if (rkdIncentive > 0) earningLines.push({ name: 'RKD Incentive', amount: rkdIncentive });
-  const grossEarnings = money(earningBreakdown.displayedGrossEarnings + rkdIncentive);
+  const grossEarnings = money(earningBreakdown.displayedGrossEarnings);
 
   // 2. Build Itemized Deduction Lines
   const deductionLines: Array<{ name: string; amount: number }> = [];
@@ -275,7 +274,9 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
   }
 
   // 5. Reimbursements Table
-  const reimbursements = money(input.expenseReimbursement);
+  const expenseReimbursement = money(input.expenseReimbursement);
+  const rkdIncentive = money(input.rkdIncentive);
+  const totalReimbursements = money(expenseReimbursement + rkdIncentive);
   const catEntries = Object.entries(input.expenseCategories || {});
   const reimbTableBody: any[] = [
     [
@@ -284,19 +285,75 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     ],
   ];
 
+  let hasReimbRows = false;
   if (catEntries.length > 0) {
     catEntries.forEach(([cat, amt], idx) => {
+      hasReimbRows = true;
       reimbTableBody.push([
         { text: `${cat} Expense`, fontSize: 8.5, color: TEXT_MAIN, fillColor: idx % 2 === 1 ? '#F9FAFB' : undefined },
         { text: fmt(amt), fontSize: 8.5, alignment: 'right', color: TEXT_MAIN, fillColor: idx % 2 === 1 ? '#F9FAFB' : undefined },
       ]);
     });
-  } else if (reimbursements > 0) {
+  } else if (expenseReimbursement > 0) {
+    hasReimbRows = true;
     reimbTableBody.push([
       { text: 'Approved Expenses', fontSize: 8.5, color: TEXT_MAIN },
-      { text: fmt(reimbursements), fontSize: 8.5, alignment: 'right', color: TEXT_MAIN },
+      { text: fmt(expenseReimbursement), fontSize: 8.5, alignment: 'right', color: TEXT_MAIN },
     ]);
-  } else {
+  }
+
+  // Display eligible approved RKD incentives with reference, amount, and approval/payroll status
+  if (input.rkdRequests && input.rkdRequests.length > 0) {
+    input.rkdRequests.forEach((req, idx) => {
+      hasReimbRows = true;
+      const shaded = (catEntries.length + idx) % 2 === 1;
+      const statusText = req.status || (input.paymentStatus?.toUpperCase() === 'PAID' ? 'Credited in Payroll' : 'Approved');
+      reimbTableBody.push([
+        {
+          text: [
+            { text: 'RKD Incentive', bold: true },
+            { text: ` (${req.reference || `RKD-${req.id}`})` },
+            { text: ` — ${statusText}`, italics: true, color: '#047857', fontSize: 7.5 },
+          ],
+          fontSize: 8.5,
+          color: TEXT_MAIN,
+          fillColor: shaded ? '#F9FAFB' : undefined,
+        },
+        {
+          text: fmt(req.amount),
+          fontSize: 8.5,
+          alignment: 'right',
+          color: TEXT_MAIN,
+          fillColor: shaded ? '#F9FAFB' : undefined,
+        },
+      ]);
+    });
+  } else if (rkdIncentive > 0) {
+    hasReimbRows = true;
+    const refText = (input.rkdReferences && input.rkdReferences.length > 0)
+      ? input.rkdReferences.join(', ')
+      : 'Approved Request';
+    const statusText = input.paymentStatus?.toUpperCase() === 'PAID' ? 'Credited in Payroll' : 'Approved';
+    reimbTableBody.push([
+      {
+        text: [
+          { text: 'RKD Incentive', bold: true },
+          { text: ` (${refText})` },
+          { text: ` — ${statusText}`, italics: true, color: '#047857', fontSize: 7.5 },
+        ],
+        fontSize: 8.5,
+        color: TEXT_MAIN,
+      },
+      {
+        text: fmt(rkdIncentive),
+        fontSize: 8.5,
+        alignment: 'right',
+        color: TEXT_MAIN,
+      },
+    ]);
+  }
+
+  if (!hasReimbRows) {
     reimbTableBody.push([
       { text: 'No Expenses / Reimbursements', fontSize: 8.5, color: TEXT_LIGHT, italics: true },
       { text: fmt(0), fontSize: 8.5, alignment: 'right', color: TEXT_LIGHT },
@@ -305,12 +362,12 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
 
   reimbTableBody.push([
     { text: 'Total Reimbursements', fontSize: 8.5, bold: true, color: '#047857', fillColor: '#ECFDF5' },
-    { text: fmt(reimbursements), fontSize: 8.5, bold: true, alignment: 'right', color: '#047857', fillColor: '#ECFDF5' },
+    { text: fmt(totalReimbursements), fontSize: 8.5, bold: true, alignment: 'right', color: '#047857', fillColor: '#ECFDF5' },
   ]);
 
   const commission = input.isCommissionEligible ? money(input.commissionEarned) : 0;
   const netSalary = money(input.netSalary);
-  const takeHomePay = money(input.totalTakeHomePay);
+  const takeHomePay = money(input.totalTakeHomePay ?? (netSalary + totalReimbursements + commission));
   const netInWords =
     input.netInWords || `${numToWords(Math.round(takeHomePay))} Rupees Only`;
 
@@ -323,8 +380,8 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     summaryRow('Less: Total Deductions', fmtDed(totalDeductions), { color: '#BE123C' }),
     summaryRow('Net Salary', fmt(netSalary), { bold: true }),
   ];
-  if (reimbursements > 0) {
-    payableSummaryBody.push(summaryRow('Add: Eligible Reimbursements', `+${fmt(reimbursements)}`, { bold: true, color: '#059669', fontSize: 8 }));
+  if (totalReimbursements > 0) {
+    payableSummaryBody.push(summaryRow('Add: Eligible Reimbursements', `+${fmt(totalReimbursements)}`, { bold: true, color: '#059669', fontSize: 8 }));
   }
   if (commission > 0) {
     payableSummaryBody.push(summaryRow('Add: Commission', `+${fmt(commission)}`, { bold: true, color: '#059669', fontSize: 8 }));

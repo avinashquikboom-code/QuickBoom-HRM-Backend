@@ -202,7 +202,7 @@ export async function createRkdRequest(
     });
   } catch (error: any) {
     if (error?.code === 'rkd/duplicate-sale-reference') {
-      res.status(400).json({ success: false, message: error.message });
+      res.status(400).json({ success: false, message: error.message, errorCode: error.code, existingRequestId: error.existingRequestId });
       return;
     }
     if (error?.code === 'rkd/idempotency-conflict') {

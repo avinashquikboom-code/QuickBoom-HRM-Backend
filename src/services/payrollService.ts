@@ -70,8 +70,11 @@ export interface PayrollCalculation {
   additionalEarnings?: number;
   totalEarnings?: number;
   holidayWeeklyOffPay?: number;
+  totalReimbursements?: number;
   rkdIncentive?: number;
   rkdRequestIds?: number[];
+  rkdReferences?: string[];
+  rkdRequests?: Array<{ id: number; reference: string; amount: number; productName?: string; particulars?: string; description?: string; status?: string }>;
   commissionEarned: number;
   isCommissionEligible?: boolean;
   overtimeHours: number;
@@ -392,6 +395,7 @@ class PayrollService {
         absentDeduction,
         advanceDeduction,
         expenseReimbursement: approvedExpenses,
+        totalReimbursements: settlement.reimbursements,
         approvedExpenses,
         expensesByCategory,
         expenseCategories,
@@ -402,6 +406,8 @@ class PayrollService {
         totalEarnings: settlement.totalEarnings,
         rkdIncentive: rkd.amount,
         rkdRequestIds: rkd.requestIds,
+        rkdReferences: rkd.references,
+        rkdRequests: rkd.requests,
         commissionEarned,
         isCommissionEligible,
         overtimeHours: attendanceData.overtimeHours,
@@ -1578,9 +1584,17 @@ class PayrollService {
       grossEarnings,
       pendingRkdAdjustments,
       rkdIncentive: calc.rkdIncentive || 0,
-      rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
+      rkdReferences: calc.rkdReferences || (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
+      rkdRequests: calc.rkdRequests || (calc.rkdRequestIds || []).map(id => ({
+        id,
+        reference: `RKD-${id}`,
+        amount: (calc.rkdIncentive || 0) / (calc.rkdRequestIds?.length || 1),
+        description: 'RKD Incentive',
+        status: isPaid ? 'Credited in Payroll' : 'Approved',
+      })),
       commission: commissionEarned,
       expenseReimbursement,
+      totalReimbursements: settlement.reimbursements,
       expenses: expensesByCategory,
       expensesByCategory,
       expenseCategories,
@@ -1633,16 +1647,23 @@ class PayrollService {
       presentDays: calc.presentDays,
       absentDays: calc.absentDays,
       expenseReimbursement,
-      totalReimbursements: expenseReimbursement,
+      totalReimbursements: settlement.reimbursements,
       approvedExpenses: expenseReimbursement,
       approvedExpenseAmount: expenseReimbursement,
-      totalExpenses: expenseReimbursement,
+      totalExpenses: settlement.reimbursements,
       expenses: expensesByCategory,
       expensesByCategory,
       isCommissionEligible,
       pendingRkdAdjustments,
       rkdIncentive: calc.rkdIncentive || 0,
-      rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
+      rkdReferences: calc.rkdReferences || (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
+      rkdRequests: calc.rkdRequests || (calc.rkdRequestIds || []).map(id => ({
+        id,
+        reference: `RKD-${id}`,
+        amount: (calc.rkdIncentive || 0) / (calc.rkdRequestIds?.length || 1),
+        description: 'RKD Incentive',
+        status: isPaid ? 'Credited in Payroll' : 'Approved',
+      })),
       commission: commissionEarned,
       commissionEarned,
       deductionsObj: {
@@ -1769,7 +1790,8 @@ class PayrollService {
       rkdIncentive: rkdSnapshot.amount,
     });
     const netSalary = Number(ps.netSalary ?? settlement.netSalary);
-    const totalTakeHomePay = Math.round((netSalary + (ps.expenseReimbursement || 0) + commissionEarned) * 100) / 100;
+    const totalReimbursements = settlement.reimbursements;
+    const totalTakeHomePay = Math.round((netSalary + totalReimbursements + commissionEarned) * 100) / 100;
     if (Math.abs(netSalary - settlement.netSalary) > 0.01) {
       console.warn('[payroll-reconciliation]', {
         payslipId: ps.id, employeeId: ps.employeeId, month: ps.month, year: ps.year,
@@ -1863,14 +1885,15 @@ class PayrollService {
       presentDays: ps.presentDays || 0,
       absentDays: ps.absentDays || 0,
       expenseReimbursement: ps.expenseReimbursement || 0,
-      totalReimbursements: ps.expenseReimbursement || 0,
+      totalReimbursements,
       approvedExpenses: ps.expenseReimbursement || 0,
       approvedExpenseAmount: ps.expenseReimbursement || 0,
-      totalExpenses: ps.expenseReimbursement || 0,
+      totalExpenses: totalReimbursements,
       isCommissionEligible,
       pendingRkdAdjustments,
       rkdIncentive: rkdSnapshot.amount,
       rkdReferences: rkdSnapshot.references,
+      rkdRequests: rkdSnapshot.requests,
       commission: commissionEarned,
       commissionEarned,
       deductionsObj: {
@@ -1936,10 +1959,12 @@ class PayrollService {
         grossTotal: grossSalary,
         grossEarnings: grossSalary,
         pendingRkdAdjustments,
-      rkdIncentive: rkdSnapshot.amount,
-      rkdReferences: rkdSnapshot.references,
-      commission: commissionEarned,
+        rkdIncentive: rkdSnapshot.amount,
+        rkdReferences: rkdSnapshot.references,
+        rkdRequests: rkdSnapshot.requests,
+        commission: commissionEarned,
         expenseReimbursement: ps.expenseReimbursement || 0,
+        totalReimbursements,
       },
       summary: {
         fixedGrossSalary,
@@ -1955,10 +1980,12 @@ class PayrollService {
         totalTakeHomePay,
         isCommissionEligible,
         pendingRkdAdjustments,
-      rkdIncentive: rkdSnapshot.amount,
-      rkdReferences: rkdSnapshot.references,
-      commission: commissionEarned,
+        rkdIncentive: rkdSnapshot.amount,
+        rkdReferences: rkdSnapshot.references,
+        rkdRequests: rkdSnapshot.requests,
+        commission: commissionEarned,
         expenseReimbursement: ps.expenseReimbursement || 0,
+        totalReimbursements,
         netInWords,
       }
     };

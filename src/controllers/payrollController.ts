@@ -376,6 +376,7 @@ export const generatePayslipPDF = async (
       commissionEarned: view.commissionEarned,
       rkdIncentive: view.rkdIncentive,
       rkdReferences: view.rkdReferences,
+      rkdRequests: view.rkdRequests,
       isCommissionEligible: view.isCommissionEligible,
       netSalary: view.netSalary,
       totalTakeHomePay: view.totalTakeHomePay,

@@ -105,11 +105,12 @@ export function computePayrollSettlement(input: {
   const baseGrossEarnings = money(input.baseGrossEarnings);
   const holidayWeeklyOffPay = money(input.holidayWeeklyOffPay);
   const additionalEarnings = money(
-    holidayWeeklyOffPay + n(input.extraAttendancePay) + n(input.overtime) + n(input.periodBonus) + n(input.rkdIncentive)
+    holidayWeeklyOffPay + n(input.extraAttendancePay) + n(input.overtime) + n(input.periodBonus)
   );
   const totalEarnings = money(baseGrossEarnings + additionalEarnings);
   const totalDeductions = normalizeDeduction(input.totalDeductions);
-  const reimbursements = money(input.reimbursements);
+  const rkdIncentive = money(input.rkdIncentive);
+  const reimbursements = money(n(input.reimbursements) + rkdIncentive);
   const commissionEarned = money(input.commissionEarned);
   const netSalary = Math.max(0, money(totalEarnings - totalDeductions));
   const totalTakeHomePay = Math.max(0, money(netSalary + reimbursements + commissionEarned));
@@ -120,6 +121,7 @@ export function computePayrollSettlement(input: {
     totalEarnings,
     totalDeductions,
     reimbursements,
+    rkdIncentive,
     commissionEarned,
     netSalary,
     totalTakeHomePay,
@@ -199,8 +201,8 @@ export function reconcileOfficialPayslipDisplay(input: {
     commissionEarned: input.commissionEarned,
     rkdIncentive: input.rkdIncentive,
   });
-  const lines = input.rkdIncentive ? [...breakdown.lines, { name: 'RKD Incentive', amount: money(input.rkdIncentive) }] : breakdown.lines;
-  const displayedGrossEarnings = money(breakdown.displayedGrossEarnings + n(input.rkdIncentive));
+  const lines = breakdown.lines;
+  const displayedGrossEarnings = breakdown.displayedGrossEarnings;
   return {
     lines,
     extraPayout: breakdown.extraPayout,
