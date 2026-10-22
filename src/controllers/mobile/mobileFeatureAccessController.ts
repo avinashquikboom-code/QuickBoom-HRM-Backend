@@ -1,8 +1,6 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
-import { firebaseNotificationService } from '../../services/firebaseNotificationService';
-import { Role } from '@prisma/client';
 
 export const getFeatureAccess = async (
   req: AuthenticatedRequest,
@@ -67,75 +65,4 @@ export const getFeatureAccess = async (
   }
 };
 
-export const requestFeatureAccess = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id }
-    });
-
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found.' });
-      return;
-    }
-
-    const { featureName, reason, requestedFromDate, requestedToDate, requestedFromTime, requestedToTime } = req.body;
-
-    if (!featureName || !reason || !requestedFromDate || !requestedToDate) {
-      res.status(400).json({ success: false, message: 'Missing required fields.' });
-      return;
-    }
-
-    const fromDate = new Date(requestedFromDate);
-    const toDate = new Date(requestedToDate);
-
-    if (toDate < fromDate) {
-      res.status(400).json({ success: false, message: 'To date must be after from date.' });
-      return;
-    }
-
-    const existingPending = await prisma.featureAccessRequest.findFirst({
-      where: {
-        employeeId: employee.id,
-        featureName,
-        status: 'PENDING'
-      }
-    });
-
-    if (existingPending) {
-      res.status(400).json({ success: false, message: 'A pending request for this feature already exists.' });
-      return;
-    }
-
-    const request = await prisma.featureAccessRequest.create({
-      data: {
-        employeeId: employee.id,
-        featureName,
-        reason,
-        requestedFromDate: fromDate,
-        requestedToDate: toDate,
-        requestedFromTime,
-        requestedToTime
-      }
-    });
-
-    // Send FCM to HR/ADMIN
-    await firebaseNotificationService.sendNotificationToRole(
-      Role.HR,
-      'New Feature Access Request',
-      `${employee.firstName} ${employee.lastName} requested access to ${featureName}`
-    );
-    await firebaseNotificationService.sendNotificationToRole(
-      Role.SUPER_ADMIN,
-      'New Feature Access Request',
-      `${employee.firstName} ${employee.lastName} requested access to ${featureName}`
-    );
-
-    res.status(201).json({ success: true, requestId: request.id });
-  } catch (error) {
-    console.error('Error requesting feature access:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-};
+export { createAccessRequest as requestFeatureAccess } from '../accessRequestController';

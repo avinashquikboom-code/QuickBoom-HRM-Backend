@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
-import { firebaseNotificationService } from '../services/firebaseNotificationService';
+import { notifyEmployee, sendHRNotification } from '../utils/hrNotificationHelper';
 
 // Helper to extract employee id from request
 async function getEmployeeForUser(userId: number) {
@@ -81,106 +81,48 @@ export const applyRemoteWork = async (req: AuthenticatedRequest, res: Response):
       ? { in: [empIdStr, employee.employeeCode] }
       : empIdStr;
 
-    // Check for overlapping PENDING or APPROVED requests for this employee (excluding the request being edited/resubmitted)
-    const whereOverlap: any = {
-      employeeId: empFilter,
-      status: { in: ['PENDING', 'APPROVED'] },
-      fromDate: { lte: end },
-      toDate: { gte: start },
-    };
-
-    if (requestId) {
-      whereOverlap.id = { not: String(requestId) };
-    }
-
-    const existingActiveRequest = await prisma.remoteWorkRequest.findFirst({
-      where: whereOverlap
+    const result = await prisma.$transaction(async tx => {
+      const key = `remote-work:${employee.id}`;
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const target = requestId ? await tx.remoteWorkRequest.findUnique({ where: { id: String(requestId) } }) : null;
+      if (requestId && (!target || ![empIdStr, employee.employeeCode].includes(target.employeeId))) {
+        return { error: 'Request not found for this employee.' };
+      }
+      if (target?.status === 'APPROVED') return { error: 'Approved requests cannot be resubmitted.' };
+      const overlap = await tx.remoteWorkRequest.findFirst({ where: {
+        employeeId: empFilter, status: { in: ['PENDING', 'APPROVED'] },
+        fromDate: { lte: end }, toDate: { gte: start },
+        ...(requestId ? { id: { not: String(requestId) } } : {}),
+      } });
+      if (overlap) return { error: 'A pending or approved request already covers these dates.' };
+      if (target?.status === 'PENDING' && target.fromDate.getTime() === start.getTime() && target.toDate.getTime() === end.getTime() &&
+          (target.reason || '') === (reason ? String(reason).trim() : target.reason || '')) {
+        return { request: target, changed: false, resubmission: false };
+      }
+      const rejected = target || await tx.remoteWorkRequest.findFirst({ where: {
+        employeeId: empFilter, status: 'REJECTED', fromDate: { lte: end }, toDate: { gte: start },
+      }, orderBy: { createdAt: 'desc' } });
+      const data = { fromDate: start, toDate: end, reason: reason ? String(reason).trim() : rejected?.reason || null,
+        status: 'PENDING', reviewedBy: null, reviewedAt: null, reviewNote: null, appliedOn: new Date() };
+      const request = rejected
+        ? await tx.remoteWorkRequest.update({ where: { id: rejected.id }, data })
+        : await tx.remoteWorkRequest.create({ data: { employeeId: empIdStr, ...data } });
+      return { request, changed: true, resubmission: !!rejected };
     });
-
-    if (existingActiveRequest) {
-      if (existingActiveRequest.status === 'APPROVED') {
-        res.status(400).json({
-          success: false,
-          errorCode: 'ALREADY_APPROVED',
-          message: 'You already have an approved remote work request for these dates.'
-        });
-        return;
-      }
-      res.status(400).json({
-        success: false,
-        errorCode: 'ALREADY_PENDING',
-        message: 'You already have a pending remote work request for these dates. Please wait for HR approval.'
-      });
-      return;
+    if (result.error || !result.request) {
+      res.status(400).json({ success: false, message: result.error }); return;
     }
-
-    let targetRequestToUpdate = null;
-    if (requestId) {
-      const found = await prisma.remoteWorkRequest.findUnique({
-        where: { id: String(requestId) }
-      });
-      if (found && (found.employeeId === empIdStr || found.employeeId === employee.employeeCode)) {
-        targetRequestToUpdate = found;
-      }
-    } else {
-      // Find overlapping REJECTED request for this employee to resubmit in-place without duplicate
-      targetRequestToUpdate = await prisma.remoteWorkRequest.findFirst({
-        where: {
-          employeeId: empFilter,
-          status: 'REJECTED',
-          fromDate: { lte: end },
-          toDate: { gte: start },
-        },
-        orderBy: { createdAt: 'desc' }
-      });
-    }
-
-    let requestResult;
-    let isResubmission = false;
-
-    if (targetRequestToUpdate) {
-      isResubmission = true;
-      requestResult = await prisma.remoteWorkRequest.update({
-        where: { id: targetRequestToUpdate.id },
-        data: {
-          fromDate: start,
-          toDate: end,
-          reason: reason ? String(reason).trim() : targetRequestToUpdate.reason,
-          status: 'PENDING',
-          reviewedBy: null,
-          reviewedAt: null,
-          reviewNote: null,
-          updatedAt: new Date()
-        }
-      });
-    } else {
-      requestResult = await prisma.remoteWorkRequest.create({
-        data: {
-          employeeId: empIdStr,
-          fromDate: start,
-          toDate: end,
-          reason: reason ? String(reason).trim() : null,
-          status: 'PENDING',
-        }
-      });
-    }
-
-    // FCM Notification to HR role
-    const dateStr = `${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]}`;
-    try {
-      await firebaseNotificationService.sendNotificationToRole(
-        'HR',
-        isResubmission ? 'Remote Work Request Resubmitted' : 'New Remote Work Request',
-        `Remote work request from ${employee.firstName} ${employee.lastName} (${dateStr})`,
-        {
-          click_action: 'REMOTE_WORK_REQUEST',
-          requestId: requestResult.id,
-          employeeId: empIdStr
-        }
-      );
-    } catch (fcmErr) {
-      console.warn('Failed to send FCM notification to HR for remote work apply:', fcmErr);
-    }
+    const requestResult = result.request;
+    const isResubmission = result.resubmission;
+    const dateStr = `${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}`;
+    if (result.changed) await sendHRNotification({
+      title: isResubmission ? 'Remote Work Request Resubmitted' : 'New Remote Work Request',
+      message: `${employee.firstName} ${employee.lastName} requested remote work for ${dateStr}. Reference: ${requestResult.id}.`,
+      category: 'ATTENDANCE', actionType: 'REMOTE_WORK_REQUEST', actionId: requestResult.id,
+      employeeId: employee.id, requiredModuleId: 'pa-remote-work', excludeUserId: userId,
+      deduplicate: true, eventSince: requestResult.appliedOn,
+      extraData: { requestId: requestResult.id, fromDate: start.toISOString(), toDate: end.toISOString() },
+    });
 
     res.status(200).json({
       success: true,
@@ -375,84 +317,43 @@ export const reviewRemoteWorkRequest = async (req: AuthenticatedRequest, res: Re
     }
 
     const reviewerIdStr = req.user?.id ? String(req.user.id) : 'HR';
-
-    const updated = await prisma.remoteWorkRequest.update({
-      where: { id: requestId },
-      data: {
-        status: newStatus,
-        reviewedBy: reviewerIdStr,
-        reviewedAt: new Date(),
-        reviewNote: reviewNote ? String(reviewNote).trim() : null
-      }
+    const expectedStatus = newStatus === 'REVOKED' ? 'APPROVED' : 'PENDING';
+    const changed = await prisma.$transaction(async tx => {
+      // Use the same lock as apply/resubmit; stale reviews cannot decide a newer revision.
+      const numericId = /^[1-9]\d*$/.test(request.employeeId) ? Number(request.employeeId) : null;
+      const employee = numericId ? await tx.employee.findUnique({ where: { id: numericId } })
+        : await tx.employee.findUnique({ where: { employeeCode: request.employeeId } });
+      if (!employee) throw new Error('Remote work requester not found');
+      const key = `remote-work:${employee.id}`;
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const claim = await tx.remoteWorkRequest.updateMany({ where: {
+        id: requestId, status: expectedStatus, appliedOn: request.appliedOn,
+      }, data: { status: newStatus, reviewedBy: reviewerIdStr, reviewedAt: new Date(),
+        reviewNote: reviewNote ? String(reviewNote).trim() : null } });
+      const updated = await tx.remoteWorkRequest.findUnique({ where: { id: requestId } });
+      return { changed: !!claim.count, updated: updated!, employee };
     });
-
-    // FCM Notification to Employee (safely wrapped)
-    const empNumericId = parseInt(request.employeeId, 10);
-    if (!isNaN(empNumericId)) {
-      try {
-        const empUser = await prisma.employee.findUnique({
-          where: { id: empNumericId },
-          select: { userId: true, firstName: true }
-        });
-
-        if (empUser && empUser.userId) {
-          const fromStr = request.fromDate.toISOString().split('T')[0];
-          const toStr = request.toDate.toISOString().split('T')[0];
-
-          let msgTitle = 'Remote Work Status Update';
-          let msgBody = `Your remote work request (${fromStr} to ${toStr}) has been ${newStatus.toLowerCase()}.`;
-
-          if (newStatus === 'APPROVED') {
-            msgTitle = '✅ Remote Work Approved';
-            msgBody = `Your remote work request for ${fromStr} to ${toStr} is approved. You can punch from anywhere!`;
-          } else if (newStatus === 'REJECTED') {
-            msgTitle = '❌ Remote Work Request Rejected';
-            msgBody = `Remote work request rejected. ${reviewNote ? 'Note: ' + reviewNote : ''}`;
-          } else if (newStatus === 'REVOKED') {
-            msgTitle = '⚠️ Remote Work Approval Revoked';
-            msgBody = `Your remote work permission has been revoked by HR. Normal store geofence is now in effect.`;
-          }
-
-          try {
-            await prisma.notification.create({
-              data: {
-                userId: empUser.userId,
-                title: msgTitle,
-                body: msgBody,
-                category: 'ATTENDANCE',
-                actionId: updated.id,
-                actionType: 'REMOTE_WORK_STATUS',
-                isRead: false,
-              }
-            });
-          } catch (dbNotifErr) {
-            console.warn('Failed to create in-app notification for remote work status update:', dbNotifErr);
-          }
-
-          try {
-            await firebaseNotificationService.sendNotificationToUser(
-              empUser.userId,
-              msgTitle,
-              msgBody,
-              {
-                click_action: 'REMOTE_WORK_STATUS',
-                requestId: updated.id,
-                status: newStatus
-              }
-            );
-          } catch (fcmErr) {
-            console.warn('Failed to send FCM to employee for remote work status update:', fcmErr);
-          }
-        }
-      } catch (empErr) {
-        console.warn('Failed to look up employee user for notification:', empErr);
-      }
+    const updated = changed.updated;
+    if (!changed.changed) {
+      res.status(updated.status === newStatus ? 200 : 409).json({ success: updated.status === newStatus,
+        message: 'Request already reviewed or changed. Refresh before reviewing.', data: updated }); return;
     }
+    const fromStr = updated.fromDate.toISOString().slice(0, 10);
+    const toStr = updated.toDate.toISOString().slice(0, 10);
+    const notificationDelivery = await notifyEmployee({
+      employeeId: changed.employee.id,
+      title: `Remote Work ${newStatus.charAt(0) + newStatus.slice(1).toLowerCase()}`,
+      message: `Your remote work request for ${fromStr} to ${toStr} has been ${newStatus.toLowerCase()}.`,
+      category: 'ATTENDANCE', actionType: `REMOTE_WORK_${newStatus}`, actionId: updated.id,
+      screen: '/remote-work', clickRoute: '/remote-work', deduplicate: true, eventSince: updated.appliedOn,
+      extraData: { requestId: updated.id, status: newStatus, fromDate: updated.fromDate.toISOString(), toDate: updated.toDate.toISOString() },
+    });
 
     res.json({
       success: true,
       message: `Remote work request ${newStatus.toLowerCase()} successfully.`,
-      data: updated
+      data: updated,
+      notificationDelivery,
     });
   } catch (error: any) {
     console.error('Error in reviewRemoteWorkRequest:', error);

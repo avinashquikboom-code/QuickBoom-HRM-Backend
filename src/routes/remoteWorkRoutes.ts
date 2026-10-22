@@ -1,3 +1,4 @@
+import { requireRequestApprover } from '../utils/requestApprovalPermissions';
 import { Router } from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import {
@@ -16,11 +17,11 @@ router.get('/mobile/remote-work/my-requests', authMiddleware, getMyRemoteWorkReq
 router.get('/mobile/remote-work/status', authMiddleware, getRemoteWorkStatus);
 
 // HR and Admin routes
-router.get('/hr/remote-work/requests', authMiddleware, getHrRemoteWorkRequests);
-router.patch('/hr/remote-work/:id', authMiddleware, reviewRemoteWorkRequest);
-router.get('/admin/remote-work/requests', authMiddleware, getHrRemoteWorkRequests);
-router.patch('/admin/remote-work/:id', authMiddleware, reviewRemoteWorkRequest);
-router.get('/remote-work/requests', authMiddleware, getHrRemoteWorkRequests);
-router.patch('/remote-work/:id', authMiddleware, reviewRemoteWorkRequest);
+router.get('/hr/remote-work/requests', authMiddleware, requireRequestApprover('pa-remote-work'), getHrRemoteWorkRequests);
+router.patch('/hr/remote-work/:id', authMiddleware, requireRequestApprover('pa-remote-work'), reviewRemoteWorkRequest);
+router.get('/admin/remote-work/requests', authMiddleware, requireRequestApprover('pa-remote-work'), getHrRemoteWorkRequests);
+router.patch('/admin/remote-work/:id', authMiddleware, requireRequestApprover('pa-remote-work'), reviewRemoteWorkRequest);
+router.get('/remote-work/requests', authMiddleware, requireRequestApprover('pa-remote-work'), getHrRemoteWorkRequests);
+router.patch('/remote-work/:id', authMiddleware, requireRequestApprover('pa-remote-work'), reviewRemoteWorkRequest);
 
 export default router;

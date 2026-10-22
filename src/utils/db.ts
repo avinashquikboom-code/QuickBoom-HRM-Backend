@@ -148,3 +148,45 @@ export async function ensureDatabaseConstraints(): Promise<void> {
     console.warn('⚠️ [ensureDatabaseConstraints] Exception ignored:', error);
   }
 }
+
+let isRkdTableEnsured = false;
+export async function ensureRkdTable(): Promise<void> {
+  if (isRkdTableEnsured) return;
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "RkdRequest" (
+        "id" SERIAL PRIMARY KEY,
+        "employeeId" INTEGER NOT NULL,
+        "productName" TEXT NOT NULL,
+        "quantity" INTEGER NOT NULL,
+        "commissionAmount" DOUBLE PRECISION NOT NULL,
+        "saleReference" TEXT,
+        "particulars" TEXT NOT NULL,
+        "status" TEXT NOT NULL DEFAULT 'PENDING',
+        "rejectionReason" TEXT,
+        "reviewedBy" INTEGER,
+        "reviewedByName" TEXT,
+        "reviewedAt" TIMESTAMP(3),
+        "payrollId" INTEGER,
+        "salaryMonth" INTEGER,
+        "salaryYear" INTEGER,
+        "isSalaryCredited" BOOLEAN NOT NULL DEFAULT false,
+        "salaryCreditedAt" TIMESTAMP(3),
+        "submissionKey" TEXT,
+        "commissionTxId" INTEGER,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS "RkdRequest_submissionKey_key" ON "RkdRequest"("submissionKey");
+      CREATE UNIQUE INDEX IF NOT EXISTS "RkdRequest_commissionTxId_key" ON "RkdRequest"("commissionTxId");
+      CREATE INDEX IF NOT EXISTS "RkdRequest_employeeId_idx" ON "RkdRequest"("employeeId");
+      CREATE INDEX IF NOT EXISTS "RkdRequest_status_idx" ON "RkdRequest"("status");
+      CREATE INDEX IF NOT EXISTS "RkdRequest_saleReference_idx" ON "RkdRequest"("saleReference");
+      CREATE INDEX IF NOT EXISTS "RkdRequest_createdAt_idx" ON "RkdRequest"("createdAt");
+    `);
+    isRkdTableEnsured = true;
+    console.log('✅ [ensureRkdTable] Verified RkdRequest table and indices exist.');
+  } catch (error) {
+    console.warn('⚠️ [ensureRkdTable] Exception ignored:', error);
+  }
+}

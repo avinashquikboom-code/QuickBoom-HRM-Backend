@@ -1,6 +1,7 @@
+import { reviewAccessRequest } from './accessRequestController';
 import { Response } from 'express';
 import { prisma } from '../utils/db';
-import { sendPushNotification } from '../utils/pushNotifications';
+import { notifyEmployee } from '../utils/hrNotificationHelper';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 
 const getEmployeeByUserId = async (userId: number) => {
@@ -71,41 +72,7 @@ export const getEmployeeFeatureAccess = async (req: AuthenticatedRequest, res: R
   }
 };
 
-export const requestFeatureAccess = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const userId = req.user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
-    }
-
-    const employee = await getEmployeeByUserId(userId);
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee not found' });
-      return;
-    }
-
-    const { featureName, reason, requestedFromDate, requestedToDate, requestedFromTime, requestedToTime } = req.body;
-
-    const request = await prisma.featureAccessRequest.create({
-      data: {
-        employeeId: employee.id,
-        featureName,
-        reason,
-        requestedFromDate: new Date(requestedFromDate),
-        requestedToDate: new Date(requestedToDate),
-        requestedFromTime,
-        requestedToTime,
-        status: 'PENDING'
-      }
-    });
-
-    res.json({ success: true, requestId: request.id });
-  } catch (error) {
-    console.error('Error in requestFeatureAccess:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-};
+export { createAccessRequest as requestFeatureAccess } from './accessRequestController';
 
 export const getPendingAccessRequests = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -128,6 +95,7 @@ export const updateFeatureAccess = async (req: AuthenticatedRequest, res: Respon
     const featureName = req.params.featureName as string;
     const { isEnabled, validFromDate, validToDate, validFromTime, validToTime, reason } = req.body;
 
+    const previous = await prisma.featureAccess.findUnique({ where: { employeeId_featureName: { employeeId: Number(employeeId), featureName } } });
     const feature = await prisma.featureAccess.upsert({
       where: {
         employeeId_featureName: {
@@ -157,15 +125,13 @@ export const updateFeatureAccess = async (req: AuthenticatedRequest, res: Respon
       }
     });
 
-    // Notify Employee
-    const employee = await prisma.employee.findUnique({ where: { id: Number(employeeId) } });
-    if (employee && employee.userId) {
-      await sendPushNotification(
-        employee.userId,
-        'Feature Access Updated',
-        `Your access to ${featureName} has been ${isEnabled ? 'granted' : 'disabled'}.`
-      );
-    }
+    const changed = !previous || ['isEnabled', 'validFromDate', 'validToDate', 'validFromTime', 'validToTime', 'reason'].some(key =>
+      String((previous as any)[key] ?? '') !== String((feature as any)[key] ?? ''));
+    if (changed) await notifyEmployee({ employeeId: Number(employeeId), title: 'Module Access Updated',
+      message: `Your access to ${featureName} has been ${isEnabled ? 'granted' : 'disabled'}.`,
+      category: 'GENERAL', actionType: 'MODULE_ACCESS_UPDATED', actionId: `${employeeId}-${featureName}`,
+      screen: '/access-requests', clickRoute: '/access-requests', extraData: { featureName },
+    });
 
     res.json({ success: true, feature });
   } catch (error) {
@@ -175,66 +141,11 @@ export const updateFeatureAccess = async (req: AuthenticatedRequest, res: Respon
 };
 
 export const processAccessRequest = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const requestId = req.params.requestId as string;
-    const { status, reviewNote, validFromDate, validToDate, validFromTime, validToTime } = req.body;
-
-    const accessReq = await prisma.featureAccessRequest.update({
-      where: { id: requestId },
-      data: {
-        status,
-        reviewNote,
-        reviewedBy: req.user?.id?.toString(),
-        reviewedAt: new Date()
-      }
-    });
-
-    if (status === 'APPROVED') {
-      await prisma.featureAccess.upsert({
-        where: {
-          employeeId_featureName: {
-            employeeId: accessReq.employeeId,
-            featureName: accessReq.featureName
-          }
-        },
-        update: {
-          isEnabled: true,
-          validFromDate: validFromDate ? new Date(validFromDate) : accessReq.requestedFromDate,
-          validToDate: validToDate ? new Date(validToDate) : accessReq.requestedToDate,
-          validFromTime,
-          validToTime,
-          grantedBy: req.user?.id?.toString(),
-          reason: reviewNote
-        },
-        create: {
-          employeeId: accessReq.employeeId,
-          featureName: accessReq.featureName,
-          isEnabled: true,
-          validFromDate: validFromDate ? new Date(validFromDate) : accessReq.requestedFromDate,
-          validToDate: validToDate ? new Date(validToDate) : accessReq.requestedToDate,
-          validFromTime,
-          validToTime,
-          grantedBy: req.user?.id?.toString(),
-          reason: reviewNote
-        }
-      });
-    }
-
-    // Notify employee
-    const employee = await prisma.employee.findUnique({ where: { id: accessReq.employeeId } });
-    if (employee && employee.userId) {
-      await sendPushNotification(
-        employee.userId,
-        'Access Request Update',
-        `Your request for ${accessReq.featureName} has been ${status.toLowerCase()}.`
-      );
-    }
-
-    res.json({ success: true, request: accessReq });
-  } catch (error) {
-    console.error('Error in processAccessRequest:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+  const status = String(req.body.status || '').toUpperCase();
+  if (status !== 'APPROVED' && status !== 'REJECTED') {
+    res.status(400).json({ success: false, message: 'Status must be APPROVED or REJECTED' }); return;
   }
+  await reviewAccessRequest(req, res, status, true);
 };
 
 export const getAllEmployeeFeatures = async (req: AuthenticatedRequest, res: Response): Promise<void> => {

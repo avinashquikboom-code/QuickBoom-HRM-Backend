@@ -1,119 +1,64 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
-import { firebaseNotificationService } from '../services/firebaseNotificationService';
+import { notifyEmployee, sendHRNotification } from '../utils/hrNotificationHelper';
+import { getWebSocketInstance } from '../utils/websocketSingleton';
 
-/**
- * Map module names to internal EmployeePermission JSON keys
- */
-const MODULE_TO_PERMISSION_KEY: Record<string, string> = {
-  'Attendance': 'canViewAttendance',
-  'Leave': 'canViewLeaveBalance',
-  'Sales': 'canLogSale',
-  'Wallet': 'canViewSalary',
-  'Commission': 'canViewCommission',
-  'Expenses': 'canViewExpenses',
-  'Tasks': 'canViewTasks',
-  'Shift Guidelines': 'canViewShiftGuidelines',
-  'Remote Work': 'canViewRemoteWorkStatus',
-};
+async function auditRequest(req: Request, action: string, employeeId: number) {
+  try {
+    await prisma.auditLog.create({ data: { action, employeeId,
+      userId: (req as any).user?.id || null,
+      ipAddress: req.ip || null, deviceInfo: req.headers['user-agent'] || null,
+    } });
+  } catch { console.warn('[AccessRequest] Audit record unavailable', { action }); }
+}
 
-/**
- * Create a new module access request from mobile app
- */
 export const createAccessRequest = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user?.id;
-    if (!userId) {
-      res.status(401).json({ success: false, message: 'Unauthorized' });
-      return;
+    if (!userId) { res.status(401).json({ success: false, message: 'Unauthorized' }); return; }
+    const employee = await prisma.employee.findFirst({ where: { userId }, include: { department: true, office: true } });
+    if (!employee) { res.status(404).json({ success: false, message: 'Employee profile not found' }); return; }
+    const { reason = 'Requested access via mobile app', requestedFromTime, requestedToTime } = req.body;
+    const featureName = String(req.body.featureName || req.body.permissionKey || '').trim();
+    if (!featureName || !String(reason).trim()) {
+      res.status(400).json({ success: false, message: 'Feature and reason are required' }); return;
     }
-
-    const employee = await prisma.employee.findFirst({
-      where: { userId },
-      include: {
-        department: true,
-        office: true,
-      },
+    const fromDate = req.body.requestedFromDate ? new Date(req.body.requestedFromDate) : new Date();
+    const toDate = req.body.requestedToDate ? new Date(req.body.requestedToDate) : new Date(Date.now() + 30 * 86400000);
+    if (!Number.isFinite(fromDate.getTime()) || !Number.isFinite(toDate.getTime()) || fromDate > toDate) {
+      res.status(400).json({ success: false, message: 'Invalid access date range' }); return;
+    }
+    const result = await prisma.$transaction(async tx => {
+      const key = `access-request:${employee.id}:${featureName}`;
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const existing = await tx.featureAccessRequest.findFirst({ where: { employeeId: employee.id, featureName, status: 'PENDING' } });
+      if (existing) return { request: existing, created: false };
+      const request = await tx.featureAccessRequest.create({ data: {
+        employeeId: employee.id, featureName, reason: String(reason).trim(),
+        requestedFromDate: fromDate, requestedToDate: toDate, requestedFromTime, requestedToTime, status: 'PENDING',
+      }, include: { employee: { include: { department: true, office: true } } } });
+      return { request, created: true };
     });
-
-    if (!employee) {
-      res.status(404).json({ success: false, message: 'Employee profile not found' });
-      return;
-    }
-
-    const { featureName, reason = 'Requested access via mobile app' } = req.body;
-    if (!featureName) {
-      res.status(400).json({ success: false, message: 'Feature / Module name is required' });
-      return;
-    }
-
-    // Check if there is already a PENDING request for this feature
-    const existingPending = await prisma.featureAccessRequest.findFirst({
-      where: {
-        employeeId: employee.id,
-        featureName,
-        status: 'PENDING',
-      },
-    });
-
-    if (existingPending) {
-      res.status(200).json({
-        success: true,
-        message: 'An access request for this module is already pending approval.',
-        data: existingPending,
+    if (result.created) {
+      await auditRequest(req, 'ACCESS_REQUEST_SUBMITTED', employee.id);
+      await sendHRNotification({
+        title: 'Module Access Requested',
+        message: `${employee.firstName} ${employee.lastName} requested access to ${featureName}. Reference: ${result.request.id}.`,
+        category: 'GENERAL', actionType: 'ACCESS_REQUEST_SUBMITTED', actionId: result.request.id,
+        employeeId: employee.id, requiredModuleId: 'pa-access-requests', excludeUserId: userId,
+        deduplicate: true, extraData: { requestId: result.request.id, featureName },
       });
-      return;
     }
-
-    const now = new Date();
-    const accessRequest = await prisma.featureAccessRequest.create({
-      data: {
-        employeeId: employee.id,
-        featureName,
-        reason,
-        requestedFromDate: now,
-        requestedToDate: now,
-        status: 'PENDING',
-      },
-      include: {
-        employee: {
-          include: {
-            department: true,
-            office: true,
-          },
-        },
-      },
+    res.status(result.created ? 201 : 200).json({ success: true,
+      message: result.created ? 'Access request submitted successfully.' : 'Request already pending.',
+      data: result.request, requestId: result.request.id,
     });
-
-    // Create Audit Log entry
-    try {
-      await prisma.auditLog.create({
-        data: {
-          action: 'ACCESS_REQUEST_SUBMITTED',
-          employeeId: employee.id,
-          userId: employee.userId ?? null,
-          ipAddress: req.ip || null,
-          deviceInfo: req.headers['user-agent'] || null,
-        },
-      });
-    } catch (auditErr) {
-      console.warn('AuditLog creation notice:', auditErr);
-    }
-
-    res.status(201).json({
-      success: true,
-      message: 'Access request submitted successfully.',
-      data: accessRequest,
-    });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error creating access request:', error);
-    res.status(500).json({ success: false, message: error?.message || 'Server error creating access request' });
+    res.status(500).json({ success: false, message: 'Unable to create access request' });
   }
 };
 
-/**
- * List all access requests for Admin/HR Panel
- */
 export const getAccessRequests = async (req: Request, res: Response): Promise<void> => {
   try {
     const { status } = req.query;
@@ -142,9 +87,6 @@ export const getAccessRequests = async (req: Request, res: Response): Promise<vo
   }
 };
 
-/**
- * Comprehensive mapping & normalization of module names to internal permission keys
- */
 export const normalizePermissionKey = (featureName: string): string => {
   if (!featureName) return 'canViewProfile';
   const clean = featureName.trim();
@@ -204,235 +146,82 @@ export const normalizePermissionKey = (featureName: string): string => {
   return map[clean] || map[clean.toLowerCase()] || `canView${clean.charAt(0).toUpperCase() + clean.slice(1)}`;
 };
 
-/**
- * Approve access request, update UserPermission in DB atomically, send FCM notification & log audit
- */
-export const approveAccessRequest = async (req: Request, res: Response): Promise<void> => {
+
+export async function reviewAccessRequest(req: Request, res: Response, status: 'APPROVED' | 'REJECTED', useRequestedWindow = false): Promise<void> {
   try {
-    const id = req.params.id as string;
-    const reviewerId = (req as any).user?.id || 'HR Admin';
-
-    const accessRequest = await prisma.featureAccessRequest.findUnique({
-      where: { id },
-      include: { employee: true },
+    const id = String(req.params.id || req.params.requestId);
+    const reviewerId = (req as any).user?.id;
+    const result = await prisma.$transaction(async tx => {
+      const request = await tx.featureAccessRequest.findUnique({ where: { id }, include: { employee: true } });
+      if (!request) return { kind: 'missing' as const };
+      // All grants for this employee serialize JSON permission merges as well.
+      const lockKey = `module-grant:${request.employeeId}`;
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      if (status === 'APPROVED' && !request.employee.userId) return { kind: 'unlinked' as const };
+      const claim = await tx.featureAccessRequest.updateMany({ where: { id, status: 'PENDING' }, data: {
+        status, reviewedBy: String(reviewerId), reviewedAt: new Date(), reviewNote: req.body.reviewNote || null,
+      } });
+      if (!claim.count) {
+        const current = await tx.featureAccessRequest.findUnique({ where: { id }, include: { employee: true } });
+        return { kind: 'existing' as const, request: current! };
+      }
+      if (status === 'APPROVED') {
+        const userId = request.employee.userId!;
+        const permissionKey = normalizePermissionKey(request.featureName);
+        const existing = await tx.userPermission.findUnique({ where: { userId } });
+        const permissions = { ...((existing?.permissions as Record<string, boolean>) || {}), [permissionKey]: true };
+        if (permissionKey === 'canViewCommission') permissions.canLogSale = true;
+        if (permissionKey === 'canViewLeaveBalance') permissions.canApplyLeave = true;
+        if (permissionKey === 'canViewExpenses') permissions.canSubmitExpenseClaim = true;
+        if (permissionKey === 'canViewSalary') permissions.canDownloadSalaryPDF = true;
+        // The legacy feature-window API grants FeatureAccess only; do not turn
+        // its temporary grant into an unbounded UserPermission override.
+        if (!useRequestedWindow) await tx.userPermission.upsert({ where: { userId }, create: { userId, permissions }, update: { permissions } });
+        const validFromDate = req.body.validFromDate ? new Date(req.body.validFromDate) : useRequestedWindow ? request.requestedFromDate : null;
+        const validToDate = req.body.validToDate ? new Date(req.body.validToDate) : useRequestedWindow ? request.requestedToDate : null;
+        if ((validFromDate && !Number.isFinite(validFromDate.getTime())) || (validToDate && !Number.isFinite(validToDate.getTime())) ||
+          (validFromDate && validToDate && validFromDate > validToDate)) throw new Error('Invalid grant date range');
+        const grant = {
+          isEnabled: true, validFromDate, validToDate,
+          validFromTime: req.body.validFromTime ?? (useRequestedWindow ? request.requestedFromTime : null),
+          validToTime: req.body.validToTime ?? (useRequestedWindow ? request.requestedToTime : null),
+          grantedBy: String(reviewerId), reason: req.body.reviewNote || 'Approved by HR',
+        };
+        // Grant errors must roll back approval and permission updates, not be swallowed.
+        await tx.featureAccess.upsert({ where: { employeeId_featureName: { employeeId: request.employeeId, featureName: request.featureName } },
+          create: { employeeId: request.employeeId, featureName: request.featureName, ...grant }, update: grant,
+        });
+      }
+      const updated = await tx.featureAccessRequest.findUnique({ where: { id }, include: { employee: true } });
+      return { kind: 'changed' as const, request: updated! };
     });
-
-    if (!accessRequest) {
-      res.status(404).json({ success: false, message: 'Access request not found' });
-      return;
+    if (result.kind === 'missing') { res.status(404).json({ success: false, message: 'Access request not found' }); return; }
+    if (result.kind === 'unlinked') { res.status(409).json({ success: false, message: 'Link the requester to their user account before granting access.' }); return; }
+    const request = result.request;
+    if (result.kind === 'existing') {
+      res.status(request.status === status ? 200 : 409).json({ success: request.status === status, data: request, request, message: 'Request already reviewed.' }); return;
     }
-
-    const employee = accessRequest.employee;
-    let userId = employee.userId;
-
-    // Auto-link/provision User if employee record was unlinked
-    if (!userId) {
-      const user = await prisma.user.findFirst({
-        where: { email: { contains: employee.employeeCode.toLowerCase() } }
-      });
-      if (user) {
-        userId = user.id;
-        await prisma.employee.update({
-          where: { id: employee.id },
-          data: { userId: user.id }
-        });
-      }
+    await auditRequest(req, `ACCESS_REQUEST_${status}`, request.employeeId);
+    if (status === 'APPROVED') {
+      try { await getWebSocketInstance()?.broadcastPermissionUpdate(request.employee.userId!, {
+        userId: request.employee.userId, featureName: request.featureName,
+        permissionKey: normalizePermissionKey(request.featureName), status, permissionGranted: true,
+      }); } catch { console.warn('[AccessRequest] Permission broadcast unavailable'); }
     }
-
-    const permKey = normalizePermissionKey(accessRequest.featureName);
-
-    // Atomic transaction: Update AccessRequest, UserPermission, and FeatureAccess
-    const [updatedRequest] = await prisma.$transaction(async (tx) => {
-      const updatedReq = await tx.featureAccessRequest.update({
-        where: { id },
-        data: {
-          status: 'APPROVED',
-          reviewedBy: String(reviewerId),
-          reviewedAt: new Date(),
-          reviewNote: req.body.reviewNote || 'Approved by HR Admin',
-        },
-        include: { employee: true },
-      });
-
-      if (userId) {
-        const existingUserPerm = await tx.userPermission.findUnique({
-          where: { userId },
-        });
-
-        const currentPerms = (existingUserPerm?.permissions as Record<string, boolean>) || {};
-        currentPerms[permKey] = true;
-
-        // Automatically enable related operational flags for full module access
-        if (permKey === 'canViewCommission') currentPerms['canLogSale'] = true;
-        if (permKey === 'canViewLeaveBalance') currentPerms['canApplyLeave'] = true;
-        if (permKey === 'canViewExpenses') currentPerms['canSubmitExpenseClaim'] = true;
-        if (permKey === 'canViewSalary') currentPerms['canDownloadSalaryPDF'] = true;
-
-        await tx.userPermission.upsert({
-          where: { userId },
-          create: {
-            userId,
-            permissions: currentPerms,
-          },
-          update: {
-            permissions: currentPerms,
-          },
-        });
-      }
-
-      // Upsert FeatureAccess record for mobile status query
-      try {
-        await tx.featureAccess.upsert({
-          where: {
-            employeeId_featureName: {
-              employeeId: employee.id,
-              featureName: accessRequest.featureName,
-            }
-          },
-          create: {
-            employeeId: employee.id,
-            featureName: accessRequest.featureName,
-            isEnabled: true,
-            reason: 'Approved by HR',
-          },
-          update: {
-            isEnabled: true,
-            reason: 'Approved by HR',
-            updatedAt: new Date(),
-          }
-        });
-      } catch (faErr) {
-        console.warn('FeatureAccess upsert notice:', faErr);
-      }
-
-      // Create Audit Log entry
-      try {
-        await tx.auditLog.create({
-          data: {
-            action: 'ACCESS_REQUEST_APPROVED',
-            userId: typeof reviewerId === 'number' ? reviewerId : (Number(reviewerId) || null),
-            employeeId: accessRequest.employeeId,
-            ipAddress: req.ip || null,
-            deviceInfo: req.headers['user-agent'] || null,
-          },
-        });
-      } catch (auditErr) {
-        console.warn('AuditLog creation notice:', auditErr);
-      }
-
-      return [updatedReq];
+    const notificationDelivery = await notifyEmployee({
+      employeeId: request.employeeId, userId: request.employee.userId,
+      title: status === 'APPROVED' ? 'Module Access Approved' : 'Module Access Rejected',
+      message: `Your request for ${request.featureName} access has been ${status.toLowerCase()}.`,
+      category: 'GENERAL', actionType: `ACCESS_REQUEST_${status}`, actionId: request.id,
+      screen: '/access-requests', clickRoute: '/access-requests', deduplicate: true,
+      extraData: { requestId: request.id, featureName: request.featureName, status },
     });
-
-    // Broadcast permission update event via WebSocket for instant live mobile sync
-    try {
-      if (userId) {
-        const { getWebSocketInstance } = require('../utils/websocketSingleton');
-        const ws = getWebSocketInstance();
-        if (ws) {
-          await ws.broadcastPermissionUpdate(userId, {
-            userId,
-            featureName: accessRequest.featureName,
-            permissionKey: permKey,
-            status: 'APPROVED',
-            permissionGranted: true,
-          });
-        }
-      }
-    } catch (wsErr) {
-      console.warn('WebSocket broadcast notice:', wsErr);
-    }
-
-    // Send FCM Push Notification to employee
-    try {
-      if (userId) {
-        await firebaseNotificationService.sendNotificationToUser(
-          userId,
-          'Access Request Approved',
-          `Your request for ${accessRequest.featureName} access has been approved. Mobile features unlocked.`,
-          { type: 'ACCESS_REQUEST_APPROVED', featureName: accessRequest.featureName, permissionKey: permKey }
-        );
-      }
-    } catch (fcmErr) {
-      console.warn('FCM push notification notice:', fcmErr);
-    }
-
-    res.json({
-      success: true,
-      message: `Access granted for ${accessRequest.featureName}.`,
-      data: updatedRequest,
-    });
-  } catch (error: any) {
-    console.error('Error approving access request:', error);
-    res.status(500).json({ success: false, message: error?.message || 'Server error approving access request' });
+    res.json({ success: true, message: `Access request ${status.toLowerCase()}.`, data: request, request, notificationDelivery });
+  } catch (error) {
+    console.error('Error reviewing access request:', error);
+    res.status(500).json({ success: false, message: 'Unable to review access request' });
   }
-};
+}
 
-/**
- * Reject access request, send FCM notification & log audit
- */
-export const rejectAccessRequest = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const id = req.params.id as string;
-    const reviewerId = (req as any).user?.id || 'HR Admin';
-
-    const accessRequest = await prisma.featureAccessRequest.findUnique({
-      where: { id },
-      include: { employee: true },
-    });
-
-    if (!accessRequest) {
-      res.status(404).json({ success: false, message: 'Access request not found' });
-      return;
-    }
-
-    const updatedRequest = await prisma.featureAccessRequest.update({
-      where: { id },
-      data: {
-        status: 'REJECTED',
-        reviewedBy: String(reviewerId),
-        reviewedAt: new Date(),
-        reviewNote: req.body.reviewNote || 'Rejected by HR Admin',
-      },
-      include: { employee: true },
-    });
-
-    // Send FCM Push Notification to employee
-    try {
-      const userId = accessRequest.employee.userId;
-      if (userId) {
-        await firebaseNotificationService.sendNotificationToUser(
-          userId,
-          'Access Request Rejected',
-          `Your request for ${accessRequest.featureName} access has been rejected.`,
-          { type: 'ACCESS_REQUEST_REJECTED', featureName: accessRequest.featureName }
-        );
-      }
-    } catch (fcmErr) {
-      console.warn('FCM push notification notice:', fcmErr);
-    }
-
-    // Audit Log entry
-    try {
-      await prisma.auditLog.create({
-        data: {
-          action: 'ACCESS_REQUEST_REJECTED',
-          userId: typeof reviewerId === 'number' ? reviewerId : (Number(reviewerId) || null),
-          employeeId: accessRequest.employeeId,
-          ipAddress: req.ip || null,
-          deviceInfo: req.headers['user-agent'] || null,
-        },
-      });
-    } catch (auditErr) {
-      console.warn('AuditLog creation notice:', auditErr);
-    }
-
-    res.json({
-      success: true,
-      message: `Access request for ${accessRequest.featureName} rejected.`,
-      data: updatedRequest,
-    });
-  } catch (error: any) {
-    console.error('Error rejecting access request:', error);
-    res.status(500).json({ success: false, message: error?.message || 'Server error rejecting access request' });
-  }
-};
+export const approveAccessRequest = (req: Request, res: Response) => reviewAccessRequest(req, res, 'APPROVED');
+export const rejectAccessRequest = (req: Request, res: Response) => reviewAccessRequest(req, res, 'REJECTED');

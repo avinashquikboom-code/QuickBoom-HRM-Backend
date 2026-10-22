@@ -14,6 +14,10 @@ export interface SendHRNotificationParams {
   employeeId?: number | null; // The subject employee who requested or was affected
   employeeName?: string;
   requiredModuleId?: string;
+  excludeUserId?: number;
+  extraData?: Record<string, string>;
+  deduplicate?: boolean;
+  eventSince?: Date;
 }
 
 export interface SendEmployeeNotificationParams {
@@ -31,6 +35,7 @@ export interface SendEmployeeNotificationParams {
   clickRoute?: string;
   extraData?: Record<string, string>;
   deduplicate?: boolean;
+  eventSince?: Date;
 }
 
 /**
@@ -40,6 +45,8 @@ export function getHRTargetRoute(category: string, actionType?: string): string 
   const cat = (category || '').toUpperCase();
   const act = (actionType || '').toUpperCase();
 
+  if (act.includes('REMOTE_WORK')) return '/remote-work';
+  if (act.includes('ACCESS_REQUEST') || act.includes('MODULE_ACCESS')) return '/access-requests';
   if (cat === 'ATTENDANCE' || act.includes('ATTENDANCE') || act.includes('PUNCH')) {
     return '/attendance';
   }
@@ -50,6 +57,7 @@ export function getHRTargetRoute(category: string, actionType?: string): string 
     return '/payroll';
   }
   if (cat === 'EXPENSE' || act.includes('EXPENSE')) return '/expenses';
+  if (cat === 'RKD' || act.includes('RKD')) return '/rkd-requests';
   if (cat === 'EMPLOYEE' || act.includes('EMPLOYEE')) {
     return '/employees';
   }
@@ -63,6 +71,8 @@ export function getEmployeeTargetRoute(category: string, actionType?: string): s
   const cat = (category || '').toUpperCase();
   const act = (actionType || '').toUpperCase();
 
+  if (act.includes('REMOTE_WORK')) return '/remote-work';
+  if (act.includes('ACCESS_REQUEST') || act.includes('MODULE_ACCESS')) return '/access-requests';
   if (cat === 'ATTENDANCE' || act.includes('ATTENDANCE')) {
     return '/attendance';
   }
@@ -73,6 +83,7 @@ export function getEmployeeTargetRoute(category: string, actionType?: string): s
     return '/payroll';
   }
   if (cat === 'EXPENSE' || act.includes('EXPENSE')) return '/expenses';
+  if (cat === 'RKD' || act.includes('RKD')) return '/rkd-requests';
   return '/profile';
 }
 
@@ -83,6 +94,8 @@ export function getModuleIdForCategory(category: string, actionType?: string): s
   const cat = (category || '').toUpperCase();
   const act = (actionType || '').toUpperCase();
 
+  if (act.includes('REMOTE_WORK')) return 'pa-remote-work';
+  if (act.includes('ACCESS_REQUEST') || act.includes('MODULE_ACCESS')) return 'pa-access-requests';
   if (cat === 'ATTENDANCE' || act.includes('ATTENDANCE') || act.includes('PUNCH')) {
     return 'pa-attendance';
   }
@@ -96,8 +109,10 @@ export function getModuleIdForCategory(category: string, actionType?: string): s
     return 'pa-employees';
   }
   if (cat === 'EXPENSE' || act.includes('EXPENSE')) return 'pa-payroll';
+  if (cat === 'RKD' || act.includes('RKD')) return 'pa-commission';
   return 'pa-notifications';
 }
+
 
 /**
  * Dispatch an EMPLOYEE-SPECIFIC notification.
@@ -153,6 +168,7 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
           const existing = await tx.notification.findFirst({ where: {
             userId: targetUserId!, category: category.toUpperCase(),
             actionType: actionType || 'GENERAL', actionId: String(actionId),
+            ...(params.eventSince ? { createdAt: { gte: params.eventSince } } : {}),
           } });
           if (existing) return null;
           return tx.notification.create({ data: notificationData });
@@ -333,6 +349,7 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
       return [];
     }
 
+    authorizedUsers = authorizedUsers.filter(user => user.id !== params.excludeUserId);
     const targetRoute = getHRTargetRoute(category, actionType);
     // Record and dispatch per authorized recipient. A rejected token must never
     // mark another recipient's notification FAILED or attach their message ID.
@@ -346,7 +363,9 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
         category,
         actionType: actionType || 'GENERAL',
         actionId,
-        deduplicate: actionType?.startsWith('ATTENDANCE_CORRECTION') || actionType === 'SALARY_APPROVED',
+        deduplicate: params.deduplicate || actionType?.startsWith('ATTENDANCE_CORRECTION') || actionType === 'SALARY_APPROVED',
+        eventSince: params.eventSince,
+        extraData: params.extraData,
         screen: targetRoute,
         clickRoute: targetRoute,
       })));

@@ -1,3 +1,4 @@
+import { requireRequestApprover } from '../utils/requestApprovalPermissions';
 import { Router } from 'express';
 import { authenticateToken } from '../middlewares/authMiddleware';
 import {
@@ -16,9 +17,9 @@ router.get('/mobile/features/access', authenticateToken, getEmployeeFeatureAcces
 router.post('/mobile/features/access-request', authenticateToken, requestFeatureAccess);
 
 // HR Endpoints
-router.get('/hr/features/access-requests', authenticateToken, getPendingAccessRequests);
-router.patch('/hr/features/access-requests/:requestId', authenticateToken, processAccessRequest);
-router.get('/hr/features/access/:employeeId', authenticateToken, getAllEmployeeFeatures);
-router.patch('/hr/features/access/:employeeId/:featureName', authenticateToken, updateFeatureAccess);
+router.get('/hr/features/access-requests', authenticateToken, requireRequestApprover('pa-access-requests'), getPendingAccessRequests);
+router.patch('/hr/features/access-requests/:requestId', authenticateToken, requireRequestApprover('pa-access-requests'), processAccessRequest);
+router.get('/hr/features/access/:employeeId', authenticateToken, requireRequestApprover('pa-access-requests'), getAllEmployeeFeatures);
+router.patch('/hr/features/access/:employeeId/:featureName', authenticateToken, requireRequestApprover('pa-access-requests'), updateFeatureAccess);
 
 export default router;

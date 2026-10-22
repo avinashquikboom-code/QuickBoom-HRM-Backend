@@ -279,3 +279,5 @@ export function isCommissionEligibleEmployee(emp: {
 
   return false;
 }
+
+export const isSalesEmployee = isCommissionEligibleEmployee;
