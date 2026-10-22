@@ -1,3 +1,4 @@
+import { requireRequestApprover } from '../utils/requestApprovalPermissions';
 import { Router } from 'express';
 import { Role } from '@prisma/client';
 import { authMiddleware } from '../middlewares/authMiddleware';
@@ -30,6 +31,7 @@ export const hrRkdRouter = Router();
 // Require authentication and HR/Admin role for all HR RKD routes
 hrRkdRouter.use(authMiddleware);
 hrRkdRouter.use(roleMiddleware([Role.SUPER_ADMIN, Role.PLATFORM_ADMIN, Role.HR, Role.ADMIN]));
+hrRkdRouter.use(requireRequestApprover('pa-commission'));
 
 hrRkdRouter.get('/', getHrRkdRequests);
 hrRkdRouter.get('/:id', getHrRkdDetails);

@@ -1,3 +1,4 @@
+import { getIstMonthRange } from '../utils/commissionHelper';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
 
@@ -42,3 +43,16 @@ export const ordinaryCommissionFilter: Prisma.CommissionTransactionWhereInput = 
     { OR: [{ billId: null }, { billId: { not: { startsWith: 'RKD-' } } }] },
   ],
 };
+
+/** Visible explanation for unallocated approved earnings; never included in frozen totals. */
+export async function getRkdPendingAdjustments(employeeId: number, month: number, year: number) {
+  const { monthStart, monthEnd } = getIstMonthRange(year, month);
+  const rows = await prisma.rkdRequest.findMany({ where: {
+    employeeId, status: 'APPROVED', salaryMonth: null, salaryYear: null,
+    reviewedAt: { gte: monthStart, lte: monthEnd },
+  }, orderBy: { id: 'asc' } });
+  return rows.map(row => ({ reference: `RKD-${row.id}`, requestId: row.id,
+    amount: row.commissionAmount, approvedAt: row.reviewedAt?.toISOString() || null,
+    status: 'AWAITING_PAYROLL_ADJUSTMENT', description: 'RKD Incentive',
+  }));
+}

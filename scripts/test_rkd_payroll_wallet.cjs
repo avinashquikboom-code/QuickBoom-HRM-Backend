@@ -1,14 +1,17 @@
 const assert=require('node:assert/strict');
 const Module=require('node:module');require('ts-node/register/transpile-only');
+process.env.JWT_SECRET=require('node:crypto').randomBytes(32).toString('hex');
 let requests=[],commissions=[],slips=[],history=[],notifications=[],sends=[],failSave=false;
 const employee={id:10,userId:100,employeeCode:'HK-SALES-01',firstName:'Test',lastName:'Sales',designation:'Sales Executive',department:{name:'Sales'},office:{name:'Main',workingDays:['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']},user:{role:'SALESMAN'}};
-const match=(r,w)=>Object.entries(w).every(([k,v])=>v&&typeof v==='object'&&'in'in v?v.in.includes(r[k]):r[k]===v);
+const match=(r,w)=>Object.entries(w).every(([k,v])=>v&&typeof v==='object'&&'in'in v?v.in.includes(r[k]):v&&typeof v==='object'&&('gte'in v||'lte'in v)?(!('gte'in v)||r[k]>=v.gte)&&(!('lte'in v)||r[k]<=v.lte):r[k]===v);
 const db={
- $queryRaw:async()=>[],employee:{findUnique:async()=>employee},
+ $queryRaw:async()=>[],employee:{findUnique:async()=>employee,findFirst:async()=>employee},
+ user:{findMany:async()=>[{id:900,role:'HR'}],findUnique:async({where})=>({id:where.id,role:where.id===100?'SALESMAN':'HR',isActive:true,employee:{status:'ACTIVE'}})},
+ userPermission:{findMany:async()=>[],findUnique:async({where})=>({permissions:{'pa-commission':where.userId!==901}})},rolePermission:{findMany:async()=>[],findUnique:async()=>null},profile:{findFirst:async()=>({fullName:'Test HR'})},
  rkdRequest:{
   findFirst:async({where})=>requests.find(r=>r.employeeId===where.employeeId&&r.saleReference===where.saleReference&&where.status.in.includes(r.status))||null,
   findUniqueOrThrow:async({where})=>({...requests.find(r=>r.id===where.id),employee}),
-  findUnique:async({where})=>requests.find(r=>r.submissionKey===where.submissionKey)||null,
+  findUnique:async({where})=>requests.find(r=>where.id?r.id===where.id:r.submissionKey===where.submissionKey)||null,
   create:async({data})=>{const r={id:requests.length+1,createdAt:new Date(),...data};requests.push(r);return{...r,employee};},
   update:async({where,data})=>{Object.assign(requests.find(r=>r.id===where.id),data);return{...requests.find(r=>r.id===where.id),employee};},
   findMany:async({where})=>requests.filter(r=>match(r,where)),
@@ -27,7 +30,7 @@ const db={
 };
 let queue=Promise.resolve();db.$transaction=fn=>{const p=queue.then(async()=>{const backup=structuredClone({requests,commissions,slips,history});try{return await fn(db);}catch(e){({requests,commissions,slips,history}=backup);throw e;}});queue=p.catch(()=>{});return p;};
 const load=Module._load;Module._load=function(r,p,i){
- if(/(?:^|\/)utils\/db$/.test(r)||r==='./db')return{prisma:db};
+ if(/(?:^|\/)utils\/db$/.test(r)||r==='./db')return{prisma:db,ensureRkdTable:async()=>{}};
  if(/websocketSingleton$/.test(r))return{getWebSocketInstance:()=>null};
  if(/firebaseNotificationService$/.test(r))return{firebaseNotificationService:{sendNotificationToUser:async(...args)=>{sends.push(args);return{successCount:1,failureCount:0,responses:[{success:true,messageId:'accepted-test'}]};}}};
  return load.call(this,r,p,i);
@@ -36,6 +39,9 @@ db.wallet={findUnique:async()=>({id:1,availableBalance:123,advanceLimit:0,pendin
 db.salaryStructure={findUnique:async()=>({monthlySalary:15000,salaryAdvanceLimit:0})};
 db.expense.aggregate=async()=>({_sum:{amount:0}});
 db.payslip.findFirst=async({where})=>slips.find(p=>match(p,where))||null;
+const {employeeRkdRouter,hrRkdRouter}=require('../src/routes/rkdRoutes');
+const employeeRouter=require('../src/routes/employee/employeeRoutes').default;
+const salaryRouter=require('../src/routes/salaryRoutes').default;
 const employeeController=require('../src/controllers/employee/employeeController');
 const workflow=require('../src/services/rkdNotificationWorkflow');
 const payroll=require('../src/services/payrollService').default;
@@ -74,5 +80,46 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
  await workflow.createRkdRequestOnce({employeeId:10,productName:'Rejected',quantity:1,commissionAmount:700,particulars:'Not eligible'},'submission-3');await workflow.transitionRkdReview(3,'REJECTED',900,'HR','Rejected');
  assert(!(await getRkdWalletEarnings(10)).some(r=>r.requestId===3));assert.equal(commissions.length,2);
  assert.equal(computePayrollSettlement({baseGrossEarnings:15000,rkdIncentive:1500,commissionEarned:200}).totalTakeHomePay,16700);
+ if(process.argv.includes('--http-visibility')) {
+  const express=require('express'),jwt=require('jsonwebtoken');
+  const app=express();app.use(express.json());
+  app.use('/api/employee/rkd',employeeRkdRouter);app.use('/api/employee',employeeRouter);
+  app.use('/api/hr/rkd',hrRkdRouter);app.use('/api/salary',salaryRouter);
+  const server=app.listen(0,'127.0.0.1');await new Promise((resolve,reject)=>{server.once('listening',resolve);server.once('error',reject);});
+  try {
+   const base=`http://127.0.0.1:${server.address().port}`;
+   const token=id=>jwt.sign({id,role:id===100?'SALESMAN':'HR'},process.env.JWT_SECRET,{expiresIn:'1m'});
+   const call=async(path,method='GET',body,id=100)=>{
+    const response=await fetch(base+path,{method,headers:{Authorization:`Bearer ${token(id)}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+    return {status:response.status,body:await response.json()};
+   };
+   // A pre-generated draft must refresh after approval, not just calculate in memory.
+   requests=[];commissions=[];slips=[];history=[];notifications=[];sends=[];
+   let result=await call('/api/employee/rkd','POST',{productName:'Visibility',quantity:1,commissionAmount:1500,particulars:'Controlled test',requestId:'visibility-1'});
+   assert.equal(result.status,201);assert(notifications.some(n=>n.userId===900&&n.actionType==='RKD_SUBMITTED'));
+   const draft=await payroll.calculatePayroll(10,month,year);await payroll.savePayslip(draft,'Pending Approval');
+   assert.equal(slips[0].netSalary,15000);
+   result=await call('/api/hr/rkd/1/approve','POST',{},901);assert.equal(result.status,403);
+   failSave=true;result=await call('/api/hr/rkd/1/approve','POST',{},900);assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,false);assert.equal(slips[0].netSalary,15000);
+   failSave=false;result=await call('/api/hr/rkd/1/approve','POST',{},900);assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,true);assert.equal(history.length,1);assert.equal(notifications.filter(n=>n.actionType==='RKD_APPROVED').length,1);
+   assert.equal(slips[0].netSalary,16500);assert.equal(requests[0].payrollId,slips[0].id);
+   const salary=await call(`/api/salary/slip?month=${month}&year=${year}`);assert.equal(salary.status,200);assert.equal(salary.body.salarySlip.rkdIncentive,1500);assert.equal(salary.body.salarySlip.netSalary,16500);
+   const wallet=await call(`/api/employee/wallet?month=${month}&year=${year}`);assert.equal(wallet.status,200);assert.equal(wallet.body.wallet.rkdEarnings[0].reference,'RKD-1');assert.equal(wallet.body.wallet.availableBalance,123);
+   result=await call(`/api/salary/slip?employeeId=999&month=${month}&year=${year}`);assert.equal(result.status,403);
+   const count=history.length;result=await call('/api/hr/rkd/1/approve','POST',{},900);assert.equal(result.status,200);assert.equal(history.length,count);assert.equal(commissions.length,1);
+   // Once finalized, another approval must explain its absence from the frozen total.
+   slips[0].status='Approved';
+   await call('/api/employee/rkd','POST',{productName:'Late',quantity:1,commissionAmount:600,particulars:'After finalization',requestId:'visibility-2'});
+   await call('/api/hr/rkd/2/approve','POST',{},900);
+   const frozen=await call(`/api/salary/slip?month=${month}&year=${year}`);assert.equal(frozen.body.salarySlip.netSalary,16500);assert.equal(frozen.body.salarySlip.rkdIncentive,1500);assert.equal(frozen.body.salarySlip.pendingRkdAdjustments[0].reference,'RKD-2');
+   await call('/api/employee/rkd','POST',{productName:'Pending',quantity:1,commissionAmount:700,particulars:'Pending',requestId:'visibility-3'});
+   await call('/api/employee/rkd','POST',{productName:'Rejected',quantity:1,commissionAmount:800,particulars:'Rejected',requestId:'visibility-4'});
+   result=await call('/api/hr/rkd/4/reject','POST',{reason:'Not eligible'},900);assert.equal(result.status,200);
+   const lateWallet=await call('/api/employee/wallet');assert.equal(lateWallet.body.wallet.rkdEarnings.length,2);assert.equal(lateWallet.body.wallet.rkdEarnings.find(r=>r.reference==='RKD-2').status,'AWAITING_PAYROLL_ADJUSTMENT');
+   require('node:fs').mkdirSync('../QuickBoom-HRM-App/test/fixtures',{recursive:true});
+   require('node:fs').writeFileSync('../QuickBoom-HRM-App/test/fixtures/rkd_visibility_api.json',JSON.stringify({salarySlip:salary.body.salarySlip,wallet:wallet.body.wallet,finalizedSalarySlip:frozen.body.salarySlip,lateWallet:lateWallet.body.wallet},null,2)+'\n');
+   console.log('PASS actual HTTP submission/authorized approval -> persisted draft refresh -> salary and SALESMAN wallet APIs; denied reviewer/foreign owner excluded, retry idempotency, finalized adjustment visibility. Synthetic API responses exported for Flutter rendering.');
+  } finally { await new Promise(resolve=>server.close(resolve)); }
+ }
  console.log('PASS submission -> concurrent approval -> payroll calculation/snapshot/PDF -> wallet earning; single accounting amount, references, finalization/manual-adjustment hold, rejection exclusion, no cash-credit/payment push. DB/FCM mocked.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,4 +1,4 @@
-import { getRkdPayrollEarnings, payrollPeriodKey } from './rkdPayrollService';
+import { getRkdPayrollEarnings, getRkdPendingAdjustments, payrollPeriodKey } from './rkdPayrollService';
 import { fixedThirtyDaySalary, lockedPayslip, ExtraAttendancePayRule } from '../utils/fixedThirtyDaySalary';
 import { prisma } from '../utils/db';
 import { notifyEmployee } from '../utils/hrNotificationHelper';
@@ -1495,6 +1495,7 @@ class PayrollService {
     } | null,
     calc: PayrollCalculation,
   ) {
+    const pendingRkdAdjustments = await getRkdPendingAdjustments(ps.employeeId, ps.month, ps.year);
     const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
     const structure = await this.getSalaryStructure(ps.employeeId, new Date(ps.year, ps.month - 1, 1));
     const pf = round2(structure.pf || 0);
@@ -1575,6 +1576,7 @@ class PayrollService {
       grossSalary: grossEarnings,
       grossTotal: grossEarnings,
       grossEarnings,
+      pendingRkdAdjustments,
       rkdIncentive: calc.rkdIncentive || 0,
       rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
       commission: commissionEarned,
@@ -1638,6 +1640,7 @@ class PayrollService {
       expenses: expensesByCategory,
       expensesByCategory,
       isCommissionEligible,
+      pendingRkdAdjustments,
       rkdIncentive: calc.rkdIncentive || 0,
       rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
       commission: commissionEarned,
@@ -1703,7 +1706,8 @@ class PayrollService {
         netSalary,
         totalTakeHomePay,
         isCommissionEligible,
-        rkdIncentive: calc.rkdIncentive || 0,
+        pendingRkdAdjustments,
+      rkdIncentive: calc.rkdIncentive || 0,
       rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
       commission: commissionEarned,
         expenseReimbursement,
@@ -1728,6 +1732,7 @@ class PayrollService {
       }
     }
 
+    const pendingRkdAdjustments = await getRkdPendingAdjustments(ps.employeeId, ps.month, ps.year);
     const rkdSnapshot = await getRkdPayrollEarnings(ps.employeeId, ps.month, ps.year, prisma, ps.id);
     const cal = calculateScheduledWorkingDays(ps.year, ps.month, employee?.office?.workingDays);
     const calendarDays = ps.totalCalendarDays || cal.totalCalendarDays;
@@ -1863,6 +1868,7 @@ class PayrollService {
       approvedExpenseAmount: ps.expenseReimbursement || 0,
       totalExpenses: ps.expenseReimbursement || 0,
       isCommissionEligible,
+      pendingRkdAdjustments,
       rkdIncentive: rkdSnapshot.amount,
       rkdReferences: rkdSnapshot.references,
       commission: commissionEarned,
@@ -1929,7 +1935,8 @@ class PayrollService {
         grossSalary,
         grossTotal: grossSalary,
         grossEarnings: grossSalary,
-        rkdIncentive: rkdSnapshot.amount,
+        pendingRkdAdjustments,
+      rkdIncentive: rkdSnapshot.amount,
       rkdReferences: rkdSnapshot.references,
       commission: commissionEarned,
         expenseReimbursement: ps.expenseReimbursement || 0,
@@ -1947,7 +1954,8 @@ class PayrollService {
         netSalary,
         totalTakeHomePay,
         isCommissionEligible,
-        rkdIncentive: rkdSnapshot.amount,
+        pendingRkdAdjustments,
+      rkdIncentive: rkdSnapshot.amount,
       rkdReferences: rkdSnapshot.references,
       commission: commissionEarned,
         expenseReimbursement: ps.expenseReimbursement || 0,

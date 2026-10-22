@@ -661,20 +661,21 @@ export async function approveHrRkdRequest(
     );
 
     let notificationDelivery;
-    if (changed) {
-      notificationDelivery = await notifyRkdReviewed(rkd as any);
-      if (rkd.salaryMonth && rkd.salaryYear) {
-        try {
-          const slip = await prisma.payslip.findUnique({ where: { employeeId_month_year: {
-            employeeId: rkd.employeeId, month: rkd.salaryMonth, year: rkd.salaryYear,
-          } } });
-          if (slip && !lockedPayslip(slip.status)) {
-            const calculation = await payrollService.calculatePayroll(rkd.employeeId, rkd.salaryMonth, rkd.salaryYear);
-            await payrollService.savePayslip(calculation);
-          }
-        } catch { console.warn('[RKD] Approved earning awaits salary-slip refresh', { rkdId: rkd.id }); }
-      }
-
+    if (changed) notificationDelivery = await notifyRkdReviewed(rkd);
+    let isSalaryCredited = rkd.isSalaryCredited;
+    // Retry an interrupted draft refresh without repeating approval or ledger credit.
+    if (rkd.salaryMonth && rkd.salaryYear) {
+      try {
+        const slip = await prisma.payslip.findUnique({ where: { employeeId_month_year: {
+          employeeId: rkd.employeeId, month: rkd.salaryMonth, year: rkd.salaryYear,
+        } } });
+        if (slip && !lockedPayslip(slip.status)) {
+          const calculation = await payrollService.calculatePayroll(rkd.employeeId, rkd.salaryMonth, rkd.salaryYear);
+          await payrollService.savePayslip(calculation);
+          const current = await prisma.rkdRequest.findUnique({ where: { id: rkd.id } });
+          isSalaryCredited = current?.isSalaryCredited ?? isSalaryCredited;
+        }
+      } catch { console.warn('[RKD] Approved earning awaits salary-slip refresh', { rkdId: rkd.id }); }
     }
 
     res.json({
@@ -687,7 +688,9 @@ export async function approveHrRkdRequest(
         status: rkd.status,
         reviewedByName: rkd.reviewedByName,
         reviewedAt: rkd.reviewedAt?.toISOString() || null,
-        isSalaryCredited: rkd.isSalaryCredited,
+        isSalaryCredited,
+        salaryMonth: rkd.salaryMonth,
+        salaryYear: rkd.salaryYear,
         commissionAmount: rkd.commissionAmount,
       },
       notificationDelivery,

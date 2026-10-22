@@ -41,7 +41,7 @@ const router = Router();
 router.use(authMiddleware);
 
 // Restrict access to employees and HR managers
-const employeeRoles = ['EMPLOYEE', 'HR', 'SUPER_ADMIN', 'ADMIN'];
+const employeeRoles = ['EMPLOYEE', 'SALESMAN', 'HR', 'SUPER_ADMIN', 'ADMIN'];
 router.use(roleMiddleware(employeeRoles));
 
 /**

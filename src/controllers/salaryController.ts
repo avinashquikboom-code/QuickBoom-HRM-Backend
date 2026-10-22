@@ -12,24 +12,25 @@ export const getSalarySlip = async (
   try {
     const { employeeId, month, year } = req.query;
 
-    let targetEmployeeId: number | null = null;
-
-    if (employeeId && !isNaN(Number(employeeId))) {
-      targetEmployeeId = Number(employeeId);
-    } else if (req.user?.id) {
-      const emp = await prisma.employee.findFirst({
-        where: { userId: req.user.id }
-      });
-      if (emp) {
-        targetEmployeeId = emp.id;
-      }
+    if (!req.user?.id) {
+      res.status(401).json({ success: false, message: 'Unauthorized' }); return;
     }
-
+    if ((employeeId !== undefined && (typeof employeeId !== 'string' || !/^[1-9]\d*$/.test(employeeId))) ||
+        (month !== undefined && (typeof month !== 'string' || !/^(?:\d{1,2}|\d{4}-\d{1,2})$/.test(month))) ||
+        (year !== undefined && (typeof year !== 'string' || !/^\d{4}$/.test(year)))) {
+      res.status(400).json({ success: false, message: 'Invalid employee or payroll period.' }); return;
+    }
+    const ownEmployee = await prisma.employee.findFirst({ where: { userId: req.user.id } });
+    const targetEmployeeId = employeeId ? Number(employeeId) : ownEmployee?.id;
     if (!targetEmployeeId) {
-      const firstEmp = await prisma.employee.findFirst({
-        where: { OR: [{ employeeCode: '074' }, { status: 'active' }] }
-      });
-      targetEmployeeId = firstEmp ? firstEmp.id : 1;
+      res.status(404).json({ success: false, message: 'Employee profile not found' }); return;
+    }
+    if (!Number.isSafeInteger(targetEmployeeId) || targetEmployeeId > 2147483647) {
+      res.status(400).json({ success: false, message: 'Invalid employee ID.' }); return;
+    }
+    const isPayrollReviewer = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER'].includes(req.user.role);
+    if (!isPayrollReviewer && targetEmployeeId !== ownEmployee?.id) {
+      res.status(403).json({ success: false, message: 'You may only view your own salary slip.' }); return;
     }
 
     const employee = await prisma.employee.findUnique({
@@ -72,6 +73,11 @@ export const getSalarySlip = async (
       } else if (!isNaN(Number(mStr))) {
         targetMonth = Number(mStr);
       }
+    }
+
+    if (!Number.isInteger(targetMonth) || targetMonth < 1 || targetMonth > 12 ||
+        !Number.isInteger(targetYear) || targetYear < 1900 || targetYear > 9999) {
+      res.status(400).json({ success: false, message: 'Invalid payroll period.' }); return;
     }
 
     const monthNames = [
