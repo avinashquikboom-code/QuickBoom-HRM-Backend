@@ -142,6 +142,38 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
   assert.equal(slips.length,1);assert.equal(commissions.length,2);assert.equal(history.length,2);
   assert.equal(calculation.rkdIncentive,1750);
   db.payslip.findMany=async({where={}}={})=>slips.filter(s=>Object.entries(where).every(([key,value])=>s[key]===value)).map(s=>({...s,employee}));
+  // A failed salary recalculation must not mix stale reimbursement totals with live categories.
+  const calculateBeforeFallback = payroll.calculatePayroll;
+  const expensesBeforeFallback = db.expense.findMany;
+  const fixtureExpenses = [
+   {employeeId:10,status:'APPROVED',category:'TRAVEL',amount:100,date:new Date(year,month-1,5)},
+   {employeeId:10,status:'APPROVED',category:'FOOD',amount:200,date:new Date(year,month-1,6)},
+   {employeeId:10,status:'APPROVED',category:'OTHER',amount:299,date:new Date(year,month-1,7)},
+   {employeeId:10,status:'PENDING',category:'FOOD',amount:800,date:new Date(year,month-1,6)},
+   {employeeId:11,status:'APPROVED',category:'TRAVEL',amount:900,date:new Date(year,month-1,5)},
+   {employeeId:10,status:'APPROVED',category:'OTHER',amount:700,date:new Date(year,month-2,5)},
+  ];
+  try {
+   payroll.calculatePayroll=async()=>{throw new Error('TEST_FALLBACK');};
+   db.expense.findMany=async({where})=>fixtureExpenses.filter(row=>match(row,where));
+   const fallback=await payroll.resolveFullPayslipView({...slips[0],status:'PENDING',expenseReimbursement:300},employee);
+   assert.deepEqual(fallback.expenseCategories,{TRAVEL:100,FOOD:200,OTHER:299});
+   assert.equal(fallback.expenseReimbursement,599);
+   assert.equal(fallback.expensesByCategory.reduce((sum,row)=>sum+row.amount,0),599);
+   assert.equal(fallback.totalReimbursements,2349);
+   assert.equal(fallback.totalTakeHomePay,17549);
+   assert.equal(fallback.netSalary,15000);
+   assert.equal(fallback.earnings.expenseReimbursement,599);
+   assert.equal(fallback.summary.expenseReimbursement,599);
+   const frozenFallback=await payroll.resolveFullPayslipView({...slips[0],status:'PAID',expenseReimbursement:300},employee);
+   assert.equal(frozenFallback.expenseReimbursement,300,'Finalized reimbursement snapshot must remain unchanged');
+   const pdfCategories=JSON.stringify(buildSalarySlipDocDefinition({...fallback,earnings:fallback.earnings,deductionsObj:fallback.deductionsObj}));
+   for(const category of ['TRAVEL Expense','FOOD Expense','OTHER Expense'])assert(pdfCategories.includes(category));
+   console.log('PASS fallback category grouping and +299 reconciliation, employee/status/period exclusions, PDF category mapping, unchanged net salary and finalized snapshot.');
+  } finally {
+   payroll.calculatePayroll=calculateBeforeFallback;
+   db.expense.findMany=expensesBeforeFallback;
+  }
   const express=require('express'),jwt=require('jsonwebtoken');
   const app=express();app.use(express.json());
   app.use('/api/payroll',require('../src/routes/payrollRoutes').default);

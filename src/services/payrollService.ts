@@ -1779,11 +1779,33 @@ class PayrollService {
     const extraWeeklyOffPayout = ps.extraWeeklyOffPayout || 0;
     const isCommissionEligible = isCommissionEligibleEmployee(employee);
     const commissionEarned = isCommissionEligible ? (ps.commissionEarned || 0) : 0;
+    // Use the same eligible records for open-payroll totals and category rows.
+    const monthRange = getIstMonthRange(ps.year, ps.month);
+    const approvedExpensesList = await prisma.expense.findMany({
+      where: {
+        employeeId: ps.employeeId,
+        status: 'APPROVED',
+        date: { gte: monthRange.monthStart, lte: monthRange.monthEnd },
+      },
+      orderBy: { date: 'asc' },
+    });
+    const expenseCategories: Record<string, number> = {};
+    for (const exp of approvedExpensesList) {
+      const cat = exp.category || 'Other';
+      const amt = exp.amount || 0;
+      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + amt) * 100) / 100;
+    }
+
+    const expenseReimbursement = isFinalized
+      ? Number(ps.expenseReimbursement || 0)
+      : Math.round(approvedExpensesList.reduce((sum, exp) => sum + (exp.amount || 0), 0) * 100) / 100;
+    const expensesByCategory = Object.entries(expenseCategories).map(([category, amount]) => ({ category, amount }));
+
     const settlement = computePayrollSettlement({
       baseGrossEarnings: grossSalary,
       holidayWeeklyOffPay: extraHolidayPayout + extraWeeklyOffPayout,
       totalDeductions: cleanDeductions,
-      reimbursements: ps.expenseReimbursement || 0,
+      reimbursements: expenseReimbursement,
       commissionEarned,
       rkdIncentive: rkdSnapshot.amount,
     });
@@ -1820,22 +1842,6 @@ class PayrollService {
       console.warn(`[resolveFullPayslipView] attendance summary unavailable for payslip #${ps?.id}:`, err);
     }
 
-    // Also resolve expense breakdown for PDF
-    const monthRange = getIstMonthRange(ps.year, ps.month);
-    const approvedExpensesList = await prisma.expense.findMany({
-      where: {
-        employeeId: ps.employeeId,
-        status: 'APPROVED',
-        date: { gte: monthRange.monthStart, lte: monthRange.monthEnd },
-      },
-      orderBy: { date: 'asc' },
-    });
-    const expenseCategories: Record<string, number> = {};
-    for (const exp of approvedExpensesList) {
-      const cat = exp.category || 'Other';
-      const amt = exp.amount || 0;
-      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + amt) * 100) / 100;
-    }
 
     return {
       ...ps,
@@ -1882,10 +1888,10 @@ class PayrollService {
       netInWords,
       presentDays: ps.presentDays || 0,
       absentDays: ps.absentDays || 0,
-      expenseReimbursement: ps.expenseReimbursement || 0,
+      expenseReimbursement,
       totalReimbursements,
-      approvedExpenses: ps.expenseReimbursement || 0,
-      approvedExpenseAmount: ps.expenseReimbursement || 0,
+      approvedExpenses: expenseReimbursement,
+      approvedExpenseAmount: expenseReimbursement,
       totalExpenses: totalReimbursements,
       isCommissionEligible,
       pendingRkdAdjustments,
@@ -1931,6 +1937,8 @@ class PayrollService {
       overtimeHours: storedAttendanceSummary ? Math.round((storedAttendanceSummary.overtimeMinutes / 60) * 100) / 100 : 0,
       attendanceSummary: storedAttendanceSummary,
       expenseCategories,
+      expenses: expensesByCategory,
+      expensesByCategory,
       earnings: {
         baseSalary: earnings.baseSalary,
         basicSalary: earnings.baseSalary,
@@ -1961,7 +1969,7 @@ class PayrollService {
         rkdReferences: rkdSnapshot.references,
         rkdRequests: rkdSnapshot.requests,
         commission: commissionEarned,
-        expenseReimbursement: ps.expenseReimbursement || 0,
+        expenseReimbursement,
         totalReimbursements,
       },
       summary: {
@@ -1982,7 +1990,7 @@ class PayrollService {
         rkdReferences: rkdSnapshot.references,
         rkdRequests: rkdSnapshot.requests,
         commission: commissionEarned,
-        expenseReimbursement: ps.expenseReimbursement || 0,
+        expenseReimbursement,
         totalReimbursements,
         netInWords,
       }
