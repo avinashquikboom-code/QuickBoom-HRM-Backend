@@ -34,3 +34,11 @@ export async function getRkdWalletEarnings(employeeId: number) {
     withdrawable: false,
   }));
 }
+
+// Nullable legacy event/reference values remain ordinary commission.
+export const ordinaryCommissionFilter: Prisma.CommissionTransactionWhereInput = {
+  AND: [
+    { OR: [{ eventType: null }, { eventType: { not: 'RKD_REQUEST' } }] },
+    { OR: [{ billId: null }, { billId: { not: { startsWith: 'RKD-' } } }] },
+  ],
+};

@@ -151,8 +151,8 @@ export async function transitionRkdReview(
       // Paid/finalized periods require manual adjustment, never retroactive credit.
       updateData.salaryMonth = slip && lockedPayslip(slip.status) ? null : month;
       updateData.salaryYear = slip && lockedPayslip(slip.status) ? null : year;
-      updateData.isSalaryCredited = true;
-      updateData.salaryCreditedAt = new Date();
+      updateData.isSalaryCredited = false;
+      updateData.salaryCreditedAt = null;
 
       // Upsert into CommissionTransaction for payroll inclusion and auditability
       const billId = `RKD-${existing.id}`;

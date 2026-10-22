@@ -1,3 +1,4 @@
+import { ordinaryCommissionFilter } from '../services/rkdPayrollService';
 import { enrichProductBreakdown } from '../utils/productLineMeta';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -1061,6 +1062,7 @@ export const createCommissionSettlement = async (
     // Calculate total commission for the employee
     const transactions = await prisma.commissionTransaction.findMany({
       where: {
+        ...ordinaryCommissionFilter,
         employeeId: parseInt(employeeId),
         status: 'APPROVED',
         paidAt: null,

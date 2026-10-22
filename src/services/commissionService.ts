@@ -1,3 +1,4 @@
+import { ordinaryCommissionFilter } from './rkdPayrollService';
 import { prisma } from '../utils/db';
 import { getTransactionNetContribution, getNumericInvoiceNumber, getIstMonthRange } from '../utils/commissionHelper';
 
@@ -25,6 +26,7 @@ export class CommissionService {
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
+        ...ordinaryCommissionFilter,
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] },
         createdAt: {
@@ -101,6 +103,7 @@ export class CommissionService {
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
+        ...ordinaryCommissionFilter,
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] },
         createdAt: {
@@ -176,6 +179,7 @@ export class CommissionService {
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
+        ...ordinaryCommissionFilter,
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] },
         createdAt: {
@@ -253,6 +257,7 @@ export class CommissionService {
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
+        ...ordinaryCommissionFilter,
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] },
         createdAt: {
@@ -381,6 +386,7 @@ export class CommissionService {
 
     const sales = await prisma.commissionTransaction.findMany({
       where: {
+        ...ordinaryCommissionFilter,
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] },
         createdAt: {

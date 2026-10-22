@@ -1,3 +1,4 @@
+import { ordinaryCommissionFilter } from '../services/rkdPayrollService';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
@@ -70,7 +71,7 @@ export const fetchCommissionWallet = async (
     }
 
     const allTransactions = await prisma.commissionTransaction.findMany({
-      where: { employeeId: employee.id },
+      where: { ...ordinaryCommissionFilter, employeeId: employee.id },
       orderBy: { createdAt: 'desc' }
     });
 
@@ -267,7 +268,7 @@ export const fetchCommissionHistory = async (
     const { status, limit = 20, page = 1, startDate, endDate, month } = req.query;
     const skipVal = (parseInt(page as string, 10) - 1) * parseInt(limit as string, 10);
 
-    const whereClause: any = { employeeId: employee.id };
+    const whereClause: any = { ...ordinaryCommissionFilter, employeeId: employee.id };
     if (status) {
       const upperStatus = (status as string).toUpperCase();
       whereClause.status = upperStatus;
@@ -453,7 +454,7 @@ export const fetchCommissionDetails = async (
     }
 
     const allTransactions = await prisma.commissionTransaction.findMany({
-      where: { employeeId: employee.id },
+      where: { ...ordinaryCommissionFilter, employeeId: employee.id },
       orderBy: { createdAt: 'desc' }
     });
 
@@ -662,6 +663,7 @@ export const fetchSalarySlipCommission = async (
       queryDescription = `payrollId=${parsedPayrollId}`;
       transactions = await prisma.commissionTransaction.findMany({
         where: {
+          ...ordinaryCommissionFilter,
           employeeId: employee.id,
           payrollId: parsedPayrollId,
         }
@@ -689,6 +691,7 @@ export const fetchSalarySlipCommission = async (
 
       transactions = await prisma.commissionTransaction.findMany({
         where: {
+          ...ordinaryCommissionFilter,
           employeeId: employee.id,
           status: { in: ['PENDING', 'APPROVED', 'PAID'] },
           createdAt: { gte: monthStart, lte: monthEnd },

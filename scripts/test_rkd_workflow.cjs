@@ -359,7 +359,7 @@ function reset() {
   );
   assert.equal(r.code, 200);
   assert.equal(rkdRequests[0].status, 'APPROVED');
-  assert.equal(rkdRequests[0].isSalaryCredited, true);
+  assert.equal(rkdRequests[0].isSalaryCredited, false, 'Approval is eligibility; inclusion is recorded only when a payslip is saved');
   assert.equal(commissionTransactions.length, 1, 'Approved request must create exactly one CommissionTransaction');
   assert.equal(commissionTransactions[0].billId, 'RKD-1');
   assert.equal(commissionTransactions[0].commissionAmount, 1500);
