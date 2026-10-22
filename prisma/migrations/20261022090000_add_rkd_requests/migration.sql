@@ -43,6 +43,12 @@ CREATE INDEX IF NOT EXISTS "RkdRequest_saleReference_idx" ON "RkdRequest"("saleR
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "RkdRequest_createdAt_idx" ON "RkdRequest"("createdAt");
 
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "RkdRequest_payrollId_idx" ON "RkdRequest"("payrollId");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "RkdRequest_employeeId_salaryYear_salaryMonth_idx" ON "RkdRequest"("employeeId", "salaryYear", "salaryMonth");
+
 -- AddForeignKey
 DO $$
 BEGIN
