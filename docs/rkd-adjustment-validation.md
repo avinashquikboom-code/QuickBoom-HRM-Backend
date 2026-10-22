@@ -61,3 +61,15 @@ When no editable employee period exists, Confirm Adjustment is disabled and the 
 Additional changed files: backend `src/controllers/payrollController.ts`, `src/services/rkdPayrollService.ts`; period filtering is in the existing admin `src/services/rkdService.ts`. Existing adjustment page/controller/tests were extended.
 
 Verification: backend build passed; adjustment HTTP tests passed for missing/closed/open periods, other employees/empty history, retained default history limit and all-history reads, correct payroll ID, and idempotent retries. Payroll/wallet/PDF and route-ID regressions passed. Admin selector/service tests passed for earliest open period, year rollover, closed/foreign exclusions and empty availability; authentication regressions passed. Full admin type-check retains the same nine pre-existing unrelated diagnostics, confirmed by an in-memory comparison with HEAD versions of the changed RKD files. No browser or production database end-to-end verification was performed.
+
+## Empty-list investigation and recovery
+
+A read-only inspection of the configured database on 22 October 2026 found five Payslip rows: three Approved, one Paid and one PAID. These are all closed under the existing lock rules. RKD request IDs 1 and 2 were absent, so this connection cannot establish parity with the reported production requests. No records were modified.
+
+The history response contract was verified in the controller: `payslips`, `history`, `data` and `records` are aliases for the same array. The admin parser now validates that response and each record explicitly, supports these existing aliases, and throws on malformed responses or success:false instead of treating them as empty availability. Authentication and HTTP errors remain failures.
+
+The modal separates loaded-empty from loading-error state, provides Retry after errors and links genuine empty results to the existing `/payroll` screen. Confirmation remains disabled until a successful read and a valid employee-specific period selection. Changing either month or year keeps a real open pair selected and filters the counterpart's options, including disjoint periods across years. No period or date is fabricated.
+
+Changed files for this follow-up: admin `src/services/rkdService.ts`, `src/features/rkd/pages/RkdRequestsPage.tsx`, `scripts/test_rkd_adjustment.cjs`, and this report. Backend allocation validation is retained unchanged.
+
+Admin tests pass for documented response aliases, invalid/missing response data, HTTP/server failures, retry recovery, open/closed/empty availability and synchronized month/year selection. Authentication regression tests and the backend adjustment HTTP tests pass. The frontend compiler comparison still shows only the nine pre-existing unrelated diagnostics. Browser/production end-to-end behavior remains unverified.
