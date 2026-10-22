@@ -137,7 +137,13 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     extraHolidayPayout: input.extraHolidayPayout,
     extraWeeklyOffPayout: input.extraWeeklyOffPayout,
   });
-  const earningLines = earningBreakdown.lines;
+  const earningLines = [...earningBreakdown.lines];
+  if (input.rkdIncentive && input.rkdIncentive > 0) {
+    const refText = (input.rkdReferences && input.rkdReferences.length > 0)
+      ? ` (${input.rkdReferences.join(', ')})`
+      : '';
+    earningLines.push({ name: `RKD Incentive${refText}`, amount: money(input.rkdIncentive) });
+  }
   const grossEarnings = money(earningBreakdown.displayedGrossEarnings);
 
   // 2. Build Itemized Deduction Lines

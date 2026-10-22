@@ -276,7 +276,8 @@ export const getEmployeePayrollHistory = async (
     const { limit = '12' } = req.query as { limit: string };
     
     const employeeIdStr = Array.isArray(employeeId) ? employeeId[0] : employeeId;
-    const limitNum = parseInt(limit);
+    // Period selectors need the complete existing history, not just the last 12.
+    const limitNum = limit === 'all' ? undefined : parseInt(limit);
 
     const payslips = await prisma.payslip.findMany({
       where: {

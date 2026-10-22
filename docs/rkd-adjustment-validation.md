@@ -47,3 +47,17 @@ Admin:
 - `src/features/rkd/pages/RkdRequestsPage.tsx`
 - `src/services/rkdService.ts`
 - `scripts/test_rkd_adjustment.cjs`
+
+## Existing open-period selection fix
+
+The reported October default came from calendar-based month/year state and from copying the request's previous allocation, without checking the employee's actual payroll status. The modal now reads `GET /api/payroll/history/:employeeId?limit=all`, sorts editable periods chronologically and defaults to the earliest existing open period for that employee. Year and month options are derived from those records. There is no hardcoded replacement period or automatic creation/reopening.
+
+The existing history API now accepts `limit=all`; default `limit=12` behavior is unchanged. History reads do not generate or modify payroll. The admin slips API was intentionally not used because it auto-generates payroll on some GET requests. Payroll runs are aggregate processing jobs, whereas the employee's Payslip record is the lock/status authority used by adjustment.
+
+Editable states are Draft, Pending and Pending Approval (case/whitespace normalized). Approved, Paid, Disbursed, Completed, Rejected, Cancelled and unknown states cannot be selected. The backend uses the same editable-state rule, requires the employee's target payslip to exist, and checks it under the existing payroll period lock. Same-period retries after credit still return the persisted result without resetting credit or modifying finalized records.
+
+When no editable employee period exists, Confirm Adjustment is disabled and the modal displays: "No open payroll period is available. Please create or reopen a payroll period before proceeding." Loading/failed reads also prevent confirmation. Client validation checks that the selected year/month is a member of the fetched employee period list. Success refreshes request details, the RKD list and payroll history, and names the selected month/year.
+
+Additional changed files: backend `src/controllers/payrollController.ts`, `src/services/rkdPayrollService.ts`; period filtering is in the existing admin `src/services/rkdService.ts`. Existing adjustment page/controller/tests were extended.
+
+Verification: backend build passed; adjustment HTTP tests passed for missing/closed/open periods, other employees/empty history, retained default history limit and all-history reads, correct payroll ID, and idempotent retries. Payroll/wallet/PDF and route-ID regressions passed. Admin selector/service tests passed for earliest open period, year rollover, closed/foreign exclusions and empty availability; authentication regressions passed. Full admin type-check retains the same nine pre-existing unrelated diagnostics, confirmed by an in-memory comparison with HEAD versions of the changed RKD files. No browser or production database end-to-end verification was performed.

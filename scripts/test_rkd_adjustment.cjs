@@ -6,7 +6,7 @@ const jwt=require('jsonwebtoken'),express=require('express');
 let updates=0,recalculations=0,failRefresh=false;
 const requests=[1,2,3,4,5,6,7].map(id=>({id,employeeId:10,commissionAmount:100*id,status:({3:'PENDING',4:'REJECTED',5:'RETURNED'})[id]||'APPROVED',salaryMonth:id===6?11:null,salaryYear:id===6?2026:null,isSalaryCredited:id===6,payrollId:id===6?62:null}));
 const originalAmounts=requests.map(r=>r.commissionAmount);
-const slips=[{id:61,employeeId:10,month:10,year:2026,status:'PAID'},{id:62,employeeId:10,month:11,year:2026,status:'Pending Approval'}];
+const slips=[{id:61,employeeId:10,month:10,year:2026,status:'PAID'},{id:62,employeeId:10,month:11,year:2026,status:'Pending Approval'},{id:63,employeeId:10,month:12,year:2026,status:'Draft'},{id:64,employeeId:10,month:1,year:2027,status:'Rejected'}];
 const locks=[];
 const db={
  $queryRaw:async (_sql,key)=>{locks.push(key);return[];},
@@ -21,14 +21,18 @@ const db={
  payslip:{findUnique:async({where})=>slips.find(s=>Object.entries(where.employeeId_month_year).every(([key,value])=>s[key]===value))||null},
 };
 let queue=Promise.resolve();db.$transaction=fn=>{const pending=queue.then(()=>fn(db));queue=pending.catch(()=>{});return pending;};
-const payroll={calculatePayroll:async(employeeId,month,year)=>{recalculations++;return{employeeId,month,year};},savePayslip:async calc=>{if(failRefresh)throw Error('CONTROLLED_REFRESH_FAILURE');requests.filter(r=>r.salaryMonth===calc.month&&r.salaryYear===calc.year).forEach(r=>Object.assign(r,{isSalaryCredited:true,payrollId:62}));}};
+const payroll={calculatePayroll:async(employeeId,month,year)=>{recalculations++;return{employeeId,month,year};},savePayslip:async calc=>{if(failRefresh)throw Error('CONTROLLED_REFRESH_FAILURE');requests.filter(r=>r.salaryMonth===calc.month&&r.salaryYear===calc.year).forEach(r=>Object.assign(r,{isSalaryCredited:true,payrollId:slips.find(s=>s.employeeId===calc.employeeId&&s.month===calc.month&&s.year===calc.year).id}));}};
 const load=Module._load;Module._load=function(name,parent,isMain){
  if(/(?:^|\/)utils\/db$/.test(name)||name==='./db')return{prisma:db,ensureRkdTable:async()=>{}};
  if(/services\/payrollService$/.test(name))return payroll;
  if(/services\/rkdNotificationWorkflow$/.test(name))return{};
  return load.call(this,name,parent,isMain);
 };
-const {hrRkdRouter}=require('../src/routes/rkdRoutes');Module._load=load;
+const {hrRkdRouter}=require('../src/routes/rkdRoutes');
+const {getEmployeePayrollHistory}=require('../src/controllers/payrollController');
+Module._load=load;
+let historyTake;
+db.payslip.findMany=async({where,take})=>{historyTake=take;return slips.filter(row=>row.employeeId===where.employeeId);};
 const app=express();app.use(express.json());app.use('/api/hr/rkd',hrRkdRouter);
 (async()=>{
  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
@@ -38,6 +42,14 @@ const app=express();app.use(express.json());app.use('/api/hr/rkd',hrRkdRouter);
    const response=await fetch(`http://127.0.0.1:${server.address().port}/api/hr/rkd/${id}/adjust`,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
    return{status:response.status,body:await response.json()};
   };
+  const historyResponse={json(body){this.body=body;return this;},status(code){this.code=code;return this;}};
+  await getEmployeePayrollHistory({params:{employeeId:'10'},query:{limit:'all'}},historyResponse);
+  assert.equal(historyTake,undefined);assert.equal(historyResponse.body.payslips.length,4);
+  assert(historyResponse.body.payslips.some(row=>row.status==='PAID'));
+  await getEmployeePayrollHistory({params:{employeeId:'10'},query:{limit:'12'}},historyResponse);
+  assert.equal(historyTake,12);
+  await getEmployeePayrollHistory({params:{employeeId:'99'},query:{limit:'all'}},historyResponse);
+  assert.deepEqual(historyResponse.body.payslips,[]);
   assert.equal((await call(1,{month:11,year:2026},null)).status,401);
   assert.equal((await call(1,{month:11,year:2026},100)).status,403);
   assert.equal((await call(1,{month:11,year:2026},901)).status,403);
@@ -51,14 +63,17 @@ const app=express();app.use(express.json());app.use('/api/hr/rkd',hrRkdRouter);
    const result=await call(id,{month:10,year:2026});assert.equal(result.status,400);assert.equal(result.body.errorCode,'RKD_PAYROLL_LOCKED');
    console.log(`Observed local response for RKD ${id}:`,JSON.stringify(result.body));
   }
+  assert.equal((await call(2,{month:2,year:2027})).body.errorCode,'RKD_PAYROLL_NOT_FOUND');
+  assert.equal((await call(2,{month:1,year:2027})).body.errorCode,'RKD_PAYROLL_CLOSED');
   assert.equal(updates,0,'Invalid and forbidden operations must not change allocations');
   let result=await call(1,{month:11,year:2026,commissionAmount:99999});
   assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,true);assert.equal(result.body.rkd.adjustmentStatus,'ADJUSTED_IN_PAYROLL');assert.equal(requests[0].commissionAmount,100);
   const previousUpdates=updates,previousRecalculations=recalculations;
   result=await call(1,{month:11,year:2026});assert.equal(result.status,200);assert.equal(updates,previousUpdates);assert.equal(recalculations,previousRecalculations);
   result=await call(1,{month:12,year:2026});assert.equal(result.status,400);assert.equal(result.body.errorCode,'RKD_ALREADY_CREDITED');
-  result=await call(2,{month:12,year:2026});assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,false);
-  await Promise.all([call(2,{month:12,year:2026}),call(2,{month:12,year:2026})]);assert.equal(requests[1].commissionAmount,200);
+  result=await call(2,{month:12,year:2026});assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,true);assert.equal(result.body.rkd.payrollId,63);assert.equal(requests[1].employeeId,10);
+  const beforeRetries=updates;
+  await Promise.all([call(2,{month:12,year:2026}),call(2,{month:12,year:2026})]);assert.equal(requests[1].commissionAmount,200);assert.equal(updates,beforeRetries);
   failRefresh=true;result=await call(7,{month:11,year:2026});assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,false);
   assert.deepEqual(requests.map(r=>r.commissionAmount),originalAmounts);
   assert(locks.includes('rkd-review:1'));assert(locks.includes('payroll-period:10:2026:11'));

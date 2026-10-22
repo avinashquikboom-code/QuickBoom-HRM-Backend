@@ -87,3 +87,8 @@ export async function getRkdPendingAdjustments(employeeId: number, month: number
     status: 'AWAITING_PAYROLL_ADJUSTMENT', description: 'RKD Incentive',
   }));
 }
+
+/** Only editable payroll states can receive a new RKD allocation. */
+export function isOpenRkdPayrollStatus(status: string): boolean {
+  return ['DRAFT', 'PENDING', 'PENDING APPROVAL'].includes(status.trim().toUpperCase());
+}

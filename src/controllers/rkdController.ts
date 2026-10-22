@@ -1,5 +1,5 @@
 import payrollService from '../services/payrollService';
-import { payrollPeriodKey } from '../services/rkdPayrollService';
+import { payrollPeriodKey, isOpenRkdPayrollStatus } from '../services/rkdPayrollService';
 import { lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -874,6 +874,14 @@ export async function adjustRkdPayrollPeriod(
       if (slip && lockedPayslip(slip.status)) return { error: {
         status: 400, code: 'RKD_PAYROLL_LOCKED',
         message: `Payroll for ${m}/${y} is already finalized/paid. Please select an open payroll period.`,
+      } };
+      if (!slip) return { error: {
+        status: 400, code: 'RKD_PAYROLL_NOT_FOUND',
+        message: 'The selected payroll period does not exist for this employee. Please create an open payroll period before proceeding.',
+      } };
+      if (!isOpenRkdPayrollStatus(slip.status)) return { error: {
+        status: 400, code: 'RKD_PAYROLL_CLOSED',
+        message: 'The selected payroll period is not open for adjustment. Please select an open payroll period.',
       } };
       const updated = await tx.rkdRequest.update({ where: { id }, data: {
         salaryMonth: m, salaryYear: y, isSalaryCredited: false,
