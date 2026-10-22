@@ -63,8 +63,8 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
  const walletResponse={status(code){this.code=code;return this;},json(body){this.body=body;return this;}};
  await employeeController.fetchEmployeeWallet({user:{id:100},query:{month,year}},walletResponse);
  assert.equal(walletResponse.body.success,true);assert.equal(walletResponse.body.wallet.availableBalance,123);assert.equal(walletResponse.body.wallet.netSalary,16500);assert.equal(walletResponse.body.wallet.totalTakeHomePay,16700);assert.equal(walletResponse.body.wallet.rkdEarnings[0].reference,'RKD-1');
- const definition=buildSalarySlipDocDefinition({employeeName:'Test Sales',employeeCode:'HK-SALES-01',month,year,paymentStatus:'PENDING',earnings:{baseSalary:15000},rkdIncentive:view.rkdIncentive,netSalary:view.netSalary,totalTakeHomePay:view.totalTakeHomePay,commissionEarned:200,isCommissionEligible:true});
- assert(JSON.stringify(definition).includes('RKD Incentive'));
+ const definition=buildSalarySlipDocDefinition({employeeName:'Test Sales',employeeCode:'HK-SALES-01',month,year,paymentStatus:'PENDING',earnings:{baseSalary:15000},rkdIncentive:view.rkdIncentive,rkdReferences:view.rkdReferences,netSalary:view.netSalary,totalTakeHomePay:view.totalTakeHomePay,commissionEarned:200,isCommissionEligible:true});
+ assert(JSON.stringify(definition).includes('RKD Incentive'));assert(JSON.stringify(definition).includes('RKD-1'));
  const before=JSON.stringify(slips[0]);await payroll.savePayslip(calc);assert.equal(JSON.stringify(slips[0]),before);
  await workflow.createRkdRequestOnce({employeeId:10,productName:'Later',quantity:1,commissionAmount:600,particulars:'Late approved earning'},'submission-2');
  await workflow.transitionRkdReview(2,'APPROVED',900,'HR');assert.equal(requests[1].salaryMonth,null);assert.equal((await getRkdWalletEarnings(10)).find(r=>r.requestId===2).status,'AWAITING_PAYROLL_ADJUSTMENT');

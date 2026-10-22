@@ -642,6 +642,11 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
         margin: [0, 0, 0, 8],
       },
 
+      ...(input.rkdReferences?.length ? [{
+        text: `RKD Incentive references: ${input.rkdReferences.join(', ')}`,
+        fontSize: 7.5, color: TEXT_MUTED, margin: [0, 0, 0, 6],
+      }] : []),
+
       // 7. Disclaimer
       {
         text: 'This is a computer-generated salary slip and does not require a physical signature. For any discrepancy, please contact the HR department.',

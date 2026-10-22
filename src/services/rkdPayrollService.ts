@@ -30,7 +30,7 @@ export async function getRkdWalletEarnings(employeeId: number) {
     approvedAt: request.reviewedAt?.toISOString() || null,
     status: request.salaryMonth && request.salaryYear ? 'APPROVED_EARNING' : 'AWAITING_PAYROLL_ADJUSTMENT',
     salaryMonth: request.salaryMonth, salaryYear: request.salaryYear,
-    payrollId: request.payrollId, includedInPayslip: request.isSalaryCredited,
+    payrollId: request.payrollId, includedInPayslip: request.isSalaryCredited && request.payrollId !== null,
     withdrawable: false,
   }));
 }
