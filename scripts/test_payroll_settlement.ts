@@ -2,6 +2,7 @@ import assert from 'assert';
 import {
   computeGrossSalary,
   computePayrollSettlement,
+  PayrollSettlement,
   normalizeDeduction,
   money,
   reconcileOfficialPayslipDisplay,
@@ -32,6 +33,30 @@ function run() {
   });
   check('no extras: net equals base gross', none.netSalary === 14000);
   check('no extras: take-home equals net', none.totalTakeHomePay === 14000);
+  // Type-check this test without --transpile-only: RKD is always numeric.
+  const emptyRkdAdjustment: number = none.rkdIncentive;
+  check('no RKD returns a required numeric zero', emptyRkdAdjustment === 0);
+
+  const rkdInput = {
+    baseGrossEarnings: base,
+    totalDeductions: 500,
+    reimbursements: 250,
+    rkdIncentive: 1500,
+    commissionEarned: 200,
+  };
+  const rkd: PayrollSettlement = computePayrollSettlement(rkdInput);
+  check('RKD does not increase salary gross or earnings', rkd.baseGrossEarnings === 14000 && rkd.totalEarnings === 14000);
+  check('RKD does not increase net salary', rkd.netSalary === 13500);
+  check('RKD is identified within total adjustments', rkd.rkdIncentive === 1500 && rkd.reimbursements === 1750);
+  check('take-home adds expenses, RKD and ordinary commission once', rkd.totalTakeHomePay === 15450);
+  assert.deepStrictEqual(computePayrollSettlement(rkdInput), rkd, 'Recalculation must not accumulate RKD');
+  const rkdDisplay = reconcileOfficialPayslipDisplay({
+    basicSalary: base, totalDeductions: 500, reimbursements: 250,
+    rkdIncentive: 1500, commissionEarned: 200,
+  });
+  check('official display preserves salary gross and net', rkdDisplay.displayedGrossEarnings === 14000 && rkdDisplay.netSalary === 13500);
+  check('official display agrees on adjustments and take-home', rkdDisplay.settlement.reimbursements === 1750 && rkdDisplay.totalTakeHomePay === 15450);
+  check('official earning lines exclude the RKD adjustment', rkdDisplay.lines.every(line => !line.name.includes('RKD')));
 
   const holidayCase = computePayrollSettlement({
     baseGrossEarnings: base,

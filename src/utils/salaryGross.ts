@@ -75,8 +75,10 @@ export type PayrollSettlement = {
   additionalEarnings: number;
   totalEarnings: number;
   totalDeductions: number;
+  /** Total adjustments: ordinary approved expenses plus RKD, counted once. */
   reimbursements: number;
-  rkdIncentive?: number;
+  /** Approved RKD portion of reimbursements; zero when no RKD is eligible. */
+  rkdIncentive: number;
   commissionEarned: number;
   netSalary: number;
   totalTakeHomePay: number;
@@ -89,8 +91,10 @@ export type PayrollSettlement = {
  * Holiday / weekly-off payout is additional (stored separately) and is
  * added once into totalEarnings / net. It is not added if the caller
  * already folded it into baseGrossEarnings.
- * Approved reimbursements are part of net payable. Commission stays on
- * take-home only (existing sales/Hopkid rule).
+ * Net salary is earnings minus deductions. Approved expense reimbursements
+ * and RKD adjustments are added once to take-home, alongside ordinary
+ * commission (existing sales/Hopkid rule); none increases gross or net salary.
+ * input.reimbursements contains ordinary expenses only, excluding RKD.
  */
 export function computePayrollSettlement(input: {
   baseGrossEarnings: number;
