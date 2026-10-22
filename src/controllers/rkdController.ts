@@ -27,6 +27,19 @@ function parseRkdNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+export function getRkdAdjustmentStatus(r: {
+  status: string;
+  isSalaryCredited?: boolean;
+  payrollId?: number | null;
+  salaryMonth?: number | null;
+  salaryYear?: number | null;
+}): string {
+  if (r.status !== 'APPROVED') return r.status;
+  if (r.isSalaryCredited && r.payrollId) return 'ADJUSTED_IN_PAYROLL';
+  if (r.salaryMonth && r.salaryYear) return 'APPROVED';
+  return 'AWAITING_PAYROLL_ADJUSTMENT';
+}
+
 // Helper to resolve employee from authenticated request
 async function getEmployeeFromReq(req: AuthenticatedRequest) {
   if (!req.user) return null;
@@ -272,7 +285,12 @@ export async function getEmployeeRkdRequests(
         rejectionReason: r.rejectionReason,
         reviewedByName: r.reviewedByName,
         reviewedAt: r.reviewedAt?.toISOString() || null,
+        payrollId: r.payrollId,
+        salaryMonth: r.salaryMonth,
+        salaryYear: r.salaryYear,
         isSalaryCredited: r.isSalaryCredited,
+        salaryCreditedAt: r.salaryCreditedAt?.toISOString() || null,
+        adjustmentStatus: getRkdAdjustmentStatus(r),
         createdAt: r.createdAt.toISOString(),
       })),
       pagination: {
@@ -333,7 +351,12 @@ export async function getEmployeeRkdDetails(
         rejectionReason: rkd.rejectionReason,
         reviewedByName: rkd.reviewedByName,
         reviewedAt: rkd.reviewedAt?.toISOString() || null,
+        payrollId: rkd.payrollId,
+        salaryMonth: rkd.salaryMonth,
+        salaryYear: rkd.salaryYear,
         isSalaryCredited: rkd.isSalaryCredited,
+        salaryCreditedAt: rkd.salaryCreditedAt?.toISOString() || null,
+        adjustmentStatus: getRkdAdjustmentStatus(rkd),
         createdAt: rkd.createdAt.toISOString(),
       },
     });
@@ -542,7 +565,12 @@ export async function getHrRkdRequests(
         rejectionReason: r.rejectionReason,
         reviewedByName: r.reviewedByName,
         reviewedAt: r.reviewedAt?.toISOString() || null,
+        payrollId: r.payrollId,
+        salaryMonth: r.salaryMonth,
+        salaryYear: r.salaryYear,
         isSalaryCredited: r.isSalaryCredited,
+        salaryCreditedAt: r.salaryCreditedAt?.toISOString() || null,
+        adjustmentStatus: getRkdAdjustmentStatus(r),
         createdAt: r.createdAt.toISOString(),
       })),
       stats,
@@ -621,7 +649,12 @@ export async function getHrRkdDetails(
         rejectionReason: rkd.rejectionReason,
         reviewedByName: rkd.reviewedByName,
         reviewedAt: rkd.reviewedAt?.toISOString() || null,
+        payrollId: rkd.payrollId,
+        salaryMonth: rkd.salaryMonth,
+        salaryYear: rkd.salaryYear,
         isSalaryCredited: rkd.isSalaryCredited,
+        salaryCreditedAt: rkd.salaryCreditedAt?.toISOString() || null,
+        adjustmentStatus: getRkdAdjustmentStatus(rkd),
         createdAt: rkd.createdAt.toISOString(),
       },
     });
@@ -683,6 +716,7 @@ export async function approveHrRkdRequest(
       message: changed
         ? `RKD request #${id} approved successfully. RKD Incentive is eligible for payroll; finalized periods require manual adjustment.`
         : `RKD request #${id} was already approved.`,
+      alreadyApproved: !changed,
       rkd: {
         id: rkd.id,
         status: rkd.status,
@@ -691,6 +725,8 @@ export async function approveHrRkdRequest(
         isSalaryCredited,
         salaryMonth: rkd.salaryMonth,
         salaryYear: rkd.salaryYear,
+        payrollId: rkd.payrollId,
+        adjustmentStatus: getRkdAdjustmentStatus({ ...rkd, isSalaryCredited }),
         commissionAmount: rkd.commissionAmount,
       },
       notificationDelivery,
@@ -774,5 +810,109 @@ export async function rejectHrRkdRequest(
     }
     console.error('Reject RKD request error:', error);
     res.status(500).json({ success: false, message: 'Failed to reject RKD request.' });
+  }
+}
+
+/**
+ * 9. Adjust RKD Request for Payroll Period (Authorized HR/Admin Only)
+ */
+export async function adjustRkdPayrollPeriod(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    const id = parseRkdRequestId(req.params.id);
+    if (id === null) {
+      res.status(400).json({ success: false, message: 'Invalid request ID.' });
+      return;
+    }
+
+    await ensureRkdTable();
+
+    const { month, year } = req.body;
+    const m = parseInt(String(month), 10);
+    const y = parseInt(String(year), 10);
+
+    if (!m || m < 1 || m > 12 || !y || y < 2000 || y > 2100) {
+      res.status(400).json({
+        success: false,
+        message: 'A valid month (1-12) and year are required for payroll adjustment.',
+      });
+      return;
+    }
+
+    const rkd = await prisma.rkdRequest.findUnique({
+      where: { id },
+      include: { employee: true },
+    });
+
+    if (!rkd) {
+      res.status(404).json({ success: false, message: 'RKD request not found.' });
+      return;
+    }
+
+    if (rkd.status !== 'APPROVED') {
+      res.status(400).json({
+        success: false,
+        message: 'Only approved RKD requests can be adjusted for payroll.',
+      });
+      return;
+    }
+
+    // Check if target payroll period has already been finalized / paid
+    const slip = await prisma.payslip.findUnique({
+      where: {
+        employeeId_month_year: {
+          employeeId: rkd.employeeId,
+          month: m,
+          year: y,
+        },
+      },
+    });
+
+    if (slip && lockedPayslip(slip.status)) {
+      res.status(400).json({
+        success: false,
+        message: `Payroll for ${m}/${y} is already finalized/paid. Please select an open payroll period.`,
+      });
+      return;
+    }
+
+    // Update target payroll period on the RKD request
+    const updated = await prisma.rkdRequest.update({
+      where: { id },
+      data: {
+        salaryMonth: m,
+        salaryYear: y,
+        isSalaryCredited: false,
+      },
+    });
+
+    // If an open draft payslip exists for that period, recalculate and update it
+    if (slip && !lockedPayslip(slip.status)) {
+      try {
+        const calculation = await payrollService.calculatePayroll(rkd.employeeId, m, y);
+        await payrollService.savePayslip(calculation);
+      } catch (err) {
+        console.warn('[RKD] Draft payroll update after adjustment deferred:', err);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `RKD request #${id} allocated to payroll period ${m}/${y} successfully.`,
+      rkd: {
+        id: updated.id,
+        status: updated.status,
+        salaryMonth: updated.salaryMonth,
+        salaryYear: updated.salaryYear,
+        isSalaryCredited: updated.isSalaryCredited,
+        payrollId: updated.payrollId,
+        adjustmentStatus: updated.isSalaryCredited && updated.payrollId ? 'ADJUSTED_IN_PAYROLL' : 'APPROVED',
+      },
+    });
+  } catch (error) {
+    console.error('Adjust RKD payroll period error:', error);
+    res.status(500).json({ success: false, message: 'Failed to adjust RKD payroll period.' });
   }
 }

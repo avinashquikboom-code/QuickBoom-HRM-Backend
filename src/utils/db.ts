@@ -183,6 +183,8 @@ export async function ensureRkdTable(): Promise<void> {
       CREATE INDEX IF NOT EXISTS "RkdRequest_status_idx" ON "RkdRequest"("status");
       CREATE INDEX IF NOT EXISTS "RkdRequest_saleReference_idx" ON "RkdRequest"("saleReference");
       CREATE INDEX IF NOT EXISTS "RkdRequest_createdAt_idx" ON "RkdRequest"("createdAt");
+      CREATE INDEX IF NOT EXISTS "RkdRequest_payrollId_idx" ON "RkdRequest"("payrollId");
+      CREATE INDEX IF NOT EXISTS "RkdRequest_salaryPeriod_idx" ON "RkdRequest"("employeeId", "salaryYear", "salaryMonth");
     `);
     isRkdTableEnsured = true;
     console.log('✅ [ensureRkdTable] Verified RkdRequest table and indices exist.');

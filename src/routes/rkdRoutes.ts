@@ -12,6 +12,7 @@ import {
   getHrRkdDetails,
   approveHrRkdRequest,
   rejectHrRkdRequest,
+  adjustRkdPayrollPeriod,
 } from '../controllers/rkdController';
 
 // ─── Employee RKD Router ───────────────────────────────────────
@@ -38,3 +39,4 @@ hrRkdRouter.get('/:id', getHrRkdDetails);
 hrRkdRouter.post('/:id/approve', approveHrRkdRequest);
 hrRkdRouter.post('/:id/accept', approveHrRkdRequest);
 hrRkdRouter.post('/:id/reject', rejectHrRkdRequest);
+hrRkdRouter.post('/:id/adjust', adjustRkdPayrollPeriod);

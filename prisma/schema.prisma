@@ -1494,4 +1494,6 @@ model RkdRequest {
   @@index([status])
   @@index([saleReference])
   @@index([createdAt])
+  @@index([payrollId])
+  @@index([employeeId, salaryYear, salaryMonth])
 }

@@ -104,8 +104,8 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
    result=await call('/api/hr/rkd/1/approve','POST',{},901);assert.equal(result.status,403);
    failSave=true;result=await call('/api/hr/rkd/1/approve','POST',{},900);assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,false);assert.equal(slips[0].netSalary,15000);
    failSave=false;result=await call('/api/hr/rkd/1/approve','POST',{},900);assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,true);assert.equal(history.length,1);assert.equal(notifications.filter(n=>n.actionType==='RKD_APPROVED').length,1);
-   assert.equal(slips[0].netSalary,16500);assert.equal(requests[0].payrollId,slips[0].id);
-   const salary=await call(`/api/salary/slip?month=${month}&year=${year}`);assert.equal(salary.status,200);assert.equal(salary.body.salarySlip.rkdIncentive,1500);assert.equal(salary.body.salarySlip.netSalary,16500);
+   assert.equal(slips[0].netSalary,15000);assert.equal(requests[0].payrollId,slips[0].id);
+   const salary=await call(`/api/salary/slip?month=${month}&year=${year}`);assert.equal(salary.status,200);assert.equal(salary.body.salarySlip.rkdIncentive,1500);assert.equal(salary.body.salarySlip.netSalary,15000);assert.equal(salary.body.salarySlip.totalTakeHomePay,16700);
    const wallet=await call(`/api/employee/wallet?month=${month}&year=${year}`);assert.equal(wallet.status,200);assert.equal(wallet.body.wallet.rkdEarnings[0].reference,'RKD-1');assert.equal(wallet.body.wallet.availableBalance,123);
    result=await call(`/api/salary/slip?employeeId=999&month=${month}&year=${year}`);assert.equal(result.status,403);
    const count=history.length;result=await call('/api/hr/rkd/1/approve','POST',{},900);assert.equal(result.status,200);assert.equal(history.length,count);assert.equal(commissions.length,1);
@@ -113,7 +113,7 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
    slips[0].status='Approved';
    await call('/api/employee/rkd','POST',{productName:'Late',quantity:1,commissionAmount:600,particulars:'After finalization',requestId:'visibility-2'});
    await call('/api/hr/rkd/2/approve','POST',{},900);
-   const frozen=await call(`/api/salary/slip?month=${month}&year=${year}`);assert.equal(frozen.body.salarySlip.netSalary,16500);assert.equal(frozen.body.salarySlip.rkdIncentive,1500);assert.equal(frozen.body.salarySlip.pendingRkdAdjustments[0].reference,'RKD-2');
+   const frozen=await call(`/api/salary/slip?month=${month}&year=${year}`);assert.equal(frozen.body.salarySlip.netSalary,15000);assert.equal(frozen.body.salarySlip.totalTakeHomePay,16700);assert.equal(frozen.body.salarySlip.rkdIncentive,1500);assert.equal(frozen.body.salarySlip.pendingRkdAdjustments[0].reference,'RKD-2');
    await call('/api/employee/rkd','POST',{productName:'Pending',quantity:1,commissionAmount:700,particulars:'Pending',requestId:'visibility-3'});
    await call('/api/employee/rkd','POST',{productName:'Rejected',quantity:1,commissionAmount:800,particulars:'Rejected',requestId:'visibility-4'});
    result=await call('/api/hr/rkd/4/reject','POST',{reason:'Not eligible'},900);assert.equal(result.status,200);

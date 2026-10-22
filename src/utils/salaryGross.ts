@@ -76,6 +76,7 @@ export type PayrollSettlement = {
   totalEarnings: number;
   totalDeductions: number;
   reimbursements: number;
+  rkdIncentive?: number;
   commissionEarned: number;
   netSalary: number;
   totalTakeHomePay: number;

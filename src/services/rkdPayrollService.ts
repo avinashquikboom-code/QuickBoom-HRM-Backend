@@ -13,7 +13,8 @@ export async function getRkdPayrollEarnings(employeeId: number, month: number, y
       ? {
           OR: [
             { payrollId, isSalaryCredited: true },
-            { salaryMonth: month, salaryYear: year },
+            { salaryMonth: month, salaryYear: year, isSalaryCredited: false },
+            { salaryMonth: month, salaryYear: year, payrollId },
           ],
         }
       : {
@@ -40,7 +41,10 @@ export async function getRkdPayrollEarnings(employeeId: number, month: number, y
       description: 'RKD Incentive',
       status: request.isSalaryCredited && request.payrollId
         ? 'Credited in Payroll'
-        : 'Approved',
+        : 'Approved (Awaiting Payroll Adjustment)',
+      adjustmentStatus: request.isSalaryCredited && request.payrollId
+        ? 'ADJUSTED_IN_PAYROLL'
+        : (request.salaryMonth && request.salaryYear ? 'APPROVED' : 'AWAITING_PAYROLL_ADJUSTMENT'),
       isSalaryCredited: Boolean(request.isSalaryCredited),
       payrollId: request.payrollId,
     })),

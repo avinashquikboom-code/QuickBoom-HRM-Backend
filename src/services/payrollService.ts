@@ -249,7 +249,17 @@ class PayrollService {
         commissionEarned = commAggregate._sum?.commissionAmount || 0;
       }
 
-      const rkd = await getRkdPayrollEarnings(employeeId, month, year);
+      const existingSlip = await prisma.payslip.findUnique({
+        where: {
+          employeeId_month_year: {
+            employeeId,
+            month,
+            year
+          }
+        }
+      });
+
+      const rkd = await getRkdPayrollEarnings(employeeId, month, year, prisma, existingSlip?.id);
 
       // Fetch approved expenses for this month
       const approvedExpenseRecords = await prisma.expense.findMany({
@@ -1424,7 +1434,7 @@ class PayrollService {
           createdAt: new Date()
         }
       });
-        const rkd = await getRkdPayrollEarnings(calculation.employeeId, calculation.month, calculation.year, tx);
+        const rkd = await getRkdPayrollEarnings(calculation.employeeId, calculation.month, calculation.year, tx, existingSlip?.id);
         if (Math.abs(rkd.amount - (calculation.rkdIncentive || 0)) > 0.005) {
           throw new Error('RKD earnings changed during payroll calculation. Recalculate before saving.');
         }
