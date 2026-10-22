@@ -1,6 +1,6 @@
 import { fixedThirtyDaySalary, lockedPayslip, ExtraAttendancePayRule } from '../utils/fixedThirtyDaySalary';
 import { prisma } from '../utils/db';
-import { firebaseNotificationService } from './firebaseNotificationService';
+import { notifyEmployee } from '../utils/hrNotificationHelper';
 import { getIstMonthRange } from '../utils/commissionHelper';
 import { numToWords } from './payrollAutomationService';
 import { computeGrossSalary, mapStructureGrossFields, isCommissionEligibleEmployee, computePayrollSettlement } from '../utils/salaryGross';
@@ -457,7 +457,7 @@ class PayrollService {
           totalAmount += calculation.netSalary;
 
           // Send notification to employee
-          await this.sendPayrollNotification(employeeId, calculation);
+
 
         } catch (error) {
           console.error(`Error processing payroll for employee ${employeeId}:`, error);
@@ -557,7 +557,7 @@ class PayrollService {
 
         const calc = await this.calculatePayroll(emp.id, month, year);
         await this.savePayslip(calc);
-        await this.sendPayrollNotification(emp.id, calc);
+
         processed++;
         totalAmount += calc.netSalary;
       }
@@ -1404,6 +1404,7 @@ class PayrollService {
           createdAt: new Date()
         }
       });
+      await this.notifyPublishedPayslip(calculation.employeeId, calculation.month, calculation.year);
     } catch (error) {
       console.error('Save payslip error:', error);
       throw error;
@@ -1908,40 +1909,20 @@ class PayrollService {
   }
 
 
-  private async sendPayrollNotification(employeeId: number, calculation: PayrollCalculation): Promise<void> {
-    try {
-      const employee = await prisma.employee.findUnique({
-        where: { id: employeeId },
-        include: { user: true }
-      });
-
-      if (employee && employee.user) {
-        await prisma.notification.create({
-          data: {
-            employeeId,
-            userId: employee.user.id,
-            title: 'Payslip Generated',
-            body: `Your payslip for ${calculation.month}/${calculation.year} has been generated. Net salary: ₹${calculation.netSalary}`,
-            category: 'PAYROLL',
-            actionId: `${employeeId}-${calculation.month}-${calculation.year}`,
-            actionType: 'PAYSLIP_GENERATED'
-          }
-        });
-
-        // Send FCM push notification (outside app)
-        firebaseNotificationService.sendAppNotification({
-          userId: employee.user.id,
-          title: 'Salary Slip Generated',
-          body: `Your salary slip for ${calculation.month}/${calculation.year} is now available. Net pay: ₹${calculation.netSalary}`,
-          category: 'payroll',
-          screen: 'salary_slip',
-          type: 'salary',
-          actionId: `${employeeId}-${calculation.month}-${calculation.year}`,
-        }).catch(err => console.error('Payslip FCM push error:', err));
-      }
-    } catch (error) {
-      console.error('Send payroll notification error:', error);
-    }
+  async notifyPublishedPayslip(employeeId: number, month: number, year: number): Promise<void> {
+    // Approved is the existing workflow's employee-visible published state.
+    const slip = await prisma.payslip.findUnique({ where: { employeeId_month_year: {
+      employeeId, month, year,
+    } } });
+    if (!slip || !['APPROVED', 'PAID'].includes(slip.status.toUpperCase())) return;
+    await notifyEmployee({
+      employeeId, title: 'Salary Slip Available',
+      message: `Your salary slip for ${slip.month}/${slip.year} is now available.`,
+      category: 'PAYROLL', actionType: 'PAYSLIP_GENERATED',
+      actionId: `${employeeId}-${slip.month}-${slip.year}`,
+      deduplicate: true,
+      extraData: { payslipId: String(slip.id), month: String(slip.month), year: String(slip.year) },
+    });
   }
 
   async getDateWiseSalaryBreakdown(employeeId: number, month: number, year: number) {

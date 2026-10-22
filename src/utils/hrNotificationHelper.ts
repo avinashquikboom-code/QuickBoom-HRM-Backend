@@ -30,6 +30,7 @@ export interface SendEmployeeNotificationParams {
   screen?: string;
   clickRoute?: string;
   extraData?: Record<string, string>;
+  deduplicate?: boolean;
 }
 
 /**
@@ -132,19 +133,32 @@ export async function notifyEmployee(params: SendEmployeeNotificationParams): Pr
     }
 
     // 1. In-App Notification (Database) - strictly tied to this employee's userId
-    const notification = await prisma.notification.create({
-      data: {
-        userId: targetUserId,
-        employeeId: targetEmployeeId || null,
-        title,
-        body: message,
-        category: category.toUpperCase(),
-        actionType: actionType || 'GENERAL',
-        actionId: actionId ? String(actionId) : null,
-        isRead: false,
-        deliveryStatus: 'PENDING',
-      },
-    });
+    const notificationData = {
+      userId: targetUserId,
+      employeeId: targetEmployeeId || null,
+      title,
+      body: message,
+      category: category.toUpperCase(),
+      actionType: actionType || 'GENERAL',
+      actionId: actionId ? String(actionId) : null,
+      isRead: false,
+      deliveryStatus: 'PENDING',
+    };
+    // A transaction-scoped lock serializes this event across backend processes.
+    // Push runs after commit; retries never resend an uncertain provider outcome.
+    const notification = params.deduplicate && actionId
+      ? await prisma.$transaction(async tx => {
+          const key = `${targetUserId}:${category}:${actionType}:${actionId}`;
+          await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+          const existing = await tx.notification.findFirst({ where: {
+            userId: targetUserId!, category: category.toUpperCase(),
+            actionType: actionType || 'GENERAL', actionId: String(actionId),
+          } });
+          if (existing) return null;
+          return tx.notification.create({ data: notificationData });
+        })
+      : await prisma.notification.create({ data: notificationData });
+    if (!notification) return;
 
     const defaultRoute = getEmployeeTargetRoute(category, actionType);
     const targetScreen = screen || defaultRoute;
@@ -260,6 +274,8 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
   try {
     const candidateRoles: Role[] = [Role.SUPER_ADMIN, Role.ADMIN, Role.HR, Role.PLATFORM_ADMIN];
 
+    if (actionType?.startsWith('ATTENDANCE_CORRECTION')) candidateRoles.push(Role.STORE_MANAGER);
+
     const hrUsers = await prisma.user.findMany({
       where: {
         role: { in: candidateRoles },
@@ -330,6 +346,7 @@ export async function notifyHRAndAdmins(params: SendHRNotificationParams): Promi
         category,
         actionType: actionType || 'GENERAL',
         actionId,
+        deduplicate: actionType?.startsWith('ATTENDANCE_CORRECTION') || actionType === 'SALARY_APPROVED',
         screen: targetRoute,
         clickRoute: targetRoute,
       })));

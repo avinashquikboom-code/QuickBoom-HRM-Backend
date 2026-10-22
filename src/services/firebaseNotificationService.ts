@@ -46,8 +46,7 @@ export class FirebaseNotificationService {
         ttl: options?.ttl ? options.ttl * 1000 : 3600000,
         notification: {
           sound: 'default',
-          channelId: data?.category?.toUpperCase() === 'LEAVE'
-            ? 'leave_notifications' : 'general_notifications',
+          channelId: ({ LEAVE: 'leave_notifications', ATTENDANCE: 'attendance_notifications', PAYROLL: 'payroll_notifications' } as Record<string, string>)[data?.category?.toUpperCase() || ''] || 'general_notifications',
           clickAction: data?.click_action && !data.click_action.startsWith('/') ? data.click_action : 'FLUTTER_NOTIFICATION_CLICK',
           color: '#4CAF50',
           ...(imageUrl ? { imageUrl } : {}),

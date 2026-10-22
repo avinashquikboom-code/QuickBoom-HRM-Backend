@@ -73,18 +73,6 @@ export const processPayrollRun = async (
       runName
     );
 
-    // 1. Notify each affected employee (strictly isolated to their own account)
-    for (const empId of employeeIds) {
-      notifyEmployee({
-        employeeId: parseInt(empId),
-        title: 'Salary Slip Available',
-        message: `Your salary slip for ${month}/${year} is now available.`,
-        category: 'PAYROLL',
-        actionType: 'SALARY_GENERATED',
-        actionId: `${empId}-${month}-${year}`,
-      }).catch(() => {});
-    }
-
     // 2. Notify Authorized HR/Admin Team
     sendHRNotification({
       title: 'Salary Generated',
@@ -428,31 +416,39 @@ export const approvePayslip = async (
 
     const payslipIdStr = Array.isArray(payslipId) ? payslipId[0] : payslipId;
 
-    const payslip = await prisma.payslip.update({
-      where: { id: parseInt(payslipIdStr) },
+    const transition = await prisma.payslip.updateMany({
+      where: { id: parseInt(payslipIdStr), status: { notIn: ['Paid', 'PAID', 'paid'] } },
       data: {
         status: 'Approved',
         updatedAt: new Date()
       }
     });
+    const payslip = await prisma.payslip.findUnique({ where: { id: parseInt(payslipIdStr) } });
+    if (!payslip || !transition.count) {
+      res.status(payslip ? 409 : 404).json({ success: false, message: payslip ? 'Paid payslips cannot be changed.' : 'Payslip not found.' });
+      return;
+    }
+    await payrollService.notifyPublishedPayslip(payslip.employeeId, payslip.month, payslip.year);
+
 
     // 1. Notify Employee
-    notifyEmployee({
+    await notifyEmployee({
       employeeId: payslip.employeeId,
       title: 'Salary Approved',
       message: `Your salary for ${payslip.month}/${payslip.year} has been approved.`,
       category: 'PAYROLL',
       actionType: 'SALARY_APPROVED',
-      actionId: String(payslip.id),
+      deduplicate: true,
+      actionId: `${payslip.employeeId}-${payslip.month}-${payslip.year}`,
     }).catch(() => {});
 
     // 2. Notify Authorized HR/Admin Team
-    sendHRNotification({
+    await sendHRNotification({
       title: 'Salary Approved',
       message: `Payslip #${payslip.id} for employee #${payslip.employeeId} (${payslip.month}/${payslip.year}) has been approved.`,
       category: 'PAYROLL',
       actionType: 'SALARY_APPROVED',
-      actionId: String(payslip.id),
+      actionId: `${payslip.employeeId}-${payslip.month}-${payslip.year}`,
       employeeId: payslip.employeeId,
       requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Payslip approve notice error:', err));
@@ -491,13 +487,19 @@ export const rejectPayslip = async (
 
     const payslipIdStr = Array.isArray(payslipId) ? payslipId[0] : payslipId;
 
-    const payslip = await prisma.payslip.update({
-      where: { id: parseInt(payslipIdStr) },
+    const transition = await prisma.payslip.updateMany({
+      where: { id: parseInt(payslipIdStr), status: { notIn: ['Paid', 'PAID', 'paid'] } },
       data: {
         status: 'Rejected',
         updatedAt: new Date()
       }
     });
+    const payslip = await prisma.payslip.findUnique({ where: { id: parseInt(payslipIdStr) } });
+    if (!payslip || !transition.count) {
+      res.status(payslip ? 409 : 404).json({ success: false, message: payslip ? 'Paid payslips cannot be changed.' : 'Payslip not found.' });
+      return;
+    }
+
 
     res.json({
       success: true,
@@ -797,7 +799,8 @@ export const approveAdminPayslip = async (
       where: {
         employeeId: parseInt(employeeId),
         month: parseInt(month),
-        year: parseInt(year)
+        year: parseInt(year),
+        status: { notIn: ['Paid', 'PAID', 'paid'] }
       },
       data: {
         status: 'Approved',
@@ -814,6 +817,8 @@ export const approveAdminPayslip = async (
       return;
     }
 
+    await payrollService.notifyPublishedPayslip(parseInt(employeeId), parseInt(month), parseInt(year));
+
     // 1. Notify Affected Employee
     notifyEmployee({
       employeeId: parseInt(employeeId),
@@ -821,6 +826,7 @@ export const approveAdminPayslip = async (
       message: `Your salary for ${month}/${year} has been approved.`,
       category: 'PAYROLL',
       actionType: 'SALARY_APPROVED',
+      deduplicate: true,
       actionId: `${employeeId}-${month}-${year}`,
     }).catch(() => {});
 
@@ -849,10 +855,10 @@ export const approveAdminPayslip = async (
   }
 };
 
-async function applyAdvanceRecoveryForPaidPayslip(employeeId: number, advanceDeduction: number): Promise<void> {
+async function applyAdvanceRecoveryForPaidPayslip(tx: any, employeeId: number, advanceDeduction: number): Promise<void> {
   if (!advanceDeduction || advanceDeduction <= 0) return;
   let remainingToRecover = advanceDeduction;
-  const advances = await prisma.salaryAdvance.findMany({
+  const advances = await tx.salaryAdvance.findMany({
     where: {
       wallet: { employeeId },
       status: 'APPROVED',
@@ -867,7 +873,7 @@ async function applyAdvanceRecoveryForPaidPayslip(employeeId: number, advanceDed
     const newRemaining = Math.max(0, Math.round((adv.remainingAmount - rec) * 100) / 100);
     const newPaid = Math.round(((adv.paidAmount || 0) + rec) * 100) / 100;
     const newPaidEmis = (adv.paidEmis || 0) + 1;
-    await prisma.salaryAdvance.update({
+    await tx.salaryAdvance.update({
       where: { id: adv.id },
       data: {
         remainingAmount: newRemaining,
@@ -876,6 +882,31 @@ async function applyAdvanceRecoveryForPaidPayslip(employeeId: number, advanceDed
       }
     });
   }
+}
+
+// The successful conditional update owns both recovery and the notification event.
+async function markPayslipPaid(p: { id: number; employeeId: number; month: number; year: number; advanceDeduction: number }) {
+  const changed = await prisma.$transaction(async tx => {
+    // Serialize recovery for different periods of the same employee too.
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(${p.employeeId})`;
+    const claim = await tx.payslip.updateMany({
+      where: { id: p.id, status: { in: ['Approved', 'APPROVED'] } },
+      data: { status: 'Paid', updatedAt: new Date() },
+    });
+    if (!claim.count) return false;
+    await applyAdvanceRecoveryForPaidPayslip(tx, p.employeeId, p.advanceDeduction);
+    return true;
+  });
+  if (!changed) return false;
+  // Disbursement and Paid are the same transition in this workflow.
+  await notifyEmployee({
+    employeeId: p.employeeId, title: 'Salary Paid',
+    message: `Your salary for ${p.month}/${p.year} has been marked as paid.`,
+    category: 'PAYROLL', actionType: 'SALARY_PAID',
+    actionId: `${p.employeeId}-${p.month}-${p.year}`, deduplicate: true,
+    extraData: { payslipId: String(p.id), month: String(p.month), year: String(p.year), status: 'PAID' },
+  });
+  return true;
 }
 
 export const bulkDisbursePayroll = async (
@@ -895,47 +926,24 @@ export const bulkDisbursePayroll = async (
       }
     });
 
-    // Update status to Paid
-    await prisma.payslip.updateMany({
-      where: {
-        month: currentMonth,
-        year: currentYear,
-        status: { in: ['Approved', 'APPROVED'] }
-      },
-      data: {
-        status: 'Paid',
-        updatedAt: new Date()
-      }
-    });
-
-    // 1. Process advance recovery and notify Each Affected Employee
-    for (const p of approvedPayslips) {
-      if (p.advanceDeduction && p.advanceDeduction > 0) {
-        await applyAdvanceRecoveryForPaidPayslip(p.employeeId, p.advanceDeduction);
-      }
-      notifyEmployee({
-        employeeId: p.employeeId,
+    let paidCount = 0;
+    for (const p of approvedPayslips) if (await markPayslipPaid(p)) paidCount++;
+    if (paidCount > 0) {
+      // 2. Notify Authorized HR/Admin Team
+      await sendHRNotification({
         title: 'Salary Paid',
-        message: `Your salary for ${p.month}/${p.year} has been marked as paid.`,
+        message: `Salary disbursement completed for ${paidCount} employee(s) for ${currentMonth}/${currentYear}.`,
         category: 'PAYROLL',
         actionType: 'SALARY_PAID',
-        actionId: String(p.id),
-      }).catch(() => {});
-    }
-
-    // 2. Notify Authorized HR/Admin Team
-    sendHRNotification({
-      title: 'Salary Paid',
-      message: `Salary disbursement completed for ${approvedPayslips.length} employee(s) for ${currentMonth}/${currentYear}.`,
-      category: 'PAYROLL',
-      actionType: 'SALARY_PAID',
-      actionId: `${currentMonth}-${currentYear}`,
-      requiredModuleId: 'pa-payroll',
+        actionId: `${currentMonth}-${currentYear}`,
+        requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Bulk disburse notice error:', err));
+
+    }
 
     res.json({
       success: true,
-      message: `Disbursement completed successfully! Processed ${approvedPayslips.length} payslips.`
+      message: `Disbursement completed successfully! Processed ${paidCount} payslips.`
     });
   } catch (error) {
     console.error('Bulk disburse payroll error:', error);
@@ -970,51 +978,30 @@ export const disburseAdminPayslip = async (
     }
 
     const targetPayslips = await prisma.payslip.findMany({ where: whereClause });
-    for (const p of targetPayslips) {
-      if (p.advanceDeduction && p.advanceDeduction > 0) {
-        await applyAdvanceRecoveryForPaidPayslip(p.employeeId, p.advanceDeduction);
-      }
-    }
-
-    const updateRes = await prisma.payslip.updateMany({
-      where: whereClause,
-      data: {
-        status: 'Paid',
-        updatedAt: new Date()
-      }
-    });
-
-    if (updateRes.count === 0) {
-      res.status(404).json({
-        success: false,
-        message: 'No matching payslip found to disburse.',
-        errorCode: 'PAYSLIP_NOT_FOUND'
-      });
+    if (targetPayslips.length === 0) {
+      res.status(404).json({ success: false, message: 'No matching payslip found.', errorCode: 'PAYSLIP_NOT_FOUND' });
       return;
     }
-
-    // 1. Notify Affected Employee
-    if (employeeId) {
-      notifyEmployee({
-        employeeId: parseInt(employeeId),
+    if (targetPayslips.some(p => !['APPROVED', 'PAID'].includes(p.status.toUpperCase()))) {
+      res.status(409).json({ success: false, message: 'Payslip must be approved before disbursement.' });
+      return;
+    }
+    const paidPayslips = [];
+    for (const p of targetPayslips) if (await markPayslipPaid(p)) paidPayslips.push(p);
+    // Use persisted recipient/period, even when only payslipId was supplied.
+    for (const p of paidPayslips) {
+      // 2. Notify Authorized HR/Admin Team
+      await sendHRNotification({
         title: 'Salary Paid',
-        message: `Your salary for ${month || ''}/${year || ''} has been marked as paid.`,
+        message: `Salary marked as Paid for employee #${p.employeeId} (${p.month}/${p.year}).`,
         category: 'PAYROLL',
         actionType: 'SALARY_PAID',
-        actionId: String(payslipId || employeeId),
-      }).catch(() => {});
-    }
-
-    // 2. Notify Authorized HR/Admin Team
-    sendHRNotification({
-      title: 'Salary Paid',
-      message: `Salary marked as Paid for employee #${employeeId || payslipId} (${month || ''}/${year || ''}).`,
-      category: 'PAYROLL',
-      actionType: 'SALARY_PAID',
-      actionId: String(payslipId || employeeId),
-      employeeId: employeeId ? parseInt(employeeId) : undefined,
-      requiredModuleId: 'pa-payroll',
+        actionId: `${p.employeeId}-${p.month}-${p.year}`,
+        employeeId: p.employeeId,
+        requiredModuleId: 'pa-payroll',
     }).catch(err => console.error('[HR Notification] Disburse notice error:', err));
+
+    }
 
     res.json({
       success: true,

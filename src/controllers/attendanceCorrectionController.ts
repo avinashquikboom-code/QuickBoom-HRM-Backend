@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
-import { firebaseNotificationService } from '../services/firebaseNotificationService';
 import { getEffectiveUserPermissions } from '../utils/permissionHelper';
 import payrollService, { payslipComponentData } from '../services/payrollService';
 
@@ -9,6 +8,18 @@ import payrollService, { payslipComponentData } from '../services/payrollService
 function getSingleParam(param: string | string[] | undefined): string | undefined {
   if (!param) return undefined;
   return Array.isArray(param) ? param[0] : param;
+}
+
+// Business identifiers take precedence over legacy numeric primary/user IDs.
+async function correctionEmployee(reference: string) {
+  const byCode = await prisma.employee.findUnique({ where: { employeeCode: reference } });
+  if (byCode) return byCode;
+  const byEmployeeID = await prisma.employee.findFirst({ where: { employeeID: reference } });
+  if (byEmployeeID) return byEmployeeID;
+  const id = Number(reference);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  return await prisma.employee.findUnique({ where: { id } }) ||
+    await prisma.employee.findUnique({ where: { userId: id } });
 }
 
 // Helper: Recalculate Payslip if affected by attendance change
@@ -76,6 +87,8 @@ async function notifyEmployee(
       message,
       category: 'ATTENDANCE',
       actionType: type,
+      actionId: extraData?.correctionId || extraData?.requestId,
+      deduplicate: true,
       extraData,
     });
   } catch (error) {
@@ -177,17 +190,26 @@ export const applyCorrectionRequest = async (req: AuthenticatedRequest, res: Res
     }
 
     // Create correction request row
-    const requestRow = await prisma.attendanceCorrectionRequest.create({
-      data: {
-        employeeId: employee.employeeCode,
-        attendanceDate: targetDate,
-        currentStatus,
-        requestedStatus,
-        reason,
-        supportingDoc: supportingDoc || null,
-        status: 'PENDING',
-      },
+    const requestRow = await prisma.$transaction(async tx => {
+      const key = `attendance-correction:${employee.id}:${targetDate.toISOString().slice(0, 10)}`;
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const pending = await tx.attendanceCorrectionRequest.findFirst({
+        where: { employeeId: employee.employeeCode, attendanceDate: { gte: dateStart, lte: dateEnd }, status: 'PENDING' },
+      });
+      if (pending) return null;
+      return tx.attendanceCorrectionRequest.create({
+        data: {
+          employeeId: employee.employeeCode,
+          attendanceDate: targetDate,
+          currentStatus,
+          requestedStatus,
+          reason,
+          supportingDoc: supportingDoc || null,
+          status: 'PENDING',
+        },
+      });
     });
+    if (!requestRow) return res.status(400).json({ error: 'A pending correction request already exists for this date.' });
 
     const empName = `${employee.firstName} ${employee.lastName}`.trim();
     const dateFormatted = targetDate.toISOString().split('T')[0];
@@ -300,17 +322,26 @@ export const resubmitCorrectionRequest = async (req: AuthenticatedRequest, res: 
     }
 
     // Step 6: Create NEW correction request
-    const newCorrection = await prisma.attendanceCorrectionRequest.create({
-      data: {
-        employeeId: original.employeeId,
-        attendanceDate: original.attendanceDate,
-        currentStatus: original.currentStatus,
-        requestedStatus,
-        reason: newReason.trim(),
-        supportingDoc: supportingDoc || original.supportingDoc,
-        status: 'PENDING',
-      }
+    const newCorrection = await prisma.$transaction(async tx => {
+      const key = `attendance-correction:${employee.id}:${original.attendanceDate.toISOString().slice(0, 10)}`;
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const pending = await tx.attendanceCorrectionRequest.findFirst({
+        where: { employeeId: original.employeeId, attendanceDate: { gte: dateStart, lte: dateEnd }, status: 'PENDING' },
+      });
+      if (pending) return null;
+      return tx.attendanceCorrectionRequest.create({
+        data: {
+          employeeId: original.employeeId,
+          attendanceDate: original.attendanceDate,
+          currentStatus: original.currentStatus,
+          requestedStatus,
+          reason: newReason.trim(),
+          supportingDoc: supportingDoc || original.supportingDoc,
+          status: 'PENDING',
+        }
+      });
     });
+    if (!newCorrection) return res.status(400).json({ error: 'A pending correction request already exists for this date.' });
 
     console.log(`[AUDIT LOG] Employee ${userId} resubmitted correction for ${original.attendanceDate}: new id=${newCorrection.id}, old id=${id}`);
     
@@ -553,21 +584,21 @@ export async function executeCorrectionApproval(
   reviewNote?: string,
   approvalEffectDate?: Date | string
 ) {
-  const isNum = !isNaN(Number(request.employeeId));
-  const numId = isNum ? Number(request.employeeId) : undefined;
-  const employee = await prisma.employee.findFirst({
-    where: {
-      OR: [
-        { employeeCode: request.employeeId },
-        ...(numId !== undefined ? [{ id: numId }, { userId: numId }] : []),
-      ],
-    },
-  });
+  const employee = await correctionEmployee(request.employeeId);
 
   const rawDate = request.attendanceDate instanceof Date ? request.attendanceDate : new Date(request.attendanceDate);
   const dateFormatted = rawDate.toISOString().split('T')[0];
 
   const updated = await prisma.$transaction(async (tx) => {
+    const claim = await tx.attendanceCorrectionRequest.updateMany({
+      where: { id: request.id, status: 'PENDING' },
+      data: {
+        status: 'APPROVED', reviewedBy: reviewerId, reviewedAt: new Date(),
+        reviewNote: reviewNote || null,
+        approvalEffectDate: approvalEffectDate ? new Date(approvalEffectDate) : new Date(),
+      },
+    });
+    if (!claim.count) return null;
     if (employee) {
       const existingAttendance = await tx.attendance.findFirst({
         where: {
@@ -606,6 +637,8 @@ export async function executeCorrectionApproval(
     });
   });
 
+  if (!updated) return prisma.attendanceCorrectionRequest.findUnique({ where: { id: request.id } });
+
   if (employee) {
     // Recalculate affected salary slip if any
     await recalculatePayslipIfPresent(employee.id, rawDate);
@@ -614,7 +647,7 @@ export async function executeCorrectionApproval(
     await notifyEmployee(
       employee.id,
       'Attendance Correction Approved',
-      `✅ Attendance corrected for ${dateFormatted}. Salary updated accordingly.`,
+      `Attendance correction for ${dateFormatted} has been approved.`,
       'ATTENDANCE_CORRECTION_APPROVED',
       { correctionId: String(request.id) }
     );
@@ -652,17 +685,13 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
       where: { id },
     });
     if (!request) return res.status(404).json({ error: 'Correction request not found' });
+    if (request.status !== 'PENDING') {
+      return res.status(request.status === status ? 200 : 409).json({
+        success: request.status === status, request, message: 'Request already reviewed.',
+      });
+    }
 
-    const isNum = !isNaN(Number(request.employeeId));
-    const numId = isNum ? Number(request.employeeId) : undefined;
-    const employee = await prisma.employee.findFirst({
-      where: {
-        OR: [
-          { employeeCode: request.employeeId },
-          ...(numId !== undefined ? [{ id: numId }, { userId: numId }] : []),
-        ],
-      },
-    });
+    const employee = await correctionEmployee(request.employeeId);
 
     const dateFormatted = request.attendanceDate.toISOString().split('T')[0];
 
@@ -674,12 +703,23 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
         approvalEffectDate
       );
 
+      if (updated?.status !== 'APPROVED') return res.status(409).json({ success: false, request: updated, error: 'Request already reviewed.' });
       return res.json({
         success: true,
         message: `Correction request approved successfully`,
         request: updated,
       });
     } else if (status === 'REJECTED') {
+      const claim = await prisma.attendanceCorrectionRequest.updateMany({
+        where: { id, status: 'PENDING' },
+        data: {
+          status: 'REJECTED', reviewedBy: reviewerId, reviewedAt: new Date(),
+          reviewNote: reviewNote || null,
+          approvalEffectDate: approvalEffectDate ? new Date(approvalEffectDate) : new Date(),
+        },
+      });
+      const updated = await prisma.attendanceCorrectionRequest.findUnique({ where: { id } });
+      if (!claim.count) return res.status(updated?.status === status ? 200 : 409).json({ success: updated?.status === status, request: updated, message: 'Request already reviewed.' });
       if (employee) {
         const noteText = reviewNote ? `. Reason: ${reviewNote}` : '';
         await notifyEmployee(
@@ -700,16 +740,6 @@ export const reviewHRAttendanceCorrection = async (req: AuthenticatedRequest, re
         });
       }
 
-      const updated = await prisma.attendanceCorrectionRequest.update({
-        where: { id },
-        data: {
-          status,
-          reviewedBy: reviewerId,
-          reviewedAt: new Date(),
-          reviewNote: reviewNote || null,
-          approvalEffectDate: approvalEffectDate ? new Date(approvalEffectDate) : new Date(),
-        },
-      });
 
       console.log(`🔒 [AUDIT LOG] HR ${reviewerId} reviewed AttendanceCorrectionRequest ${id}: status=${status}`);
 
@@ -812,7 +842,8 @@ export const bulkApproveHRAttendanceCorrections = async (req: AuthenticatedReque
       }
 
       try {
-        await executeCorrectionApproval(request, reviewerId, reviewNote);
+        const updated = await executeCorrectionApproval(request, reviewerId, reviewNote);
+        if (updated?.status !== 'APPROVED') throw new Error('Request already reviewed');
         results.push({
           id,
           status: 'APPROVED',
@@ -876,18 +907,16 @@ export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedReques
     let processedCount = 0;
 
     for (const request of requests) {
-      const isNum = !isNaN(Number(request.employeeId));
-      const numId = isNum ? Number(request.employeeId) : undefined;
-      const employee = await prisma.employee.findFirst({
-        where: {
-          OR: [
-            { employeeCode: request.employeeId },
-            ...(numId !== undefined ? [{ id: numId }, { userId: numId }] : []),
-          ],
-        },
-      });
+      const employee = await correctionEmployee(request.employeeId);
 
       const dateFormatted = request.attendanceDate.toISOString().split('T')[0];
+
+      const claim = await prisma.attendanceCorrectionRequest.updateMany({
+        where: { id: request.id, status: 'PENDING' },
+        data: { status: 'REJECTED', reviewedBy: reviewerId, reviewedAt: new Date(),
+          reviewNote: reviewNote || null, approvalEffectDate: new Date() },
+      });
+      if (!claim.count) continue;
 
       if (employee) {
         const noteText = reviewNote ? `. Reason: ${reviewNote}` : '';
@@ -900,16 +929,6 @@ export const bulkReviewHRAttendanceCorrections = async (req: AuthenticatedReques
         );
       }
 
-      await prisma.attendanceCorrectionRequest.update({
-        where: { id: request.id },
-        data: {
-          status: 'REJECTED',
-          reviewedBy: reviewerId,
-          reviewedAt: new Date(),
-          reviewNote: reviewNote || null,
-          approvalEffectDate: new Date(),
-        },
-      });
 
       processedCount++;
     }
