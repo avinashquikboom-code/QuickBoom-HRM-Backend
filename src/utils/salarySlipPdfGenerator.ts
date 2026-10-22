@@ -312,7 +312,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
       reimbTableBody.push([
         {
           text: [
-            { text: 'RKD Incentive', bold: true },
+            { text: 'RKD Claim', bold: true },
             { text: ` (${req.reference || `RKD-${req.id}`})` },
             { text: ` — ${statusText}`, italics: true, color: '#047857', fontSize: 7.5 },
           ],
@@ -338,7 +338,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     reimbTableBody.push([
       {
         text: [
-          { text: 'RKD Incentive', bold: true },
+          { text: 'RKD Claim', bold: true },
           { text: ` (${refText})` },
           { text: ` — ${statusText}`, italics: true, color: '#047857', fontSize: 7.5 },
         ],
@@ -701,7 +701,7 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
       },
 
       ...(input.rkdReferences?.length ? [{
-        text: `RKD Incentive references: ${input.rkdReferences.join(', ')}`,
+        text: `RKD Claim references: ${input.rkdReferences.join(', ')}`,
         fontSize: 7.5, color: TEXT_MUTED, margin: [0, 0, 0, 6],
       }] : []),
 

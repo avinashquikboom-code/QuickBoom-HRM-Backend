@@ -71,7 +71,7 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
  await employeeController.fetchEmployeeWallet({user:{id:100},query:{month,year}},walletResponse);
  assert.equal(walletResponse.body.success,true);assert.equal(walletResponse.body.wallet.availableBalance,123);assert.equal(walletResponse.body.wallet.netSalary,15000);assert.equal(walletResponse.body.wallet.totalTakeHomePay,16700);assert.equal(walletResponse.body.wallet.rkdEarnings[0].reference,'RKD-1');
  const definition=buildSalarySlipDocDefinition({employeeName:'Test Sales',employeeCode:'HK-SALES-01',month,year,paymentStatus:'PENDING',earnings:{baseSalary:15000},rkdIncentive:view.rkdIncentive,rkdReferences:view.rkdReferences,rkdRequests:view.rkdRequests,netSalary:view.netSalary,totalTakeHomePay:view.totalTakeHomePay,commissionEarned:200,isCommissionEligible:true});
- assert(JSON.stringify(definition).includes('RKD Incentive'));assert(JSON.stringify(definition).includes('RKD-1'));
+ assert(JSON.stringify(definition).includes('RKD Claim'));assert(JSON.stringify(definition).includes('RKD-1'));
  const before=JSON.stringify(slips[0]);await payroll.savePayslip(calc);assert.equal(JSON.stringify(slips[0]),before);
  await workflow.createRkdRequestOnce({employeeId:10,productName:'Later',quantity:1,commissionAmount:600,particulars:'Late approved earning'},'submission-2');
  await workflow.transitionRkdReview(2,'APPROVED',900,'HR');assert.equal(requests[1].salaryMonth,null);assert.equal((await getRkdWalletEarnings(10)).find(r=>r.requestId===2).status,'AWAITING_PAYROLL_ADJUSTMENT');
@@ -164,7 +164,7 @@ payroll.calculateOvertime=()=>0;payroll.calculateBonus=async()=>0;payroll.applyD
   }finally{await new Promise(resolve=>server.close(resolve));}
   const pdfInput={...admin,earnings:admin.earnings,deductionsObj:admin.deductionsObj};
   const definition=buildSalarySlipDocDefinition(pdfInput);
-  assert.equal((JSON.stringify(definition).match(/"text":"RKD Incentive"/g)||[]).length,2,'Each request appears once in reimbursements, never in gross earnings');
+  assert.equal((JSON.stringify(definition).match(/"text":"RKD Claim"/g)||[]).length,2,'Each request appears once in reimbursements, never in gross earnings');
   const pdf=require('../src/utils/salarySlipPdfGenerator').generateSalarySlipPdfStream(pdfInput);
   const bytes=await new Promise((resolve,reject)=>{const chunks=[];pdf.on('data',chunk=>chunks.push(chunk));pdf.on('end',()=>resolve(Buffer.concat(chunks)));pdf.on('error',reject);pdf.end();});
   assert(bytes.subarray(0,4).equals(Buffer.from('%PDF')));
