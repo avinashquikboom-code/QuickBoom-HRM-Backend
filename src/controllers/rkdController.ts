@@ -1,3 +1,5 @@
+import payrollService from '../services/payrollService';
+import { lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma, ensureRkdTable } from '../utils/db';
@@ -8,6 +10,15 @@ import {
   transitionRkdReview,
   notifyRkdReviewed,
 } from '../services/rkdNotificationWorkflow';
+
+// RKD routes identify exactly one positive Prisma Int ID; arrays are ambiguous.
+function parseRkdRequestId(value: string | string[] | undefined): number | null {
+  if (Array.isArray(value) || typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 && id <= 2147483647 ? id : null;
+}
 
 // Helper to resolve employee from authenticated request
 async function getEmployeeFromReq(req: AuthenticatedRequest) {
@@ -271,17 +282,17 @@ export async function getEmployeeRkdDetails(
   res: Response
 ): Promise<void> {
   try {
+    const id = parseRkdRequestId(req.params.id);
+    if (id === null) {
+      res.status(400).json({ success: false, message: 'Invalid request ID.' });
+      return;
+    }
+
     await ensureRkdTable();
 
     const emp = await getEmployeeFromReq(req);
     if (!emp) {
       res.status(404).json({ success: false, message: 'Employee profile not found.' });
-      return;
-    }
-
-    const id = parseInt(String(req.params.id), 10);
-    if (isNaN(id)) {
-      res.status(400).json({ success: false, message: 'Invalid request ID.' });
       return;
     }
 
@@ -542,13 +553,13 @@ export async function getHrRkdDetails(
   res: Response
 ): Promise<void> {
   try {
-    await ensureRkdTable();
-
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    const id = parseRkdRequestId(req.params.id);
+    if (id === null) {
       res.status(400).json({ success: false, message: 'Invalid request ID.' });
       return;
     }
+
+    await ensureRkdTable();
 
     const rkd = await prisma.rkdRequest.findUnique({
       where: { id },
@@ -615,13 +626,13 @@ export async function approveHrRkdRequest(
   res: Response
 ): Promise<void> {
   try {
-    await ensureRkdTable();
-
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    const id = parseRkdRequestId(req.params.id);
+    if (id === null) {
       res.status(400).json({ success: false, message: 'Invalid request ID.' });
       return;
     }
+
+    await ensureRkdTable();
 
     const reviewerUserId = req.user?.id || 1;
     const reviewerProfile = await prisma.profile.findFirst({
@@ -639,12 +650,24 @@ export async function approveHrRkdRequest(
     let notificationDelivery;
     if (changed) {
       notificationDelivery = await notifyRkdReviewed(rkd as any);
+      if (rkd.salaryMonth && rkd.salaryYear) {
+        try {
+          const slip = await prisma.payslip.findUnique({ where: { employeeId_month_year: {
+            employeeId: rkd.employeeId, month: rkd.salaryMonth, year: rkd.salaryYear,
+          } } });
+          if (slip && !lockedPayslip(slip.status)) {
+            const calculation = await payrollService.calculatePayroll(rkd.employeeId, rkd.salaryMonth, rkd.salaryYear);
+            await payrollService.savePayslip(calculation);
+          }
+        } catch { console.warn('[RKD] Approved earning awaits salary-slip refresh', { rkdId: rkd.id }); }
+      }
+
     }
 
     res.json({
       success: true,
       message: changed
-        ? `RKD request #${id} approved successfully! Approved commission (₹${rkd.commissionAmount}) added to payroll ledger.`
+        ? `RKD request #${id} approved successfully. RKD Incentive is eligible for payroll; finalized periods require manual adjustment.`
         : `RKD request #${id} was already approved.`,
       rkd: {
         id: rkd.id,
@@ -674,13 +697,14 @@ export async function rejectHrRkdRequest(
   res: Response
 ): Promise<void> {
   try {
-    await ensureRkdTable();
+    const id = parseRkdRequestId(req.params.id);
 
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    if (id === null) {
       res.status(400).json({ success: false, message: 'Invalid request ID.' });
       return;
     }
+
+    await ensureRkdTable();
 
     const { reason, rejectionReason } = req.body;
     const note = (reason || rejectionReason || '').trim();

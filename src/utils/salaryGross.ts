@@ -99,12 +99,13 @@ export function computePayrollSettlement(input: {
   periodBonus?: number | null;
   totalDeductions?: number | null;
   reimbursements?: number | null;
+  rkdIncentive?: number | null;
   commissionEarned?: number | null;
 }): PayrollSettlement {
   const baseGrossEarnings = money(input.baseGrossEarnings);
   const holidayWeeklyOffPay = money(input.holidayWeeklyOffPay);
   const additionalEarnings = money(
-    holidayWeeklyOffPay + n(input.extraAttendancePay) + n(input.overtime) + n(input.periodBonus)
+    holidayWeeklyOffPay + n(input.extraAttendancePay) + n(input.overtime) + n(input.periodBonus) + n(input.rkdIncentive)
   );
   const totalEarnings = money(baseGrossEarnings + additionalEarnings);
   const totalDeductions = normalizeDeduction(input.totalDeductions);
@@ -185,6 +186,7 @@ export function reconcileOfficialPayslipDisplay(input: {
   extraAttendancePayout?: number | null;
   totalDeductions?: number | null;
   reimbursements?: number | null;
+  rkdIncentive?: number | null;
   commissionEarned?: number | null;
 }) {
   const breakdown = buildPayslipEarningLines(input);

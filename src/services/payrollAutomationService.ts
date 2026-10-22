@@ -21,7 +21,7 @@ export function numToWords(n: number): string {
   return isNegative ? 'Minus ' + words : words;
 }
 
-import payrollService, { payslipComponentData } from './payrollService';
+import payrollService from './payrollService';
 
 export class PayrollAutomationService {
   /**
@@ -36,109 +36,9 @@ export class PayrollAutomationService {
   ) {
     const existing = await prisma.payslip.findUnique({ where: { employeeId_month_year: { employeeId, month, year } } });
     if (existing && lockedPayslip(existing.status)) return existing;
-    const employee = await prisma.employee.findUnique({
-      where: { id: employeeId },
-      include: {
-        office: true,
-        department: true,
-        salaryStructure: true,
-      },
-    });
-
-    if (!employee) {
-      throw new Error(`Employee with ID ${employeeId} not found.`);
-    }
-
     const calculation = await payrollService.calculatePayroll(employeeId, month, year);
-
-    const designationName = employee.designation || 'Associate';
-    const departmentName = employee.department?.name || 'Operations';
-    const officeName = employee.office?.name || 'Headquarters';
-    const fullName = `${employee.firstName} ${employee.lastName || ''}`.trim();
-    const netInWordsStr = `${numToWords(calculation.netSalary)} Rupees Only`;
-
-    const payslip = await prisma.payslip.upsert({
-      where: {
-        employeeId_month_year: {
-          employeeId,
-          month,
-          year,
-        },
-      },
-      update: {
-        baseSalary: calculation.baseSalary,
-        allowance: calculation.allowance,
-        deductions: calculation.deductions,
-        advanceDeduction: calculation.advanceDeduction,
-        netSalary: calculation.netSalary,
-        presentDays: calculation.presentDays,
-        absentDays: calculation.absentDays,
-        halfDays: calculation.halfDays,
-        paidLeaveDays: calculation.paidLeaveDays,
-        unpaidLeaveDays: calculation.unpaidLeaveDays,
-        holidayCount: calculation.holidayCount,
-        weeklyOffCount: calculation.weeklyOffCount,
-        holidayWorkedCount: calculation.holidayWorkedCount,
-        weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
-        extraHolidayPayout: calculation.extraHolidayPayout,
-        extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
-        extraAttendanceDays: calculation.extraAttendanceDays || 0,
-        extraAttendancePayout: calculation.extraAttendancePayout || 0,
-        dailySalary: calculation.dailySalary,
-        workingDays: calculation.workingDays,
-        totalCalendarDays: calculation.totalCalendarDays,
-        commissionEarned: calculation.commissionEarned,
-        expenseReimbursement: calculation.expenseReimbursement,
-        ...payslipComponentData(calculation),
-        status,
-        employeeCode: employee.employeeCode,
-        employeeName: fullName,
-        designation: designationName,
-        department: departmentName,
-        officeName,
-        netInWords: netInWordsStr,
-        updatedAt: new Date(),
-      },
-      create: {
-        employeeId,
-        month,
-        year,
-        baseSalary: calculation.baseSalary,
-        allowance: calculation.allowance,
-        deductions: calculation.deductions,
-        advanceDeduction: calculation.advanceDeduction,
-        netSalary: calculation.netSalary,
-        presentDays: calculation.presentDays,
-        absentDays: calculation.absentDays,
-        halfDays: calculation.halfDays,
-        paidLeaveDays: calculation.paidLeaveDays,
-        unpaidLeaveDays: calculation.unpaidLeaveDays,
-        holidayCount: calculation.holidayCount,
-        weeklyOffCount: calculation.weeklyOffCount,
-        holidayWorkedCount: calculation.holidayWorkedCount,
-        weeklyOffWorkedCount: calculation.weeklyOffWorkedCount,
-        extraHolidayPayout: calculation.extraHolidayPayout,
-        extraWeeklyOffPayout: calculation.extraWeeklyOffPayout,
-        extraAttendanceDays: calculation.extraAttendanceDays || 0,
-        extraAttendancePayout: calculation.extraAttendancePayout || 0,
-        dailySalary: calculation.dailySalary,
-        workingDays: calculation.workingDays,
-        totalCalendarDays: calculation.totalCalendarDays,
-        commissionEarned: calculation.commissionEarned,
-        expenseReimbursement: calculation.expenseReimbursement,
-        ...payslipComponentData(calculation),
-        status,
-        employeeCode: employee.employeeCode,
-        employeeName: fullName,
-        designation: designationName,
-        department: departmentName,
-        officeName,
-        netInWords: netInWordsStr,
-        createdAt: new Date(),
-      },
-    });
-
-    return payslip;
+    await payrollService.savePayslip(calculation, status);
+    return prisma.payslip.findUniqueOrThrow({ where: { employeeId_month_year: { employeeId, month, year } } });
   }
 }
 

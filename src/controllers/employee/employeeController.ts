@@ -1,3 +1,4 @@
+import { getRkdWalletEarnings } from '../../services/rkdPayrollService';
 import { createExpenseOnce, notifyExpenseSubmitted } from '../../services/expenseNotificationWorkflow';
 import { Response } from 'express';
 import { Prisma } from '@prisma/client';
@@ -1680,6 +1681,7 @@ export const fetchEmployeeWallet = async (
     const payroll = await payrollService.resolveFullPayslipView(payslip ?? {
       employeeId: employee.id, month: currentMonth, year: currentYear, status: 'PENDING',
     });
+    const rkdEarnings = await getRkdWalletEarnings(employee.id);
     const registeredSalary = payroll.fixedGrossSalary;
     const isCommissionEligible = payroll.isCommissionEligible;
     const currentCommission = payroll.commissionEarned;
@@ -1725,6 +1727,7 @@ export const fetchEmployeeWallet = async (
       wallet: {
         id: wallet.id.toString(),
         availableBalance: wallet.availableBalance,
+        rkdEarnings,
         advanceLimit: effectiveLimit,
         usedAmount: totalAdvanceUsed,
         usedAdvance: totalAdvanceUsed,

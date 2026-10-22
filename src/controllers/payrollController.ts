@@ -1,3 +1,4 @@
+import { getRkdPayrollEarnings, payrollPeriodKey } from '../services/rkdPayrollService';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import payrollService from '../services/payrollService';
@@ -373,6 +374,8 @@ export const generatePayslipPDF = async (
       expenseCategories: view.expenseCategories,
       expenseReimbursement: view.expenseReimbursement,
       commissionEarned: view.commissionEarned,
+      rkdIncentive: view.rkdIncentive,
+      rkdReferences: view.rkdReferences,
       isCommissionEligible: view.isCommissionEligible,
       netSalary: view.netSalary,
       totalTakeHomePay: view.totalTakeHomePay,
@@ -887,6 +890,13 @@ async function applyAdvanceRecoveryForPaidPayslip(tx: any, employeeId: number, a
 // The successful conditional update owns both recovery and the notification event.
 async function markPayslipPaid(p: { id: number; employeeId: number; month: number; year: number; advanceDeduction: number }) {
   const changed = await prisma.$transaction(async tx => {
+    const periodKey = payrollPeriodKey(p.employeeId, p.month, p.year);
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${periodKey}, 0))`;
+    const eligibleRkd = await getRkdPayrollEarnings(p.employeeId, p.month, p.year, tx);
+    const includedRkd = await getRkdPayrollEarnings(p.employeeId, p.month, p.year, tx, p.id);
+    if (eligibleRkd.requestIds.join(',') !== includedRkd.requestIds.join(',')) {
+      throw new Error('RKD earnings changed. Regenerate the salary slip before disbursement.');
+    }
     // Serialize recovery for different periods of the same employee too.
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(${p.employeeId})`;
     const claim = await tx.payslip.updateMany({

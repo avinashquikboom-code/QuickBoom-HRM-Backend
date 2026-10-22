@@ -119,5 +119,17 @@ const fixture=()=>({id:'access-fixture',employeeId:50,featureName:'Attendance',s
  for(const moduleId of ['pa-remote-work','pa-access-requests'])for(const [id,role,allowed]of[[100,'EMPLOYEE',false],[901,'HR',false],[900,'HR',true]]){
   let next=false;const response=res();await requireRequestApprover(moduleId)(req({}, {},id,role),response,()=>{next=true;});assert.equal(next,allowed);if(!allowed)assert.equal(response.code,403);
  }
+ reset();access=[fixture()];owner.userId=null;
+ const unlinked=res();await moduleController.approveAccessRequest(req({}, {id:'access-fixture'},900,'HR'),unlinked);
+ assert.equal(unlinked.code,409);assert.equal(access[0].status,'PENDING');assert.equal(notices.length,0);owner.userId=100;
+ for(const status of ['APPROVED','REJECTED']){
+  reset();await remoteController.applyRemoteWork(req(period),res());notices=[];sends=[];failSave=true;
+  await remoteController.reviewRemoteWorkRequest(req({status},{id:remote[0].id},900,'HR'),res());
+  assert.equal(remote[0].status,'PENDING');assert.equal(sends.length,0);assert.equal(notices.length,0);
+  reset();access=[fixture()];failSave=true;
+  await moduleController.reviewAccessRequest(req({}, {id:'access-fixture'},900,'HR'),res(),status);
+  assert.equal(access[0].status,'PENDING');assert.equal(sends.length,0);assert.equal(notices.length,0);
+ }
+ console.log('PASS unlinked requester cannot be approved or fuzzy-linked; failed remote/module review writes send nothing');
  console.log('PASS reviewer role/module authorization matches notification recipient filtering. DB/FCM mocked, no production calls.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

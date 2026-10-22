@@ -1,3 +1,5 @@
+import { payrollPeriodKey } from './rkdPayrollService';
+import { lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
@@ -109,6 +111,8 @@ export async function transitionRkdReview(
   rejectionReason?: string
 ) {
   return prisma.$transaction(async (tx) => {
+    const reviewLock = `rkd-review:${id}`;
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${reviewLock}, 0))`;
     const existing = await tx.rkdRequest.findUniqueOrThrow({
       where: { id },
       include: { employee: true },
@@ -135,6 +139,18 @@ export async function transitionRkdReview(
     };
 
     if (status === 'APPROVED') {
+      const approvedAt = new Date();
+      const ist = new Date(approvedAt.getTime() + 330 * 60000);
+      const month = ist.getUTCMonth() + 1;
+      const year = ist.getUTCFullYear();
+      const periodKey = payrollPeriodKey(existing.employeeId, month, year);
+      await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${periodKey}, 0))`;
+      const slip = await tx.payslip.findUnique({ where: { employeeId_month_year: {
+        employeeId: existing.employeeId, month, year,
+      } } });
+      // Paid/finalized periods require manual adjustment, never retroactive credit.
+      updateData.salaryMonth = slip && lockedPayslip(slip.status) ? null : month;
+      updateData.salaryYear = slip && lockedPayslip(slip.status) ? null : year;
       updateData.isSalaryCredited = true;
       updateData.salaryCreditedAt = new Date();
 
@@ -161,13 +177,7 @@ export async function transitionRkdReview(
           approvedAt: new Date(),
           notes: `Approved RKD Request #${existing.id}: ${existing.productName} (Qty: ${existing.quantity}) - ${existing.particulars}`,
         },
-        update: {
-          commissionAmount: existing.commissionAmount,
-          status: 'APPROVED',
-          approvedBy: reviewerUserId,
-          approvedAt: new Date(),
-          notes: `Approved RKD Request #${existing.id}: ${existing.productName} (Qty: ${existing.quantity}) - ${existing.particulars}`,
-        },
+        update: {},
       });
 
       // Record in CommissionHistory
@@ -226,6 +236,7 @@ export async function notifyRkdReviewed(
       body: `Your RKD request #${rkd.id} has been approved. The approved amount will be included in the applicable payroll according to payroll rules.`,
       category: 'COMMISSION',
       actionType: 'RKD_APPROVED',
+      deduplicate: true,
       actionId: String(rkd.id),
       screen: '/rkd-requests',
       extraData: {

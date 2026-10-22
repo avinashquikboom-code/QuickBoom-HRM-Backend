@@ -1,3 +1,4 @@
+import { getRkdPayrollEarnings, payrollPeriodKey } from './rkdPayrollService';
 import { fixedThirtyDaySalary, lockedPayslip, ExtraAttendancePayRule } from '../utils/fixedThirtyDaySalary';
 import { prisma } from '../utils/db';
 import { notifyEmployee } from '../utils/hrNotificationHelper';
@@ -69,6 +70,8 @@ export interface PayrollCalculation {
   additionalEarnings?: number;
   totalEarnings?: number;
   holidayWeeklyOffPay?: number;
+  rkdIncentive?: number;
+  rkdRequestIds?: number[];
   commissionEarned: number;
   isCommissionEligible?: boolean;
   overtimeHours: number;
@@ -233,6 +236,8 @@ class PayrollService {
         const commAggregate = await prisma.commissionTransaction.aggregate({
           where: {
             employeeId,
+            AND: [{ OR: [{ eventType: null }, { eventType: { not: 'RKD_REQUEST' } }] },
+              { OR: [{ billId: null }, { billId: { not: { startsWith: 'RKD-' } } }] }],
             createdAt: { gte: monthStart, lte: monthEnd },
             status: { in: ['PENDING', 'APPROVED', 'PAID'] }
           },
@@ -240,6 +245,8 @@ class PayrollService {
         });
         commissionEarned = commAggregate._sum?.commissionAmount || 0;
       }
+
+      const rkd = await getRkdPayrollEarnings(employeeId, month, year);
 
       // Fetch approved expenses for this month
       const approvedExpenseRecords = await prisma.expense.findMany({
@@ -334,6 +341,7 @@ class PayrollService {
         totalDeductions,
         reimbursements: approvedExpenses,
         commissionEarned,
+        rkdIncentive: rkd.amount,
       });
       const netSalary = settlement.netSalary;
       const totalTakeHomePay = settlement.totalTakeHomePay;
@@ -392,6 +400,8 @@ class PayrollService {
         holidayWeeklyOffPay: settlement.holidayWeeklyOffPay,
         additionalEarnings: settlement.additionalEarnings,
         totalEarnings: settlement.totalEarnings,
+        rkdIncentive: rkd.amount,
+        rkdRequestIds: rkd.requestIds,
         commissionEarned,
         isCommissionEligible,
         overtimeHours: attendanceData.overtimeHours,
@@ -1287,7 +1297,7 @@ class PayrollService {
     }
   }
 
-  async savePayslip(calculation: PayrollCalculation): Promise<void> {
+  async savePayslip(calculation: PayrollCalculation, status?: string): Promise<void> {
     try {
       const employee = await prisma.employee.findUnique({
         where: { id: calculation.employeeId },
@@ -1306,7 +1316,10 @@ class PayrollService {
       const totalTakeHome = calculation.totalTakeHomePay ?? Math.round((calculation.netSalary + (calculation.commissionEarned || 0) + (calculation.expenseReimbursement || 0)) * 100) / 100;
       const netInWords = `${numToWords(Math.round(totalTakeHome))} Rupees Only`;
 
-      const existingSlip = await prisma.payslip.findUnique({
+      const rkdUpdate = await prisma.$transaction(async tx => {
+        const key = payrollPeriodKey(calculation.employeeId, calculation.month, calculation.year);
+        await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      const existingSlip = await tx.payslip.findUnique({
         where: {
           employeeId_month_year: {
             employeeId: calculation.employeeId,
@@ -1322,9 +1335,10 @@ class PayrollService {
         return;
       }
 
-      const preservedStatus = existingSlip?.status || 'Approved';
+      const previousRkd = existingSlip ? await getRkdPayrollEarnings(calculation.employeeId, calculation.month, calculation.year, tx, existingSlip.id) : null;
+      const preservedStatus = status || existingSlip?.status || 'Approved';
 
-      await prisma.payslip.upsert({
+      const saved = await tx.payslip.upsert({
         where: {
           employeeId_month_year: {
             employeeId: calculation.employeeId,
@@ -1376,7 +1390,7 @@ class PayrollService {
           netSalary: calculation.netSalary,
           advanceDeduction: calculation.advanceDeduction,
           expenseReimbursement: calculation.expenseReimbursement,
-          status: 'Approved',
+          status: preservedStatus,
           employeeCode: empCode,
           employeeName: empName,
           designation: desigName,
@@ -1403,6 +1417,25 @@ class PayrollService {
           netInWords,
           createdAt: new Date()
         }
+      });
+        const rkd = await getRkdPayrollEarnings(calculation.employeeId, calculation.month, calculation.year, tx);
+        if (Math.abs(rkd.amount - (calculation.rkdIncentive || 0)) > 0.005) {
+          throw new Error('RKD earnings changed during payroll calculation. Recalculate before saving.');
+        }
+        if (rkd.requestIds.length) await tx.rkdRequest.updateMany({
+          where: { id: { in: rkd.requestIds }, status: 'APPROVED', employeeId: calculation.employeeId },
+          data: { payrollId: saved.id, isSalaryCredited: true, salaryCreditedAt: new Date() },
+        });
+        return existingSlip && previousRkd?.requestIds.join(',') !== rkd.requestIds.join(',') && ['APPROVED', 'PAID'].includes(saved.status.toUpperCase())
+          ? rkd.requestIds : null;
+      });
+      if (rkdUpdate?.length) await notifyEmployee({
+        employeeId: calculation.employeeId, title: 'Salary Slip Updated',
+        message: `Your salary slip for ${calculation.month}/${calculation.year} now includes RKD Incentive.`,
+        category: 'PAYROLL', actionType: 'PAYSLIP_RKD_UPDATED',
+        actionId: `${calculation.employeeId}-${calculation.month}-${calculation.year}-rkd-${rkdUpdate.join('_')}`,
+        deduplicate: true,
+        extraData: { rkdReferences: rkdUpdate.map(id => `RKD-${id}`).join(',') },
       });
       await this.notifyPublishedPayslip(calculation.employeeId, calculation.month, calculation.year);
     } catch (error) {
@@ -1487,6 +1520,7 @@ class PayrollService {
       totalDeductions,
       reimbursements: expenseReimbursement,
       commissionEarned,
+      rkdIncentive: calc.rkdIncentive || 0,
     });
     const grossEarnings = settlement.baseGrossEarnings;
     const netSalary = settlement.netSalary;
@@ -1541,6 +1575,8 @@ class PayrollService {
       grossSalary: grossEarnings,
       grossTotal: grossEarnings,
       grossEarnings,
+      rkdIncentive: calc.rkdIncentive || 0,
+      rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
       commission: commissionEarned,
       expenseReimbursement,
       expenses: expensesByCategory,
@@ -1602,6 +1638,8 @@ class PayrollService {
       expenses: expensesByCategory,
       expensesByCategory,
       isCommissionEligible,
+      rkdIncentive: calc.rkdIncentive || 0,
+      rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
       commission: commissionEarned,
       commissionEarned,
       deductionsObj: {
@@ -1665,7 +1703,9 @@ class PayrollService {
         netSalary,
         totalTakeHomePay,
         isCommissionEligible,
-        commission: commissionEarned,
+        rkdIncentive: calc.rkdIncentive || 0,
+      rkdReferences: (calc.rkdRequestIds || []).map(id => `RKD-${id}`),
+      commission: commissionEarned,
         expenseReimbursement,
         netInWords,
       },
@@ -1688,6 +1728,7 @@ class PayrollService {
       }
     }
 
+    const rkdSnapshot = await getRkdPayrollEarnings(ps.employeeId, ps.month, ps.year, prisma, ps.id);
     const cal = calculateScheduledWorkingDays(ps.year, ps.month, employee?.office?.workingDays);
     const calendarDays = ps.totalCalendarDays || cal.totalCalendarDays;
     const schedWorkingDays = ps.workingDays || cal.workingDays;
@@ -1720,6 +1761,7 @@ class PayrollService {
       totalDeductions: cleanDeductions,
       reimbursements: ps.expenseReimbursement || 0,
       commissionEarned,
+      rkdIncentive: rkdSnapshot.amount,
     });
     const netSalary = Number(ps.netSalary ?? settlement.netSalary);
     const totalTakeHomePay = Math.round((netSalary + (ps.expenseReimbursement || 0) + commissionEarned) * 100) / 100;
@@ -1821,6 +1863,8 @@ class PayrollService {
       approvedExpenseAmount: ps.expenseReimbursement || 0,
       totalExpenses: ps.expenseReimbursement || 0,
       isCommissionEligible,
+      rkdIncentive: rkdSnapshot.amount,
+      rkdReferences: rkdSnapshot.references,
       commission: commissionEarned,
       commissionEarned,
       deductionsObj: {
@@ -1885,7 +1929,9 @@ class PayrollService {
         grossSalary,
         grossTotal: grossSalary,
         grossEarnings: grossSalary,
-        commission: commissionEarned,
+        rkdIncentive: rkdSnapshot.amount,
+      rkdReferences: rkdSnapshot.references,
+      commission: commissionEarned,
         expenseReimbursement: ps.expenseReimbursement || 0,
       },
       summary: {
@@ -1901,7 +1947,9 @@ class PayrollService {
         netSalary,
         totalTakeHomePay,
         isCommissionEligible,
-        commission: commissionEarned,
+        rkdIncentive: rkdSnapshot.amount,
+      rkdReferences: rkdSnapshot.references,
+      commission: commissionEarned,
         expenseReimbursement: ps.expenseReimbursement || 0,
         netInWords,
       }

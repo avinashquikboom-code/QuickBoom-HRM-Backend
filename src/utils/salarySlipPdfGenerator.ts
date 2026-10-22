@@ -69,6 +69,8 @@ export interface GenerateSalarySlipPdfInput {
   remainingWorkingDays?: number | null;
   expenseCategories?: Record<string, number> | null;
   expenseReimbursement?: number | null;
+  rkdIncentive?: number | null;
+  rkdReferences?: string[];
   commissionEarned?: number | null;
   isCommissionEligible?: boolean | null;
   netSalary: number;
@@ -135,7 +137,9 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
     extraWeeklyOffPayout: input.extraWeeklyOffPayout,
   });
   const earningLines = earningBreakdown.lines;
-  const grossEarnings = earningBreakdown.displayedGrossEarnings;
+  const rkdIncentive = money(input.rkdIncentive);
+  if (rkdIncentive > 0) earningLines.push({ name: 'RKD Incentive', amount: rkdIncentive });
+  const grossEarnings = money(earningBreakdown.displayedGrossEarnings + rkdIncentive);
 
   // 2. Build Itemized Deduction Lines
   const deductionLines: Array<{ name: string; amount: number }> = [];
