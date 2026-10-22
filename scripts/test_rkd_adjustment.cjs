@@ -4,9 +4,9 @@ require('ts-node/register/transpile-only');
 process.env.JWT_SECRET=require('node:crypto').randomBytes(32).toString('hex');
 const jwt=require('jsonwebtoken'),express=require('express');
 let updates=0,recalculations=0,failRefresh=false;
-const requests=[1,2,3,4,5,6,7].map(id=>({id,employeeId:10,commissionAmount:100*id,status:({3:'PENDING',4:'REJECTED',5:'RETURNED'})[id]||'APPROVED',salaryMonth:id===6?11:null,salaryYear:id===6?2026:null,isSalaryCredited:id===6,payrollId:id===6?62:null}));
+const requests=[1,2,3,4,5,6,7,8].map(id=>({id,employeeId:10,commissionAmount:100*id,status:({3:'PENDING',4:'REJECTED',5:'RETURNED'})[id]||'APPROVED',salaryMonth:id===6?11:null,salaryYear:id===6?2026:null,isSalaryCredited:id===6,payrollId:id===6?62:null}));
 const originalAmounts=requests.map(r=>r.commissionAmount);
-const slips=[{id:61,employeeId:10,month:10,year:2026,status:'PAID'},{id:62,employeeId:10,month:11,year:2026,status:'Pending Approval'},{id:63,employeeId:10,month:12,year:2026,status:'Draft'},{id:64,employeeId:10,month:1,year:2027,status:'Rejected'}];
+const slips=[{id:61,employeeId:10,month:10,year:2026,status:'PAID'},{id:62,employeeId:10,month:11,year:2026,status:'Pending Approval'},{id:63,employeeId:10,month:12,year:2026,status:'Draft'},{id:64,employeeId:10,month:1,year:2027,status:'Rejected'},{id:65,employeeId:10,month:4,year:2027,status:'Approved'}];
 const locks=[];
 const db={
  $queryRaw:async (_sql,key)=>{locks.push(key);return[];},
@@ -44,7 +44,7 @@ const app=express();app.use(express.json());app.use('/api/hr/rkd',hrRkdRouter);
   };
   const historyResponse={json(body){this.body=body;return this;},status(code){this.code=code;return this;}};
   await getEmployeePayrollHistory({params:{employeeId:'10'},query:{limit:'all'}},historyResponse);
-  assert.equal(historyTake,undefined);assert.equal(historyResponse.body.payslips.length,4);
+  assert.equal(historyTake,undefined);assert.equal(historyResponse.body.payslips.length,slips.length);
   assert(historyResponse.body.payslips.some(row=>row.status==='PAID'));
   await getEmployeePayrollHistory({params:{employeeId:'10'},query:{limit:'12'}},historyResponse);
   assert.equal(historyTake,12);
@@ -74,6 +74,7 @@ const app=express();app.use(express.json());app.use('/api/hr/rkd',hrRkdRouter);
   result=await call(2,{month:12,year:2026});assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,true);assert.equal(result.body.rkd.payrollId,63);assert.equal(requests[1].employeeId,10);
   const beforeRetries=updates;
   await Promise.all([call(2,{month:12,year:2026}),call(2,{month:12,year:2026})]);assert.equal(requests[1].commissionAmount,200);assert.equal(updates,beforeRetries);
+  result=await call(7,{month:4,year:2027});assert.equal(result.status,200);assert.equal(result.body.rkd.salaryMonth,4);assert.equal(result.body.rkd.salaryYear,2027);
   failRefresh=true;result=await call(7,{month:11,year:2026});assert.equal(result.status,200);assert.equal(result.body.rkd.isSalaryCredited,false);
   assert.deepEqual(requests.map(r=>r.commissionAmount),originalAmounts);
   assert(locks.includes('rkd-review:1'));assert(locks.includes('payroll-period:10:2026:11'));

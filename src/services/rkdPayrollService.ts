@@ -88,7 +88,16 @@ export async function getRkdPendingAdjustments(employeeId: number, month: number
   }));
 }
 
-/** Only editable payroll states can receive a new RKD allocation. */
+const CLOSED_PAYROLL_STATUSES = new Set(['PAID', 'FINALIZED', 'DISBURSED', 'COMPLETED', 'REJECTED', 'CANCELLED']);
+const OPEN_PAYROLL_STATUSES = new Set(['OPEN', 'DRAFT', 'PENDING', 'PENDING APPROVAL', 'PROCESSING', 'APPROVED']);
+
+export function isLockedRkdPayrollStatus(status: unknown): boolean {
+  return ['PAID', 'FINALIZED', 'DISBURSED', 'COMPLETED'].includes(String(status || '').trim().toUpperCase());
+}
+
+/** Only unfinalized/open payroll states can receive a new RKD allocation. */
 export function isOpenRkdPayrollStatus(status: string): boolean {
-  return ['DRAFT', 'PENDING', 'PENDING APPROVAL'].includes(status.trim().toUpperCase());
+  const s = String(status || '').trim().toUpperCase();
+  if (CLOSED_PAYROLL_STATUSES.has(s)) return false;
+  return OPEN_PAYROLL_STATUSES.has(s);
 }

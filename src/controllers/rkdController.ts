@@ -1,5 +1,5 @@
 import payrollService from '../services/payrollService';
-import { payrollPeriodKey, isOpenRkdPayrollStatus } from '../services/rkdPayrollService';
+import { payrollPeriodKey, isOpenRkdPayrollStatus, isLockedRkdPayrollStatus } from '../services/rkdPayrollService';
 import { lockedPayslip } from '../utils/fixedThirtyDaySalary';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -871,7 +871,7 @@ export async function adjustRkdPayrollPeriod(
       const slip = await tx.payslip.findUnique({ where: {
         employeeId_month_year: { employeeId: rkd.employeeId, month: m, year: y },
       } });
-      if (slip && lockedPayslip(slip.status)) return { error: {
+      if (slip && isLockedRkdPayrollStatus(slip.status)) return { error: {
         status: 400, code: 'RKD_PAYROLL_LOCKED',
         message: `Payroll for ${m}/${y} is already finalized/paid. Please select an open payroll period.`,
       } };
@@ -896,7 +896,7 @@ export async function adjustRkdPayrollPeriod(
     let updated = allocation.updated;
 
     // If an open draft payslip exists for that period, recalculate and update it
-    if (slip && !lockedPayslip(slip.status)) {
+    if (slip && !isLockedRkdPayrollStatus(slip.status)) {
       try {
         const calculation = await payrollService.calculatePayroll(employeeId, m, y);
         await payrollService.savePayslip(calculation);
