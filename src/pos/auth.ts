@@ -53,7 +53,6 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
   STORE_MANAGER: {
     "pos.read": true,
     "pos.catalog": true,
-    "pos.inventory": true,
     "pos.sell": true,
     "pos.discount": true,
     "pos.priceOverride": true,
@@ -149,6 +148,7 @@ export async function authenticate(
           "pos.refund": true,
           "pos.reconcile": true,
           "pos.catalog": false,
+          "pos.inventory": false,
         },
       };
       next();

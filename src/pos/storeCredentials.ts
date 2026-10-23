@@ -57,10 +57,10 @@ export async function manageStorePOSCredential(req:AuthenticatedRequest, rawId:u
   return prisma.$transaction(async tx=>{
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(${storeId}::bigint)::text`;
     const store=await tx.store.findUnique({where:{id:storeId},select:{id:true,name:true}});ensure(store,'Store not found',404);
-    const existing=await tx.pOSStoreCredential.findUnique({where:{storeId},select:{id:true,posEnabled:true}});
-    const createdHash=passwordHash??(!existing?(await defaultPOSCredential()).passwordHash:undefined);
+    const defaultHash = (await defaultPOSCredential()).passwordHash;
+    const createdHash = passwordHash ?? defaultHash;
     const credential=await tx.pOSStoreCredential.upsert({where:{storeId},
-      create:{storeId,passwordHash:createdHash!,posEnabled:b.posEnabled??true},
+      create:{storeId,passwordHash:createdHash,posEnabled:b.posEnabled??true},
       update:{...(passwordHash?{passwordHash,failedAttempts:0,lockedUntil:null}:{}),...(b.posEnabled!==undefined?{posEnabled:b.posEnabled}:{})},
       select:{storeId:true,posEnabled:true,updatedAt:true,lastLoginAt:true},
     });

@@ -670,7 +670,7 @@ router.patch(
 router.get(
   "/inventory",
   route(async (r) => {
-    permission(r.actor, "read");
+    permission(r.actor, "inventory");
     const storeId = storeFilter(r.actor, r.query.storeId),
       p = page(r.query),
       where = {
@@ -954,7 +954,10 @@ router.get(
 );
 router.get(
   "/reports/inventory",
-  route((r) => inventoryReport(r.actor, r.query)),
+  route((r) => {
+    permission(r.actor, "inventory");
+    return inventoryReport(r.actor, r.query);
+  }),
 );
 router.get(
   "/reports/registers",
