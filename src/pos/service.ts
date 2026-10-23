@@ -374,6 +374,77 @@ async function openSession(
     );
   return s;
 }
+async function ensureOrOpenSession(
+  tx: Tx,
+  actor: Actor,
+  storeId: number,
+  preferredSessionId?: string,
+): Promise<string> {
+  await activeStore(tx, storeId);
+  if (preferredSessionId) {
+    try {
+      const s = await openSession(tx, actor, preferredSessionId, storeId, true);
+      return s.id;
+    } catch {
+      // Preferred session not open or belongs elsewhere; auto-resolve.
+    }
+  }
+
+  const existing = await tx.pOSSession.findFirst({
+    where: {
+      userId: actor.userId,
+      closedAt: null,
+      register: { storeId, active: true },
+    },
+    include: { register: true },
+    orderBy: { openedAt: "desc" },
+  });
+
+  if (existing) {
+    await tx.$queryRaw`SELECT id FROM "POSSession" WHERE id = ${existing.id}::uuid FOR UPDATE`;
+    return existing.id;
+  }
+
+  let register = await tx.pOSRegister.findFirst({
+    where: { storeId, active: true },
+    orderBy: { id: "asc" },
+  });
+
+  if (!register) {
+    register = await tx.pOSRegister.create({
+      data: {
+        storeId,
+        name: "Main Register",
+        active: true,
+      },
+    });
+    await audit(tx, actor, "REGISTER_CREATED", register.id);
+  }
+
+  const shiftAssignment = actor.employeeId
+    ? await tx.shiftAssignment.findFirst({
+        where: {
+          employeeId: actor.employeeId,
+          effectiveFrom: { lte: new Date() },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
+        },
+        orderBy: [{ effectiveFrom: "desc" }, { id: "desc" }],
+      })
+    : null;
+
+  const newSession = await tx.pOSSession.create({
+    data: {
+      registerId: register.id,
+      userId: actor.userId,
+      employeeId: actor.employeeId,
+      shiftAssignmentId: shiftAssignment?.id,
+      openingCash: new D(0),
+    },
+  });
+
+  await audit(tx, actor, "REGISTER_OPENED", newSession.id);
+  return newSession.id;
+}
 export async function openRegister(actor: Actor, id: string, raw: unknown) {
   permission(actor, "sell");
   const b = object(raw);
@@ -488,7 +559,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     "customerId",
   ]);
   const storeId = integer(b.storeId, "storeId"),
-    sessionId = uuid(b.sessionId),
+    providedSessionId = b.sessionId ? uuid(b.sessionId) : undefined,
     idempotencyKey = text(b.idempotencyKey, "idempotencyKey", 100);
   scope(actor, storeId);
   const items = pricingInput(actor, b.items),
@@ -522,7 +593,6 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       : undefined;
   const requestHash = hash({
     storeId,
-    sessionId,
     items,
     payments,
     salespersonId,
@@ -556,7 +626,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       );
       return existing;
     }
-    await openSession(tx, actor, sessionId, storeId);
+    const sessionId = await ensureOrOpenSession(tx, actor, storeId, providedSessionId);
     const itemSalespeople = items
       .map((i) => i.salespersonId)
       .filter((id): id is number => id !== undefined && id !== null);
@@ -940,8 +1010,6 @@ type ManualInput = {
   name: string;
   sku?: string;
   barcode?: string;
-  size?: string;
-  color?: string;
   brand?: string;
   category?: string;
   quantity: number;
@@ -1003,8 +1071,6 @@ function manualItem(
     name: text(v.name, "item name", 200),
     sku: optionalText(v.sku, "SKU", 80),
     barcode,
-    size: optionalText(v.size, "size", 40),
-    color: optionalText(v.color, "color", 60),
     brand: optionalText(v.brand, "brand", 80),
     category: optionalText(v.category, "category", 80),
     quantity: integer(v.quantity, "quantity", 1, 10000),
@@ -1226,8 +1292,8 @@ async function priceItems(
         name: manual.name,
         sku: manual.sku ?? "",
         barcode: manual.barcode ?? null,
-        size: manual.size ?? "",
-        color: manual.color ?? "",
+        size: "",
+        color: "",
         brand: manual.brand ?? "",
         category: manual.category ?? null,
         quantity: manual.quantity,
