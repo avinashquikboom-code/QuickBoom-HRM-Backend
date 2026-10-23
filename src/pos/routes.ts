@@ -1084,6 +1084,8 @@ router.use((e: unknown, req: Request, res: Response, next: NextFunction) => {
     return;
   }
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    // Do not log cashier/customer payloads or payment references.
+    console.error(JSON.stringify({module: "pos", event: "database_conflict", method: req.method, path: req.path, code: e.code, model: e.meta?.modelName, target: e.meta?.target}));
     const status = ["P2002", "P2034"].includes(e.code)
       ? 409
       : ["P2003", "P2025"].includes(e.code)

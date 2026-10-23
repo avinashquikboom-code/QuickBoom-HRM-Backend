@@ -53,32 +53,54 @@ export function uuid(value: unknown): string {
   );
   return v;
 }
+export function optionalUuid(
+  value: unknown,
+  name = "UUID",
+): string | undefined {
+  if (value == null || (typeof value === "string" && value.trim() === ""))
+    return undefined;
+  return uuid(value);
+}
 export function integer(
   value: unknown,
   name = "quantity",
   min = 1,
   max = 1000000,
 ): number {
+  const num =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value.trim())
+        : NaN;
   ensure(
-    typeof value === "number" &&
-      Number.isSafeInteger(value) &&
-      value >= min &&
-      value <= max,
+    Number.isSafeInteger(num) && num >= min && num <= max,
     `Invalid ${name}`,
   );
-  return value;
+  return num;
 }
 export function money(
   value: unknown,
   name = "amount",
   max = "9999999999.99",
 ): Prisma.Decimal {
+  let str = "";
+  if (typeof value === "number") {
+    str = Number.isFinite(value) ? value.toFixed(2) : "";
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    const n = Number(trimmed);
+    if (!Number.isNaN(n) && Number.isFinite(n) && n >= 0) {
+      str = n.toFixed(2);
+    } else {
+      str = trimmed;
+    }
+  }
   ensure(
-    (typeof value === "string" || typeof value === "number") &&
-      /^\d{1,10}(\.\d{1,2})?$/.test(String(value)),
+    /^\d{1,10}(\.\d{1,2})?$/.test(str),
     `Invalid ${name}: use nonnegative decimal with at most two places`,
   );
-  const d = new Prisma.Decimal(value);
+  const d = new Prisma.Decimal(str);
   ensure(d.lte(max), `${name} exceeds limit`);
   return d;
 }
@@ -94,11 +116,12 @@ export function unique(values: string[]) {
 }
 export const methods = ["CASH", "UPI", "CARD", "BANK_TRANSFER", "OTHER"];
 export function method(value: unknown): string {
+  const v = typeof value === "string" ? value.trim().toUpperCase() : "";
   ensure(
-    typeof value === "string" && /^[A-Z][A-Z0-9_]{0,39}$/.test(value),
+    /^[A-Z][A-Z0-9_]{0,39}$/.test(v),
     "Invalid payment method",
   );
-  return value;
+  return v;
 }
 export function boolean(value: unknown): boolean {
   ensure(typeof value === "boolean", "Expected boolean");

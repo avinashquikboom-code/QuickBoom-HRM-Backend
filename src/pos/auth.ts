@@ -68,6 +68,7 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
   EMPLOYEE: {
     "pos.read": true,
     "pos.sell": true,
+    "pos.discount": true,
   },
   HELPER: {
     "pos.read": true,

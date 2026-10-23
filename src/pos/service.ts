@@ -12,6 +12,7 @@ import {
   text,
   optionalText,
   uuid,
+  optionalUuid,
   integer,
   money,
   list,
@@ -379,13 +380,10 @@ async function ensureOrOpenSession(
   preferredSessionId?: string,
 ): Promise<string> {
   await activeStore(tx, storeId);
+  await tx.$queryRaw`SELECT id FROM "Store" WHERE id = ${storeId} FOR UPDATE`;
   if (preferredSessionId) {
-    try {
-      const s = await openSession(tx, actor, preferredSessionId, storeId, true);
-      return s.id;
-    } catch {
-      // Preferred session not open or belongs elsewhere; auto-resolve.
-    }
+    const session = await openSession(tx, actor, preferredSessionId, storeId, true);
+    return session.id;
   }
 
   const existing = await tx.pOSSession.findFirst({
@@ -404,18 +402,14 @@ async function ensureOrOpenSession(
   }
 
   let register = await tx.pOSRegister.findFirst({
-    where: { storeId, active: true },
+    where: { storeId, active: true, sessions: { none: { closedAt: null } } },
     orderBy: { id: "asc" },
   });
 
   if (!register) {
-    register = await tx.pOSRegister.create({
-      data: {
-        storeId,
-        name: "Main Register",
-        active: true,
-      },
-    });
+    const configured = await tx.pOSRegister.count({ where: { storeId } });
+    ensure(configured === 0, "No available register. Close the occupied cashier session or select an available active register.", 409);
+    register = await tx.pOSRegister.create({data: {storeId, name: "Main Register", active: true}});
     await audit(tx, actor, "REGISTER_CREATED", register.id);
   }
 
@@ -557,7 +551,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     "customerId",
   ]);
   const storeId = integer(b.storeId, "storeId"),
-    providedSessionId = b.sessionId ? uuid(b.sessionId) : undefined,
+    providedSessionId = optionalUuid(b.sessionId, "sessionId"),
     idempotencyKey = text(b.idempotencyKey, "idempotencyKey", 100);
   scope(actor, storeId);
   const items = pricingInput(actor, b.items),
@@ -572,23 +566,17 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     return {
       method: m,
       amount,
-      gatewayTransactionId: p.gatewayTransactionId
-        ? text(p.gatewayTransactionId, "gatewayTransactionId", 200)
-        : undefined,
-      reference: p.reference ? text(p.reference, "reference", 200) : undefined,
+      gatewayTransactionId: optionalText(p.gatewayTransactionId, "gatewayTransactionId", 200),
+      reference: optionalText(p.reference, "reference", 200),
     };
   });
   const salespersonId =
-    b.salespersonId == null
+    b.salespersonId == null || b.salespersonId === "" || b.salespersonId === 0 || b.salespersonId === "0"
       ? undefined
-      : integer(b.salespersonId, "salespersonId");
-  const customerId = b.customerId ? uuid(b.customerId) : undefined;
-  const customerName = b.customerName
-      ? text(b.customerName, "customerName")
-      : undefined,
-    customerPhone = b.customerPhone
-      ? text(b.customerPhone, "customerPhone", 30)
-      : undefined;
+      : integer(b.salespersonId, "salespersonId", 1);
+  const customerId = optionalUuid(b.customerId, "customerId");
+  const customerName = optionalText(b.customerName, "customerName", 200);
+  const customerPhone = optionalText(b.customerPhone, "customerPhone", 30);
   const requestHash = hash({
     storeId,
     items,
@@ -599,146 +587,201 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     customerId,
     orderDiscount,
   });
-  return run(existingTx, async (tx) => {
-    // Advisory lock serializes concurrent retries even before a sale row exists.
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`sale:${idempotencyKey}`}, 0))::text`;
-    const existing = await tx.pOSSale.findUnique({
-      where: { idempotencyKey },
+
+  const saleInclude = {
+    items: {
       include: {
-        items: {
-          include: {
-            salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
-          },
-        },
-        payments: true,
         salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
       },
-    });
-    if (existing) {
-      ensure(
-        existing.cashierId === actor.userId &&
-          existing.storeId === storeId &&
-          existing.requestHash === requestHash,
-        "Idempotency key used for another request",
-        409,
-      );
-      return existing;
-    }
-    const sessionId = await ensureOrOpenSession(tx, actor, storeId, providedSessionId);
-    const itemSalespeople = items
-      .map((i) => i.salespersonId)
-      .filter((id): id is number => id !== undefined && id !== null);
-    const allSalespeople = [
-      ...(salespersonId ? [salespersonId] : []),
-      ...itemSalespeople,
-    ];
-    for (const spId of new Set(allSalespeople)) {
-      const activeEmp = await tx.employee.findFirst({
-        where: {
-          id: spId,
-          status: { equals: "active", mode: "insensitive" },
-        },
-        include: { department: true, user: { select: { role: true, isActive: true } } },
-      });
-      ensure(activeEmp, "Select an active employee.");
-      ensure(activeEmp.user?.isActive !== false, "Select an active employee.");
-    }
-    for (const payment of payments) {
-      const configured = await tx.pOSPaymentMethod.findUnique({
-        where: { storeId_code: { storeId, code: payment.method } },
-      });
-      ensure(
-        configured ? configured.enabled : methods.includes(payment.method),
-        "Payment method is disabled or unconfigured",
-      );
-    }
-    const customer = customerId
-      ? await tx.pOSCustomer.findFirst({
-          where: { id: customerId, storeId, active: true },
-        })
-      : null;
-    ensure(!customerId || customer, "Customer not found in this store");
-    const { subtotal, discountTotal, taxTotal, grandTotal, snapshots } =
-      await priceItems(tx, items, orderDiscount);
-    ensure(
-      grandTotal.gt(0) && grandTotal.lte("9999999999999.99"),
-      "Invalid invoice total",
-    );
-    ensure(
-      payments.reduce((n, p) => n.plus(p.amount), new D(0)).equals(grandTotal),
-      `Payments must equal server total ${grandTotal.toFixed(2)}`,
-    );
-    const sequence = await tx.$queryRaw<
-      { n: bigint }[]
-    >`SELECT nextval('"POSInvoiceSequence"') AS n`;
-    const invoiceNo = `POS-${String(sequence[0]!.n).padStart(10, "0")}`;
-    const itemsToCreate = snapshots.map((s, idx) => {
-      // `key` exists only in the request/quote snapshot for line alignment;
-      // POSSaleItem has no such column.
-      const { key, ...row } = s;
-      return {
-        ...row,
-        salespersonId: items[idx]?.salespersonId !== undefined ? items[idx]!.salespersonId : salespersonId ?? null,
-      };
-    });
-    const sale = await tx.pOSSale.create({
-      data: {
-        invoiceNo,
-        idempotencyKey,
-        requestHash,
-        storeId,
-        sessionId,
-        cashierId: actor.userId,
-        salespersonId,
-        customerId,
-        customerName: customer?.name ?? customerName,
-        customerPhone: customer?.phone ?? customerPhone,
-        subtotal,
-        discountTotal,
-        taxTotal,
-        grandTotal,
-        items: { create: itemsToCreate },
-        payments: { create: payments },
-      },
-      include: {
-        items: {
-          include: {
-            salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
-          },
-        },
-        payments: true,
-        salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
-      },
-    });
-    for (const item of items)
-      if (item.kind === "catalog")
-        await movement(
-          tx,
-          actor,
-          storeId,
-          item.variantId,
-          -item.quantity,
-          0,
-          "SALE",
-          sale.id,
-          invoiceNo,
-        );
-    await accrueCommission(tx, actor, sale.id);
-    await audit(tx, actor, "SALE_COMPLETED", sale.id, {
-      invoiceNo,
-      salespersonId: salespersonId ?? null,
-      orderDiscount: orderDiscount.toString(),
-      overrides: snapshots
-        .filter((i) => i.overrideReason)
-        .map((i) => ({
-          variantId: i.variantId,
-          catalogPrice: i.catalogUnitPrice.toString(),
-          unitPrice: i.unitPrice.toString(),
-          reason: i.overrideReason!,
-        })),
-    });
-    return sale;
+    },
+    payments: true,
+    salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
+  };
+
+  // Immediate idempotency fast path before opening a transaction
+  const preExisting = existingTx ? null : await prisma.pOSSale.findUnique({
+    where: { idempotencyKey },
+    include: saleInclude,
   });
+  if (preExisting) {
+    if (preExisting.cashierId === actor.userId && preExisting.storeId === storeId && preExisting.requestHash === requestHash) {
+      return preExisting;
+    }
+    throw new POSError(409, "Idempotency key used for another request");
+  }
+
+  try {
+    return await run(existingTx, async (tx) => {
+      // Advisory lock serializes concurrent retries even before a sale row exists.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`sale:${idempotencyKey}`}, 0))::text`;
+      const existing = await tx.pOSSale.findUnique({
+        where: { idempotencyKey },
+        include: saleInclude,
+      });
+      if (existing) {
+        if (existing.cashierId === actor.userId && existing.storeId === storeId && existing.requestHash === requestHash) {
+          return existing;
+        }
+        throw new POSError(409, "Idempotency key used for another request");
+      }
+      const sessionId = await ensureOrOpenSession(tx, actor, storeId, providedSessionId);
+      const itemSalespeople = items
+        .map((i) => i.salespersonId)
+        .filter((id): id is number => id !== undefined && id !== null);
+      const allSalespeople = [
+        ...(salespersonId ? [salespersonId] : []),
+        ...itemSalespeople,
+      ];
+      for (const spId of new Set(allSalespeople)) {
+        const activeEmp = await tx.employee.findFirst({
+          where: {
+            id: spId,
+            status: { equals: "active", mode: "insensitive" },
+          },
+          include: { department: true, user: { select: { role: true, isActive: true } } },
+        });
+        ensure(activeEmp, "Select an active employee.");
+        ensure(activeEmp.user?.isActive !== false, "Select an active employee.");
+      }
+      for (const payment of payments) {
+        const configured = await tx.pOSPaymentMethod.findUnique({
+          where: { storeId_code: { storeId, code: payment.method } },
+        });
+        ensure(
+          configured ? configured.enabled : methods.includes(payment.method),
+          "Payment method is disabled or unconfigured",
+        );
+      }
+      const customer = customerId
+        ? await tx.pOSCustomer.findFirst({
+            where: { id: customerId, storeId, active: true },
+          })
+        : null;
+      ensure(!customerId || customer, "Customer not found in this store");
+      const { subtotal, discountTotal, taxTotal, grandTotal, snapshots } =
+        await priceItems(tx, items, orderDiscount);
+      ensure(
+        grandTotal.gt(0) && grandTotal.lte("9999999999999.99"),
+        "Invalid invoice total",
+      );
+
+      // Payment alignment & cash change handling
+      if (payments.length === 1) {
+        if (payments[0].method === "CASH" && payments[0].amount.gte(grandTotal)) {
+          payments[0].amount = grandTotal;
+        } else if (payments[0].amount.minus(grandTotal).abs().lte("0.05")) {
+          payments[0].amount = grandTotal;
+        }
+      } else {
+        const paymentTotal = payments.reduce((n, p) => n.plus(p.amount), new D(0));
+        if (paymentTotal.minus(grandTotal).abs().lte("0.05")) {
+          const diff = grandTotal.minus(paymentTotal);
+          payments[payments.length - 1].amount = payments[payments.length - 1].amount.plus(diff);
+        }
+      }
+
+      ensure(
+        payments.reduce((n, p) => n.plus(p.amount), new D(0)).equals(grandTotal),
+        `Payments must equal server total ${grandTotal.toFixed(2)}`,
+      );
+
+      let invoiceNo = "";
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const sequence = await tx.$queryRaw<
+          { n: bigint }[]
+        >`SELECT nextval('"POSInvoiceSequence"') AS n`;
+        const candidate = `POS-${String(sequence[0]!.n).padStart(10, "0")}`;
+        const conflict = await tx.pOSSale.findUnique({
+          where: { invoiceNo: candidate },
+          select: { id: true },
+        });
+        if (!conflict) {
+          invoiceNo = candidate;
+          break;
+        }
+      }
+      ensure(invoiceNo.length > 0, "Failed to generate unique invoice number", 500);
+
+      const itemsToCreate = snapshots.map((s, idx) => {
+        // `key` exists only in the request/quote snapshot for line alignment;
+        // POSSaleItem has no such column.
+        const { key, ...row } = s;
+        return {
+          ...row,
+          salespersonId: items[idx]?.salespersonId !== undefined ? items[idx]!.salespersonId : salespersonId ?? null,
+        };
+      });
+      const sale = await tx.pOSSale.create({
+        data: {
+          invoiceNo,
+          idempotencyKey,
+          requestHash,
+          storeId,
+          sessionId,
+          cashierId: actor.userId,
+          salespersonId,
+          customerId,
+          customerName: customer?.name ?? customerName,
+          customerPhone: customer?.phone ?? customerPhone,
+          subtotal,
+          discountTotal,
+          taxTotal,
+          grandTotal,
+          items: { create: itemsToCreate },
+          payments: { create: payments },
+        },
+        include: saleInclude,
+      });
+      for (const item of items)
+        if (item.kind === "catalog")
+          await movement(
+            tx,
+            actor,
+            storeId,
+            item.variantId,
+            -item.quantity,
+            0,
+            "SALE",
+            sale.id,
+            invoiceNo,
+          );
+      await accrueCommission(tx, actor, sale.id);
+      await audit(tx, actor, "SALE_COMPLETED", sale.id, {
+        invoiceNo,
+        salespersonId: salespersonId ?? null,
+        orderDiscount: orderDiscount.toString(),
+        overrides: snapshots
+          .filter((i) => i.overrideReason)
+          .map((i) => ({
+            variantId: i.variantId,
+            catalogPrice: i.catalogUnitPrice.toString(),
+            unitPrice: i.unitPrice.toString(),
+            reason: i.overrideReason!,
+          })),
+      });
+      return sale;
+    });
+  } catch (err) {
+    if (
+      !existingTx && err instanceof Prisma.PrismaClientKnownRequestError &&
+      (err.code === "P2002" || err.code === "P2034")
+    ) {
+      const concurrentSale = await prisma.pOSSale.findUnique({
+        where: { idempotencyKey },
+        include: saleInclude,
+      });
+      if (concurrentSale) {
+        if (
+          concurrentSale.cashierId === actor.userId &&
+          concurrentSale.storeId === storeId
+        ) {
+          return concurrentSale;
+        }
+        throw new POSError(409, "Idempotency key used for another request");
+      }
+    }
+    throw err;
+  }
 }
 export async function returnSale(
   actor: Actor,
@@ -1049,11 +1092,11 @@ function manualItem(
   const taxRate = money(v.taxRate ?? "0", "tax rate", "100");
   ensure(unitPrice.gt(0), "Unit price must be greater than zero");
   const salespersonId =
-    v.salespersonId === null
+    v.salespersonId === null || v.salespersonId === 0 || v.salespersonId === "0"
       ? null
       : v.salespersonId === undefined || v.salespersonId === ""
         ? undefined
-        : integer(v.salespersonId, "salespersonId");
+        : integer(v.salespersonId, "salespersonId", 1);
   // Barcode acceptance mirrors catalog variants (variantData): printable ASCII, max 80.
   const barcode = optionalText(v.barcode, "barcode", 80);
   if (barcode)
@@ -1101,10 +1144,10 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
       ]);
       const discount = money(v.discountPerUnit ?? "0");
       if (discount.gt(0)) permission(actor, "discount");
-      const isManual = v.manual === true;
-      ensure(isManual || (typeof v.variantId === "string" && v.variantId.trim().length > 0),
-        "Choose a registered variant or explicitly add a manual item.");
-      ensure(!isManual || v.variantId == null || v.variantId === "", "A manual item cannot also reference a catalog variant");
+      const isManual =
+        v.manual === true ||
+        !v.variantId ||
+        (typeof v.variantId === "string" && v.variantId.trim() === "");
       if (isManual) return manualItem(v, discount);
       const override =
         v.unitPriceOverride === undefined
@@ -1116,11 +1159,11 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
           ? undefined
           : text(v.priceOverrideReason, "priceOverrideReason", 500);
       const salespersonId =
-        v.salespersonId === null
+        v.salespersonId === null || v.salespersonId === 0 || v.salespersonId === "0"
           ? null
           : v.salespersonId === undefined || v.salespersonId === ""
             ? undefined
-            : integer(v.salespersonId, "salespersonId");
+            : integer(v.salespersonId, "salespersonId", 1);
       const catalog: CatalogInput = {
         kind: "catalog",
         key: optionalText(v.key, "item key", 100),
