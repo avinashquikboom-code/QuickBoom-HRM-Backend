@@ -120,6 +120,8 @@ import {
   createStore,
   updateStore,
   deleteStore,
+  setStorePOSCredentials,
+  updateStorePOSAccess,
 } from '../controllers/storeController';
 
 import {
@@ -171,6 +173,9 @@ router.get('/stores/:id', roleMiddleware(storeManagerAllowedRoles), fetchStoreBy
 router.post('/stores', roleMiddleware(adminOnlyRoles), createStore);
 router.put('/stores/:id', roleMiddleware(adminOnlyRoles), updateStore);
 router.delete('/stores/:id', roleMiddleware(adminOnlyRoles), deleteStore);
+router.post('/stores/:id/pos-credentials', roleMiddleware(adminOnlyRoles), setStorePOSCredentials);
+router.put('/stores/:id/pos-credentials', roleMiddleware(adminOnlyRoles), setStorePOSCredentials);
+router.patch('/stores/:id/pos-access', roleMiddleware(adminOnlyRoles), updateStorePOSAccess);
 
 
 

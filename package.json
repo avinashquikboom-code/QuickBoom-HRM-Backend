@@ -17,7 +17,8 @@
     "test:pos": "ts-node --transpile-only scripts/test_pos.ts",
     "test:pos:context": "ts-node --transpile-only scripts/test_pos_context_auth.ts",
     "test:pos:selection": "ts-node --transpile-only scripts/test_pos_selection.ts",
-    "test:pos:barcode": "ts-node --transpile-only scripts/test_pos_barcode_search.ts"
+    "test:pos:barcode": "ts-node --transpile-only scripts/test_pos_barcode_search.ts",
+    "test:pos:store-auth": "ts-node --transpile-only scripts/test_pos_store_auth.ts"
   },
   "keywords": [],
   "author": "",
