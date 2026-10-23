@@ -1,4 +1,5 @@
 import express from 'express';
+import posRoutes from './pos/routes';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
@@ -81,6 +82,7 @@ app.use(cors());
 // Configure larger limit for base64 profile avatar images
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use('/api/v1/pos', posRoutes);
 
 // Ensure uploads directory structure exists on startup
 import fs from 'fs';

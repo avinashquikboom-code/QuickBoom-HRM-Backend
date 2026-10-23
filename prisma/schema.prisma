@@ -7,6 +7,12 @@ datasource db {
 }
 
 model User {
+  posCashMovements POSCashMovement[]
+  posSessions POSSession[]
+  posSales POSSale[]
+  posMovements POSStockMovement[]
+  posAudits POSAuditLog[]
+  posReturns POSReturn[]
   id             Int             @id @default(autoincrement())
   email          String?         @unique
   password       String
@@ -92,6 +98,8 @@ model Department {
 }
 
 model Employee {
+  posSales POSSale[]
+  posSessions POSSession[]
   id               Int               @id @default(autoincrement())
   employeeID       String?           @unique
   userId           Int?              @unique
@@ -624,6 +632,12 @@ model CustomRole {
 
 
 model Store {
+  posRegisters POSRegister[]
+  posBalances POSInventoryBalance[]
+  posMovements POSStockMovement[]
+  posSales POSSale[]
+  posTransfersOut POSStockTransfer[] @relation("POSFromStore")
+  posTransfersIn POSStockTransfer[] @relation("POSToStore")
   id          Int       @id @default(autoincrement())
   name        String
   code        String?   @unique
@@ -1496,4 +1510,255 @@ model RkdRequest {
   @@index([createdAt])
   @@index([payrollId])
   @@index([employeeId, salaryYear, salaryMonth])
+}
+
+// Fashion retail POS: independent documents, shared HRM identities and stores.
+model POSCategory {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  parentId String? @db.Uuid
+  parent POSCategory? @relation("POSCategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children POSCategory[] @relation("POSCategoryTree")
+  products POSProduct[]
+}
+model POSProduct {
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  description String @default("")
+  code String @unique
+  brand String @default("")
+  categoryId String? @db.Uuid
+  category POSCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  season String @default("")
+  material String @default("")
+  gender String @default("")
+  images String[]
+  sizeChart Json?
+  discountEligible Boolean @default(true)
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  variants POSProductVariant[]
+  @@index([name])
+  @@index([categoryId, active])
+}
+model POSProductVariant {
+  id String @id @default(uuid()) @db.Uuid
+  productId String @db.Uuid
+  product POSProduct @relation(fields: [productId], references: [id], onDelete: Restrict)
+  sku String @unique
+  barcode String @unique
+  size String
+  color String
+  attributes Json?
+  costPrice Decimal @db.Decimal(15,2)
+  sellingPrice Decimal @db.Decimal(15,2)
+  taxRate Decimal @db.Decimal(7,4)
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  balances POSInventoryBalance[]
+  movements POSStockMovement[]
+  items POSSaleItem[]
+  transferItems POSStockTransferItem[]
+  @@index([productId, active])
+}
+model POSInventoryBalance {
+  id String @id @default(uuid()) @db.Uuid
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variantId String @db.Uuid
+  variant POSProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  quantity Int @default(0)
+  damaged Int @default(0)
+  lowStockThreshold Int @default(5)
+  updatedAt DateTime @updatedAt
+  @@unique([storeId, variantId])
+}
+model POSStockMovement {
+  id String @id @default(uuid()) @db.Uuid
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  variantId String @db.Uuid
+  variant POSProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  quantityDelta Int
+  damagedDelta Int @default(0)
+  type String
+  reference String
+  reason String
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  @@index([storeId, createdAt])
+  @@index([variantId, createdAt])
+  @@index([reference])
+}
+model POSRegister {
+  id String @id @default(uuid()) @db.Uuid
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name String
+  active Boolean @default(true)
+  sessions POSSession[]
+  @@unique([storeId, name])
+}
+model POSSession {
+  cashMovements POSCashMovement[]
+  id String @id @default(uuid()) @db.Uuid
+  registerId String @db.Uuid
+  register POSRegister @relation(fields: [registerId], references: [id], onDelete: Restrict)
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  employeeId Int?
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  openingCash Decimal @db.Decimal(15,2)
+  expectedCash Decimal? @db.Decimal(15,2)
+  actualCash Decimal? @db.Decimal(15,2)
+  variance Decimal? @db.Decimal(15,2)
+  closeReason String?
+  openedAt DateTime @default(now())
+  closedAt DateTime?
+  sales POSSale[]
+  returns POSReturn[]
+  @@index([registerId, closedAt])
+}
+model POSSale {
+  id String @id @default(uuid()) @db.Uuid
+  invoiceNo String @unique
+  idempotencyKey String @unique
+  requestHash String
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  sessionId String @db.Uuid
+  session POSSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  cashierId Int
+  cashier User @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  salespersonId Int?
+  salesperson Employee? @relation(fields: [salespersonId], references: [id], onDelete: Restrict)
+  customerName String?
+  customerPhone String?
+  status String @default("COMPLETED")
+  subtotal Decimal @db.Decimal(15,2)
+  discountTotal Decimal @db.Decimal(15,2)
+  taxTotal Decimal @db.Decimal(15,2)
+  grandTotal Decimal @db.Decimal(15,2)
+  createdAt DateTime @default(now())
+  items POSSaleItem[]
+  payments POSSalePayment[]
+  returns POSReturn[]
+  @@index([storeId, createdAt])
+  @@index([cashierId, createdAt])
+  @@index([salespersonId, createdAt])
+}
+model POSSaleItem {
+  discountTotal Decimal @default(0) @db.Decimal(15,2)
+  catalogUnitPrice Decimal @default(0) @db.Decimal(15,2)
+  overrideReason String?
+  id String @id @default(uuid()) @db.Uuid
+  saleId String @db.Uuid
+  sale POSSale @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  variantId String @db.Uuid
+  variant POSProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  name String
+  sku String
+  size String
+  color String
+  brand String
+  category String?
+  quantity Int
+  returnedQuantity Int @default(0)
+  unitPrice Decimal @db.Decimal(15,2)
+  costPrice Decimal @db.Decimal(15,2)
+  discountPerUnit Decimal @db.Decimal(15,2)
+  taxRate Decimal @db.Decimal(7,4)
+  taxTotal Decimal @db.Decimal(15,2)
+  lineTotal Decimal @db.Decimal(15,2)
+  returnItems POSReturnItem[]
+  @@unique([saleId, variantId])
+}
+model POSSalePayment {
+  id String @id @default(uuid()) @db.Uuid
+  saleId String @db.Uuid
+  sale POSSale @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  method String
+  amount Decimal @db.Decimal(15,2)
+  reference String?
+  createdAt DateTime @default(now())
+}
+model POSReturn {
+  id String @id @default(uuid()) @db.Uuid
+  saleId String @db.Uuid
+  sale POSSale @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  sessionId String @db.Uuid
+  session POSSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  idempotencyKey String @unique
+  requestHash String
+  reason String
+  refundMethod String
+  refundReference String?
+  refundAmount Decimal @db.Decimal(15,2)
+  createdAt DateTime @default(now())
+  items POSReturnItem[]
+  @@index([saleId, createdAt])
+}
+model POSReturnItem {
+  revenueRefund Decimal @default(0) @db.Decimal(15,2)
+  id String @id @default(uuid()) @db.Uuid
+  returnId String @db.Uuid
+  return POSReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  saleItemId String @db.Uuid
+  saleItem POSSaleItem @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  quantity Int
+  resellable Boolean
+  refundAmount Decimal @db.Decimal(15,2)
+  @@unique([returnId, saleItemId])
+}
+model POSStockTransfer {
+  id String @id @default(uuid()) @db.Uuid
+  fromStoreId Int
+  fromStore Store @relation("POSFromStore", fields: [fromStoreId], references: [id], onDelete: Restrict)
+  toStoreId Int
+  toStore Store @relation("POSToStore", fields: [toStoreId], references: [id], onDelete: Restrict)
+  status String @default("DRAFT")
+  reason String
+  createdAt DateTime @default(now())
+  dispatchedAt DateTime?
+  receivedAt DateTime?
+  items POSStockTransferItem[]
+  @@index([fromStoreId, toStoreId, status])
+}
+model POSStockTransferItem {
+  id String @id @default(uuid()) @db.Uuid
+  transferId String @db.Uuid
+  transfer POSStockTransfer @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  variantId String @db.Uuid
+  variant POSProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  quantity Int
+  @@unique([transferId, variantId])
+}
+model POSAuditLog {
+  id String @id @default(uuid()) @db.Uuid
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  action String
+  entityId String
+  metadata Json
+  createdAt DateTime @default(now())
+  @@index([entityId, createdAt])
+}
+
+model POSCashMovement {
+  id String @id @default(uuid()) @db.Uuid
+  sessionId String @db.Uuid
+  session POSSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  direction String
+  amount Decimal @db.Decimal(15,2)
+  reason String
+  idempotencyKey String @unique
+  createdAt DateTime @default(now())
+  @@index([sessionId, createdAt])
 }
