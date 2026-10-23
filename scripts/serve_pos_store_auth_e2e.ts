@@ -18,9 +18,10 @@ async function main(){
  const actor:Actor={userId:user.id,role:user.role,admin:true,permissions:{}};
  const product=await service.createProduct(actor,{name:`Browser Shirt ${suffix}`,code:`UI-${suffix}`,variants:[{sku:`UI-${suffix}`,size:'M',color:'Black',sellingPrice:'100',costPrice:'50',taxRate:'5'}]});
  await service.adjust(actor,{storeId:a.id,variantId:product.variants[0]!.id,quantityDelta:5,type:'OPENING',reason:'Isolated browser fixture'});
+ const salesperson=await prisma.employee.create({data:{employeeCode:`SELLER-${suffix}`,employeeID:randomUUID(),firstName:'Store',lastName:`Seller ${suffix}`,designation:'Salesperson',storeId:a.id}});
  const register=await prisma.pOSRegister.create({data:{storeId:a.id,name:'Browser terminal'}});
  const app=express();app.use(express.json());app.use('/api/v1/pos',posRoutes);app.use('/api/admin',adminRoutes);app.use('/api/auth',authRoutes);
- const server=app.listen(0,'127.0.0.1',()=>console.log('STORE_AUTH_READY '+JSON.stringify({origin:`http://127.0.0.1:${(server.address() as {port:number}).port}`,user:{id:user.id,name:'Browser Super Admin',email:user.email,role:user.role},stores,productName:product.name,registerId:register.id})));
+ const server=app.listen(0,'127.0.0.1',()=>console.log('STORE_AUTH_READY '+JSON.stringify({origin:`http://127.0.0.1:${(server.address() as {port:number}).port}`,user:{id:user.id,name:'Browser Super Admin',email:user.email,role:user.role},stores,productName:product.name,sku:product.variants[0]!.sku,salesperson,registerId:register.id})));
  process.on('SIGTERM',()=>server.close(async()=>{await prisma.$disconnect();process.exit(0);}));
 }
 main().catch(async()=>{console.error('Store browser harness failed');await prisma.$disconnect();process.exit(1);});

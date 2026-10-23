@@ -580,25 +580,21 @@ router.get(
                 ? []
                 : [
                     { name: { contains: search, mode: "insensitive" as const } },
-                    { code: searchMode === "name" ? { equals: search, mode: "insensitive" as const } : { contains: search, mode: "insensitive" as const } },
+                    { code: { contains: search, mode: "insensitive" as const } },
                   ]),
-              ...(searchMode === "name"
-                ? []
-                : [
-                    {
-                      variants: {
-                        some: {
-                          OR: [
-                            { barcode: search },
-                            { barcode: { equals: search, mode: "insensitive" as const } },
-                            { barcode: { contains: search, mode: "insensitive" as const } },
-                            { sku: { equals: search, mode: "insensitive" as const } },
-                            { sku: { contains: search, mode: "insensitive" as const } },
-                          ],
-                        },
-                      },
-                    } as Prisma.POSProductWhereInput,
-                  ]),
+              {
+                variants: {
+                  some: {
+                    OR: [
+                      { barcode: search },
+                      { barcode: { equals: search, mode: "insensitive" as const } },
+                      { barcode: { contains: search, mode: "insensitive" as const } },
+                      { sku: { equals: search, mode: "insensitive" as const } },
+                      { sku: { contains: search, mode: "insensitive" as const } },
+                    ],
+                  },
+                },
+              } as Prisma.POSProductWhereInput,
             ],
           }
         : {}),
@@ -641,6 +637,7 @@ router.get(
         OR: [
           { barcode: code },
           { sku: code },
+          { product: { code } },
         ],
       },
       include: { product: true, balances: { where: { storeId } } },
@@ -653,6 +650,7 @@ router.get(
           OR: [
             { barcode: { equals: code, mode: "insensitive" } },
             { sku: { equals: code, mode: "insensitive" } },
+            { product: { code: { equals: code, mode: "insensitive" } } },
           ],
         },
         include: { product: true, balances: { where: { storeId } } },

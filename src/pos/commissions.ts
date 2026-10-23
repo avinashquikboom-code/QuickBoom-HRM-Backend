@@ -99,38 +99,35 @@ export async function accrueCommission(tx: Tx, actor: Actor, saleId: string) {
     });
     const lines = empItems
       .map((item) => {
-        // Manual items without a catalog variant attach to no commission
-        // product/category mapping, so they accrue nothing instead of fabricating data.
-        if (!item.variant) return null;
-        const product = item.variant.product;
-      // Explicit mappings only: a UUID/name is never guessed to be an external numeric policy ID.
-      const applicable = policies.filter(
-        (p) =>
-          (p.productId == null ||
-            p.productId === product.externalCommissionProductId) &&
-          (p.categoryId == null ||
-            p.categoryId === product.category?.externalCommissionCategoryId),
-      );
-      const eligibleRevenue =
-        config.commissionBasis === "NET_INCL_TAX"
-          ? item.lineTotal
-          : item.lineTotal.minus(item.taxTotal);
-      const resolution = calculateEffectiveCommissionForLineItem({
-        saleAmount: eligibleRevenue.toNumber(),
-        salesman: emp,
-        storeId: sale.storeId,
-        productId: product.externalCommissionProductId,
-        categoryId: product.category?.externalCommissionCategoryId,
-        policies: applicable,
-      });
-      const amount = round(
-        new D(String(resolution.commissionAmount)).mul(
-          resolution.commissionType === "FIXED" &&
-            config.fixedCommissionBasis === "UNIT"
-            ? item.quantity
-            : 1,
-        ),
-      );
+        const product = item.variant?.product;
+        // Explicit mappings only: a UUID/name is never guessed to be an external numeric policy ID.
+        const applicable = policies.filter(
+          (p) =>
+            (p.productId == null ||
+              (product && p.productId === product.externalCommissionProductId)) &&
+            (p.categoryId == null ||
+              (product && p.categoryId === product.category?.externalCommissionCategoryId)),
+        );
+        const eligibleRevenue =
+          config.commissionBasis === "NET_INCL_TAX"
+            ? item.lineTotal
+            : item.lineTotal.minus(item.taxTotal);
+        const resolution = calculateEffectiveCommissionForLineItem({
+          saleAmount: eligibleRevenue.toNumber(),
+          salesman: emp,
+          storeId: sale.storeId,
+          productId: product?.externalCommissionProductId,
+          categoryId: product?.category?.externalCommissionCategoryId,
+          policies: applicable,
+        });
+        const amount = round(
+          new D(String(resolution.commissionAmount)).mul(
+            resolution.commissionType === "FIXED" &&
+              config.fixedCommissionBasis === "UNIT"
+              ? item.quantity
+              : 1,
+          ),
+        );
       ensure(amount.gte(0), "Commission policy resolved a negative earning");
       return {
         saleItemId: item.id,

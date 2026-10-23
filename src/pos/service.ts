@@ -927,6 +927,7 @@ export async function progressTransfer(
 type SalespersonRef = number | null | undefined;
 type CatalogInput = {
   kind: "catalog";
+  key?: string;
   variantId: string;
   quantity: number;
   discount: Prisma.Decimal;
@@ -1062,6 +1063,7 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
             : integer(v.salespersonId, "salespersonId");
       const catalog: CatalogInput = {
         kind: "catalog",
+        key: optionalText(v.key, "item key", 100),
         variantId: uuid(v.variantId),
         quantity: integer(v.quantity, "quantity", 1, 10000),
         discount,
@@ -1195,7 +1197,7 @@ async function priceItems(
       grandTotal = grandTotal.plus(total);
       if (catalog) {
         return {
-          key: item.kind === "manual" ? item.key : undefined,
+          key: item.key,
           variantId: catalog.variantId,
           name: catalog.name,
           sku: catalog.sku,
