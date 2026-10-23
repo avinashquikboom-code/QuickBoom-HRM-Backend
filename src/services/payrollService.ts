@@ -1789,16 +1789,40 @@ class PayrollService {
       },
       orderBy: { date: 'asc' },
     });
-    const expenseCategories: Record<string, number> = {};
-    for (const exp of approvedExpensesList) {
-      const cat = exp.category || 'Other';
-      const amt = exp.amount || 0;
-      expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + amt) * 100) / 100;
-    }
-
     const expenseReimbursement = isFinalized
       ? Number(ps.expenseReimbursement || 0)
       : Math.round(approvedExpensesList.reduce((sum, exp) => sum + (exp.amount || 0), 0) * 100) / 100;
+
+    const expenseCategories: Record<string, number> = {};
+    if (isFinalized) {
+      if (expenseReimbursement > 0) {
+        if (approvedExpensesList.length === 0) {
+          expenseCategories['Other'] = expenseReimbursement;
+        } else {
+          let runningTotal = 0;
+          for (const exp of approvedExpensesList) {
+            const cat = exp.category || 'Other';
+            const amt = exp.amount || 0;
+            if (amt <= 0) continue;
+            const remaining = Math.round((expenseReimbursement - runningTotal) * 100) / 100;
+            if (remaining <= 0) break;
+            const alloc = Math.min(amt, remaining);
+            expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + alloc) * 100) / 100;
+            runningTotal = Math.round((runningTotal + alloc) * 100) / 100;
+          }
+          if (runningTotal < expenseReimbursement) {
+            const diff = Math.round((expenseReimbursement - runningTotal) * 100) / 100;
+            expenseCategories['Other'] = Math.round(((expenseCategories['Other'] || 0) + diff) * 100) / 100;
+          }
+        }
+      }
+    } else {
+      for (const exp of approvedExpensesList) {
+        const cat = exp.category || 'Other';
+        const amt = exp.amount || 0;
+        expenseCategories[cat] = Math.round(((expenseCategories[cat] || 0) + amt) * 100) / 100;
+      }
+    }
     const expensesByCategory = Object.entries(expenseCategories).map(([category, amount]) => ({ category, amount }));
 
     const settlement = computePayrollSettlement({
@@ -1971,6 +1995,9 @@ class PayrollService {
         commission: commissionEarned,
         expenseReimbursement,
         totalReimbursements,
+        expenses: expensesByCategory,
+        expensesByCategory,
+        expenseCategories,
       },
       summary: {
         fixedGrossSalary,

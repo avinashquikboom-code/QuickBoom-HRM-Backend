@@ -277,8 +277,10 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
   // 5. Reimbursements Table
   const expenseReimbursement = money(input.expenseReimbursement);
   const rkdIncentive = money(input.rkdIncentive);
-  const totalReimbursements = money(input.totalReimbursements ?? (expenseReimbursement + rkdIncentive));
   const catEntries = Object.entries(input.expenseCategories || {});
+  const catSum = catEntries.reduce((sum, [, amt]) => sum + (Number(amt) || 0), 0);
+  const effectiveExpenseReimb = catEntries.length > 0 ? catSum : expenseReimbursement;
+  const totalReimbursements = money(input.totalReimbursements ?? (effectiveExpenseReimb + rkdIncentive));
   const reimbTableBody: any[] = [
     [
       { text: 'Reimbursement / Expense Category', style: 'tableHeader', fillColor: '#059669' },
@@ -290,8 +292,9 @@ export function buildSalarySlipDocDefinition(input: GenerateSalarySlipPdfInput):
   if (catEntries.length > 0) {
     catEntries.forEach(([cat, amt], idx) => {
       hasReimbRows = true;
+      const label = /(?:expense|claim|reimbursement)$/i.test(cat.trim()) ? cat : `${cat} Expense`;
       reimbTableBody.push([
-        { text: `${cat} Expense`, fontSize: 8.5, color: TEXT_MAIN, fillColor: idx % 2 === 1 ? '#F9FAFB' : undefined },
+        { text: label, fontSize: 8.5, color: TEXT_MAIN, fillColor: idx % 2 === 1 ? '#F9FAFB' : undefined },
         { text: fmt(amt), fontSize: 8.5, alignment: 'right', color: TEXT_MAIN, fillColor: idx % 2 === 1 ? '#F9FAFB' : undefined },
       ]);
     });
