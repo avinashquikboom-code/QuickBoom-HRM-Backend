@@ -22,6 +22,7 @@ import {
 import { isCommissionEligibleEmployee } from "../utils/salaryGross";
 import { lineTotals, refundComponents, round } from "./finance";
 const D = Prisma.Decimal;
+type D = Prisma.Decimal;
 type Tx = Prisma.TransactionClient;
 export const hash = (v: unknown) =>
   createHash("sha256").update(JSON.stringify(v)).digest("hex");
@@ -605,10 +606,15 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       { n: bigint }[]
     >`SELECT nextval('"POSInvoiceSequence"') AS n`;
     const invoiceNo = `POS-${String(sequence[0]!.n).padStart(10, "0")}`;
-    const itemsToCreate = snapshots.map((s, idx) => ({
-      ...s,
-      salespersonId: items[idx]?.salespersonId !== undefined ? items[idx]!.salespersonId : salespersonId ?? null,
-    }));
+    const itemsToCreate = snapshots.map((s, idx) => {
+      // `key` exists only in the request/quote snapshot for line alignment;
+      // POSSaleItem has no such column.
+      const { key, ...row } = s;
+      return {
+        ...row,
+        salespersonId: items[idx]?.salespersonId !== undefined ? items[idx]!.salespersonId : salespersonId ?? null,
+      };
+    });
     const sale = await tx.pOSSale.create({
       data: {
         invoiceNo,
@@ -639,17 +645,18 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       },
     });
     for (const item of items)
-      await movement(
-        tx,
-        actor,
-        storeId,
-        item.variantId,
-        -item.quantity,
-        0,
-        "SALE",
-        sale.id,
-        invoiceNo,
-      );
+      if (item.kind === "catalog")
+        await movement(
+          tx,
+          actor,
+          storeId,
+          item.variantId,
+          -item.quantity,
+          0,
+          "SALE",
+          sale.id,
+          invoiceNo,
+        );
     await accrueCommission(tx, actor, sale.id);
     await audit(tx, actor, "SALE_COMPLETED", sale.id, {
       invoiceNo,
@@ -805,18 +812,22 @@ export async function returnSale(
       include: { items: true },
     });
     for (const line of items) {
-      const item = sale.items.find((i) => i.id === line.saleItemId)!;
-      await movement(
-        tx,
-        actor,
-        sale.storeId,
-        item.variantId,
-        line.resellable ? line.quantity : 0,
-        line.resellable ? 0 : line.quantity,
-        "RETURN",
-        result.id,
-        reason,
-      );
+      const item = sale.items.find((i) => i.id === line.saleItemId);
+      ensure(item, "Sale item not found", 404);
+      const variantId = item.variantId;
+      // Manual sale items have no catalog variant and no stock to return.
+      if (variantId)
+        await movement(
+          tx,
+          actor,
+          sale.storeId,
+          variantId,
+          line.resellable ? line.quantity : 0,
+          line.resellable ? 0 : line.quantity,
+          "RETURN",
+          result.id,
+          reason,
+        );
     }
     const updatedItems = await tx.pOSSaleItem.findMany({ where: { saleId } });
     await tx.pOSSale.update({
@@ -941,6 +952,28 @@ type ManualInput = {
   salespersonId: SalespersonRef;
 };
 type PricedInput = CatalogInput | ManualInput;
+type PricedSnapshot = {
+  key?: string;
+  variantId: string | null;
+  name: string;
+  sku: string;
+  barcode: string | null;
+  size: string;
+  color: string;
+  brand: string;
+  category: string | null;
+  quantity: number;
+  unitPrice: Prisma.Decimal;
+  catalogUnitPrice: Prisma.Decimal;
+  overrideReason?: string;
+  costPrice: Prisma.Decimal;
+  discountPerUnit: Prisma.Decimal;
+  discountTotal: Prisma.Decimal;
+  taxRate: Prisma.Decimal;
+  taxTotal: Prisma.Decimal;
+  lineTotal: Prisma.Decimal;
+  salespersonId: number | null;
+};
 function manualItem(
   v: Record<string, any>,
   discount: Prisma.Decimal,
@@ -1052,20 +1085,20 @@ async function priceItems(
   /** Input-aligned rows: each pricing decision keeps the position of its item. */
   const priced: {
     item: PricedInput;
-    price: D;
-    taxRate: D;
+    price: Prisma.Decimal;
+    taxRate: Prisma.Decimal;
     totals: ReturnType<typeof lineTotals>;
     catalog?: {
       variantId: string;
       name: string;
       sku: string;
-      barcode: string;
+      barcode: string | null;
       size: string;
       color: string;
       brand: string;
       category: string | null;
-      catalogUnitPrice: D;
-      costPrice: D;
+      catalogUnitPrice: Prisma.Decimal;
+      costPrice: Prisma.Decimal;
       discountEligible: boolean;
     };
   }[] = [];
@@ -1095,7 +1128,7 @@ async function priceItems(
           size: v.size,
           color: v.color,
           brand: v.product.brand,
-          category: v.product.category?.name,
+          category: v.product.category?.name ?? null,
           catalogUnitPrice: v.sellingPrice,
           costPrice: v.costPrice,
           discountEligible: v.product.discountEligible,

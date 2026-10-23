@@ -637,17 +637,15 @@ router.get(
     scope(r.actor, storeId);
     const code = text(r.query.code, "barcode or SKU", 200).trim();
     let matches = await prisma.pOSProductVariant.findMany({
-      where: { barcode: code },
+      where: {
+        OR: [
+          { barcode: code },
+          { sku: code },
+        ],
+      },
       include: { product: true, balances: { where: { storeId } } },
-      take: 2,
+      take: 5,
     });
-    if (!matches.length) {
-      matches = await prisma.pOSProductVariant.findMany({
-        where: { sku: code },
-        include: { product: true, balances: { where: { storeId } } },
-        take: 2,
-      });
-    }
     // Fallback to case-insensitive lookup if no exact match is found
     if (!matches.length) {
       matches = await prisma.pOSProductVariant.findMany({

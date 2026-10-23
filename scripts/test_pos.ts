@@ -973,12 +973,11 @@ async function main() {
           },
         ],
       });
-      const debit = await prisma.commissionTransaction.findUniqueOrThrow({
+      // Refund debits are keyed per original transaction: billId is `POSRETURN-<returnId>-<txId>`.
+      const debit = await prisma.commissionTransaction.findFirstOrThrow({
         where: {
-          billId_employeeId: {
-            billId: `POSRETURN-${returned.id}`,
-            employeeId: employee.id,
-          },
+          billId: { startsWith: `POSRETURN-${returned.id}-` },
+          employeeId: employee.id,
         },
       });
       assert.equal(debit.commissionAmount, -20);
@@ -1354,12 +1353,11 @@ async function main() {
           },
         ],
       });
-      const debit = await prisma.commissionTransaction.findUniqueOrThrow({
+      // Refund debits are keyed per original transaction: billId is `POSRETURN-<returnId>-<txId>`.
+      const debit = await prisma.commissionTransaction.findFirstOrThrow({
         where: {
-          billId_employeeId: {
-            billId: `POSRETURN-${returned.id}`,
-            employeeId: employee.id,
-          },
+          billId: { startsWith: `POSRETURN-${returned.id}-` },
+          employeeId: employee.id,
         },
       });
       assert.equal(debit.commissionAmount, -20);

@@ -122,4 +122,4 @@ async function main() {
     console.log(`PASS ${passed} real PostgreSQL/HTTP scan, registration and salesperson checks`);
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); await prisma.$disconnect(); }
 }
-main().catch(async error => { console.error(error); await prisma.$disconnect(); process.exitCode = 1; });
+main().then(() => process.exit(0)).catch(async error => { console.error(error); await prisma.$disconnect(); process.exit(1); });

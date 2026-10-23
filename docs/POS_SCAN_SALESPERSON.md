@@ -32,7 +32,7 @@ No new endpoint or duplicate catalog/inventory system was added.
 - `GET /api/v1/pos/products`: optional `searchMode=name` restricts suggestions to product-name substrings and exact product codes, excluding barcode/SKU substrings. Existing callers without this parameter retain their catalog search behavior.
 - `POST /api/v1/pos/products`: optional atomic opening-stock registration described above; existing callers remain supported.
 - `GET /api/v1/pos/salespeople`: existing endpoint now uses the shared store-scope helper and excludes disabled linked user accounts.
-- `POST /api/v1/pos/sales`: existing salesperson relationships are validated; explicit null line attribution is preserved.
+- `POST /api/v1/pos/sales`: existing salesperson relationships are validated; explicit null line attribution is preserved. Authenticated quote, sale and exchange API boundaries require registered variant IDs and reject catalog-free manual rows before billing.
 - Existing sale/history/detail responses include the selected employee's external GUID and actual name. Quotes, payments, receipts and reprints continue through their existing APIs.
 
 ## Files
@@ -64,7 +64,7 @@ No Prisma schema changes or database migrations were needed for this request. Th
 
 All database tests use matching `DATABASE_URL` and `POS_TEST_DATABASE_URL` targeting `hopkid_pos_test_verified` on localhost port 55439. The new test refuses other destinations before writing fixtures.
 
-- New real HTTP/PostgreSQL scan/salesperson suite: **11 checks passed** — real registration and OPENING ledger/balance, missing/partial-code no-write behavior, exact UUID/stock lookup, name search, registration rollback/permissions, eligible list/GUID/name, idempotent saved sale/payment/stock, history/receipt names, explicit unassigned rows, invalid/inactive/cross-store employee rejection and authorization.
+- New real HTTP/PostgreSQL scan/salesperson suite: **12 checks passed** — real registration and OPENING ledger/balance, missing/partial-code no-write behavior, exact UUID/stock lookup, name search, registration rollback/permissions, eligible list/GUID/name, idempotent saved sale/payment/stock, history/receipt names, explicit unassigned rows, invalid/inactive/cross-store employee rejection and authorization, including explicit rejection of catalog-free manual lines.
 - Existing PostgreSQL variant-selection suite: **8 checks passed** — both dimensions, size-only, color-only and plain variants; stock/inactive rejection; exact-barcode priority; invalid/missing stores and scope.
 - Existing browser selection suite: **passed**. This suite uses API fixtures; the end-to-end and PostgreSQL suites independently verify real backend behavior.
 - Focused POS ESLint and backend TypeScript: passed at completed checks.
@@ -75,6 +75,10 @@ All database tests use matching `DATABASE_URL` and `POS_TEST_DATABASE_URL` targe
 - Multi-product example verified: ₹399.95 subtotal − ₹27.01 discounts + ₹32.38 GST = ₹405.32, paid with ₹100 Cash + ₹305.32 UPI. A dropped successful response followed by retry deducted stock only once.
 - **Broad existing `test:pos` suite: not passed.** Core finance, idempotency, concurrent overselling, rollback, stock, authorization and related checks passed before the suite stopped at `scripts/test_pos.ts:976`: its expected commission-refund transaction identifier was absent (`P2025`). This is the previously observed commission-refund expectation; commission calculations were left unchanged as requested.
 
-A separate concurrent `pos_manual_sale_items` schema/migration appeared during final verification. It is outside this request, was not applied to the database by this work, and is not part of the verified registration-required barcode flow. Review/deploy concurrent work independently; the terminal implemented here does not bill unknown catalog-free items.
+A separate concurrent `pos_manual_sale_items` schema/migration appeared during final verification. It is outside this request, was not applied to the database by this work, and is not required for the verified registration-required barcode flow. Checkout was kept catalog-backed, with an explicit API guard against manual unregistered rows. Review the separate nullable-variant schema/migration work independently before deployment.
 
  Physical printer output and production deployment are not tested. Browser print invocation, 58/80 mm CSS widths and saved-invoice reprint recovery are tested with printing intercepted, avoiding a native print dialog.
+
+## Shared-checkout status at the final audit
+
+The registration-required implementation and its real-browser flow passed the checks above. Afterwards another chat continued modifying these same files, removed the registration-only API/service guards and their manual-line rejection test, and introduced catalog-free manual billing. The latest harness therefore reports 11 checks, not the 12-check registration-only suite described above. These edits conflict with the request to register product/variant/price/stock before billing. The current shared checkout is **not certified as the tested registration-only revision**. Integration is awaiting a pause of the competing edits or an explicit change of the requested manual-billing policy. No production database changes were made by this task.

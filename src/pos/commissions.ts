@@ -97,8 +97,12 @@ export async function accrueCommission(tx: Tx, actor: Actor, saleId: string) {
       },
       orderBy: [{ priority: "desc" }, { id: "asc" }],
     });
-    const lines = empItems.map((item) => {
-      const product = item.variant.product;
+    const lines = empItems
+      .map((item) => {
+        // Manual items without a catalog variant attach to no commission
+        // product/category mapping, so they accrue nothing instead of fabricating data.
+        if (!item.variant) return null;
+        const product = item.variant.product;
       // Explicit mappings only: a UUID/name is never guessed to be an external numeric policy ID.
       const applicable = policies.filter(
         (p) =>
@@ -139,7 +143,10 @@ export async function accrueCommission(tx: Tx, actor: Actor, saleId: string) {
           refundPolicy: config.refundCommissionPolicy!,
         },
       };
-    });
+      })
+      .filter((l): l is NonNullable<typeof l> => l !== null);
+    // An employee whose whole batch was manual lines has no commissionable revenue.
+    if (!lines.length) continue;
     const total = lines.reduce((n, l) => n.plus(l.amount), new D(0));
     const txRecord = await tx.commissionTransaction.create({
       data: {
