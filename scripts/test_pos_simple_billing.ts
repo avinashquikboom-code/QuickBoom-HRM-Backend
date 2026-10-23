@@ -292,6 +292,7 @@ async function run() {
     await prisma.pOSAuditLog.deleteMany({ where: { userId: cashierUser.id } });
     await prisma.user.deleteMany({ where: { id: cashierUser.id } });
     await prisma.store.deleteMany({ where: { id: store.id } });
+    process.exit(0);
   }
 }
 
