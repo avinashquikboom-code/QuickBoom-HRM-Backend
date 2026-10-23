@@ -126,8 +126,8 @@ export function variantData(raw: unknown) {
   return {
     sku: text(b.sku, "SKU", 80),
     barcode: b.barcode ? text(b.barcode, "barcode", 80) : `POS-${randomUUID()}`,
-    size: text(b.size, "size", 40),
-    color: text(b.color, "color", 60),
+    size: b.size == null || b.size === "" ? "" : text(b.size, "size", 40),
+    color: b.color == null || b.color === "" ? "" : text(b.color, "color", 60),
     costPrice: money(b.costPrice, "costPrice"),
     sellingPrice: money(b.sellingPrice, "sellingPrice"),
     taxRate,

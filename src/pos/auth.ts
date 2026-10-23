@@ -8,8 +8,11 @@ export interface Actor {
   role: string;
   employeeId?: number;
   storeId?: number;
+  storeName?: string;
+  storeCode?: string;
   permissions: Record<string, unknown>;
   admin: boolean;
+  isPosStoreSession?: boolean;
 }
 
 export interface POSRequest extends Request {
@@ -92,14 +95,63 @@ export async function authenticate(
       "POS requires configured JWT_SECRET",
       503,
     );
-    const token = req.headers.authorization?.replace(/^Bearer /, "");
+    const token =
+      req.headers.authorization?.replace(/^Bearer /, "") ||
+      (req.cookies?.pos_store_token as string | undefined);
     ensure(token, "Sign in required", 401);
-    let id: number;
+    let payload: any;
     try {
-      id = verifyToken(token).id;
+      payload = verifyToken(token);
     } catch {
       throw new POSError(401, "Invalid or expired signed session");
     }
+
+    if (payload.isPosStoreSession || payload.role === "STORE_POS") {
+      const storeId = Number(payload.storeId);
+      ensure(
+        Number.isSafeInteger(storeId) && storeId > 0,
+        "Invalid store session token",
+        401,
+      );
+      const store = await prisma.store.findUnique({
+        where: { id: storeId },
+        include: { posCredential: true },
+      });
+      ensure(store, "Store not found or session invalid", 401);
+      ensure(
+        store.isActive,
+        "Store location is currently inactive. Contact an administrator.",
+        403,
+      );
+      ensure(
+        store.posCredential && store.posCredential.posEnabled,
+        "POS access is disabled for this store. Contact an administrator.",
+        403,
+      );
+
+      (req as POSRequest).actor = {
+        userId: payload.id,
+        role: "STORE_POS",
+        storeId: store.id,
+        storeName: store.name,
+        storeCode: store.code ?? undefined,
+        admin: false,
+        isPosStoreSession: true,
+        permissions: {
+          "pos.read": true,
+          "pos.sell": true,
+          "pos.discount": true,
+          "pos.reports": true,
+          "pos.refund": true,
+          "pos.reconcile": true,
+          "pos.catalog": false,
+        },
+      };
+      next();
+      return;
+    }
+
+    const id: number = payload.id;
     const user = await prisma.user.findUnique({
       where: { id },
       include: { employee: true, userPermission: true },
@@ -112,16 +164,20 @@ export async function authenticate(
       employee = await prisma.employee.findFirst({
         where: {
           OR: [
-            ...(user.employeeID ? [{ employeeID: user.employeeID }, { employeeCode: user.employeeID }] : []),
+            ...(user.employeeID
+              ? [{ employeeID: user.employeeID }, { employeeCode: user.employeeID }]
+              : []),
             ...(user.email ? [{ user: { email: user.email } }] : []),
           ],
         },
       });
       if (employee && !employee.userId) {
-        await prisma.employee.update({
-          where: { id: employee.id },
-          data: { userId: user.id },
-        }).catch(() => {});
+        await prisma.employee
+          .update({
+            where: { id: employee.id },
+            data: { userId: user.id },
+          })
+          .catch(() => {});
       }
     }
 
@@ -140,6 +196,7 @@ export async function authenticate(
       employeeId: employee?.id,
       storeId: employee?.storeId ?? undefined,
       admin: ["SUPER_ADMIN", "ADMIN"].includes(user.role),
+      isPosStoreSession: false,
       permissions: {
         ...defaultRolePerms,
         ...((defaults?.permissions ?? {}) as object),
@@ -162,6 +219,14 @@ export function permission(actor: Actor, name: string) {
 
 export function scope(actor: Actor, storeId: number) {
   integer(storeId, "storeId");
+  if (actor.isPosStoreSession) {
+    ensure(
+      actor.storeId === storeId,
+      "Unauthorized store access: POS session is locked to its authenticated store.",
+      403,
+    );
+    return;
+  }
   ensure(
     actor.admin ||
       actor.permissions["pos.allStores"] === true ||
@@ -173,6 +238,14 @@ export function scope(actor: Actor, storeId: number) {
 }
 
 export function storeFilter(actor: Actor, input: unknown): number | undefined {
+  if (actor.isPosStoreSession) {
+    ensure(
+      actor.storeId,
+      "POS store session is missing an assigned store ID",
+      403,
+    );
+    return actor.storeId;
+  }
   if (input !== undefined && input !== "") {
     const id = Number(input);
     scope(actor, id);

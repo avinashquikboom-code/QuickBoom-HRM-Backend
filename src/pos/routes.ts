@@ -417,7 +417,7 @@ router.get(
     permission(r.actor, "read");
     const p = page(r.query),
       search =
-        typeof r.query.search === "string" ? r.query.search.slice(0, 200) : "",
+        typeof r.query.search === "string" ? r.query.search.trim().slice(0, 200) : "",
       storeId = storeFilter(r.actor, r.query.storeId);
     const where: Prisma.POSProductWhereInput = {
       ...(["true", "false"].includes(String(r.query.active))
@@ -441,8 +441,10 @@ router.get(
                 variants: {
                   some: {
                     OR: [
-                      { sku: { contains: search, mode: "insensitive" } },
                       { barcode: search },
+                      { barcode: { equals: search, mode: "insensitive" } },
+                      { barcode: { contains: search, mode: "insensitive" } },
+                      { sku: { contains: search, mode: "insensitive" } },
                     ],
                   },
                 },
@@ -473,6 +475,37 @@ router.get(
       total: await prisma.pOSProduct.count({ where }),
       page: p.page,
     };
+  }),
+);
+// Exact scan lookup is independent of paginated name search. SKU and barcode
+// are individually unique, but can collide across those two namespaces.
+router.get(
+  "/products/lookup",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const storeId = integer(Number(r.query.storeId), "storeId");
+    scope(r.actor, storeId);
+    const code = text(r.query.code, "barcode or SKU", 200);
+    // Prioritize exact case match first
+    let matches = await prisma.pOSProductVariant.findMany({
+      where: { OR: [{ barcode: code }, { sku: code }] },
+      include: { product: true, balances: { where: { storeId } } },
+      take: 2,
+    });
+    // Fall back to case-insensitive match if no exact match found
+    if (!matches.length) {
+      matches = await prisma.pOSProductVariant.findMany({
+        where: {
+          OR: [
+            { barcode: { equals: code, mode: "insensitive" } },
+            { sku: { equals: code, mode: "insensitive" } },
+          ],
+        },
+        include: { product: true, balances: { where: { storeId } } },
+        take: 2,
+      });
+    }
+    return { matches };
   }),
 );
 router.get(
