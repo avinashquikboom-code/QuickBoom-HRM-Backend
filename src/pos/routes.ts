@@ -30,7 +30,7 @@ import {
 } from "./reports";
 import * as operations from "./operations";
 import { reviewCommission } from "./commissions";
-import bcrypt from "bcryptjs";
+import { authenticateStorePassword } from "./storeCredentials";
 import { signAccessToken } from "../utils/jwt";
 
 const router = Router();
@@ -56,117 +56,31 @@ router.get("/auth/stores", async (_req: Request, res: Response, next: NextFuncti
   }
 });
 
+// IP guard bounds unknown-store attempts; database locks also rate-limit each
+// store across concurrent requests and server instances.
+const loginAttempts = new Map<string, {count:number;expires:number}>();
 router.post("/auth/login", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const b = object(req.body);
-    const storeIdentifier = b.storeCode || b.storeId;
-    ensure(
-      storeIdentifier !== undefined && storeIdentifier !== "",
-      "Store selection or store code is required",
-      400,
-    );
-    const password = text(b.password, "store password", 100);
-
-    let store;
-    if (typeof storeIdentifier === "number" || /^\d+$/.test(String(storeIdentifier))) {
-      store = await prisma.store.findUnique({
-        where: { id: Number(storeIdentifier) },
-        include: { posCredential: true },
-      });
-    }
-    if (!store && typeof storeIdentifier === "string") {
-      store = await prisma.store.findFirst({
-        where: { code: { equals: storeIdentifier.trim(), mode: "insensitive" } },
-        include: { posCredential: true },
-      });
-    }
-    if (!store) {
-      throw new POSError(401, "Store not found or invalid credentials.");
-    }
-    if (!store.isActive) {
-      throw new POSError(403, "Store location is currently inactive. Please contact an administrator.");
-    }
-    if (!store.posCredential || !store.posCredential.posEnabled) {
-      throw new POSError(403, "POS access is not enabled for this store. Please contact an administrator.");
-    }
-
-    const cred = store.posCredential;
-    if (cred.lockedUntil && cred.lockedUntil > new Date()) {
-      const waitMin = Math.ceil((cred.lockedUntil.getTime() - Date.now()) / (60 * 1000));
-      throw new POSError(429, `Too many failed attempts. POS login is locked for ${waitMin} more minute(s).`);
-    }
-
-    const isMatch = await bcrypt.compare(password, cred.passwordHash);
-    if (!isMatch) {
-      const failed = (cred.failedAttempts || 0) + 1;
-      const willLock = failed >= 5;
-      await prisma.pOSStoreCredential.update({
-        where: { id: cred.id },
-        data: {
-          failedAttempts: failed,
-          lockedUntil: willLock ? new Date(Date.now() + 15 * 60 * 1000) : null,
-        },
-      });
-      if (willLock) {
-        throw new POSError(429, "Too many failed attempts. POS access locked for 15 minutes.");
-      }
-      throw new POSError(401, "Invalid store password.");
-    }
-
-    // Reset failed attempts & record lastLoginAt
-    await prisma.pOSStoreCredential.update({
-      where: { id: cred.id },
-      data: {
-        failedAttempts: 0,
-        lockedUntil: null,
-        lastLoginAt: new Date(),
-      },
-    });
-
-    // Ensure dedicated internal POS terminal user for store
-    const terminalEmail = `pos-store-${store.id}@hopkid.local`;
-    const terminalUser = await prisma.user.upsert({
-      where: { email: terminalEmail },
-      update: { isActive: true },
-      create: {
-        email: terminalEmail,
-        password: cred.passwordHash,
-        role: "SALESMAN",
-        isActive: true,
-      },
-    });
-
-    // Sign store-scoped POS JWT token
-    const token = signAccessToken({
-      id: terminalUser.id,
-      role: "STORE_POS",
-      storeId: store.id,
-      storeCode: store.code ?? undefined,
-      storeName: store.name,
-      isPosStoreSession: true,
-    } as any);
-
-    // Set secure cookie
-    res.cookie("pos_store_token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
-    res.json({
-      success: true,
-      message: "POS login successful.",
-      token,
-      store: {
-        id: store.id,
-        name: store.name,
-        code: store.code,
-      },
-    });
-  } catch (e) {
-    next(e);
-  }
+    ensure(process.env.NODE_ENV !== "production" || !!process.env.JWT_SECRET, "POS requires configured JWT_SECRET", 503);
+    const now=Date.now();
+    for(const [ip,entry] of loginAttempts) if(entry.expires<=now) loginAttempts.delete(ip);
+    const ip=req.ip||req.socket.remoteAddress||"unknown";
+    const attempts=loginAttempts.get(ip)??{count:0,expires:now+15*60*1000};
+    ensure(attempts.count<30,"Too many POS login attempts. Try again in 15 minutes.",429);
+    attempts.count++;loginAttempts.set(ip,attempts);
+    const b=object(req.body);keys(b,["storeCode","storeId","password"]);
+    ensure((b.storeCode!==undefined)!==(b.storeId!==undefined),"Provide either a store code or a store selection, not both.");
+    ensure(typeof b.password==="string"&&b.password.length>0&&Buffer.byteLength(b.password,"utf8")<=72,"Enter a store password of at most 72 UTF-8 bytes.");
+    const store=b.storeCode!==undefined
+      ? await prisma.store.findFirst({where:{code:{equals:text(b.storeCode,"storeCode",80),mode:"insensitive"}},select:{id:true}})
+      : await prisma.store.findUnique({where:{id:integer(b.storeId,"storeId")},select:{id:true}});
+    ensure(store,"Store not found or invalid credentials.",401);
+    const result=await authenticateStorePassword(store.id,b.password);
+    if(result.error)throw result.error;
+    const token=signAccessToken({id:result.userId!,role:"STORE_POS",storeId:result.store!.id,storeCode:result.store!.code??undefined,storeName:result.store!.name,isPosStoreSession:true,credentialVersion:result.version});
+    res.cookie("pos_store_token",token,{httpOnly:true,secure:process.env.NODE_ENV==="production",sameSite:"lax",maxAge:60*60*1000});
+    res.json({success:true,message:"POS login successful.",token,store:result.store});
+  } catch(e) {next(e);}
 });
 
 router.post("/auth/logout", async (_req: Request, res: Response) => {

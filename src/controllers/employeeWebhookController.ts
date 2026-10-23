@@ -1,3 +1,4 @@
+import { defaultPOSCredential } from '../pos/storeCredentials';
 import { Router, Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { CommissionService } from '../services/commissionService';
@@ -102,6 +103,7 @@ export async function resolveStoreAndOffice(employeeData: any): Promise<{ storeI
         data: {
           name: displayName,
           code: `${baseCode}_${randomSuffix}`,
+          posCredential: { create: await defaultPOSCredential() },
         }
       });
       console.log(`[Store Resolve] ✅ Auto-created missing Store "${displayName}" (ID: ${store.id})`);

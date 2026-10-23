@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../utils/db";
+import { credentialVersion } from "./storeCredentials";
 import { verifyToken } from "../utils/jwt";
 import { ensure, integer, POSError } from "./validation";
 
@@ -129,6 +130,9 @@ export async function authenticate(
         403,
       );
 
+      ensure(payload.credentialVersion === credentialVersion(store.posCredential.passwordHash), "Store password changed. Sign in to POS again.", 401);
+      const terminal = await prisma.user.findUnique({where:{id:payload.id},select:{email:true,isActive:true}});
+      ensure(terminal?.isActive && terminal.email === `pos-store-${storeId}@hopkid.local`, "Invalid or disabled POS terminal session", 401);
       (req as POSRequest).actor = {
         userId: payload.id,
         role: "STORE_POS",

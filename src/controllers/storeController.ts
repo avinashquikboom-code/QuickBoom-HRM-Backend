@@ -3,7 +3,8 @@ import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import { generateStoreCode } from '../utils/idGenerator';
 import { syncStoresAndOffices } from '../utils/employeeSync';
-import bcrypt from 'bcryptjs';
+import { defaultPOSCredential, manageStorePOSCredential } from '../pos/storeCredentials';
+import { POSError } from '../pos/validation';
 
 export const fetchStores = async (
   req: AuthenticatedRequest,
@@ -102,6 +103,7 @@ export const createStore = async (
       data: {
         name: name.trim(),
         code: storeCode,
+        posCredential: { create: await defaultPOSCredential() },
         address: address?.trim() || null,
         country: country?.trim() || 'India',
         pincode: pincode?.trim() || null,
@@ -243,158 +245,14 @@ export const deleteStore = async (
   }
 };
 
-export const setStorePOSCredentials = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
+const credentialAction = (mode: 'password' | 'reset' | 'access') => async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
-    const storeId = parseInt(id as string, 10);
-    if (isNaN(storeId)) {
-      res.status(400).json({ success: false, message: 'Invalid store ID.' });
-      return;
-    }
-
-    const { password, posEnabled } = req.body;
-    if (!password || typeof password !== 'string' || password.trim().length < 6) {
-      res.status(400).json({
-        success: false,
-        message: 'Password is required and must be at least 6 characters long.',
-      });
-      return;
-    }
-
-    const store = await prisma.store.findUnique({
-      where: { id: storeId },
-    });
-    if (!store) {
-      res.status(404).json({ success: false, message: 'Store not found.' });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(password.trim(), 10);
-
-    const credential = await prisma.pOSStoreCredential.upsert({
-      where: { storeId },
-      create: {
-        storeId,
-        passwordHash,
-        posEnabled: posEnabled !== undefined ? Boolean(posEnabled) : true,
-        failedAttempts: 0,
-        lockedUntil: null,
-      },
-      update: {
-        passwordHash,
-        posEnabled: posEnabled !== undefined ? Boolean(posEnabled) : true,
-        failedAttempts: 0,
-        lockedUntil: null,
-      },
-      select: {
-        id: true,
-        storeId: true,
-        posEnabled: true,
-        lastLoginAt: true,
-        updatedAt: true,
-      },
-    });
-
-    // Record credential changes in the activity log
-    await prisma.activityLog.create({
-      data: {
-        actorId: req.user ? String(req.user.id) : null,
-        actorName: req.user?.email || 'Super Admin',
-        actorRole: req.user?.role || 'SUPER_ADMIN',
-        source: 'ADMIN_PANEL',
-        action: 'SET_STORE_POS_CREDENTIALS',
-        entityType: 'Store',
-        entityId: String(storeId),
-        description: `Set POS password and configured access for store "${store.name}" (${store.code || storeId})`,
-      },
-    }).catch(() => {});
-
-    res.json({
-      success: true,
-      message: 'Store POS credentials set successfully.',
-      data: {
-        storeId: credential.storeId,
-        posEnabled: credential.posEnabled,
-        updatedAt: credential.updatedAt,
-      },
-    });
-  } catch (error: any) {
-    console.error('Set store POS credentials error:', error);
-    res.status(500).json({ success: false, message: 'Failed to set store POS credentials.' });
+    const data = await manageStorePOSCredential(req, req.params.id, req.body ?? {}, mode);
+    res.json({success:true,message:mode==='reset'?'POS password reset to the initial default. Replace it with a unique password promptly.':'Store POS settings saved successfully.',data});
+  } catch(error) {
+    res.status(error instanceof POSError?error.status:500).json({success:false,message:error instanceof POSError?error.message:'Unable to save store POS settings.'});
   }
 };
-
-export const updateStorePOSAccess = async (
-  req: AuthenticatedRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const storeId = parseInt(id as string, 10);
-    if (isNaN(storeId)) {
-      res.status(400).json({ success: false, message: 'Invalid store ID.' });
-      return;
-    }
-
-    const { posEnabled } = req.body;
-    if (typeof posEnabled !== 'boolean') {
-      res.status(400).json({ success: false, message: 'posEnabled must be a boolean.' });
-      return;
-    }
-
-    const store = await prisma.store.findUnique({
-      where: { id: storeId },
-      include: { posCredential: true },
-    });
-    if (!store) {
-      res.status(404).json({ success: false, message: 'Store not found.' });
-      return;
-    }
-
-    if (!store.posCredential) {
-      res.status(400).json({
-        success: false,
-        message: 'POS credentials not yet configured for this store. Set a password first.',
-      });
-      return;
-    }
-
-    const updated = await prisma.pOSStoreCredential.update({
-      where: { storeId },
-      data: { posEnabled },
-      select: {
-        storeId: true,
-        posEnabled: true,
-        lastLoginAt: true,
-        updatedAt: true,
-      },
-    });
-
-    // Record in activity log
-    await prisma.activityLog.create({
-      data: {
-        actorId: req.user ? String(req.user.id) : null,
-        actorName: req.user?.email || 'Super Admin',
-        actorRole: req.user?.role || 'SUPER_ADMIN',
-        source: 'ADMIN_PANEL',
-        action: 'UPDATE_STORE_POS_ACCESS',
-        entityType: 'Store',
-        entityId: String(storeId),
-        description: `${posEnabled ? 'Enabled' : 'Disabled'} POS access for store "${store.name}"`,
-      },
-    }).catch(() => {});
-
-    res.json({
-      success: true,
-      message: `POS login access ${posEnabled ? 'enabled' : 'disabled'} successfully.`,
-      data: updated,
-    });
-  } catch (error: any) {
-    console.error('Update store POS access error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update store POS access.' });
-  }
-};
-
+export const setStorePOSCredentials = credentialAction('password');
+export const resetStorePOSPassword = credentialAction('reset');
+export const updateStorePOSAccess = credentialAction('access');

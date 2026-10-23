@@ -798,6 +798,7 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
         }
       }
 
+      if (legacyUser.role === "STORE_POS" || legacyUser.isPosStoreSession) throw new Error("POS sessions require store login");
       const userObj = await prisma.user.findUnique({
         where: { id: legacyUser.id },
         include: { employee: { select: { id: true, status: true } } }

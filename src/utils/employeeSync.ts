@@ -1,3 +1,4 @@
+import { defaultPOSCredential } from '../pos/storeCredentials';
 import { prisma } from './db';
 import { getIntegrationSettings } from './configService';
 import userSessionService from '../services/userSessionService';
@@ -134,6 +135,7 @@ export async function syncHopkidEmployees(): Promise<void> {
             data: {
               name: emp.branchName,
               code: storeCode,
+              posCredential: { create: await defaultPOSCredential() },
             }
           });
         }

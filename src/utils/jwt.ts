@@ -8,6 +8,11 @@ export interface UserJWTPayload {
   id: number;
   email?: string | null;
   role: string;
+  storeId?: number;
+  storeCode?: string;
+  storeName?: string;
+  isPosStoreSession?: boolean;
+  credentialVersion?: string;
 }
 
 // Access token - short-lived (1 hour)

@@ -168,6 +168,10 @@ export const authMiddleware = async (
 
   try {
     const decoded = verifyToken(token);
+    if (decoded.role === "STORE_POS" || decoded.isPosStoreSession) {
+      res.status(403).json({success:false,message:"Store POS sessions cannot access HRM APIs."});
+      return;
+    }
     req.user = decoded;
 
     // Validate that user and employee account are currently ACTIVE in the database

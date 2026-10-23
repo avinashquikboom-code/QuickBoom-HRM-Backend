@@ -1,3 +1,4 @@
+import { requireStorePOSAdmin } from '../pos/storeCredentials';
 import { protectLegacyPOSReview } from '../pos/commissions';
 import { Router } from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
@@ -118,6 +119,7 @@ import {
   fetchStores,
   fetchStoreById,
   createStore,
+  resetStorePOSPassword,
   updateStore,
   deleteStore,
   setStorePOSCredentials,
@@ -173,9 +175,10 @@ router.get('/stores/:id', roleMiddleware(storeManagerAllowedRoles), fetchStoreBy
 router.post('/stores', roleMiddleware(adminOnlyRoles), createStore);
 router.put('/stores/:id', roleMiddleware(adminOnlyRoles), updateStore);
 router.delete('/stores/:id', roleMiddleware(adminOnlyRoles), deleteStore);
-router.post('/stores/:id/pos-credentials', roleMiddleware(adminOnlyRoles), setStorePOSCredentials);
-router.put('/stores/:id/pos-credentials', roleMiddleware(adminOnlyRoles), setStorePOSCredentials);
-router.patch('/stores/:id/pos-access', roleMiddleware(adminOnlyRoles), updateStorePOSAccess);
+router.post('/stores/:id/pos-credentials', requireStorePOSAdmin, setStorePOSCredentials);
+router.put('/stores/:id/pos-credentials', requireStorePOSAdmin, setStorePOSCredentials);
+router.post('/stores/:id/pos-password/reset', requireStorePOSAdmin, resetStorePOSPassword);
+router.patch('/stores/:id/pos-access', requireStorePOSAdmin, updateStorePOSAccess);
 
 
 

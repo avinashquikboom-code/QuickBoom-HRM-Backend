@@ -14,6 +14,7 @@
     "test:salary-sync": "npx ts-node --transpile-only scripts/test_salary_sync_e2e.ts",
     "test:payroll-export": "npx ts-node --transpile-only scripts/test_payroll_governance_export.ts",
     "test:attendance-summary": "npx ts-node --transpile-only scripts/test_attendance_summary.ts",
+    "pos:initialize-credentials": "ts-node --transpile-only scripts/initialize_pos_store_credentials.ts",
     "test:pos": "ts-node --transpile-only scripts/test_pos.ts",
     "test:pos:context": "ts-node --transpile-only scripts/test_pos_context_auth.ts",
     "test:pos:selection": "ts-node --transpile-only scripts/test_pos_selection.ts",
