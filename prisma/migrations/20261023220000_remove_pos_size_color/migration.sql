@@ -1,3 +1,3 @@
--- Preserve catalog variant and historical invoice dimensions.
--- Manual POS rows omit these values; no database columns are dropped.
-SELECT 1;
+-- Authorized removal of POS catalog and invoice snapshot dimensions.
+ALTER TABLE "POSProductVariant" DROP COLUMN IF EXISTS "size", DROP COLUMN IF EXISTS "color";
+ALTER TABLE "POSSaleItem" DROP COLUMN IF EXISTS "size", DROP COLUMN IF EXISTS "color";
