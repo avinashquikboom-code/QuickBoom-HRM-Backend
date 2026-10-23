@@ -162,6 +162,7 @@ export async function authenticate(
     });
     ensure(user, "User account not found or session invalid", 401);
     ensure(user.isActive, "Account inactive", 403);
+    ensure(!/^pos-store-\d+@hopkid\.local$/i.test(user.email ?? ""), "Store terminal accounts must use the dedicated POS login.", 401);
 
     let employee = user.employee;
     if (!employee) {

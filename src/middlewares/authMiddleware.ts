@@ -180,6 +180,7 @@ export const authMiddleware = async (
       select: {
         id: true,
         isActive: true,
+        email: true,
         role: true,
         employee: {
           select: {
@@ -190,6 +191,9 @@ export const authMiddleware = async (
       },
     });
 
+    if (dbUser && /^pos-store-\d+@hopkid\.local$/i.test(dbUser.email ?? "")) {
+      res.status(403).json({success:false,message:"Store terminal accounts must use the dedicated POS login."});return;
+    }
     if (!dbUser || !dbUser.isActive) {
       res.status(403).json({
         success: false,

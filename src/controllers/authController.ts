@@ -811,6 +811,7 @@ export const refreshToken = async (req: AuthenticatedRequest, res: Response): Pr
         where: { id: legacyUser.id },
         include: { employee: { select: { id: true, status: true } } }
       });
+      if (/^pos-store-\d+@hopkid\.local$/i.test(userObj?.email ?? '')) throw new Error('POS sessions require store login');
       const isAdmin = userObj?.role === 'SUPER_ADMIN' || userObj?.role === 'ADMIN';
       const isEmployeeInactive = userObj?.employee?.status && userObj.employee.status.toLowerCase() !== 'active';
       if (!userObj || !userObj.isActive || (!isAdmin && isEmployeeInactive)) {
