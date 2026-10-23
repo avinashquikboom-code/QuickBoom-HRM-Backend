@@ -700,7 +700,7 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
 
 // Role-specific login endpoints
 export const employeeLogin = async (req: Request, res: Response): Promise<void> => {
-  await authenticateRoleLogin(req, res, [Role.EMPLOYEE]);
+  await authenticateRoleLogin(req, res, [Role.EMPLOYEE, Role.STORE_MANAGER, Role.SALESMAN, Role.HELPER]);
 };
 
 export const hrLogin = async (req: Request, res: Response): Promise<void> => {

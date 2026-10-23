@@ -1,63 +1,774 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { Prisma } from '@prisma/client';
-import { prisma } from '../utils/db';
-import { authenticate, POSRequest, permission, scope, storeFilter } from './auth';
-import { POSError, ensure, object, keys, text, uuid, integer, page, list } from './validation';
-import * as service from './service';
-import { report } from './reports';
+import { Router, Request, Response, NextFunction } from "express";
+import { Prisma } from "@prisma/client";
+import { prisma } from "../utils/db";
+import {
+  authenticate,
+  POSRequest,
+  permission,
+  scope,
+  storeFilter,
+} from "./auth";
+import {
+  POSError,
+  ensure,
+  object,
+  keys,
+  text,
+  uuid,
+  integer,
+  page,
+  list,
+  dateRange,
+} from "./validation";
+import * as service from "./service";
+import {
+  report,
+  groupedSales,
+  inventoryReport,
+  registerReport,
+  returnReport,
+} from "./reports";
+import * as operations from "./operations";
+import { reviewCommission } from "./commissions";
 const router = Router();
 router.use(authenticate);
-const route = (fn: (req: POSRequest) => Promise<unknown>) => async (req: Request, res: Response, next: NextFunction) => { try { res.json({ success: true, data: await fn(req as POSRequest) }); } catch (e) { next(e); } };
+const route =
+  (fn: (req: POSRequest) => Promise<unknown>) =>
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json({ success: true, data: await fn(req as POSRequest) });
+    } catch (e) {
+      next(e);
+    }
+  };
 const id = (r: Request) => uuid(r.params.id);
-router.get('/access/users', route(async r => { ensure(r.actor.admin, 'Administrator required', 403); const p = page(r.query); return prisma.user.findMany({ skip: p.skip, take: p.take, select: { id: true, email: true, role: true, userPermission: true, employee: { select: { firstName: true, lastName: true, storeId: true } } }, orderBy: { id: 'asc' } }); }));
-router.patch('/access/users/:userId', route(async r => { ensure(r.actor.admin, 'Administrator required', 403); const userId = integer(Number(r.params.userId), 'userId'), b = object(r.body); const names = ['read','catalog','inventory','sell','discount','priceOverride','refund','reconcile','reports','configure'].map(n => `pos.${n}`); keys(b, names); ensure(Object.values(b).every(v => typeof v === 'boolean'), 'Permissions must be booleans'); return service.transaction(async tx => { const previous = await tx.userPermission.findUnique({ where: { userId } }); const p = await tx.userPermission.upsert({ where: { userId }, create: { userId, permissions: b }, update: { permissions: { ...((previous?.permissions ?? {}) as object), ...b } } }); await service.audit(tx, r.actor, 'POS_PERMISSIONS_UPDATED', String(userId), b); return p; }); }));
-router.get('/context', route(async r => {
-  const a = r.actor; ensure(a.admin || Object.entries(a.permissions).some(([k, v]) => k.startsWith('pos.') && v === true), 'POS access required', 403);
-  const storeId = storeFilter(a, r.query.storeId);
-  return { actor: a, transferStores: (a.admin || a.permissions['pos.inventory'] === true) ? await prisma.store.findMany({ where: { isActive: true }, select: { id: true, name: true } }) : [], stores: await prisma.store.findMany({ where: { id: storeId, isActive: true }, select: { id: true, name: true, code: true } }), employees: await prisma.employee.findMany({ where: { storeId, status: { equals: 'active', mode: 'insensitive' } }, select: { id: true, firstName: true, lastName: true, storeId: true }, take: 500 }), currency: (await prisma.systemSetting.findFirst({ select: { currency: true } }))?.currency ?? 'INR' };
-}));
-router.get('/categories', route(async r => { permission(r.actor, 'read'); return prisma.pOSCategory.findMany({ orderBy: { name: 'asc' }, take: 500 }); }));
-router.post('/categories', route(async r => { permission(r.actor, 'catalog'); const b = object(r.body); keys(b, ['name', 'parentId']); return service.transaction(async tx => { const c = await tx.pOSCategory.create({ data: { name: text(b.name, 'name'), parentId: b.parentId ? uuid(b.parentId) : undefined } }); await service.audit(tx, r.actor, 'CATEGORY_CREATED', c.id); return c; }); }));
-router.get('/products', route(async r => {
-  permission(r.actor, 'read'); const p = page(r.query), search = typeof r.query.search === 'string' ? r.query.search.slice(0, 200) : '', storeId = storeFilter(r.actor, r.query.storeId);
-  const where: Prisma.POSProductWhereInput = { ...(r.query.active === 'true' ? { active: true } : {}), ...(r.query.categoryId ? { categoryId: uuid(r.query.categoryId) } : {}), ...(search ? { OR: [{ name: { contains: search, mode: 'insensitive' } }, { code: { contains: search, mode: 'insensitive' } }, { variants: { some: { OR: [{ sku: { contains: search, mode: 'insensitive' } }, { barcode: search }] } } }] } : {}) };
-  const sort = r.query.sort === 'name' ? { name: 'asc' as const } : { createdAt: 'desc' as const };
-  return { items: await prisma.pOSProduct.findMany({ where, skip: p.skip, take: p.take, orderBy: sort, include: { category: true, variants: { include: { balances: { where: { storeId } } } } } }), total: await prisma.pOSProduct.count({ where }), page: p.page };
-}));
-router.get('/products/:id', route(async r => { permission(r.actor, 'read'); const p = await prisma.pOSProduct.findUnique({ where: { id: id(r) }, include: { variants: true, category: true } }); ensure(p, 'Product not found', 404); return p; }));
-router.post('/products/import', route(async r => { permission(r.actor, 'catalog'); const b = object(r.body); keys(b, ['products']); const products = list(b.products, 100); return service.transaction(async tx => { const results = []; for (const product of products) results.push(await service.createProduct(r.actor, product, tx)); return results; }); }));
-router.post('/products', route(r => service.createProduct(r.actor, r.body)));
-router.patch('/products/:id', route(async r => { permission(r.actor, 'catalog'); const b = object(r.body); keys(b, ['name', 'description', 'code', 'brand', 'categoryId', 'season', 'material', 'gender', 'images', 'sizeChart', 'discountEligible', 'active']); return service.transaction(async tx => { const p = await tx.pOSProduct.update({ where: { id: id(r) }, data: service.productData(b) }); await service.audit(tx, r.actor, 'PRODUCT_UPDATED', p.id); return p; }); }));
-router.post('/products/:id/variants', route(async r => { permission(r.actor, 'catalog'); const data = service.variantData(r.body); return service.transaction(async tx => { const v = await tx.pOSProductVariant.create({ data: { ...data, productId: id(r) } }); await service.audit(tx, r.actor, 'VARIANT_CREATED', v.id); return v; }); }));
-router.patch('/variants/:id', route(async r => { permission(r.actor, 'catalog'); const data = service.variantData(r.body); return service.transaction(async tx => { const v = await tx.pOSProductVariant.update({ where: { id: id(r) }, data }); await service.audit(tx, r.actor, 'VARIANT_UPDATED', v.id); return v; }); }));
-router.get('/inventory', route(async r => { permission(r.actor, 'read'); const storeId = storeFilter(r.actor, r.query.storeId), p = page(r.query), where = { storeId, ...(r.query.variantId ? { variantId: uuid(r.query.variantId) } : {}) }; return { items: await prisma.pOSInventoryBalance.findMany({ where, skip: p.skip, take: p.take, include: { variant: { include: { product: true } }, store: { select: { name: true } } }, orderBy: { updatedAt: 'desc' } }), total: await prisma.pOSInventoryBalance.count({ where }), page: p.page }; }));
-router.get('/inventory/movements', route(async r => { permission(r.actor, 'inventory'); const storeId = storeFilter(r.actor, r.query.storeId), p = page(r.query), where = { storeId, ...(r.query.variantId ? { variantId: uuid(r.query.variantId) } : {}) }; return { items: await prisma.pOSStockMovement.findMany({ where, skip: p.skip, take: p.take, orderBy: { createdAt: 'desc' }, include: { variant: true } }), total: await prisma.pOSStockMovement.count({ where }) }; }));
-router.post('/inventory/reconciliations', route(r => service.reconcileStock(r.actor, r.body)));
-router.patch('/inventory/:id', route(async r => { permission(r.actor, 'inventory'); const b = object(r.body); keys(b, ['lowStockThreshold']); const threshold = integer(b.lowStockThreshold, 'lowStockThreshold', 0); return service.transaction(async tx => { const balance = await tx.pOSInventoryBalance.findUnique({ where: { id: id(r) } }); ensure(balance, 'Balance not found', 404); scope(r.actor, balance.storeId); const result = await tx.pOSInventoryBalance.update({ where: { id: balance.id }, data: { lowStockThreshold: threshold } }); await service.audit(tx, r.actor, 'LOW_STOCK_THRESHOLD_UPDATED', balance.id, { threshold }); return result; }); }));
-router.post('/inventory/adjustments', route(r => service.adjust(r.actor, r.body)));
-router.get('/transfers', route(async r => { permission(r.actor, 'inventory'); const storeId = storeFilter(r.actor, r.query.storeId), p = page(r.query), where = storeId ? { OR: [{ fromStoreId: storeId }, { toStoreId: storeId }] } : {}; return { items: await prisma.pOSStockTransfer.findMany({ where, skip: p.skip, take: p.take, orderBy: { createdAt: 'desc' }, include: { items: { include: { variant: true } }, fromStore: { select: { name: true } }, toStore: { select: { name: true } } } }), total: await prisma.pOSStockTransfer.count({ where }) }; }));
-router.post('/transfers', route(r => service.createTransfer(r.actor, r.body)));
-router.post('/transfers/:id/dispatch', route(r => service.progressTransfer(r.actor, id(r), false)));
-router.post('/transfers/:id/receive', route(r => service.progressTransfer(r.actor, id(r), true)));
-router.get('/registers', route(async r => { permission(r.actor, 'read'); const storeId = storeFilter(r.actor, r.query.storeId); return prisma.pOSRegister.findMany({ where: { storeId }, include: { sessions: { where: { closedAt: null } }, store: { select: { name: true } } }, take: 100 }); }));
-router.post('/registers', route(async r => { permission(r.actor, 'configure'); const b = object(r.body); keys(b, ['storeId', 'name']); const storeId = integer(b.storeId, 'storeId'); scope(r.actor, storeId); return service.transaction(async tx => { await service.activeStore(tx, storeId); const result = await tx.pOSRegister.create({ data: { storeId, name: text(b.name, 'name', 80) } }); await service.audit(tx, r.actor, 'REGISTER_CREATED', result.id); return result; }); }));
-router.post('/registers/:id/open', route(r => service.openRegister(r.actor, id(r), r.body)));
-router.post('/registers/:id/close', route(r => service.closeRegister(r.actor, id(r), r.body)));
-router.post('/sessions/:id/cash-movements', route(r => service.cashMovement(r.actor, id(r), r.body)));
-router.get('/registers/:id/sessions', route(async r => { permission(r.actor, 'read'); const register = await prisma.pOSRegister.findUnique({ where: { id: id(r) } }); ensure(register, 'Register not found', 404); scope(r.actor, register.storeId); const p = page(r.query); return prisma.pOSSession.findMany({ where: { registerId: register.id }, include: { cashMovements: true }, skip: p.skip, take: p.take, orderBy: { openedAt: 'desc' } }); }));
+router.get(
+  "/access/users",
+  route(async (r) => {
+    ensure(r.actor.admin, "Administrator required", 403);
+    const p = page(r.query);
+    return prisma.user.findMany({
+      skip: p.skip,
+      take: p.take,
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        userPermission: true,
+        employee: {
+          select: { firstName: true, lastName: true, storeId: true },
+        },
+      },
+      orderBy: { id: "asc" },
+    });
+  }),
+);
+router.patch(
+  "/access/users/:userId",
+  route(async (r) => {
+    ensure(r.actor.admin, "Administrator required", 403);
+    const userId = integer(Number(r.params.userId), "userId"),
+      b = object(r.body);
+    const names = [
+      "read",
+      "catalog",
+      "inventory",
+      "sell",
+      "discount",
+      "priceOverride",
+      "refund",
+      "reconcile",
+      "reports",
+      "configure",
+      "commissionApprove",
+    ].map((n) => `pos.${n}`);
+    keys(b, names);
+    ensure(
+      Object.values(b).every((v) => typeof v === "boolean"),
+      "Permissions must be booleans",
+    );
+    return service.transaction(async (tx) => {
+      const previous = await tx.userPermission.findUnique({
+        where: { userId },
+      });
+      const p = await tx.userPermission.upsert({
+        where: { userId },
+        create: { userId, permissions: b },
+        update: {
+          permissions: { ...((previous?.permissions ?? {}) as object), ...b },
+        },
+      });
+      await service.audit(
+        tx,
+        r.actor,
+        "POS_PERMISSIONS_UPDATED",
+        String(userId),
+        b,
+      );
+      return p;
+    });
+  }),
+);
+router.get(
+  "/configuration",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const storeId = Number(r.query.storeId);
+    scope(r.actor, storeId);
+    return (
+      (await prisma.pOSConfiguration.findUnique({ where: { storeId } })) ?? {
+        storeId,
+        commissionEnabled: false,
+        returnWindowDays: null,
+      }
+    );
+  }),
+);
+router.patch(
+  "/configuration",
+  route((r) => operations.configure(r.actor, r.body)),
+);
+router.get(
+  "/payment-methods",
+  route(async (r) => {
+    permission(r.actor, "read");
+    return operations.paymentMethods(r.actor, Number(r.query.storeId));
+  }),
+);
+router.patch(
+  "/payment-methods/:code",
+  route((r) =>
+    operations.savePaymentMethod(r.actor, String(r.params.code), r.body),
+  ),
+);
+router.post(
+  "/payments/:id/reconcile",
+  route((r) => operations.reconcilePayment(r.actor, id(r), r.body)),
+);
+router.post(
+  "/returns/:id/reconcile",
+  route((r) => operations.reconcilePayment(r.actor, id(r), r.body, true)),
+);
+router.get(
+  "/customers",
+  route((r) => operations.customers(r.actor, r.query)),
+);
+router.post(
+  "/customers",
+  route((r) => operations.saveCustomer(r.actor, r.body)),
+);
+router.patch(
+  "/customers/:id",
+  route((r) => operations.saveCustomer(r.actor, r.body, id(r))),
+);
+router.post(
+  "/products/bulk-update",
+  route((r) => operations.bulkCatalog(r.actor, r.body)),
+);
+router.get(
+  "/commissions",
+  route(async (r) => {
+    permission(r.actor, "reports");
+    const storeId = storeFilter(r.actor, r.query.storeId),
+      p = page(r.query);
+    const where: Prisma.CommissionTransactionWhereInput = {
+      storeId,
+      eventType: { startsWith: "POS_" },
+      ...(r.query.status ? { status: text(r.query.status, "status") } : {}),
+    };
+    return {
+      items: await prisma.commissionTransaction.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        include: {
+          employee: { select: { firstName: true, lastName: true } },
+          posLines: {
+            include: {
+              saleItem: { select: { saleId: true, name: true, sku: true } },
+            },
+          },
+        },
+      }),
+      total: await prisma.commissionTransaction.count({ where }),
+      page: p.page,
+    };
+  }),
+);
+router.post(
+  "/commissions/:transactionId/review",
+  route((r) =>
+    reviewCommission(
+      r.actor,
+      integer(Number(r.params.transactionId), "transactionId"),
+      r.body,
+    ),
+  ),
+);
+router.get(
+  "/context",
+  route(async (r) => {
+    const a = r.actor;
+    ensure(
+      a.admin ||
+        Object.entries(a.permissions).some(
+          ([k, v]) => k.startsWith("pos.") && v === true,
+        ),
+      "POS access required",
+      403,
+    );
+    const storeId = storeFilter(a, r.query.storeId);
+    return {
+      actor: a,
+      transferStores:
+        a.admin || a.permissions["pos.inventory"] === true
+          ? await prisma.store.findMany({
+              where: { isActive: true },
+              select: { id: true, name: true },
+            })
+          : [],
+      stores: await prisma.store.findMany({
+        where: { id: storeId, isActive: true },
+        select: { id: true, name: true, code: true },
+      }),
+      employees: await prisma.employee.findMany({
+        where: { storeId, status: { equals: "active", mode: "insensitive" } },
+        select: { id: true, firstName: true, lastName: true, storeId: true },
+        take: 500,
+      }),
+      currency:
+        (await prisma.systemSetting.findFirst({ select: { currency: true } }))
+          ?.currency ?? "INR",
+    };
+  }),
+);
+router.get(
+  "/categories",
+  route(async (r) => {
+    permission(r.actor, "read");
+    return prisma.pOSCategory.findMany({ orderBy: { name: "asc" }, take: 500 });
+  }),
+);
+router.post(
+  "/categories",
+  route(async (r) => {
+    permission(r.actor, "catalog");
+    const b = object(r.body);
+    keys(b, ["name", "parentId", "externalCommissionCategoryId"]);
+    return service.transaction(async (tx) => {
+      const c = await tx.pOSCategory.create({
+        data: {
+          name: text(b.name, "name"),
+          externalCommissionCategoryId: b.externalCommissionCategoryId
+            ? integer(
+                b.externalCommissionCategoryId,
+                "externalCommissionCategoryId",
+              )
+            : undefined,
+          parentId: b.parentId ? uuid(b.parentId) : undefined,
+        },
+      });
+      await service.audit(tx, r.actor, "CATEGORY_CREATED", c.id);
+      return c;
+    });
+  }),
+);
+router.get(
+  "/products",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const p = page(r.query),
+      search =
+        typeof r.query.search === "string" ? r.query.search.slice(0, 200) : "",
+      storeId = storeFilter(r.actor, r.query.storeId);
+    const where: Prisma.POSProductWhereInput = {
+      ...(["true", "false"].includes(String(r.query.active))
+        ? { active: r.query.active === "true" }
+        : {}),
+      ...(r.query.brand
+        ? {
+            brand: {
+              contains: text(r.query.brand, "brand"),
+              mode: "insensitive",
+            },
+          }
+        : {}),
+      ...(r.query.categoryId ? { categoryId: uuid(r.query.categoryId) } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { code: { contains: search, mode: "insensitive" } },
+              {
+                variants: {
+                  some: {
+                    OR: [
+                      { sku: { contains: search, mode: "insensitive" } },
+                      { barcode: search },
+                    ],
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+    const sort: Prisma.POSProductOrderByWithRelationInput =
+      r.query.sort === "name"
+        ? { name: "asc" }
+        : r.query.sort === "name-desc"
+          ? { name: "desc" }
+          : r.query.sort === "oldest"
+            ? { createdAt: "asc" }
+            : { createdAt: "desc" };
+    return {
+      items: await prisma.pOSProduct.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        orderBy: sort,
+        include: {
+          category: true,
+          variants: { include: { balances: { where: { storeId } } } },
+        },
+      }),
+      total: await prisma.pOSProduct.count({ where }),
+      page: p.page,
+    };
+  }),
+);
+router.get(
+  "/products/:id",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const p = await prisma.pOSProduct.findUnique({
+      where: { id: id(r) },
+      include: { variants: true, category: true },
+    });
+    ensure(p, "Product not found", 404);
+    return p;
+  }),
+);
+router.post(
+  "/products/import",
+  route(async (r) => {
+    permission(r.actor, "catalog");
+    const b = object(r.body);
+    keys(b, ["products"]);
+    const products = list(b.products, 100);
+    return service.transaction(async (tx) => {
+      const results = [];
+      for (const product of products)
+        results.push(await service.createProduct(r.actor, product, tx));
+      return results;
+    });
+  }),
+);
+router.post(
+  "/products",
+  route((r) => service.createProduct(r.actor, r.body)),
+);
+router.patch(
+  "/products/:id",
+  route(async (r) => {
+    permission(r.actor, "catalog");
+    const b = object(r.body);
+    keys(b, [
+      "name",
+      "description",
+      "code",
+      "brand",
+      "categoryId",
+      "season",
+      "material",
+      "gender",
+      "images",
+      "sizeChart",
+      "discountEligible",
+      "active",
+      "externalCommissionProductId",
+    ]);
+    return service.transaction(async (tx) => {
+      const p = await tx.pOSProduct.update({
+        where: { id: id(r) },
+        data: service.productData(b),
+      });
+      await service.audit(tx, r.actor, "PRODUCT_UPDATED", p.id);
+      return p;
+    });
+  }),
+);
+router.post(
+  "/products/:id/variants",
+  route(async (r) => {
+    permission(r.actor, "catalog");
+    const data = service.variantData(r.body);
+    return service.transaction(async (tx) => {
+      const v = await tx.pOSProductVariant.create({
+        data: { ...data, productId: id(r) },
+      });
+      await service.audit(tx, r.actor, "VARIANT_CREATED", v.id);
+      return v;
+    });
+  }),
+);
+router.patch(
+  "/variants/:id",
+  route((r) => operations.updateVariant(r.actor, id(r), r.body)),
+);
+router.get(
+  "/inventory",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const storeId = storeFilter(r.actor, r.query.storeId),
+      p = page(r.query),
+      where = {
+        storeId,
+        ...(r.query.variantId ? { variantId: uuid(r.query.variantId) } : {}),
+      };
+    return {
+      items: await prisma.pOSInventoryBalance.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        include: {
+          variant: { include: { product: true } },
+          store: { select: { name: true } },
+        },
+        orderBy: { updatedAt: "desc" },
+      }),
+      total: await prisma.pOSInventoryBalance.count({ where }),
+      page: p.page,
+    };
+  }),
+);
+router.get(
+  "/inventory/movements",
+  route(async (r) => {
+    permission(r.actor, "inventory");
+    const storeId = storeFilter(r.actor, r.query.storeId),
+      p = page(r.query),
+      where = {
+        storeId,
+        ...(r.query.variantId ? { variantId: uuid(r.query.variantId) } : {}),
+      };
+    return {
+      items: await prisma.pOSStockMovement.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        orderBy: { createdAt: "desc" },
+        include: { variant: true },
+      }),
+      total: await prisma.pOSStockMovement.count({ where }),
+    };
+  }),
+);
+router.post(
+  "/inventory/reconciliations",
+  route((r) => service.reconcileStock(r.actor, r.body)),
+);
+router.patch(
+  "/inventory/:id",
+  route(async (r) => {
+    permission(r.actor, "inventory");
+    const b = object(r.body);
+    keys(b, ["lowStockThreshold"]);
+    const threshold = integer(b.lowStockThreshold, "lowStockThreshold", 0);
+    return service.transaction(async (tx) => {
+      const balance = await tx.pOSInventoryBalance.findUnique({
+        where: { id: id(r) },
+      });
+      ensure(balance, "Balance not found", 404);
+      scope(r.actor, balance.storeId);
+      const result = await tx.pOSInventoryBalance.update({
+        where: { id: balance.id },
+        data: { lowStockThreshold: threshold },
+      });
+      await service.audit(
+        tx,
+        r.actor,
+        "LOW_STOCK_THRESHOLD_UPDATED",
+        balance.id,
+        { threshold },
+      );
+      return result;
+    });
+  }),
+);
+router.post(
+  "/inventory/adjustments",
+  route((r) => service.adjust(r.actor, r.body)),
+);
+router.get(
+  "/transfers",
+  route(async (r) => {
+    permission(r.actor, "inventory");
+    const storeId = storeFilter(r.actor, r.query.storeId),
+      p = page(r.query),
+      where = storeId
+        ? { OR: [{ fromStoreId: storeId }, { toStoreId: storeId }] }
+        : {};
+    return {
+      items: await prisma.pOSStockTransfer.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        orderBy: { createdAt: "desc" },
+        include: {
+          items: { include: { variant: true } },
+          fromStore: { select: { name: true } },
+          toStore: { select: { name: true } },
+        },
+      }),
+      total: await prisma.pOSStockTransfer.count({ where }),
+    };
+  }),
+);
+router.post(
+  "/transfers",
+  route((r) => service.createTransfer(r.actor, r.body)),
+);
+router.post(
+  "/transfers/:id/dispatch",
+  route((r) => service.progressTransfer(r.actor, id(r), false)),
+);
+router.post(
+  "/transfers/:id/receive",
+  route((r) => service.progressTransfer(r.actor, id(r), true)),
+);
+router.get(
+  "/registers",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const storeId = storeFilter(r.actor, r.query.storeId);
+    return prisma.pOSRegister.findMany({
+      where: { storeId },
+      include: {
+        sessions: { where: { closedAt: null } },
+        store: { select: { name: true } },
+      },
+      take: 100,
+    });
+  }),
+);
+router.post(
+  "/registers",
+  route(async (r) => {
+    permission(r.actor, "configure");
+    const b = object(r.body);
+    keys(b, ["storeId", "name"]);
+    const storeId = integer(b.storeId, "storeId");
+    scope(r.actor, storeId);
+    return service.transaction(async (tx) => {
+      await service.activeStore(tx, storeId);
+      const result = await tx.pOSRegister.create({
+        data: { storeId, name: text(b.name, "name", 80) },
+      });
+      await service.audit(tx, r.actor, "REGISTER_CREATED", result.id);
+      return result;
+    });
+  }),
+);
+router.post(
+  "/registers/:id/open",
+  route((r) => service.openRegister(r.actor, id(r), r.body)),
+);
+router.post(
+  "/registers/:id/close",
+  route((r) => service.closeRegister(r.actor, id(r), r.body)),
+);
+router.post(
+  "/sessions/:id/cash-movements",
+  route((r) => service.cashMovement(r.actor, id(r), r.body)),
+);
+router.get(
+  "/registers/:id/sessions",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const register = await prisma.pOSRegister.findUnique({
+      where: { id: id(r) },
+    });
+    ensure(register, "Register not found", 404);
+    scope(r.actor, register.storeId);
+    const p = page(r.query);
+    return prisma.pOSSession.findMany({
+      where: { registerId: register.id },
+      include: { cashMovements: true },
+      skip: p.skip,
+      take: p.take,
+      orderBy: { openedAt: "desc" },
+    });
+  }),
+);
 // Sale creation completes atomically. No separate unsafe draft-completion endpoint.
-router.post('/quote', route(r => service.quote(r.actor, r.body)));
-router.post('/sales', route(r => service.checkout(r.actor, r.body)));
-router.get('/sales', route(async r => { permission(r.actor, 'read'); const storeId = storeFilter(r.actor, r.query.storeId), p = page(r.query); const where: Prisma.POSSaleWhereInput = { storeId, ...(r.query.search ? { invoiceNo: { contains: text(r.query.search, 'search'), mode: 'insensitive' } } : {}) }; return { items: await prisma.pOSSale.findMany({ where, skip: p.skip, take: p.take, orderBy: { createdAt: 'desc' }, include: { salesperson: { select: { firstName: true, lastName: true } } } }), total: await prisma.pOSSale.count({ where }), page: p.page }; }));
-router.get('/sales/:id', route(async r => { permission(r.actor, 'read'); const s = await prisma.pOSSale.findUnique({ where: { id: id(r) }, include: { items: true, payments: true, returns: { include: { items: true } }, store: { select: { name: true, address: true } }, salesperson: { select: { firstName: true, lastName: true } } } }); ensure(s, 'Invoice not found', 404); scope(r.actor, s.storeId); return s; }));
-router.post('/sales/:id/exchanges', route(r => service.exchange(r.actor, id(r), r.body)));
-router.post('/sales/:id/cancel', route(r => service.cancelSale(r.actor, id(r), r.body)));
-router.post('/sales/:id/returns', route(r => service.returnSale(r.actor, id(r), r.body)));
-for (const name of ['daily-sales', 'employee-sales', 'inventory']) router.get(`/reports/${name}`, route(r => report(r.actor, r.query)));
+router.post(
+  "/quote",
+  route((r) => service.quote(r.actor, r.body)),
+);
+router.post(
+  "/sales",
+  route((r) => service.checkout(r.actor, r.body)),
+);
+router.get(
+  "/sales",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const storeId = storeFilter(r.actor, r.query.storeId),
+      p = page(r.query);
+    const where: Prisma.POSSaleWhereInput = {
+      storeId,
+      ...(r.query.from || r.query.to ? { createdAt: dateRange(r.query) } : {}),
+      ...(r.query.status ? { status: text(r.query.status, "status") } : {}),
+      ...(r.query.cashierId
+        ? { cashierId: integer(Number(r.query.cashierId), "cashierId") }
+        : {}),
+      ...(r.query.salespersonId
+        ? {
+            salespersonId: integer(
+              Number(r.query.salespersonId),
+              "salespersonId",
+            ),
+          }
+        : {}),
+      ...(r.query.search
+        ? {
+            invoiceNo: {
+              contains: text(r.query.search, "search"),
+              mode: "insensitive",
+            },
+          }
+        : {}),
+    };
+    return {
+      items: await prisma.pOSSale.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        include: {
+          salesperson: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      total: await prisma.pOSSale.count({ where }),
+      page: p.page,
+    };
+  }),
+);
+router.get(
+  "/sales/:id",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const s = await prisma.pOSSale.findUnique({
+      where: { id: id(r) },
+      include: {
+        items: true,
+        payments: true,
+        returns: { include: { items: true } },
+        store: { select: { name: true, address: true } },
+        salesperson: { select: { firstName: true, lastName: true } },
+      },
+    });
+    ensure(s, "Invoice not found", 404);
+    scope(r.actor, s.storeId);
+    return s;
+  }),
+);
+router.post(
+  "/sales/:id/exchanges",
+  route((r) => service.exchange(r.actor, id(r), r.body)),
+);
+router.post(
+  "/sales/:id/cancel",
+  route((r) => service.cancelSale(r.actor, id(r), r.body)),
+);
+router.post(
+  "/sales/:id/returns",
+  route((r) => service.returnSale(r.actor, id(r), r.body)),
+);
+router.get(
+  "/reports/daily-sales",
+  route((r) => report(r.actor, r.query)),
+);
+router.get(
+  "/reports/employee-sales",
+  route((r) => report(r.actor, r.query)),
+);
+router.get(
+  "/reports/sales",
+  route((r) => groupedSales(r.actor, r.query)),
+);
+router.get(
+  "/reports/inventory",
+  route((r) => inventoryReport(r.actor, r.query)),
+);
+router.get(
+  "/reports/registers",
+  route((r) => registerReport(r.actor, r.query)),
+);
+router.get(
+  "/reports/returns",
+  route((r) => returnReport(r.actor, r.query)),
+);
+router.get(
+  "/sales/:id/audit",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const sale = await prisma.pOSSale.findUnique({
+      where: { id: id(r) },
+      select: { storeId: true, returns: { select: { id: true } } },
+    });
+    ensure(sale, "Invoice not found", 404);
+    scope(r.actor, sale.storeId);
+    const p = page(r.query);
+    const ids = [id(r), ...sale.returns.map((x) => x.id)];
+    const where = { entityId: { in: ids } };
+    return {
+      items: await prisma.pOSAuditLog.findMany({
+        where,
+        skip: p.skip,
+        take: p.take,
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        include: { user: { select: { id: true, email: true } } },
+      }),
+      total: await prisma.pOSAuditLog.count({ where }),
+    };
+  }),
+);
 router.use((e: unknown, req: Request, res: Response, next: NextFunction) => {
-  if (e instanceof POSError) { res.status(e.status).json({ success: false, message: e.message }); return; }
-  if (e instanceof Prisma.PrismaClientKnownRequestError) { const status = ['P2002', 'P2034'].includes(e.code) ? 409 : ['P2003', 'P2025'].includes(e.code) ? 400 : 500; res.status(status).json({ success: false, message: status === 409 ? 'Conflicting record or concurrent update. Retry with the same request key.' : status === 400 ? 'Referenced record is missing or invalid.' : 'POS database operation failed.' }); return; }
-  console.error(JSON.stringify({ module: 'pos', event: 'request_failed', method: req.method, path: req.path, errorType: e instanceof Error ? e.name : 'Unknown' }));
-  res.status(500).json({ success: false, message: 'POS request failed.' });
+  if (e instanceof POSError) {
+    res.status(e.status).json({ success: false, message: e.message });
+    return;
+  }
+  if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    const status = ["P2002", "P2034"].includes(e.code)
+      ? 409
+      : ["P2003", "P2025"].includes(e.code)
+        ? 400
+        : 500;
+    res
+      .status(status)
+      .json({
+        success: false,
+        message:
+          status === 409
+            ? "Conflicting record or concurrent update. Retry with the same request key."
+            : status === 400
+              ? "Referenced record is missing or invalid."
+              : "POS database operation failed.",
+      });
+    return;
+  }
+  console.error(
+    JSON.stringify({
+      module: "pos",
+      event: "request_failed",
+      method: req.method,
+      path: req.path,
+      errorType: e instanceof Error ? e.name : "Unknown",
+    }),
+  );
+  res.status(500).json({ success: false, message: "POS request failed." });
 });
 export default router;

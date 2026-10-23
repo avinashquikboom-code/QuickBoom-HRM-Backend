@@ -632,6 +632,9 @@ model CustomRole {
 
 
 model Store {
+  posConfiguration POSConfiguration?
+  posCustomers POSCustomer[]
+  posPaymentMethods POSPaymentMethod[]
   posRegisters POSRegister[]
   posBalances POSInventoryBalance[]
   posMovements POSStockMovement[]
@@ -803,6 +806,7 @@ model CommissionPolicy {
 }
 
 model CommissionTransaction {
+  posLines POSCommissionLine[]
   id                Int      @id @default(autoincrement())
   billId            String?
   invoiceNumber     String?
@@ -1514,6 +1518,7 @@ model RkdRequest {
 
 // Fashion retail POS: independent documents, shared HRM identities and stores.
 model POSCategory {
+  externalCommissionCategoryId Int?
   id String @id @default(uuid()) @db.Uuid
   name String @unique
   parentId String? @db.Uuid
@@ -1522,6 +1527,7 @@ model POSCategory {
   products POSProduct[]
 }
 model POSProduct {
+  externalCommissionProductId Int?
   id String @id @default(uuid()) @db.Uuid
   name String
   description String @default("")
@@ -1623,6 +1629,10 @@ model POSSession {
   @@index([registerId, closedAt])
 }
 model POSSale {
+  customerId String? @db.Uuid
+  customer POSCustomer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  paymentStatus String @default("RECORDED")
+  rounding Decimal @default(0) @db.Decimal(15,2)
   id String @id @default(uuid()) @db.Uuid
   invoiceNo String @unique
   idempotencyKey String @unique
@@ -1651,6 +1661,7 @@ model POSSale {
   @@index([salespersonId, createdAt])
 }
 model POSSaleItem {
+  commission POSCommissionLine?
   discountTotal Decimal @default(0) @db.Decimal(15,2)
   catalogUnitPrice Decimal @default(0) @db.Decimal(15,2)
   overrideReason String?
@@ -1677,6 +1688,10 @@ model POSSaleItem {
   @@unique([saleId, variantId])
 }
 model POSSalePayment {
+  gatewayTransactionId String?
+  reconciliationStatus String @default("UNRECONCILED")
+  reconciledAt DateTime?
+  reconciliationNote String?
   id String @id @default(uuid()) @db.Uuid
   saleId String @db.Uuid
   sale POSSale @relation(fields: [saleId], references: [id], onDelete: Restrict)
@@ -1686,6 +1701,9 @@ model POSSalePayment {
   createdAt DateTime @default(now())
 }
 model POSReturn {
+  reconciliationStatus String @default("UNRECONCILED")
+  reconciledAt DateTime?
+  reconciliationNote String?
   id String @id @default(uuid()) @db.Uuid
   saleId String @db.Uuid
   sale POSSale @relation(fields: [saleId], references: [id], onDelete: Restrict)
@@ -1761,4 +1779,51 @@ model POSCashMovement {
   idempotencyKey String @unique
   createdAt DateTime @default(now())
   @@index([sessionId, createdAt])
+}
+
+// Store-level retail policies are opt-in; no commission rule is inferred.
+model POSConfiguration {
+  storeId Int @id
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  commissionEnabled Boolean @default(false)
+  commissionBasis String?
+  fixedCommissionBasis String?
+  refundCommissionPolicy String?
+  returnWindowDays Int?
+  updatedAt DateTime @updatedAt
+}
+model POSCustomer {
+  id String @id @default(uuid()) @db.Uuid
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name String
+  phone String?
+  email String?
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sales POSSale[]
+  @@unique([storeId, phone])
+  @@index([storeId, name])
+}
+model POSPaymentMethod {
+  id String @id @default(uuid()) @db.Uuid
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  code String
+  name String
+  enabled Boolean @default(true)
+  @@unique([storeId, code])
+}
+model POSCommissionLine {
+  id String @id @default(uuid()) @db.Uuid
+  saleItemId String @unique @db.Uuid
+  saleItem POSSaleItem @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  transactionId Int
+  transaction CommissionTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  amount Decimal @db.Decimal(15,2)
+  reversedAmount Decimal @default(0) @db.Decimal(15,2)
+  eligibleRevenue Decimal @db.Decimal(15,2)
+  policySnapshot Json
+  @@index([transactionId])
 }

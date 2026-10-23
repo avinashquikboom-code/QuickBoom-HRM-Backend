@@ -1,3 +1,4 @@
+import { commissionPayrollWhere } from '../pos/commissions';
 import { getRkdPayrollEarnings, getRkdPendingAdjustments, payrollPeriodKey } from './rkdPayrollService';
 import { fixedThirtyDaySalary, lockedPayslip, ExtraAttendancePayRule } from '../utils/fixedThirtyDaySalary';
 import { prisma } from '../utils/db';
@@ -237,13 +238,7 @@ class PayrollService {
       let commissionEarned = 0;
       if (isCommissionEligible) {
         const commAggregate = await prisma.commissionTransaction.aggregate({
-          where: {
-            employeeId,
-            AND: [{ OR: [{ eventType: null }, { eventType: { not: 'RKD_REQUEST' } }] },
-              { OR: [{ billId: null }, { billId: { not: { startsWith: 'RKD-' } } }] }],
-            createdAt: { gte: monthStart, lte: monthEnd },
-            status: { in: ['PENDING', 'APPROVED', 'PAID'] }
-          },
+          where: commissionPayrollWhere(employeeId, monthStart, monthEnd),
           _sum: { commissionAmount: true }
         });
         commissionEarned = commAggregate._sum?.commissionAmount || 0;

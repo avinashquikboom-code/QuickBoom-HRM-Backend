@@ -27,3 +27,15 @@ Integer apparel quantities; tax-exclusive prices, per-line half-up tax rounding,
 
 ## Final implementation notes
 See POS_DELIVERY.md for route/model inventory, test evidence, limitations and deployment commands. Order discounts and audited price overrides were implemented after the initial core workflow verification. The final migration was re-generated and re-tested offline against a fresh isolated PostgreSQL database. No configured HRM database migration was applied.
+
+## Second-pass dependency map and plan (before changes)
+The repeated master prompt requires closing remaining gaps rather than recreating the working POS.
+1. Catalog -> partial variant patch, bulk update, product filters and variant/size-chart UI. Preserve existing barcode on PATCH.
+2. Customer registry -> store-scoped customer records -> immutable invoice customer snapshots.
+3. Payment-method configuration -> manually recorded tender snapshots -> authorized reconciliation history. No gateway success claims.
+4. Existing CommissionPolicy + salaryGross eligibility + commissionHelper precedence -> optional audited POS commission settings -> per-item accrual snapshots -> existing CommissionTransaction/History approval -> existing payroll aggregation. POS pending proposals must be excluded from payroll until approved; legacy event behavior stays unchanged. Refunds never rewrite frozen payroll: paid/frozen reversals remain review adjustments until explicitly approved.
+5. Reports -> separate inventory, register, return/exchange, sales-dimension and commission projections with stable pagination and real period aggregation.
+6. Inventory -> typed opening/receipt/damage movements, zero-stock visibility, audit and date filters.
+7. Re-run isolated migration/concurrency/financial/API tests plus real HTTP-to-browser integration. Do not access the configured HRM database.
+
+Company-level authorization remains unavailable because no relational company tenancy exists. No tenant mapping or external payment credentials will be invented. Commission posting stays off until an authorized administrator explicitly chooses the basis and fixed-commission/refund behavior.

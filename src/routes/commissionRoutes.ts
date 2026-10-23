@@ -1,3 +1,4 @@
+import { protectLegacyPOSReview } from '../pos/commissions';
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import {
@@ -25,10 +26,10 @@ router.get('/transactions', getCommissionTransactions);
 router.post('/transactions', createCommissionTransaction);
 
 // PUT /api/commission/transactions/:id/approve
-router.put('/transactions/:id/approve', approveCommissionTransaction);
+router.put('/transactions/:id/approve', protectLegacyPOSReview('APPROVED'), approveCommissionTransaction);
 
 // PUT /api/commission/transactions/:id/reject
-router.put('/transactions/:id/reject', rejectCommissionTransaction);
+router.put('/transactions/:id/reject', protectLegacyPOSReview('REJECTED'), rejectCommissionTransaction);
 
 // GET /api/commission/dashboard
 router.get('/dashboard', getCommissionDashboard);
