@@ -59,6 +59,7 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
     "pos.refund": true,
     "pos.reconcile": true,
     "pos.reports": true,
+    "pos.manageStores": true,
   },
   SALESMAN: {
     "pos.read": true,
@@ -85,6 +86,22 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
   },
 };
 
+export function parseCookieHeader(header?: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!header) return cookies;
+  for (const part of header.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (!key) continue;
+    const value = rest.join("=").trim();
+    try {
+      cookies[key] = decodeURIComponent(value);
+    } catch {
+      cookies[key] = value;
+    }
+  }
+  return cookies;
+}
+
 export async function authenticate(
   req: Request,
   res: Response,
@@ -96,9 +113,41 @@ export async function authenticate(
       "POS requires configured JWT_SECRET",
       503,
     );
+
+    const cookies: Record<string, string> = {
+      ...parseCookieHeader(req.headers.cookie),
+      ...((req as any).cookies || {}),
+    };
+
+    const authHeader =
+      req.headers.authorization ||
+      (req.headers["x-access-token"] as string | undefined) ||
+      (req.headers["x-auth-token"] as string | undefined);
+
+    let rawToken: string | undefined;
+    if (typeof authHeader === "string" && authHeader.trim().length > 0) {
+      rawToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    } else if (typeof req.query?.token === "string" && req.query.token.trim().length > 0) {
+      rawToken = (req.query.token as string).trim();
+    } else {
+      const cookieCandidate =
+        cookies.pos_store_token ||
+        cookies.token ||
+        cookies.auth_token ||
+        cookies.hrm_token ||
+        cookies.super_hrm_token ||
+        cookies.admin_hrm_token ||
+        cookies.employee_hrm_token;
+      if (typeof cookieCandidate === "string" && cookieCandidate.trim().length > 0) {
+        rawToken = cookieCandidate.trim();
+      }
+    }
+
     const token =
-      req.headers.authorization?.replace(/^Bearer /, "") ||
-      (req.cookies?.pos_store_token as string | undefined);
+      rawToken && rawToken !== "undefined" && rawToken !== "null"
+        ? rawToken
+        : undefined;
+
     ensure(token, "Sign in required", 401);
     let payload: any;
     try {
@@ -156,7 +205,12 @@ export async function authenticate(
       return;
     }
 
-    const id: number = payload.id;
+    const id: number = Number(payload.id ?? payload.userId);
+    ensure(
+      Number.isSafeInteger(id) && id > 0,
+      "User account not found or session invalid",
+      401,
+    );
     const user = await prisma.user.findUnique({
       where: { id },
       include: { employee: true, userPermission: true },

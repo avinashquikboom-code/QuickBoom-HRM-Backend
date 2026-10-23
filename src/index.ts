@@ -78,7 +78,38 @@ const port = parseInt(process.env.PORT || '5004', 10);
 
 import path from 'path';
 
-app.use(cors());
+app.use(
+  cors({
+    origin: (_origin, callback) => {
+      callback(null, true);
+    },
+    credentials: true,
+  })
+);
+
+// Cookie parsing middleware
+app.use((req, _res, next) => {
+  if (!(req as any).cookies && req.headers.cookie) {
+    const list: Record<string, string> = {};
+    req.headers.cookie.split(';').forEach((cookie) => {
+      const parts = cookie.split('=');
+      const key = parts.shift()?.trim();
+      if (key) {
+        const val = parts.join('=').trim();
+        try {
+          list[key] = decodeURIComponent(val);
+        } catch {
+          list[key] = val;
+        }
+      }
+    });
+    (req as any).cookies = list;
+  } else if (!(req as any).cookies) {
+    (req as any).cookies = {};
+  }
+  next();
+});
+
 // Configure larger limit for base64 profile avatar images
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
