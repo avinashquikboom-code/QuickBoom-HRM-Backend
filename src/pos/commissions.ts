@@ -51,6 +51,7 @@ export async function accrueCommission(tx: Tx, actor: Actor, saleId: string) {
       salesperson: { include: { user: true, department: true } },
       items: {
         include: {
+          salesperson: { include: { user: true, department: true } },
           variant: { include: { product: { include: { category: true } } } },
         },
       },
@@ -59,109 +60,122 @@ export async function accrueCommission(tx: Tx, actor: Actor, saleId: string) {
   const config = await tx.pOSConfiguration.findUnique({
     where: { storeId: sale.storeId },
   });
-  if (
-    !config?.commissionEnabled ||
-    !sale.salesperson ||
-    !isCommissionEligibleEmployee(sale.salesperson)
-  )
-    return;
-  const emp = sale.salesperson;
-  const policies = await tx.commissionPolicy.findMany({
-    where: {
-      isActive: true,
-      effectiveFrom: { lte: sale.createdAt },
-      AND: [
-        {
-          OR: [{ effectiveTo: null }, { effectiveTo: { gte: sale.createdAt } }],
-        },
-        { OR: [{ employeeId: null }, { employeeId: emp.id }] },
-        { OR: [{ storeId: null }, { storeId: sale.storeId }] },
-        { OR: [{ departmentId: null }, { departmentId: emp.departmentId }] },
-        { OR: [{ designationId: null }, { designationId: emp.designationId }] },
-        { OR: [{ roleId: null }, { roleId: emp.user?.role ?? "" }] },
-        { brandId: null },
-      ],
-    },
-    orderBy: [{ priority: "desc" }, { id: "asc" }],
-  });
-  const lines = sale.items.map((item) => {
-    const product = item.variant.product;
-    // Explicit mappings only: a UUID/name is never guessed to be an external numeric policy ID.
-    const applicable = policies.filter(
-      (p) =>
-        (p.productId == null ||
-          p.productId === product.externalCommissionProductId) &&
-        (p.categoryId == null ||
-          p.categoryId === product.category?.externalCommissionCategoryId),
-    );
-    const eligibleRevenue =
-      config.commissionBasis === "NET_INCL_TAX"
-        ? item.lineTotal
-        : item.lineTotal.minus(item.taxTotal);
-    const resolution = calculateEffectiveCommissionForLineItem({
-      saleAmount: eligibleRevenue.toNumber(),
-      salesman: emp,
-      storeId: sale.storeId,
-      productId: product.externalCommissionProductId,
-      categoryId: product.category?.externalCommissionCategoryId,
-      policies: applicable,
-    });
-    const amount = round(
-      new D(String(resolution.commissionAmount)).mul(
-        resolution.commissionType === "FIXED" &&
-          config.fixedCommissionBasis === "UNIT"
-          ? item.quantity
-          : 1,
-      ),
-    );
-    ensure(amount.gte(0), "Commission policy resolved a negative earning");
-    return {
-      saleItemId: item.id,
-      eligibleRevenue,
-      amount,
-      policySnapshot: {
-        ...resolution,
-        basis: config.commissionBasis!,
-        fixedBasis: config.fixedCommissionBasis!,
-        refundPolicy: config.refundCommissionPolicy!,
+  if (!config?.commissionEnabled) return;
+
+  type Emp = NonNullable<typeof sale.salesperson>;
+  const groups = new Map<number, { emp: Emp; items: typeof sale.items }>();
+
+  for (const item of sale.items) {
+    const emp = (item.salesperson ?? sale.salesperson) as Emp | null;
+    if (!emp || !isCommissionEligibleEmployee(emp)) continue;
+    const existing = groups.get(emp.id);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      groups.set(emp.id, { emp, items: [item] });
+    }
+  }
+
+  if (groups.size === 0) return;
+
+  for (const [, { emp, items: empItems }] of groups.entries()) {
+    const policies = await tx.commissionPolicy.findMany({
+      where: {
+        isActive: true,
+        effectiveFrom: { lte: sale.createdAt },
+        AND: [
+          {
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: sale.createdAt } }],
+          },
+          { OR: [{ employeeId: null }, { employeeId: emp.id }] },
+          { OR: [{ storeId: null }, { storeId: sale.storeId }] },
+          { OR: [{ departmentId: null }, { departmentId: emp.departmentId }] },
+          { OR: [{ designationId: null }, { designationId: emp.designationId }] },
+          { OR: [{ roleId: null }, { roleId: emp.user?.role ?? "" }] },
+          { brandId: null },
+        ],
       },
-    };
-  });
-  const total = lines.reduce((n, l) => n.plus(l.amount), new D(0));
-  const txRecord = await tx.commissionTransaction.create({
-    data: {
-      employeeId: emp.id,
-      storeId: sale.storeId,
-      billId: `POSSALE-${sale.id}`,
-      invoiceNumber: sale.invoiceNo,
-      saleAmount: lines
-        .reduce((n, l) => n.plus(l.eligibleRevenue), new D(0))
-        .toNumber(),
-      commissionType: "PERCENTAGE",
-      commissionAmount: total.toNumber(),
-      eventType: "POS_SALE",
-      status: "PENDING",
-      notes: "POS proposal; excluded from payroll until approved",
-      productBreakdown: lines.map((l) => ({
-        saleItemId: l.saleItemId,
-        amount: l.amount.toFixed(2),
-        eligibleRevenue: l.eligibleRevenue.toFixed(2),
-        ...l.policySnapshot,
-      })),
-      posLines: { create: lines },
-    },
-  });
-  await tx.commissionHistory.create({
-    data: {
-      transactionId: txRecord.id,
-      employeeId: emp.id,
-      action: "CREATED",
-      newStatus: "PENDING",
-      newAmount: total.toNumber(),
-      performedBy: actor.userId,
-      reason: `POS sale ${sale.invoiceNo}`,
-    },
-  });
+      orderBy: [{ priority: "desc" }, { id: "asc" }],
+    });
+    const lines = empItems.map((item) => {
+      const product = item.variant.product;
+      // Explicit mappings only: a UUID/name is never guessed to be an external numeric policy ID.
+      const applicable = policies.filter(
+        (p) =>
+          (p.productId == null ||
+            p.productId === product.externalCommissionProductId) &&
+          (p.categoryId == null ||
+            p.categoryId === product.category?.externalCommissionCategoryId),
+      );
+      const eligibleRevenue =
+        config.commissionBasis === "NET_INCL_TAX"
+          ? item.lineTotal
+          : item.lineTotal.minus(item.taxTotal);
+      const resolution = calculateEffectiveCommissionForLineItem({
+        saleAmount: eligibleRevenue.toNumber(),
+        salesman: emp,
+        storeId: sale.storeId,
+        productId: product.externalCommissionProductId,
+        categoryId: product.category?.externalCommissionCategoryId,
+        policies: applicable,
+      });
+      const amount = round(
+        new D(String(resolution.commissionAmount)).mul(
+          resolution.commissionType === "FIXED" &&
+            config.fixedCommissionBasis === "UNIT"
+            ? item.quantity
+            : 1,
+        ),
+      );
+      ensure(amount.gte(0), "Commission policy resolved a negative earning");
+      return {
+        saleItemId: item.id,
+        eligibleRevenue,
+        amount,
+        policySnapshot: {
+          ...resolution,
+          basis: config.commissionBasis!,
+          fixedBasis: config.fixedCommissionBasis!,
+          refundPolicy: config.refundCommissionPolicy!,
+        },
+      };
+    });
+    const total = lines.reduce((n, l) => n.plus(l.amount), new D(0));
+    const txRecord = await tx.commissionTransaction.create({
+      data: {
+        employeeId: emp.id,
+        storeId: sale.storeId,
+        billId: `POSSALE-${sale.id}`,
+        invoiceNumber: sale.invoiceNo,
+        saleAmount: lines
+          .reduce((n, l) => n.plus(l.eligibleRevenue), new D(0))
+          .toNumber(),
+        commissionType: "PERCENTAGE",
+        commissionAmount: total.toNumber(),
+        eventType: "POS_SALE",
+        status: "PENDING",
+        notes: `POS proposal for ${emp.firstName} ${emp.lastName}; excluded from payroll until approved`,
+        productBreakdown: lines.map((l) => ({
+          saleItemId: l.saleItemId,
+          amount: l.amount.toFixed(2),
+          eligibleRevenue: l.eligibleRevenue.toFixed(2),
+          ...l.policySnapshot,
+        })),
+        posLines: { create: lines },
+      },
+    });
+    await tx.commissionHistory.create({
+      data: {
+        transactionId: txRecord.id,
+        employeeId: emp.id,
+        action: "CREATED",
+        newStatus: "PENDING",
+        newAmount: total.toNumber(),
+        performedBy: actor.userId,
+        reason: `POS sale ${sale.invoiceNo} attributed to ${emp.firstName} ${emp.lastName}`,
+      },
+    });
+  }
 }
 export async function reverseCommission(
   tx: Tx,
@@ -176,94 +190,105 @@ export async function reverseCommission(
     },
   });
   const lines = ret.items.filter((i) => i.saleItem.commission);
-  if (!lines.length || !ret.sale.salespersonId) return;
-  let total = new D(0),
-    revenue = new D(0);
-  const detail = [];
+  if (!lines.length) return;
+
+  const byTransaction = new Map<number, typeof lines>();
   for (const item of lines) {
-    const commission = item.saleItem.commission!;
-    const amount = refundAllocation(
-      commission.amount,
-      item.saleItem.quantity,
-      item.saleItem.returnedQuantity - item.quantity,
-      item.quantity,
-    );
-    total = total.plus(amount);
-    revenue = revenue.plus(
-      (commission.policySnapshot as Record<string, unknown>).basis ===
-        "NET_INCL_TAX"
-        ? item.refundAmount
-        : item.revenueRefund,
-    );
-    await tx.pOSCommissionLine.update({
-      where: { id: commission.id },
-      data: { reversedAmount: { increment: amount } },
-    });
-    detail.push({
-      saleItemId: item.saleItemId,
-      returnItemId: item.id,
-      amount: amount.negated().toFixed(2),
-      originalTransactionId: commission.transactionId,
-    });
+    const tId = item.saleItem.commission!.transactionId;
+    const list = byTransaction.get(tId) ?? [];
+    list.push(item);
+    byTransaction.set(tId, list);
   }
-  const original = await tx.commissionTransaction.findUniqueOrThrow({
-    where: { id: lines[0]!.saleItem.commission!.transactionId },
-  });
-  // Unapproved earnings have never entered payroll: reduce their outstanding proposal in place with history.
-  if (original.status === "PENDING") {
-    const remaining = new D(String(original.commissionAmount)).minus(total);
-    const status = remaining.isZero() ? "REJECTED" : "PENDING";
-    await tx.commissionTransaction.update({
-      where: { id: original.id },
-      data: {
-        commissionAmount: remaining.toNumber(),
-        saleAmount: new D(String(original.saleAmount))
-          .minus(revenue)
-          .toNumber(),
-        status,
-      },
+
+  for (const [transactionId, txLines] of byTransaction.entries()) {
+    let total = new D(0),
+      revenue = new D(0);
+    const detail = [];
+    for (const item of txLines) {
+      const commission = item.saleItem.commission!;
+      const amount = refundAllocation(
+        commission.amount,
+        item.saleItem.quantity,
+        item.saleItem.returnedQuantity - item.quantity,
+        item.quantity,
+      );
+      total = total.plus(amount);
+      revenue = revenue.plus(
+        (commission.policySnapshot as Record<string, unknown>).basis ===
+          "NET_INCL_TAX"
+          ? item.refundAmount
+          : item.revenueRefund,
+      );
+      await tx.pOSCommissionLine.update({
+        where: { id: commission.id },
+        data: { reversedAmount: { increment: amount } },
+      });
+      detail.push({
+        saleItemId: item.saleItemId,
+        returnItemId: item.id,
+        amount: amount.negated().toFixed(2),
+        originalTransactionId: commission.transactionId,
+      });
+    }
+    const original = await tx.commissionTransaction.findUniqueOrThrow({
+      where: { id: transactionId },
     });
-    await tx.commissionHistory.create({
-      data: {
-        transactionId: original.id,
-        employeeId: original.employeeId,
-        action: "ADJUSTED",
-        previousStatus: original.status,
-        newStatus: status,
-        previousAmount: original.commissionAmount,
-        newAmount: remaining.toNumber(),
-        performedBy: actor.userId,
-        reason: `Original-value POS refund ${ret.id}`,
-      },
-    });
-  } else if (["APPROVED", "PAID"].includes(original.status) && total.gt(0)) {
-    // Never change paid/frozen earnings. A separate debit requires explicit review before entering an open payroll period.
-    const debit = await tx.commissionTransaction.create({
-      data: {
-        billId: `POSRETURN-${ret.id}`,
-        invoiceNumber: ret.sale.invoiceNo,
-        employeeId: original.employeeId,
-        storeId: ret.sale.storeId,
-        saleAmount: revenue.negated().toNumber(),
-        commissionAmount: total.negated().toNumber(),
-        commissionType: original.commissionType,
-        eventType: "POS_RETURN",
-        status: "PENDING",
-        productBreakdown: detail,
-        notes: `Refund ${ret.id}; original commission #${original.id}; approval required`,
-      },
-    });
-    await tx.commissionHistory.create({
-      data: {
-        transactionId: debit.id,
-        employeeId: debit.employeeId,
-        action: "CREATED",
-        newStatus: "PENDING",
-        newAmount: debit.commissionAmount,
-        performedBy: actor.userId,
-        reason: "POS refund commission adjustment awaiting approval",
-      },
-    });
+    // Unapproved earnings have never entered payroll: reduce their outstanding proposal in place with history.
+    if (original.status === "PENDING") {
+      const remaining = new D(String(original.commissionAmount)).minus(total);
+      const status = remaining.isZero() ? "REJECTED" : "PENDING";
+      await tx.commissionTransaction.update({
+        where: { id: original.id },
+        data: {
+          commissionAmount: remaining.toNumber(),
+          saleAmount: new D(String(original.saleAmount))
+            .minus(revenue)
+            .toNumber(),
+          status,
+        },
+      });
+      await tx.commissionHistory.create({
+        data: {
+          transactionId: original.id,
+          employeeId: original.employeeId,
+          action: "ADJUSTED",
+          previousStatus: original.status,
+          newStatus: status,
+          previousAmount: original.commissionAmount,
+          newAmount: remaining.toNumber(),
+          performedBy: actor.userId,
+          reason: `Original-value POS refund ${ret.id}`,
+        },
+      });
+    } else if (["APPROVED", "PAID"].includes(original.status) && total.gt(0)) {
+      // Never change paid/frozen earnings. A separate debit requires explicit review before entering an open payroll period.
+      const debit = await tx.commissionTransaction.create({
+        data: {
+          billId: `POSRETURN-${ret.id}-${transactionId}`,
+          invoiceNumber: ret.sale.invoiceNo,
+          employeeId: original.employeeId,
+          storeId: ret.sale.storeId,
+          saleAmount: revenue.negated().toNumber(),
+          commissionAmount: total.negated().toNumber(),
+          commissionType: original.commissionType,
+          eventType: "POS_RETURN",
+          status: "PENDING",
+          productBreakdown: detail,
+          notes: `Refund ${ret.id}; original commission #${original.id}; approval required`,
+        },
+      });
+      await tx.commissionHistory.create({
+        data: {
+          transactionId: debit.id,
+          employeeId: debit.employeeId,
+          action: "CREATED",
+          newStatus: "PENDING",
+          newAmount: debit.commissionAmount,
+          performedBy: actor.userId,
+          reason: "POS refund commission adjustment awaiting approval",
+        },
+      });
+    }
   }
 }
 export async function reviewCommission(actor: Actor, id: number, raw: unknown) {

@@ -49,12 +49,29 @@ export async function report(actor: Actor, query: Record<string, any>) {
         _sum: { grandTotal: true },
         _count: true,
       });
-      const bySalesperson = await tx.pOSSale.groupBy({
-        by: ["salespersonId"],
-        where: { storeId, createdAt: range },
-        _sum: { grandTotal: true },
-        _count: true,
-      });
+      const bySalespersonRaw = await tx.$queryRaw<
+        { salespersonId: number | null; total: Prisma.Decimal; count: number; firstName: string | null; lastName: string | null }[]
+      >(
+        Prisma.sql`
+          SELECT 
+            COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",
+            e."firstName",
+            e."lastName",
+            SUM(i."lineTotal") AS "total",
+            COUNT(DISTINCT s.id)::integer AS "count"
+          FROM "POSSaleItem" i
+          JOIN "POSSale" s ON s.id = i."saleId"
+          LEFT JOIN "Employee" e ON e.id = COALESCE(i."salespersonId", s."salespersonId")
+          WHERE s."storeId" = ${storeId} AND s."createdAt" >= ${range.gte} AND s."createdAt" < ${range.lt}
+          GROUP BY COALESCE(i."salespersonId", s."salespersonId"), e."firstName", e."lastName"
+        `,
+      );
+      const bySalesperson = bySalespersonRaw.map((row) => ({
+        salespersonId: row.salespersonId,
+        salespersonName: row.firstName ? `${row.firstName} ${row.lastName || ""}`.trim() : "Unassigned",
+        _sum: { grandTotal: row.total },
+        _count: row.count,
+      }));
       const dailyTrend = await tx.$queryRaw(
         Prisma.sql`SELECT to_char(s."createdAt" + interval '5 hours 30 minutes', 'YYYY-MM-DD') AS day, SUM(s."grandTotal") AS total, COUNT(*)::integer AS invoices FROM "POSSale" s WHERE ${filter} AND ${period} GROUP BY day ORDER BY day`,
       );
@@ -177,13 +194,13 @@ export async function groupedSales(actor: Actor, query: Record<string, any>) {
     color: Prisma.sql`f.color`,
     store: Prisma.sql`f."storeId"::text`,
     cashier: Prisma.sql`f."cashierId"::text`,
-    salesperson: Prisma.sql`COALESCE(f."salespersonId"::text,'Unassigned')`,
+    salesperson: Prisma.sql`COALESCE((SELECT CONCAT(e."firstName", ' ', e."lastName") FROM "Employee" e WHERE e.id = f."salespersonId"), f."salespersonId"::text, 'Unassigned')`,
   };
   const dimension = expressions[String(query.groupBy ?? "day")];
   ensure(dimension, "Unsupported sales dimension");
   const facts = Prisma.sql`WITH facts AS (
- SELECT s."createdAt" AS at,s."storeId",s."cashierId",s."salespersonId",i.name,i.category,i.brand,i.size,i.color,i.quantity AS units,i."unitPrice"*i.quantity AS gross,i."discountTotal" AS discount,i."taxTotal" AS tax,i."lineTotal" AS collected,0::numeric AS refunds,i."costPrice"*i.quantity AS cost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id=i."saleId"
- UNION ALL SELECT r."createdAt",s."storeId",s."cashierId",s."salespersonId",i.name,i.category,i.brand,i.size,i.color,-ri.quantity,0,0,-(ri."refundAmount"-ri."revenueRefund"),0,ri."refundAmount",CASE WHEN ri.resellable THEN -i."costPrice"*ri.quantity ELSE 0 END FROM "POSReturnItem" ri JOIN "POSReturn" r ON r.id=ri."returnId" JOIN "POSSaleItem" i ON i.id=ri."saleItemId" JOIN "POSSale" s ON s.id=r."saleId")`;
+ SELECT s."createdAt" AS at,s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,i.size,i.color,i.quantity AS units,i."unitPrice"*i.quantity AS gross,i."discountTotal" AS discount,i."taxTotal" AS tax,i."lineTotal" AS collected,0::numeric AS refunds,i."costPrice"*i.quantity AS cost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id=i."saleId"
+ UNION ALL SELECT r."createdAt",s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,i.size,i.color,-ri.quantity,0,0,-(ri."refundAmount"-ri."revenueRefund"),0,ri."refundAmount",CASE WHEN ri.resellable THEN -i."costPrice"*ri.quantity ELSE 0 END FROM "POSReturnItem" ri JOIN "POSReturn" r ON r.id=ri."returnId" JOIN "POSSaleItem" i ON i.id=ri."saleItemId" JOIN "POSSale" s ON s.id=r."saleId")`;
   const rows = await prisma.$queryRaw<Record<string, unknown>[]>(
     Prisma.sql`${facts} SELECT ${dimension} AS label,SUM(units)::integer AS units,SUM(gross) AS gross,SUM(discount) AS discounts,SUM(tax) AS taxes,SUM(refunds) AS refunds,SUM(collected-refunds) AS "netCollected",SUM(collected-refunds-tax) AS "netRevenue",SUM(cost) AS "costOfGoodsSold",SUM(collected-refunds-tax-cost) AS "grossMargin",COUNT(*) OVER()::integer AS "totalGroups" FROM facts f WHERE (${storeId ?? null}::integer IS NULL OR f."storeId"=${storeId ?? null}::integer) AND f.at >= ${range.gte} AND f.at < ${range.lt} GROUP BY label ORDER BY label LIMIT ${p.take} OFFSET ${p.skip}`,
   );

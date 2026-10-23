@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
+import { isCommissionEligibleEmployee } from "../utils/salaryGross";
 import {
   authenticate,
   POSRequest,
@@ -457,7 +458,69 @@ router.get(
         take: 500,
       }),
       currency: systemSetting?.currency ?? "INR",
+      salespeople: (
+        await prisma.employee.findMany({
+          where: {
+            ...(storeId ? { storeId } : {}),
+            status: { equals: "active", mode: "insensitive" },
+          },
+          include: {
+            department: true,
+            user: true,
+          },
+          orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+          take: 500,
+        })
+      )
+        .filter((emp) => isCommissionEligibleEmployee(emp))
+        .map((emp) => ({
+          id: emp.id,
+          employeeCode: emp.employeeCode,
+          firstName: emp.firstName,
+          lastName: emp.lastName,
+          name: `${emp.firstName} ${emp.lastName}`.trim(),
+          designation: emp.designation,
+          storeId: emp.storeId,
+        })),
     };
+  }),
+);
+router.get(
+  "/salespeople",
+  route(async (r) => {
+    permission(r.actor, "read");
+    let storeId: number | undefined;
+    if (r.query.storeId !== undefined && r.query.storeId !== "") {
+      storeId = integer(Number(r.query.storeId), "storeId");
+      scope(r.actor, storeId);
+    } else if (r.actor.isPosStoreSession) {
+      storeId = r.actor.storeId;
+    } else if (r.actor.storeId && !r.actor.admin) {
+      storeId = r.actor.storeId;
+    }
+    const employees = await prisma.employee.findMany({
+      where: {
+        ...(storeId ? { storeId } : {}),
+        status: { equals: "active", mode: "insensitive" },
+      },
+      include: {
+        department: true,
+        user: true,
+      },
+      orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
+      take: 500,
+    });
+    const eligible = employees.filter((emp) => isCommissionEligibleEmployee(emp));
+    return eligible.map((emp) => ({
+      id: emp.id,
+      employeeCode: emp.employeeCode,
+      employeeID: emp.employeeID,
+      firstName: emp.firstName,
+      lastName: emp.lastName,
+      name: `${emp.firstName} ${emp.lastName}`.trim(),
+      designation: emp.designation,
+      storeId: emp.storeId,
+    }));
   }),
 );
 router.get(
@@ -907,7 +970,12 @@ router.get(
         take: p.take,
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         include: {
-          salesperson: { select: { firstName: true, lastName: true } },
+          salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+          items: {
+            include: {
+              salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+            },
+          },
         },
       }),
       total: await prisma.pOSSale.count({ where }),
@@ -922,12 +990,16 @@ router.get(
     const s = await prisma.pOSSale.findUnique({
       where: { id: id(r) },
       include: {
-        items: true,
+        items: {
+          include: {
+            salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+          },
+        },
         payments: true,
         returns: { include: { items: true } },
         store: { select: { name: true, address: true } },
         cashier: { select: { email: true, profile: { select: { fullName: true } } } },
-        salesperson: { select: { firstName: true, lastName: true } },
+        salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
       },
     });
     ensure(s, "Invoice not found", 404);
