@@ -185,7 +185,7 @@ async function main() {
         400,
       );
     });
-    await test("cross-namespace SKU/barcode collision is returned as ambiguity", async () => {
+    await test("exact barcode takes priority over a cross-namespace SKU collision", async () => {
       const v = products[0]!.variants[0]!;
       const second = products[1]!.variants[0]!;
       await prisma.pOSProductVariant.update({
@@ -195,11 +195,8 @@ async function main() {
       const exact = await request(
         `/products/lookup?storeId=${store.id}&code=${v.sku}`,
       );
-      assert.equal(exact.matches.length, 2);
-      assert.deepEqual(
-        new Set(exact.matches.map((r: { id: string }) => r.id)),
-        new Set([v.id, second.id]),
-      );
+      assert.equal(exact.matches.length, 1);
+      assert.equal(exact.matches[0].id, second.id);
     });
     await test("missing codes and missing/invalid stores are explicit", async () => {
       assert.equal(

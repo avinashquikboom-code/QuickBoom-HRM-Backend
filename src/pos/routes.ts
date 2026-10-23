@@ -558,7 +558,7 @@ router.get(
   }),
 );
 // Exact scan lookup is independent of paginated name search. SKU and barcode
-// are individually unique, but can collide across those two namespaces.
+// are individually unique. Exact barcodes take precedence over SKU matches.
 router.get(
   "/products/lookup",
   route(async (r) => {
@@ -566,13 +566,19 @@ router.get(
     const storeId = integer(Number(r.query.storeId), "storeId");
     scope(r.actor, storeId);
     const code = text(r.query.code, "barcode or SKU", 200);
-    // Prioritize exact case match first
     let matches = await prisma.pOSProductVariant.findMany({
-      where: { OR: [{ barcode: code }, { sku: code }] },
+      where: { barcode: code },
       include: { product: true, balances: { where: { storeId } } },
       take: 2,
     });
-    // Fall back to case-insensitive match if no exact match found
+    if (!matches.length) {
+      matches = await prisma.pOSProductVariant.findMany({
+        where: { sku: code },
+        include: { product: true, balances: { where: { storeId } } },
+        take: 2,
+      });
+    }
+    // Preserve the existing case-insensitive fallback only after exact lookup.
     if (!matches.length) {
       matches = await prisma.pOSProductVariant.findMany({
         where: {
@@ -920,6 +926,7 @@ router.get(
         payments: true,
         returns: { include: { items: true } },
         store: { select: { name: true, address: true } },
+        cashier: { select: { email: true, profile: { select: { fullName: true } } } },
         salesperson: { select: { firstName: true, lastName: true } },
       },
     });

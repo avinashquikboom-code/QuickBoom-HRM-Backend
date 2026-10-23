@@ -99,6 +99,7 @@ model Department {
 
 model Employee {
   posSales POSSale[]
+  posSaleItems POSSaleItem[] @relation("EmployeeSaleItems")
   posSessions POSSession[]
   id               Int               @id @default(autoincrement())
   employeeID       String?           @unique
@@ -1689,8 +1690,11 @@ model POSSaleItem {
   taxRate Decimal @db.Decimal(7,4)
   taxTotal Decimal @db.Decimal(15,2)
   lineTotal Decimal @db.Decimal(15,2)
+  salespersonId Int?
+  salesperson Employee? @relation("EmployeeSaleItems", fields: [salespersonId], references: [id], onDelete: Restrict)
   returnItems POSReturnItem[]
   @@unique([saleId, variantId])
+  @@index([salespersonId])
 }
 model POSSalePayment {
   gatewayTransactionId String?

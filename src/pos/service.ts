@@ -6,6 +6,7 @@ import { Actor, permission, scope } from "./auth";
 import {
   methods,
   ensure,
+  POSError,
   object,
   keys,
   text,
@@ -90,7 +91,20 @@ export async function movement(
       damaged: { increment: damagedDelta },
     },
   });
-  ensure(updated.count === 1, "Insufficient stock", 409);
+  if (updated.count !== 1) {
+    const current = await tx.pOSInventoryBalance.findUnique({
+      where: { storeId_variantId: { storeId, variantId } },
+    });
+    const v = await tx.pOSProductVariant.findUnique({
+      where: { id: variantId },
+    });
+    const avail = current?.quantity ?? 0;
+    const skuLabel = v?.sku ? ` for ${v.sku}` : "";
+    throw new POSError(
+      409,
+      `Insufficient stock${skuLabel}: only ${avail} unit(s) available in this store.`,
+    );
+  }
   await tx.pOSStockMovement.create({
     data: {
       storeId,
@@ -506,7 +520,15 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`sale:${idempotencyKey}`}, 0))::text`;
     const existing = await tx.pOSSale.findUnique({
       where: { idempotencyKey },
-      include: { items: true, payments: true },
+      include: {
+        items: {
+          include: {
+            salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+          },
+        },
+        payments: true,
+        salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+      },
     });
     if (existing) {
       ensure(
@@ -519,17 +541,23 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       return existing;
     }
     await openSession(tx, actor, sessionId, storeId);
-    if (salespersonId)
-      ensure(
-        await tx.employee.findFirst({
-          where: {
-            id: salespersonId,
-            storeId,
-            status: { equals: "active", mode: "insensitive" },
-          },
-        }),
-        "Salesperson must be active in this store",
-      );
+    const itemSalespeople = items
+      .map((i) => i.salespersonId)
+      .filter((id): id is number => id !== undefined);
+    const allSalespeople = [
+      ...(salespersonId ? [salespersonId] : []),
+      ...itemSalespeople,
+    ];
+    for (const spId of new Set(allSalespeople)) {
+      const activeEmp = await tx.employee.findFirst({
+        where: {
+          id: spId,
+          storeId,
+          status: { equals: "active", mode: "insensitive" },
+        },
+      });
+      ensure(activeEmp, `Salesperson #${spId} must be active in this store`);
+    }
     for (const payment of payments) {
       const configured = await tx.pOSPaymentMethod.findUnique({
         where: { storeId_code: { storeId, code: payment.method } },
@@ -559,6 +587,10 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       { n: bigint }[]
     >`SELECT nextval('"POSInvoiceSequence"') AS n`;
     const invoiceNo = `POS-${String(sequence[0]!.n).padStart(10, "0")}`;
+    const itemsToCreate = snapshots.map((s, idx) => ({
+      ...s,
+      salespersonId: items[idx]?.salespersonId ?? s.salespersonId ?? salespersonId ?? null,
+    }));
     const sale = await tx.pOSSale.create({
       data: {
         invoiceNo,
@@ -575,10 +607,18 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
         discountTotal,
         taxTotal,
         grandTotal,
-        items: { create: snapshots },
+        items: { create: itemsToCreate },
         payments: { create: payments },
       },
-      include: { items: true, payments: true },
+      include: {
+        items: {
+          include: {
+            salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+          },
+        },
+        payments: true,
+        salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+      },
     });
     for (const item of items)
       await movement(
@@ -861,6 +901,7 @@ type PricedInput = {
   discount: Prisma.Decimal;
   override?: Prisma.Decimal;
   reason?: string;
+  salespersonId?: number;
 };
 function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
   const items = list(raw)
@@ -872,6 +913,7 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
         "discountPerUnit",
         "unitPriceOverride",
         "priceOverrideReason",
+        "salespersonId",
       ]);
       const discount = money(v.discountPerUnit ?? "0");
       if (discount.gt(0)) permission(actor, "discount");
@@ -884,12 +926,17 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
         override === undefined
           ? undefined
           : text(v.priceOverrideReason, "priceOverrideReason", 500);
+      const salespersonId =
+        v.salespersonId == null || v.salespersonId === ""
+          ? undefined
+          : integer(v.salespersonId, "salespersonId");
       return {
         variantId: uuid(v.variantId),
         quantity: integer(v.quantity, "quantity", 1, 10000),
         discount,
         override,
         reason,
+        salespersonId,
       };
     })
     .sort((a, b) => a.variantId.localeCompare(b.variantId));
@@ -971,6 +1018,7 @@ async function priceItems(
       taxRate: v.taxRate,
       taxTotal: lineTax,
       lineTotal: total,
+      salespersonId: item.salespersonId ?? null,
     };
   });
   ensure(remainingDiscount.isZero(), "Could not allocate order discount");
