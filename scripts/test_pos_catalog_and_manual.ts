@@ -5,6 +5,8 @@ import * as service from "../src/pos/service";
 import { Actor } from "../src/pos/auth";
 
 async function run() {
+  const testUrl = new URL(process.env.POS_TEST_DATABASE_URL ?? "");
+  assert(["127.0.0.1", "localhost"].includes(testUrl.hostname) && testUrl.port === "55439" && testUrl.pathname.includes("pos_test") && process.env.DATABASE_URL === process.env.POS_TEST_DATABASE_URL, "Guarded isolated POS test database required");
   console.log("=== STARTING CATALOG & MANUAL POS CHECKOUT & COMMISSION VERIFICATION ===");
   const key = randomUUID().slice(0, 8);
 
@@ -272,7 +274,7 @@ async function run() {
   }
 }
 
-run().catch((err) => {
+run().then(() => process.exit(0)).catch((err) => {
   console.error("Test failed:", err);
   process.exit(1);
 });

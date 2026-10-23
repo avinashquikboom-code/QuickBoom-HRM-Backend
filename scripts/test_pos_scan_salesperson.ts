@@ -119,6 +119,14 @@ async function main() {
       await call(`/sales/${sale.id}`, undefined, 200, limitedToken);
       await call("/products", registration("RESTRICTED"), 403, limitedToken);
     });
+    await test("manual entry requires explicit intent and does not fabricate catalog records", async () => {
+      const row = { name: "Explicit manual", barcode: `MANUAL-${suffix}`, quantity: 1, unitPrice: "100", taxRate: "5" };
+      await call("/quote", { storeId: store.id, items: [row] }, 400);
+      const quoted = await call("/quote", { storeId: store.id, items: [{ ...row, manual: true }] });
+      assert.equal(quoted.grandTotal, "105");
+      assert.equal(quoted.snapshots[0].variantId, null);
+      assert.equal(await prisma.pOSProductVariant.count({ where: { barcode: row.barcode } }), 0);
+    });
     console.log(`PASS ${passed} real PostgreSQL/HTTP scan, registration and salesperson checks`);
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); await prisma.$disconnect(); }
 }

@@ -1,84 +1,84 @@
-# POS scanning and salesperson delivery — 23 October 2026
+# HopKid POS scanning, salesperson selection and manual billing
 
-## Root causes and final behavior
+Verified locally on 23 October 2026. The user subsequently authorized **manual billing**; that instruction supersedes the earlier requirement that every billed line first have a catalog record.
 
-The scanner already called the real POS backend, but a failed exact lookup could fall through to a paginated substring search and automatically add its only result. A partial/random code could therefore select a different registered code. Automatic additions now require an exact barcode/SKU lookup or an exact product name/product code. Partial product names expose choices; partial barcode/SKU/product-code matches do not substitute a variant. A missing code shows exactly:
+## Delivered behavior and root causes
 
-> Product not found. Please verify the barcode or register this product first.
+The original scanner fallback could automatically add the only result from a partial barcode/SKU search. The terminal now tries exact barcode/SKU lookup first. Name suggestions exclude barcode/SKU substrings, and partial product codes cannot silently substitute a different product. Unique exact names/codes can resolve directly; variant choices remain explicit when necessary.
 
-Quick Catalog and its background request are removed. The cart starts empty. Both scanner fields feed one ordered lookup queue, using actual variant UUIDs and selected-store stock. The submitted field is cleared synchronously, so duplicate Enter submissions see an empty field; a genuinely new repeated scan still increments quantity. Successful additions retain focus and do not erase a subsequent code being typed. Exact barcode matches take precedence over SKU collisions.
+Unknown scans show the requested message: “Product not found. Please verify the barcode or register this product first.” They never insert products or manual rows automatically. Quick Catalog and its background query are removed. Keyboard scans feed an ordered queue, duplicate Enter submissions see an already-cleared input, and a genuinely repeated scan increments quantity subject to selected-store stock. Product size/color remain visible beneath long names.
 
-Salesperson choices previously fell back to the general employee list when the eligible list was empty and could auto-attribute the logged-in employee. The terminal now loads the existing store-scoped `/salespeople` API directly, shows an explicit searchable **Select Salesperson** control for the bill, and retains per-item overrides. Selection is optional because the current schema/configuration has no required-salesperson rule. A row explicitly cleared to Unassigned remains unassigned instead of inheriting the bill salesperson during checkout or receipt rendering.
+Salespeople previously fell back to the general employee list and their dropdown could be clipped by cart/payment scrolling. The terminal now uses the existing store-scoped eligible-salespeople API, with searchable bill selection and per-row overrides. The popup renders outside scroll clipping. Names and employee codes are displayed rather than UUIDs. Attribution remains optional under the existing configuration. Explicitly unassigned rows stay unassigned in saved documents and receipts.
 
-The dropdown was also clipped by the cart/payment scroll containers. Its menu now renders in an anchored overlay so search and selection remain clickable. It displays names and employee codes, never a UUID as a name.
+## Explicit manual billing
 
-## Identifiers and persistence
+**Add Item Manually** creates an editable row only when the cashier requests it. A name, positive quantity and unit price, valid GST, and valid discounts are required before checkout. The API requires `manual: true`; omitting both a variant ID and explicit manual intent is rejected. A manual row cannot also claim a catalog variant ID.
 
-`Employee.id` is an integer primary key in this application. `Employee.employeeID` is an optional external GUID/string. `POSSale.salespersonId` and `POSSaleItem.salespersonId` are existing integer foreign keys to the real Employee row. Those relationships are preserved; no integer/UUID column conversions or fabricated employee IDs were introduced. Invoice/history responses expose the related employee's actual `employeeID` alongside their name. Tests verify that the saved FK resolves to the selected employee and their existing GUID.
+The cashier enters the manual price/GST; the server validates the inputs and computes authoritative Decimal totals using the existing rounding/discount pipeline. Manual lines are saved as invoice snapshots with `variantId = null`, salesperson association and payment/tax details. They create no catalog products, variants, inventory balances or stock movements. Catalog lines in a mixed bill still resolve current prices/taxes and deduct stock transactionally. Returns restore only catalog stock; manual lines refund their saved amounts without inventing stock.
 
-Checkout validates active store-assigned employees against the same existing eligibility helper used by the salesperson list, and rejects disabled linked user accounts. The existing commission calculations/helper were not changed. The existing transaction, Decimal pricing/GST, split tenders, invoice sequence, idempotency and conditional stock deductions remain authoritative.
+Entering a barcode in an explicit manual row can offer conversion to a real catalog match, with cashier confirmation. Unknown scanner input itself never becomes a manual line or silently substitutes an item.
 
-## Authorized new-barcode registration
+## Optional authorized registration
 
-After a real lookup miss, an operator with both catalog and stock permissions can open **Register this product**. Other users receive an instruction to ask an authorized catalog manager. The dialog requires actual product name/code, SKU, barcode, cost/selling prices, GST, opening quantity and reason; size/color remain optional under the existing catalog rules.
+A genuine lookup miss offers product registration only to users with catalog and stock permissions. The dialog saves an actual product, variant, SKU/barcode, prices, tax, selected-store opening quantity and reason. The existing product-create API persists catalog records and the existing OPENING stock movement/balance in one transaction. A failed store/stock validation rolls everything back. The terminal reloads the saved variant through the scan queue before adding it to the cart.
 
-The existing `POST /api/v1/pos/products` accepts an optional `openingStock: { storeId, quantity, reason }` for one-variant registration. It checks `pos.catalog`, `pos.inventory`, store scope, input values and store activity, then creates the product/variant and existing OPENING stock movement/balance in the same transaction. Invalid stock/store setup rolls everything back. Existing SKU/barcode uniqueness remains enforced. The frontend only adds the product after reloading the saved variant through the scan queue. Unknown scans never write products automatically.
+## Relationships and financial integrity
 
-## APIs
+`Employee.id` is the existing integer primary key. `Employee.employeeID` is an optional external GUID/string. Existing sale/item `salespersonId` integer foreign keys retain the real Employee relationship, and invoice/history responses expose that employee's actual GUID and name. No identifier-column conversion or fabricated employee UUID was introduced.
 
-No new endpoint or duplicate catalog/inventory system was added.
+Selected employees must be active, eligible under the existing helper, assigned to the store and not attached to a disabled user account. Bill/item relationships, server quotes, persisted receipts, split tenders, transaction rollback, idempotency and catalog stock protection are retained. Unrelated payroll, attendance, expenses and commission calculation formulas were not rewritten by this task.
 
-- `GET /api/v1/pos/products/lookup`: exact barcode, then exact SKU; existing case-insensitive fallback retained.
-- `GET /api/v1/pos/products`: optional `searchMode=name` restricts suggestions to product-name substrings and exact product codes, excluding barcode/SKU substrings. Existing callers without this parameter retain their catalog search behavior.
-- `POST /api/v1/pos/products`: optional atomic opening-stock registration described above; existing callers remain supported.
-- `GET /api/v1/pos/salespeople`: existing endpoint now uses the shared store-scope helper and excludes disabled linked user accounts.
-- `POST /api/v1/pos/sales`: existing salesperson relationships are validated; explicit null line attribution is preserved. Authenticated quote, sale and exchange API boundaries require registered variant IDs and reject catalog-free manual rows before billing.
-- Existing sale/history/detail responses include the selected employee's external GUID and actual name. Quotes, payments, receipts and reprints continue through their existing APIs.
+## APIs reused and updated
 
-## Files
+All paths are relative to `/api/v1/pos`. No duplicate endpoint or inventory system was created.
+
+- `GET /products/lookup`: exact barcode priority, then SKU, retaining the case-insensitive ambiguity fallback.
+- `GET /products?searchMode=name`: name suggestions plus exact product codes; no barcode/SKU substring substitution. Other existing catalog search modes remain available.
+- `POST /products`: optional `openingStock: { storeId, quantity, reason }` for authorized atomic one-variant registration.
+- `GET /salespeople`: existing store scope and eligibility rules, excluding disabled linked users.
+- `POST /quote`, `POST /sales`: accept registered variants or explicitly marked manual lines. Prices/GST/tenders and selected employees are validated server-side.
+- `GET /sales`, `GET /sales/:id`: preserve bill/item salesperson names and external employee GUIDs.
+- Existing return, report, register, customer, payment and receipt operations are reused.
+
+## Files changed or integrated
 
 Frontend (`HRM-Admin-Pannel`):
 
-- Modified `src/features/pos/POSBillingScreen.tsx` — remove Quick Catalog, strict lookup/queue, registration handoff, bill/row salesperson selection.
-- Modified `src/features/pos/SalespersonDropdownCell.tsx` — accessible search label and unclipped anchored menu.
-- Added `src/features/pos/POSProductRegistration.tsx` — authorized database-backed registration dialog.
-- Modified `src/features/pos/posReceipt.ts` — preserve explicit unassigned item attribution.
-- Modified `scripts/test_pos_e2e.cjs` and `scripts/test_pos_selection.cjs` — real integration coverage and updated not-found message.
+- `src/features/pos/POSBillingScreen.tsx`: scanner queue, strict lookup, removal of Quick Catalog, visible dimensions, manual rows, bill/row salesperson selection and registration handoff.
+- `src/features/pos/SalespersonDropdownCell.tsx`: searchable anchored overlay with actual names.
+- `src/features/pos/POSProductRegistration.tsx`: real catalog/opening-stock registration dialog.
+- `src/features/pos/posReceipt.ts`: item-level salesperson/unassigned rendering, using saved invoice data.
+- `scripts/test_pos_e2e.cjs`, `scripts/test_pos_selection.cjs`: updated browser coverage.
 
 Backend (`QuickBoom-HRM-Backend`):
 
-- Modified `src/pos/routes.ts` — restricted name suggestions, exact barcode priority, salesperson scope/filtering and external employee GUID projections.
-- Modified `src/pos/service.ts` — optional transactional opening stock, selected-employee validation and explicit null item attribution.
-- Modified `scripts/serve_pos_e2e.ts` — isolated real employee/GUID fixtures.
-- Added `scripts/test_pos_scan_salesperson.ts` — guarded real HTTP/PostgreSQL checks.
-- Modified `package.json` — `test:pos:scan-salesperson` command.
-- Added this report.
+- `src/pos/routes.ts`: lookup/search contracts, salesperson scope/filtering and GUID/name projections.
+- `src/pos/service.ts`: atomic optional opening stock, employee validation, explicit manual intent, catalog/manual pricing and persistence.
+- `src/pos/validation.ts`: optional manual text validation integrated from the concurrent manual-item implementation.
+- `prisma/schema.prisma`, `prisma/migrations/20261023200000_pos_manual_sale_items/migration.sql`: nullable sale-item variant relation for manual snapshots.
+- `scripts/serve_pos_e2e.ts`: isolated employee/GUID fixtures.
+- `scripts/test_pos_scan_salesperson.ts`: guarded real HTTP/PostgreSQL verification.
+- `scripts/test_pos_catalog_and_manual.ts`: guarded catalog/manual/mixed checkout and return verification.
+- `package.json`: scan/salesperson test command.
+- `docs/POS_SCAN_SALESPERSON.md`: this report.
 
-Existing workspace edits to POS navigation, workspace and salesperson test files were retained. Other chats made commits in the shared repositories during this work; this list describes the implementation touched for this request, rather than claiming ownership of every Git commit/diff.
+Some of these changes were implemented/committed concurrently in the shared repositories and then integrated and tested here. Existing POS navigation changes were retained.
 
-## Database and deployment
+## Migration and deployment
 
-No Prisma schema changes or database migrations were needed for this request. The existing sale-item salesperson relation/migration is reused. No production database was migrated, reset or used for tests. Deploy the matching frontend and backend together because the terminal uses the new `searchMode=name` and optional `openingStock` contract.
+Manual billing reuses the existing migration `20261023200000_pos_manual_sale_items`, which drops NOT NULL on `POSSaleItem.variantId`; existing catalog rows/foreign keys are retained. It was applied only to the isolated localhost test database. No production database was migrated or reset. Deploy the reviewed migration with the matching backend/frontend through the normal deployment process before enabling manual sales in another database.
 
-## Verification
+## Executed verification
 
-All database tests use matching `DATABASE_URL` and `POS_TEST_DATABASE_URL` targeting `hopkid_pos_test_verified` on localhost port 55439. The new test refuses other destinations before writing fixtures.
+All fixture writes target `hopkid_pos_test_verified` at localhost port 55439 with matching `DATABASE_URL` and `POS_TEST_DATABASE_URL`. Both targeted backend test scripts reject other destinations before writing.
 
-- New real HTTP/PostgreSQL scan/salesperson suite: **12 checks passed** — real registration and OPENING ledger/balance, missing/partial-code no-write behavior, exact UUID/stock lookup, name search, registration rollback/permissions, eligible list/GUID/name, idempotent saved sale/payment/stock, history/receipt names, explicit unassigned rows, invalid/inactive/cross-store employee rejection and authorization, including explicit rejection of catalog-free manual lines.
-- Existing PostgreSQL variant-selection suite: **8 checks passed** — both dimensions, size-only, color-only and plain variants; stock/inactive rejection; exact-barcode priority; invalid/missing stores and scope.
-- Existing browser selection suite: **passed**. This suite uses API fixtures; the end-to-end and PostgreSQL suites independently verify real backend behavior.
-- Focused POS ESLint and backend TypeScript: passed at completed checks.
-- Next production build: passed. Existing `ignoreBuildErrors` configuration skips type checking; repository-wide frontend TypeScript still reports pre-existing access-control, payroll and commission-service errors, with no changed-POS diagnostics in the executed check.
+- **12 real HTTP/PostgreSQL scan/salesperson checks passed**: real registration and OPENING balances/ledger; no-write unknown/partial-code lookup; exact variant/store stock; name search; registration permissions/rollback; eligible employee GUID/name; idempotent saved sale/payment/stock; invoice/history/receipt names; explicit unassigned items; invalid/inactive/cross-store salesperson rejection; forbidden stores; and explicit manual intent without fabricated catalog records.
+- **4 catalog/manual PostgreSQL checks passed**: catalog-only sale, manual-only sale without stock changes, mixed sale with catalog-only deduction, and mixed refund with correct stock restoration.
+- **Real browser → Express → PostgreSQL suite passed**: HRM login; valid barcode/name and repeated/sequential scans; duplicate Enter suppression; unknown/partial-code rejection; no Quick Catalog; searchable salesperson selection and saved GUID/name; real product/variant/stock registration before catalog billing; explicit manual/catalog mixed checkout; saved GST/payments/receipt; no fake products; exact stock changes; lost-response retry; split Cash/UPI; receipt-fetch failure/reprint without another sale; reports and laptop/tablet layout.
+- Existing PostgreSQL variant suite: **8 checks passed**; browser selection suite: **passed**. The latter uses API fixtures; the suites above independently use the real backend/database.
+- Backend TypeScript, focused POS ESLint and frontend production build: **passed**. The existing Next configuration skips type checking; repository-wide frontend TypeScript still has previously identified access-control, payroll and commission-service diagnostics.
+- The broader existing `test:pos` suite is **not marked passed**: core finance/concurrency/rollback/stock/authorization checks passed before its previously observed commission-refund identifier assertion at `scripts/test_pos.ts:976` failed with `P2025`. Commission formulas were not changed to hide that failure.
 
-- **Final real browser → Express → PostgreSQL suite: passed.** Actual HRM login; valid barcode and exact product-name scans; multiple variants; repeated scans; duplicate Enter suppression; unknown/partial code rejection; searchable salesperson selection; actual employee GUID/name in saved invoice/history/receipt; authorized registration of a previously unknown product, variant and opening stock before billing; discount/GST/payment/stock reconciliation; Cash/UPI split; lost-response retry with the same key; receipt failure/reprint without another sale; reports and laptop/tablet layout.
-- New registration example verified: ₹75.25 exclusive price + ₹3.76 GST = ₹79.01 persisted invoice, with stock moving from 3 registered units to 2 after one sale.
-- Multi-product example verified: ₹399.95 subtotal − ₹27.01 discounts + ₹32.38 GST = ₹405.32, paid with ₹100 Cash + ₹305.32 UPI. A dropped successful response followed by retry deducted stock only once.
-- **Broad existing `test:pos` suite: not passed.** Core finance, idempotency, concurrent overselling, rollback, stock, authorization and related checks passed before the suite stopped at `scripts/test_pos.ts:976`: its expected commission-refund transaction identifier was absent (`P2025`). This is the previously observed commission-refund expectation; commission calculations were left unchanged as requested.
+Verified examples: catalog subtotal ₹399.95 − discounts ₹27.01 + GST ₹32.38 = ₹405.32, split as ₹100 Cash + ₹305.32 UPI. A manual ₹50 item at 5% GST plus a catalog ₹100 item at 5% GST saved a ₹157.50 mixed invoice, with stock deducted only for the catalog item.
 
-A separate concurrent `pos_manual_sale_items` schema/migration appeared during final verification. It is outside this request, was not applied to the database by this work, and is not required for the verified registration-required barcode flow. Checkout was kept catalog-backed, with an explicit API guard against manual unregistered rows. Review the separate nullable-variant schema/migration work independently before deployment.
-
- Physical printer output and production deployment are not tested. Browser print invocation, 58/80 mm CSS widths and saved-invoice reprint recovery are tested with printing intercepted, avoiding a native print dialog.
-
-## Shared-checkout status at the final audit
-
-The registration-required implementation and its real-browser flow passed the checks above. Afterwards another chat continued modifying these same files, removed the registration-only API/service guards and their manual-line rejection test, and introduced catalog-free manual billing. The latest harness therefore reports 11 checks, not the 12-check registration-only suite described above. These edits conflict with the request to register product/variant/price/stock before billing. The current shared checkout is **not certified as the tested registration-only revision**. Integration is awaiting a pause of the competing edits or an explicit change of the requested manual-billing policy. No production database changes were made by this task.
+Printing tests intercept `window.print` and verify saved-invoice reprint recovery and 58/80 mm CSS widths. Physical printer output and production deployment were not tested. The earlier cross-chat policy conflict is resolved by the user's explicit approval of manual billing.

@@ -1040,8 +1040,10 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
       ]);
       const discount = money(v.discountPerUnit ?? "0");
       if (discount.gt(0)) permission(actor, "discount");
-      const isManual =
-        v.manual === true || v.variantId == null || v.variantId === "";
+      const isManual = v.manual === true;
+      ensure(isManual || (typeof v.variantId === "string" && v.variantId.trim().length > 0),
+        "Choose a registered variant or explicitly add a manual item.");
+      ensure(!isManual || v.variantId == null || v.variantId === "", "A manual item cannot also reference a catalog variant");
       if (isManual) return manualItem(v, discount);
       const override =
         v.unitPriceOverride === undefined
