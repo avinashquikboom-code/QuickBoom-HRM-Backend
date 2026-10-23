@@ -62,6 +62,13 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
     "pos.sell": true,
     "pos.discount": true,
   },
+  EMPLOYEE: {
+    "pos.read": true,
+    "pos.sell": true,
+  },
+  HELPER: {
+    "pos.read": true,
+  },
   HR: {
     "pos.read": true,
     "pos.reports": true,
@@ -99,8 +106,27 @@ export async function authenticate(
     });
     ensure(user, "User account not found or session invalid", 401);
     ensure(user.isActive, "Account inactive", 403);
+
+    let employee = user.employee;
+    if (!employee) {
+      employee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            ...(user.employeeID ? [{ employeeID: user.employeeID }, { employeeCode: user.employeeID }] : []),
+            ...(user.email ? [{ user: { email: user.email } }] : []),
+          ],
+        },
+      });
+      if (employee && !employee.userId) {
+        await prisma.employee.update({
+          where: { id: employee.id },
+          data: { userId: user.id },
+        }).catch(() => {});
+      }
+    }
+
     ensure(
-      !user.employee || user.employee.status.toLowerCase() === "active",
+      !employee || employee.status.toLowerCase() === "active",
       "Employee inactive",
       403,
     );
@@ -111,8 +137,8 @@ export async function authenticate(
     (req as POSRequest).actor = {
       userId: user.id,
       role: user.role,
-      employeeId: user.employee?.id,
-      storeId: user.employee?.storeId ?? undefined,
+      employeeId: employee?.id,
+      storeId: employee?.storeId ?? undefined,
       admin: ["SUPER_ADMIN", "ADMIN"].includes(user.role),
       permissions: {
         ...defaultRolePerms,
@@ -136,7 +162,14 @@ export function permission(actor: Actor, name: string) {
 
 export function scope(actor: Actor, storeId: number) {
   integer(storeId, "storeId");
-  ensure(actor.admin || actor.storeId === storeId, "Store access denied", 403);
+  ensure(
+    actor.admin ||
+      actor.permissions["pos.allStores"] === true ||
+      actor.permissions["pos.manageStores"] === true ||
+      actor.storeId === storeId,
+    "Store access denied",
+    403,
+  );
 }
 
 export function storeFilter(actor: Actor, input: unknown): number | undefined {

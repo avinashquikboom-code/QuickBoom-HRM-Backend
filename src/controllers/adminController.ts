@@ -818,38 +818,42 @@ export const updateEmployee = async (
     if (branchName !== undefined) updateData.branchName = branchName || null;
     if (storeId !== undefined) {
       const parsedStoreId = storeId ? parseInt(storeId) : null;
-      updateData.storeId = parsedStoreId;
       if (parsedStoreId) {
         const storeObj = await prisma.store.findUnique({ where: { id: parsedStoreId } });
-        if (storeObj) {
-          let officeObj = await prisma.office.findFirst({ where: { name: storeObj.name } });
-          if (!officeObj) {
-            officeObj = await prisma.office.create({
-              data: {
-                name: storeObj.name,
-                code: storeObj.code,
-                address: storeObj.address || '',
-                latitude: storeObj.latitude || 0.0,
-                longitude: storeObj.longitude || 0.0,
-                maxPunchRadiusMeters: storeObj.maxPunchRadiusMeters || 50.0,
-              }
-            });
-          } else {
-            await prisma.office.update({
-              where: { id: officeObj.id },
-              data: {
-                latitude: storeObj.latitude || 0.0,
-                longitude: storeObj.longitude || 0.0,
-                maxPunchRadiusMeters: storeObj.maxPunchRadiusMeters || 50.0,
-                address: storeObj.address || '',
-              }
-            });
-          }
-          updateData.officeId = officeObj.id;
-        } else {
-          updateData.officeId = null;
+        if (!storeObj || !storeObj.isActive) {
+          res.status(400).json({
+            success: false,
+            message: 'The selected store location is inactive or does not exist. Please assign an active store.',
+          });
+          return;
         }
+        updateData.storeId = parsedStoreId;
+        let officeObj = await prisma.office.findFirst({ where: { name: storeObj.name } });
+        if (!officeObj) {
+          officeObj = await prisma.office.create({
+            data: {
+              name: storeObj.name,
+              code: storeObj.code,
+              address: storeObj.address || '',
+              latitude: storeObj.latitude || 0.0,
+              longitude: storeObj.longitude || 0.0,
+              maxPunchRadiusMeters: storeObj.maxPunchRadiusMeters || 50.0,
+            }
+          });
+        } else {
+          await prisma.office.update({
+            where: { id: officeObj.id },
+            data: {
+              latitude: storeObj.latitude || 0.0,
+              longitude: storeObj.longitude || 0.0,
+              maxPunchRadiusMeters: storeObj.maxPunchRadiusMeters || 50.0,
+              address: storeObj.address || '',
+            }
+          });
+        }
+        updateData.officeId = officeObj.id;
       } else {
+        updateData.storeId = null;
         updateData.officeId = null;
       }
     }
@@ -1442,6 +1446,18 @@ export const createEmployee = async (
   if ((!userId && (!email || !password)) || !firstName) {
     res.status(400).json({ success: false, message: 'userId (or email and password) and firstName are required.' });
     return;
+  }
+
+  const parsedStoreId = storeId ? parseInt(storeId, 10) : null;
+  if (parsedStoreId) {
+    const storeObj = await prisma.store.findUnique({ where: { id: parsedStoreId } });
+    if (!storeObj || !storeObj.isActive) {
+      res.status(400).json({
+        success: false,
+        message: 'The selected store location is inactive or does not exist. Please assign an active store.',
+      });
+      return;
+    }
   }
 
   try {

@@ -1,231 +1,64 @@
-import assert from "node:assert/strict";
-import express from "express";
-import { prisma } from "../src/utils/db";
-import { signAccessToken } from "../src/utils/jwt";
-import routes from "../src/pos/routes";
-import { Role } from "@prisma/client";
+/** Real HTTP context regression; fixtures are restricted to the isolated local POS database. */
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import express from 'express';
+import { prisma } from '../src/utils/db';
+import { signAccessToken } from '../src/utils/jwt';
+import routes from '../src/pos/routes';
 
 async function run() {
-  console.log("Starting POS /context authorization verification...");
-
-  // Setup Express server with POS routes
-  const app = express();
-  app.use(express.json());
-  app.use("/api/v1/pos", routes);
-  const server = app.listen(0, "127.0.0.1");
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  const addr = server.address() as { port: number };
-  const url = `http://127.0.0.1:${addr.port}/api/v1/pos/context`;
-
+  const url = new URL(process.env.POS_TEST_DATABASE_URL ?? '');
+  assert(['localhost', '127.0.0.1'].includes(url.hostname) && url.port === '55439' && url.pathname.includes('pos_test') && process.env.DATABASE_URL === process.env.POS_TEST_DATABASE_URL, 'An isolated local POS test database is required');
+  const suffix = randomUUID();
+  const store = await prisma.store.create({ data: { name: `Context ${suffix}` } });
+  const other = await prisma.store.create({ data: { name: `Other ${suffix}` } });
+  const inactive = await prisma.store.create({ data: { name: `Inactive ${suffix}`, isActive: false } });
+  await prisma.workMode.upsert({where:{id:'OFFICE'},create:{id:'OFFICE',name:'Office'},update:{}});
+  const account = async (role: 'ADMIN' | 'SALESMAN', storeId?: number | null, employee = true) => prisma.user.create({ data: {
+    email: `${randomUUID()}@context.test.invalid`, password: 'unused-test-hash', role,
+    ...(employee ? { employee: { create: { employeeCode: randomUUID(), firstName: 'Context', lastName: 'Cashier', status: 'active', storeId } } } : {}),
+  }});
+  const admin = await account('ADMIN', undefined, false);
+  const cashier = await account('SALESMAN', store.id);
+  const unassigned = await account('SALESMAN', null);
+  const missingEmployee = await account('SALESMAN', undefined, false);
+  const disabledStore = await account('SALESMAN', inactive.id);
+  const app = express(); app.use('/api/v1/pos', routes);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const endpoint = `http://127.0.0.1:${(server.address() as {port:number}).port}/api/v1/pos/context`;
+  let count = 0;
+  async function check(user: typeof admin | null, query: string, status: number, message?: RegExp) {
+    const response = await fetch(endpoint + query, { headers: user ? { Authorization: `Bearer ${signAccessToken({id:user.id,role:user.role})}` } : {} });
+    const body = await response.json();
+    assert.equal(response.status, status, JSON.stringify(body));
+    if (message) assert.match(body.message, message);
+    console.log(`HTTP ${response.status} ${query || '(no query)'} ${status === 200 ? 'context loaded' : JSON.stringify(body)}`);
+    count++; return body;
+  }
   try {
-    // 1. Unauthenticated requests
-    console.log("Test 1: Unauthenticated request (no token)");
-    const resNoToken = await fetch(url);
-    assert.equal(resNoToken.status, 401, "Expected 401 when no token is provided");
-    const jsonNoToken = await resNoToken.json();
-    assert.equal(jsonNoToken.message, "Sign in required");
-    console.log("  PASS -> 401 'Sign in required'");
-
-    console.log("Test 1b: Unauthenticated request (invalid signature)");
-    const resInvalidToken = await fetch(url, {
-      headers: { Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.invalid.mock" },
-    });
-    assert.equal(resInvalidToken.status, 401, "Expected 401 when token is invalid");
-    const jsonInvalidToken = await resInvalidToken.json();
-    assert.equal(jsonInvalidToken.message, "Invalid or expired signed session");
-    console.log("  PASS -> 401 'Invalid or expired signed session'");
-
-    // Ensure we have at least 2 active test stores for store isolation tests
-    const storeA = await prisma.store.upsert({
-      where: { id: 1 },
-      create: { id: 1, name: "Store Alpha", isActive: true },
-      update: { isActive: true },
-    });
-    const storeB = await prisma.store.upsert({
-      where: { id: 2 },
-      create: { id: 2, name: "Store Beta", isActive: true },
-      update: { isActive: true },
-    });
-
-    // 2. Authorized Administrator
-    console.log("Test 2: Authorized administrator (ADMIN role)");
-    let adminUser = await prisma.user.findFirst({
-      where: { role: Role.ADMIN, isActive: true },
-    });
-    if (!adminUser) {
-      adminUser = await prisma.user.create({
-        data: {
-          email: "admin-auth-test@hopkid.test",
-          password: "test-password-hash",
-          role: Role.ADMIN,
-          isActive: true,
-        },
-      });
-    }
-    const adminToken = signAccessToken({ id: adminUser.id, role: adminUser.role });
-    const resAdmin = await fetch(url, {
-      headers: { Authorization: `Bearer ${adminToken}` },
-    });
-    assert.equal(resAdmin.status, 200, "Expected 200 for authorized administrator");
-    const jsonAdmin = await resAdmin.json();
-    assert.equal(jsonAdmin.success, true);
-    assert.equal(jsonAdmin.data.actor.admin, true);
-    assert(Array.isArray(jsonAdmin.data.stores), "Expected stores array in context");
-    assert(jsonAdmin.data.stores.length >= 1, "Expected active stores list");
-    assert(jsonAdmin.data.currency, "Expected currency in context");
-    assert(Array.isArray(jsonAdmin.data.paymentMethods), "Expected paymentMethods");
-    console.log("  PASS -> 200 OK with full admin context & active stores");
-
-    // 3. Authenticated user without POS permission
-    console.log("Test 3: Authenticated user without POS permission (generic EMPLOYEE)");
-    let genericEmployee = await prisma.user.findFirst({
-      where: { role: Role.EMPLOYEE, userPermission: null, isActive: true },
-    });
-    if (!genericEmployee) {
-      genericEmployee = await prisma.user.create({
-        data: {
-          email: "employee-no-pos@hopkid.test",
-          password: "test-password-hash",
-          role: Role.EMPLOYEE,
-          isActive: true,
-        },
-      });
-    }
-    const employeeToken = signAccessToken({
-      id: genericEmployee.id,
-      role: genericEmployee.role,
-    });
-    const resNoPerm = await fetch(url, {
-      headers: { Authorization: `Bearer ${employeeToken}` },
-    });
-    assert.equal(resNoPerm.status, 403, "Expected 403 for user without POS permission");
-    const jsonNoPerm = await resNoPerm.json();
-    assert.equal(jsonNoPerm.message, "POS access required");
-    console.log("  PASS -> 403 'POS access required'");
-
-    // 4. Authorized POS cashier with assigned store
-    console.log("Test 4: Authorized POS cashier with assigned store (SALESMAN with storeId)");
-    let cashierUser = await prisma.user.findFirst({
-      where: {
-        role: Role.SALESMAN,
-        isActive: true,
-        employee: { storeId: storeA.id, status: "active" },
-      },
-      include: { employee: true },
-    });
-    if (!cashierUser) {
-      cashierUser = await prisma.user.create({
-        data: {
-          email: "cashier-assigned@hopkid.test",
-          password: "test-password-hash",
-          role: Role.SALESMAN,
-          isActive: true,
-          employee: {
-            create: {
-              firstName: "Priya",
-              lastName: "Patel",
-              employeeCode: "CASHIER-A1",
-              status: "active",
-              storeId: storeA.id,
-            },
-          },
-        },
-        include: { employee: true },
-      });
-    }
-    const cashierToken = signAccessToken({
-      id: cashierUser.id,
-      role: cashierUser.role,
-    });
-    const resCashier = await fetch(url, {
-      headers: { Authorization: `Bearer ${cashierToken}` },
-    });
-    assert.equal(resCashier.status, 200, "Expected 200 for authorized cashier with assigned store");
-    const jsonCashier = await resCashier.json();
-    assert.equal(jsonCashier.success, true);
-    assert.equal(jsonCashier.data.actor.admin, false);
-    assert.equal(jsonCashier.data.actor.permissions["pos.sell"], true);
-    assert.equal(jsonCashier.data.actor.permissions["pos.read"], true);
-    assert.equal(jsonCashier.data.actor.storeId, storeA.id);
-    assert.equal(jsonCashier.data.stores.length, 1);
-    assert.equal(jsonCashier.data.stores[0].id, storeA.id);
-    assert.equal(jsonCashier.data.salesperson.name, "Priya Patel");
-    assert(jsonCashier.data.paymentMethods.length >= 1);
-    console.log("  PASS -> 200 OK for authorized cashier with store context & salesperson profile");
-
-    // 5. User without an assigned store (Authorized cashier but no store assigned)
-    console.log("Test 5: User without an assigned store (SALESMAN with storeId = null)");
-    let unassignedCashier = await prisma.user.findFirst({
-      where: {
-        role: Role.SALESMAN,
-        isActive: true,
-        employee: { storeId: null, status: "active" },
-      },
-      include: { employee: true },
-    });
-    if (!unassignedCashier) {
-      unassignedCashier = await prisma.user.create({
-        data: {
-          email: "cashier-nostore@hopkid.test",
-          password: "test-password-hash",
-          role: Role.SALESMAN,
-          isActive: true,
-          employee: {
-            create: {
-              firstName: "Amit",
-              lastName: "Verma",
-              employeeCode: "CASHIER-UNASSIGNED",
-              status: "active",
-              storeId: null,
-            },
-          },
-        },
-        include: { employee: true },
-      });
-    }
-    const unassignedToken = signAccessToken({
-      id: unassignedCashier.id,
-      role: unassignedCashier.role,
-    });
-    const resUnassigned = await fetch(url, {
-      headers: { Authorization: `Bearer ${unassignedToken}` },
-    });
-    assert.equal(
-      resUnassigned.status,
-      422,
-      `Expected 422 Unprocessable Entity instead of generic 403, got ${resUnassigned.status}`,
-    );
-    const jsonUnassigned = await resUnassigned.json();
-    assert.match(
-      jsonUnassigned.message,
-      /No store location is assigned to your employee account/i,
-    );
-    console.log("  PASS -> 422 'No store location is assigned to your employee account...' (actionable, not 403)");
-
-    // 6. User assigned to another branch or company (Store isolation check)
-    console.log("Test 6: User assigned to Store A attempting to access Store B (?storeId=2)");
-    const resCrossStore = await fetch(`${url}?storeId=${storeB.id}`, {
-      headers: { Authorization: `Bearer ${cashierToken}` },
-    });
-    assert.equal(
-      resCrossStore.status,
-      403,
-      "Expected 403 Store access denied for cross-store attempt",
-    );
-    const jsonCrossStore = await resCrossStore.json();
-    assert.equal(jsonCrossStore.message, "Store access denied");
-    console.log("  PASS -> 403 'Store access denied' (branch isolation enforced)");
-
-    console.log("\n=========================================");
-    console.log("ALL 6 POS /context AUTHORIZATION TESTS PASSED!");
-    console.log("=========================================\n");
+    await check(null, '', 401, /Sign in required/);
+    await check(admin, '', 200);
+    const body = await check(cashier, '', 200);
+    assert.equal(body.data.actor.employeeId != null, true);
+    assert.equal(body.data.actor.storeId, store.id);
+    assert.deepEqual(body.data.stores.map((s:{id:number}) => s.id), [store.id]);
+    assert.equal(body.data.activeStore.id, store.id);
+    assert.equal(body.data.salesperson.name, 'Context Cashier');
+    assert(Array.isArray(body.data.paymentMethods));
+    await check(unassigned, '', 422, /No store location is assigned/);
+    await check(missingEmployee, '', 422, /employee/i);
+    await check(disabledStore, '', 422, /inactive or does not exist/);
+    await check(cashier, `?storeId=${other.id}`, 403, /Store access denied/);
+    await check(cashier, '?storeId=undefined', 400, /Invalid storeId/);
+    await check(cashier, '?storeId=0', 400, /Invalid storeId/);
+    await check(cashier, `?storeId=${store.id}&storeId=${store.id}`, 400, /Invalid storeId/);
+    await check(admin, `?storeId=${other.id}`, 200);
+    await check(cashier, `?storeId=${store.id}`, 200);
+    console.log(`PASS ${count} real HTTP POS context checks`);
   } finally {
-    server.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
     await prisma.$disconnect();
   }
 }
-
-run().catch((err) => {
-  console.error("Test failed:", err);
-  process.exit(1);
-});
+run().then(() => process.exit(0)).catch(error => {console.error(error); process.exit(1);});

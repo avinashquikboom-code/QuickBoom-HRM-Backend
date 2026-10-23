@@ -220,15 +220,23 @@ router.get(
     );
     let storeId: number | undefined;
     if (r.query.storeId !== undefined && r.query.storeId !== "") {
+      ensure(typeof r.query.storeId === "string", "Invalid storeId: provide one positive integer");
       const requestedStoreId = integer(Number(r.query.storeId), "storeId");
       scope(a, requestedStoreId);
       storeId = requestedStoreId;
     } else if (!a.admin) {
       ensure(
+        a.employeeId,
+        "Your user account is not linked to an employee profile. Ask an administrator to link your employee profile and assign an active store in HRM Employees.",
+        422,
+      );
+      ensure(
         a.storeId,
         "No store location is assigned to your employee account. Please contact an administrator to assign an active store.",
         422,
       );
+      storeId = a.storeId;
+    } else if (a.admin && a.storeId) {
       storeId = a.storeId;
     }
 
@@ -238,14 +246,21 @@ router.get(
       });
       ensure(
         assignedStore && assignedStore.isActive,
-        "The assigned store location is inactive or does not exist.",
+        "The assigned store location is inactive or does not exist. Ask an administrator to activate it or update your store assignment in HRM Employees.",
         422,
       );
     }
 
+    const canAccessAllStores =
+      a.admin ||
+      a.permissions["pos.allStores"] === true ||
+      a.permissions["pos.manageStores"] === true;
+
     const [stores, systemSetting, employee] = await Promise.all([
       prisma.store.findMany({
-        where: { id: storeId, isActive: true },
+        where: canAccessAllStores
+          ? { isActive: true }
+          : { id: a.storeId, isActive: true },
         select: {
           id: true,
           name: true,
@@ -277,9 +292,9 @@ router.get(
 
     const activeStore = storeId
       ? (stores.find((s) => s.id === storeId) ?? null)
-      : stores.length === 1
-        ? stores[0]
-        : null;
+      : (a.storeId ? stores.find((s) => s.id === a.storeId) : null) ??
+        stores[0] ??
+        null;
 
     const resolvedStoreId = activeStore?.id ?? storeId;
     let configuration = null;

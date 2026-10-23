@@ -2003,6 +2003,18 @@ export const updateHREmployee = async (
   try {
     const employeeId = parseInt(id as string, 10);
 
+    const parsedStoreId = storeId !== undefined ? (storeId ? parseInt(storeId, 10) : null) : undefined;
+    if (parsedStoreId) {
+      const storeObj = await prisma.store.findUnique({ where: { id: parsedStoreId } });
+      if (!storeObj || !storeObj.isActive) {
+        res.status(400).json({
+          success: false,
+          message: 'The selected store location is inactive or does not exist. Please assign an active store.',
+        });
+        return;
+      }
+    }
+
     // Manage Shift & Work Mode Assignment History
     const activeAssignment = await prisma.shiftAssignment.findFirst({
       where: { employeeId: employeeId, effectiveTo: null },
