@@ -101,6 +101,10 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 2. Verify password
+    if (/^pos-store-\d+@hopkid\.local$/i.test(user.email ?? "")) {
+      res.status(401).json({success:false,message:"Use the dedicated POS store login."});
+      return;
+    }
     const isPasswordMatch = await bcrypt.compare(password, user.password);
     if (!isPasswordMatch) {
       console.log('❌ [LOGIN] Password mismatch for:', email);
@@ -589,6 +593,10 @@ const authenticateRoleLogin = async (req: Request, res: Response, allowedRoles: 
     }
 
     // Verify password
+    if (/^pos-store-\d+@hopkid\.local$/i.test(user.email ?? "")) {
+      res.status(401).json({success:false,message:"Use the dedicated POS store login."});
+      return;
+    }
     const isPasswordMatch = await bcrypt.compare(password, user.password);
     if (!isPasswordMatch) {
       res.status(401).json({

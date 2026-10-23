@@ -1,6 +1,5 @@
 import bcrypt from 'bcryptjs';
 import { createHmac, randomBytes } from 'node:crypto';
-import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
 import { authenticate, POSRequest } from './auth';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -27,8 +26,12 @@ export async function initializeStorePOSCredentials(dryRun = false) {
       const data=await defaultPOSCredential();
       // skipDuplicates is an atomic INSERT ... ON CONFLICT DO NOTHING. It
       // preserves a custom credential created concurrently with initialization.
-      const result=await prisma.pOSStoreCredential.createMany({data:[{storeId:store.id,...data}],skipDuplicates:true});
-      initialized+=result.count;
+      const count=await prisma.$transaction(async tx=>{
+        const result=await tx.pOSStoreCredential.createMany({data:[{storeId:store.id,...data}],skipDuplicates:true});
+        if(result.count)await tx.activityLog.create({data:{actorRole:'SYSTEM',actorName:'POS credential initialization',source:'SYSTEM',action:'INITIALIZE_STORE_POS_CREDENTIALS',entityType:'Store',entityId:String(store.id),description:'Initialized missing store POS credentials'}});
+        return result.count;
+      });
+      initialized+=count;
     }
   }
   return {missing,initialized,dryRun};
