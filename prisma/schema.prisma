@@ -1557,8 +1557,6 @@ model POSProductVariant {
   product POSProduct @relation(fields: [productId], references: [id], onDelete: Restrict)
   sku String @unique
   barcode String @unique
-  size String
-  color String
   attributes Json?
   costPrice Decimal @db.Decimal(15,2)
   sellingPrice Decimal @db.Decimal(15,2)
@@ -1679,8 +1677,6 @@ model POSSaleItem {
   variant POSProductVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
   name String
   sku String
-  size String
-  color String
   brand String
   category String?
   quantity Int

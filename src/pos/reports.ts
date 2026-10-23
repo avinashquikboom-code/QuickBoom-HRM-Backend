@@ -76,7 +76,7 @@ export async function report(actor: Actor, query: Record<string, any>) {
         Prisma.sql`SELECT to_char(s."createdAt" + interval '5 hours 30 minutes', 'YYYY-MM-DD') AS day, SUM(s."grandTotal") AS total, COUNT(*)::integer AS invoices FROM "POSSale" s WHERE ${filter} AND ${period} GROUP BY day ORDER BY day`,
       );
       const dimensions = await tx.$queryRaw(
-        Prisma.sql`SELECT i."variantId", i.name, i.sku, i.size, i.color, i.brand, i.category, SUM(i.quantity)::integer AS quantity, SUM(i."unitPrice" * i.quantity) AS gross, SUM(i."discountTotal") AS discounts, SUM(i."taxTotal") AS taxes, SUM(i."lineTotal") AS collected, SUM(i."costPrice" * i.quantity) AS originalCost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id = i."saleId" WHERE ${filter} AND ${period} GROUP BY i."variantId", i.name, i.sku, i.size, i.color, i.brand, i.category ORDER BY collected DESC LIMIT ${pagination.take} OFFSET ${pagination.skip}`,
+        Prisma.sql`SELECT i."variantId", i.name, i.sku, i.brand, i.category, SUM(i.quantity)::integer AS quantity, SUM(i."unitPrice" * i.quantity) AS gross, SUM(i."discountTotal") AS discounts, SUM(i."taxTotal") AS taxes, SUM(i."lineTotal") AS collected, SUM(i."costPrice" * i.quantity) AS originalCost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id = i."saleId" WHERE ${filter} AND ${period} GROUP BY i."variantId", i.name, i.sku, i.brand, i.category ORDER BY collected DESC LIMIT ${pagination.take} OFFSET ${pagination.skip}`,
       );
       const cost = await tx.$queryRaw<
         { revenue: Prisma.Decimal | null; cogs: Prisma.Decimal | null }[]
@@ -110,7 +110,7 @@ export async function report(actor: Actor, query: Record<string, any>) {
         orderBy: { createdAt: "desc" },
       });
       const topVariants = await tx.$queryRaw(
-        Prisma.sql`SELECT i."variantId", i.sku, i.name, i.size, i.color, SUM(i.quantity)::integer AS quantity, SUM(i."lineTotal") AS total FROM "POSSaleItem" i JOIN "POSSale" s ON s.id = i."saleId" WHERE ${filter} AND ${period} GROUP BY i."variantId", i.sku, i.name, i.size, i.color ORDER BY quantity DESC LIMIT 20`,
+        Prisma.sql`SELECT i."variantId", i.sku, i.name, SUM(i.quantity)::integer AS quantity, SUM(i."lineTotal") AS total FROM "POSSaleItem" i JOIN "POSSale" s ON s.id = i."saleId" WHERE ${filter} AND ${period} GROUP BY i."variantId", i.sku, i.name ORDER BY quantity DESC LIMIT 20`,
       );
       const valuation = await tx.$queryRaw<{ value: Prisma.Decimal | null }[]>(
         Prisma.sql`SELECT SUM(b.quantity * v."costPrice") AS value FROM "POSInventoryBalance" b JOIN "POSProductVariant" v ON v.id = b."variantId" WHERE (${storeId ?? null}::integer IS NULL OR b."storeId" = ${storeId ?? null}::integer)`,
@@ -190,8 +190,8 @@ export async function groupedSales(actor: Actor, query: Record<string, any>) {
     product: Prisma.sql`f.name`,
     category: Prisma.sql`COALESCE(f.category,'Uncategorized')`,
     brand: Prisma.sql`f.brand`,
-    size: Prisma.sql`f.size`,
-    color: Prisma.sql`f.color`,
+    size: Prisma.sql`''`,
+    color: Prisma.sql`''`,
     store: Prisma.sql`f."storeId"::text`,
     cashier: Prisma.sql`f."cashierId"::text`,
     salesperson: Prisma.sql`COALESCE((SELECT CONCAT(e."firstName", ' ', e."lastName") FROM "Employee" e WHERE e.id = f."salespersonId"), f."salespersonId"::text, 'Unassigned')`,
@@ -199,8 +199,8 @@ export async function groupedSales(actor: Actor, query: Record<string, any>) {
   const dimension = expressions[String(query.groupBy ?? "day")];
   ensure(dimension, "Unsupported sales dimension");
   const facts = Prisma.sql`WITH facts AS (
- SELECT s."createdAt" AS at,s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,i.size,i.color,i.quantity AS units,i."unitPrice"*i.quantity AS gross,i."discountTotal" AS discount,i."taxTotal" AS tax,i."lineTotal" AS collected,0::numeric AS refunds,i."costPrice"*i.quantity AS cost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id=i."saleId"
- UNION ALL SELECT r."createdAt",s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,i.size,i.color,-ri.quantity,0,0,-(ri."refundAmount"-ri."revenueRefund"),0,ri."refundAmount",CASE WHEN ri.resellable THEN -i."costPrice"*ri.quantity ELSE 0 END FROM "POSReturnItem" ri JOIN "POSReturn" r ON r.id=ri."returnId" JOIN "POSSaleItem" i ON i.id=ri."saleItemId" JOIN "POSSale" s ON s.id=r."saleId")`;
+ SELECT s."createdAt" AS at,s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,i.quantity AS units,i."unitPrice"*i.quantity AS gross,i."discountTotal" AS discount,i."taxTotal" AS tax,i."lineTotal" AS collected,0::numeric AS refunds,i."costPrice"*i.quantity AS cost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id=i."saleId"
+ UNION ALL SELECT r."createdAt",s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,-ri.quantity,0,0,-(ri."refundAmount"-ri."revenueRefund"),0,ri."refundAmount",CASE WHEN ri.resellable THEN -i."costPrice"*ri.quantity ELSE 0 END FROM "POSReturnItem" ri JOIN "POSReturn" r ON r.id=ri."returnId" JOIN "POSSaleItem" i ON i.id=ri."saleItemId" JOIN "POSSale" s ON s.id=r."saleId")`;
   const rows = await prisma.$queryRaw<Record<string, unknown>[]>(
     Prisma.sql`${facts} SELECT ${dimension} AS label,SUM(units)::integer AS units,SUM(gross) AS gross,SUM(discount) AS discounts,SUM(tax) AS taxes,SUM(refunds) AS refunds,SUM(collected-refunds) AS "netCollected",SUM(collected-refunds-tax) AS "netRevenue",SUM(cost) AS "costOfGoodsSold",SUM(collected-refunds-tax-cost) AS "grossMargin",COUNT(*) OVER()::integer AS "totalGroups" FROM facts f WHERE (${storeId ?? null}::integer IS NULL OR f."storeId"=${storeId ?? null}::integer) AND f.at >= ${range.gte} AND f.at < ${range.lt} GROUP BY label ORDER BY label LIMIT ${p.take} OFFSET ${p.skip}`,
   );
@@ -223,7 +223,7 @@ export async function inventoryReport(
   const storeId = storeFilter(actor, query.storeId),
     p = page(query),
     low = query.lowStock === "true";
-  const cte = Prisma.sql`WITH stock AS (SELECT st.id AS "storeId",st.name AS "storeName",v.id AS "variantId",v.sku,v.size,v.color,pr.name,COALESCE(b.quantity,0) AS quantity,COALESCE(b.damaged,0) AS damaged,COALESCE(b."lowStockThreshold",5) AS threshold,v."costPrice",COALESCE(b.quantity,0)*v."costPrice" AS valuation FROM "Store" st CROSS JOIN "POSProductVariant" v JOIN "POSProduct" pr ON pr.id=v."productId" LEFT JOIN "POSInventoryBalance" b ON b."storeId"=st.id AND b."variantId"=v.id WHERE st."isActive" AND v.active AND pr.active AND (${storeId ?? null}::integer IS NULL OR st.id=${storeId ?? null}::integer))`;
+  const cte = Prisma.sql`WITH stock AS (SELECT st.id AS "storeId",st.name AS "storeName",v.id AS "variantId",v.sku,pr.name,COALESCE(b.quantity,0) AS quantity,COALESCE(b.damaged,0) AS damaged,COALESCE(b."lowStockThreshold",5) AS threshold,v."costPrice",COALESCE(b.quantity,0)*v."costPrice" AS valuation FROM "Store" st CROSS JOIN "POSProductVariant" v JOIN "POSProduct" pr ON pr.id=v."productId" LEFT JOIN "POSInventoryBalance" b ON b."storeId"=st.id AND b."variantId"=v.id WHERE st."isActive" AND v.active AND pr.active AND (${storeId ?? null}::integer IS NULL OR st.id=${storeId ?? null}::integer))`;
   return prisma.$transaction(
     async (tx) => {
       const items = await tx.$queryRaw(

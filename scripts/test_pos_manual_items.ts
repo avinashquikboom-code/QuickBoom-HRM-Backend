@@ -273,8 +273,6 @@ async function main() {
     const row = sale.items.find((i) => i.variantId === null)!;
     assert.equal(row.barcode, "MAN-BAR-12345");
     assert.equal(row.sku, "MAN-SKU-9");
-    assert.equal(row.size, "XL");
-    assert.equal(row.color, "Grey");
     assert.equal(row.brand, "Local");
     assert.equal(row.category, "Accessories");
     assert.equal(

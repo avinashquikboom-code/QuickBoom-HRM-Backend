@@ -302,8 +302,6 @@ export async function updateVariant(
     const merged = {
       sku: previous.sku,
       barcode: previous.barcode,
-      size: previous.size,
-      color: previous.color,
       costPrice: previous.costPrice.toFixed(2),
       sellingPrice: previous.sellingPrice.toFixed(2),
       taxRate: previous.taxRate.toString(),

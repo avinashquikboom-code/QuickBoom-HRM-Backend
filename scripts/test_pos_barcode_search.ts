@@ -58,8 +58,8 @@ async function run() {
   });
 
   // Assign stock: Store A has 10 units of M, 0 of L. Store B has 5 of L.
-  const variantM = productActive.variants.find((v) => v.size === "M")!;
-  const variantL = productActive.variants.find((v) => v.size === "L")!;
+  const variantM = productActive.variants[0]!;
+  const variantL = productActive.variants[1]!;
 
   await service.adjust(actor, {
     storeId: storeA.id,
@@ -119,8 +119,6 @@ async function run() {
     const m1 = lookupExact.data.data.matches[0];
     assert.equal(m1.barcode, targetBarcode);
     assert.equal(Number(m1.sellingPrice), 599);
-    assert.equal(m1.size, "M");
-    assert.equal(m1.color, "Navy Blue");
     assert.equal(m1.balances.length, 1);
     assert.equal(m1.balances[0].storeId, storeA.id);
     assert.equal(m1.balances[0].quantity, 10);

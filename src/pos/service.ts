@@ -142,8 +142,6 @@ export function variantData(raw: unknown) {
   return {
     sku: text(b.sku, "SKU", 80),
     barcode: b.barcode ? text(b.barcode, "barcode", 80) : `POS-${randomUUID()}`,
-    size: b.size == null || b.size === "" ? "" : text(b.size, "size", 40),
-    color: b.color == null || b.color === "" ? "" : text(b.color, "color", 60),
     costPrice: money(b.costPrice, "costPrice"),
     sellingPrice: money(b.sellingPrice, "sellingPrice"),
     taxRate,
@@ -1025,8 +1023,6 @@ type PricedSnapshot = {
   name: string;
   sku: string;
   barcode: string | null;
-  size: string;
-  color: string;
   brand: string;
   category: string | null;
   quantity: number;
@@ -1161,8 +1157,6 @@ async function priceItems(
       name: string;
       sku: string;
       barcode: string | null;
-      size: string;
-      color: string;
       brand: string;
       category: string | null;
       catalogUnitPrice: Prisma.Decimal;
@@ -1193,8 +1187,6 @@ async function priceItems(
           name: v.product.name,
           sku: v.sku,
           barcode: v.barcode,
-          size: v.size,
-          color: v.color,
           brand: v.product.brand,
           category: v.product.category?.name ?? null,
           catalogUnitPrice: v.sellingPrice,
@@ -1266,8 +1258,6 @@ async function priceItems(
           name: catalog.name,
           sku: catalog.sku,
           barcode: catalog.barcode,
-          size: catalog.size,
-          color: catalog.color,
           brand: catalog.brand,
           category: catalog.category,
           quantity: item.quantity,
@@ -1292,8 +1282,6 @@ async function priceItems(
         name: manual.name,
         sku: manual.sku ?? "",
         barcode: manual.barcode ?? null,
-        size: "",
-        color: "",
         brand: manual.brand ?? "",
         category: manual.category ?? null,
         quantity: manual.quantity,

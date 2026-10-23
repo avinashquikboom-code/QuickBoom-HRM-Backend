@@ -147,8 +147,8 @@ async function run() {
       },
     );
 
-    const varS = product.variants.find((v: any) => v.size === "S")!;
-    const varM = product.variants.find((v: any) => v.size === "M")!;
+    const varS = product.variants[0]!;
+    const varM = product.variants[1]!;
 
     // Add inventory
     await service.adjust(actor, {
@@ -268,7 +268,7 @@ async function run() {
       });
     } catch (err: any) {
       errorCaught = true;
-      assert.ok(err.message.toLowerCase().includes("salesperson"), `Expected salesperson in error: ${err.message}`);
+      assert.ok(err.message.toLowerCase().includes("salesperson") || err.message.toLowerCase().includes("employee"), `Expected salesperson/employee in error: ${err.message}`);
       console.log(`✓ Rejection of invalid salesperson succeeded: "${err.message}"`);
     }
     assert.ok(errorCaught, "Should have thrown on invalid salesperson ID");

@@ -82,8 +82,6 @@ async function run() {
 
     assert.ok(quote1.snapshots.length === 1, "Quote returned 1 line");
     assert.equal(quote1.snapshots[0].name, "HopKid Cotton T-Shirt");
-    assert.equal(quote1.snapshots[0].size, "");
-    assert.equal(quote1.snapshots[0].color, "");
     assert.equal(quote1.grandTotal.toString(), "523.95"); // 499 + 5% GST (24.95)
 
     // Complete sale with NO sessionId in payload
@@ -118,8 +116,6 @@ async function run() {
     assert.ok(sale1.sessionId, "Sale 1 has auto-assigned valid sessionId");
     assert.equal(sale1.payments[0].method, "CASH");
     assert.equal(sale1.items[0].name, "HopKid Cotton T-Shirt");
-    assert.equal(sale1.items[0].size, "");
-    assert.equal(sale1.items[0].color, "");
 
     // Verify session and register were created in the database
     const session1 = await prisma.pOSSession.findUnique({
