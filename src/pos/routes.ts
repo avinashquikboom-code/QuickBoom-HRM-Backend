@@ -472,7 +472,7 @@ router.get(
           take: 500,
         })
       )
-        .filter((emp) => isCommissionEligibleEmployee(emp))
+        .filter((emp) => emp.user?.isActive !== false && isCommissionEligibleEmployee(emp))
         .map((emp) => ({
           id: emp.id,
           employeeCode: emp.employeeCode,
@@ -489,15 +489,7 @@ router.get(
   "/salespeople",
   route(async (r) => {
     permission(r.actor, "read");
-    let storeId: number | undefined;
-    if (r.query.storeId !== undefined && r.query.storeId !== "") {
-      storeId = integer(Number(r.query.storeId), "storeId");
-      scope(r.actor, storeId);
-    } else if (r.actor.isPosStoreSession) {
-      storeId = r.actor.storeId;
-    } else if (r.actor.storeId && !r.actor.admin) {
-      storeId = r.actor.storeId;
-    }
+    const storeId = storeFilter(r.actor, r.query.storeId);
     const employees = await prisma.employee.findMany({
       where: {
         ...(storeId ? { storeId } : {}),
@@ -510,7 +502,7 @@ router.get(
       orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
       take: 500,
     });
-    const eligible = employees.filter((emp) => isCommissionEligibleEmployee(emp));
+    const eligible = employees.filter((emp) => emp.user?.isActive !== false && isCommissionEligibleEmployee(emp));
     return eligible.map((emp) => ({
       id: emp.id,
       employeeCode: emp.employeeCode,
@@ -562,6 +554,7 @@ router.get(
       search =
         typeof r.query.search === "string" ? r.query.search.trim().slice(0, 200) : "",
       storeId = storeFilter(r.actor, r.query.storeId);
+    ensure(r.query.searchMode === undefined || r.query.searchMode === "name", "Invalid product search mode");
     const where: Prisma.POSProductWhereInput = {
       ...(["true", "false"].includes(String(r.query.active))
         ? { active: r.query.active === "true" }
@@ -580,6 +573,7 @@ router.get(
             OR: [
               { name: { contains: search, mode: "insensitive" } },
               { code: { contains: search, mode: "insensitive" } },
+              ...(r.query.searchMode === "name" ? [] : [
               {
                 variants: {
                   some: {
@@ -591,7 +585,8 @@ router.get(
                     ],
                   },
                 },
-              },
+              } as Prisma.POSProductWhereInput,
+              ]),
             ],
           }
         : {}),
@@ -630,17 +625,12 @@ router.get(
     scope(r.actor, storeId);
     const code = text(r.query.code, "barcode or SKU", 200);
     let matches = await prisma.pOSProductVariant.findMany({
-      where: { barcode: code },
+      where: {
+        OR: [{ barcode: code }, { sku: code }],
+      },
       include: { product: true, balances: { where: { storeId } } },
       take: 2,
     });
-    if (!matches.length) {
-      matches = await prisma.pOSProductVariant.findMany({
-        where: { sku: code },
-        include: { product: true, balances: { where: { storeId } } },
-        take: 2,
-      });
-    }
     // Preserve the existing case-insensitive fallback only after exact lookup.
     if (!matches.length) {
       matches = await prisma.pOSProductVariant.findMany({
@@ -970,10 +960,10 @@ router.get(
         take: p.take,
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         include: {
-          salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+          salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
           items: {
             include: {
-              salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+              salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
             },
           },
         },
@@ -992,14 +982,14 @@ router.get(
       include: {
         items: {
           include: {
-            salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+            salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
           },
         },
         payments: true,
         returns: { include: { items: true } },
         store: { select: { name: true, address: true } },
         cashier: { select: { email: true, profile: { select: { fullName: true } } } },
-        salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+        salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
       },
     });
     ensure(s, "Invoice not found", 404);

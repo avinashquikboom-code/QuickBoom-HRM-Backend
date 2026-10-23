@@ -13,7 +13,8 @@ async function main(){
  const user=await prisma.user.create({data:{email:`browser-${suffix}@test.invalid`,password:await bcrypt.hash(password,4),role:'ADMIN'}});
  const store=await prisma.store.create({data:{name:`Browser store ${suffix}`}});
  await prisma.workMode.upsert({where:{id:'OFFICE'},create:{id:'OFFICE',name:'Office'},update:{}});
- const employee=await prisma.employee.create({data:{userId:user.id,employeeCode:`BROWSER-${suffix}`,firstName:'Browser',lastName:'Cashier',storeId:store.id}});
+ const employee=await prisma.employee.create({data:{userId:user.id,employeeCode:`BROWSER-${suffix}`,firstName:'Browser',lastName:'Cashier',designation:'Salesperson',employeeID:randomUUID(),storeId:store.id}});
+ const salesperson=await prisma.employee.create({data:{employeeCode:`SELLER-${suffix}`,employeeID:randomUUID(),firstName:'Store',lastName:`Seller ${suffix}`,designation:'Salesperson',storeId:store.id}});
  const actor:Actor={userId:user.id,employeeId:employee.id,storeId:store.id,role:user.role,admin:true,permissions:{}};
  const product=await createProduct(actor,{name:`Browser Cotton Shirt ${suffix}`,code:`BROWSER-${suffix}`,variants:[{sku:`BROWSER-M-${suffix}`,barcode:`BROWSER-${suffix}`,size:'M',color:'Black',costPrice:'50',sellingPrice:'100',taxRate:'5'}]});
  await adjust(actor,{storeId:store.id,variantId:product.variants[0]!.id,quantityDelta:10,type:'OPENING',reason:'Browser fixture opening stock'});
@@ -21,7 +22,7 @@ async function main(){
  await adjust(actor,{storeId:store.id,variantId:second.variants[0]!.id,quantityDelta:10,type:'OPENING',reason:'Browser fixture second product'});
  const register=await prisma.pOSRegister.create({data:{storeId:store.id,name:`Browser register ${suffix}`}});const session=await openRegister(actor,register.id,{openingCash:'500'});
  const app=express();app.use(express.json());app.use('/api/auth',authRoutes);app.use('/api/v1/pos',posRoutes);
- const server=app.listen(0,'127.0.0.1',()=>{const {port}=server.address() as {port:number};console.log('POS_E2E_READY '+JSON.stringify({origin:`http://127.0.0.1:${port}`,email:user.email,userId:user.id,storeId:store.id,productName:product.name,sku:product.variants[0]!.sku,variantId:product.variants[0]!.id,barcode:product.variants[0]!.barcode,secondVariantId:second.variants[0]!.id,secondBarcode:second.variants[0]!.barcode,secondSku:second.variants[0]!.sku,registerId:register.id,sessionId:session.id}));});
+ const server=app.listen(0,'127.0.0.1',()=>{const {port}=server.address() as {port:number};console.log('POS_E2E_READY '+JSON.stringify({origin:`http://127.0.0.1:${port}`,email:user.email,userId:user.id,storeId:store.id,salespersonId:salesperson.id,salespersonName:`${salesperson.firstName} ${salesperson.lastName}`,salespersonGuid:salesperson.employeeID,productName:product.name,sku:product.variants[0]!.sku,variantId:product.variants[0]!.id,barcode:product.variants[0]!.barcode,secondVariantId:second.variants[0]!.id,secondBarcode:second.variants[0]!.barcode,secondSku:second.variants[0]!.sku,registerId:register.id,sessionId:session.id}));});
  process.on('SIGTERM',()=>server.close(async()=>{await prisma.$disconnect();process.exit(0);}));
 }
 main().catch(async e=>{console.error(e);await prisma.$disconnect();process.exit(1);});

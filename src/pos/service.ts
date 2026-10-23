@@ -18,6 +18,7 @@ import {
   method,
   boolean,
 } from "./validation";
+import { isCommissionEligibleEmployee } from "../utils/salaryGross";
 import { lineTotals, refundComponents, round } from "./finance";
 const D = Prisma.Decimal;
 type Tx = Prisma.TransactionClient;
@@ -171,10 +172,20 @@ export async function createProduct(
     "active",
     "variants",
     "externalCommissionProductId",
+    "openingStock",
   ]);
   const variants = list(b.variants).map(variantData);
   unique(variants.map((v) => v.sku));
   unique(variants.map((v) => v.barcode));
+  let opening: { storeId: number; quantity: number; reason: string } | undefined;
+  if (b.openingStock !== undefined) {
+    permission(actor, "inventory");
+    ensure(variants.length === 1, "Opening stock registration requires exactly one variant");
+    const stock = object(b.openingStock);
+    keys(stock, ["storeId", "quantity", "reason"]);
+    opening = { storeId: integer(stock.storeId, "storeId"), quantity: integer(stock.quantity, "opening quantity"), reason: text(stock.reason, "opening stock reason", 1000) };
+    scope(actor, opening.storeId);
+  }
   const data = productData(b);
   return run(existingTx, async (tx) => {
     const p = await tx.pOSProduct.create({
@@ -186,6 +197,10 @@ export async function createProduct(
       },
       include: { variants: true },
     });
+    if (opening) {
+      await activeStore(tx, opening.storeId);
+      await movement(tx, actor, opening.storeId, p.variants[0]!.id, opening.quantity, 0, "OPENING", p.id, opening.reason);
+    }
     await audit(tx, actor, "PRODUCT_CREATED", p.id);
     return p;
   });
@@ -523,11 +538,11 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       include: {
         items: {
           include: {
-            salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+            salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
           },
         },
         payments: true,
-        salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+        salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
       },
     });
     if (existing) {
@@ -543,7 +558,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     await openSession(tx, actor, sessionId, storeId);
     const itemSalespeople = items
       .map((i) => i.salespersonId)
-      .filter((id): id is number => id !== undefined);
+      .filter((id): id is number => id !== undefined && id !== null);
     const allSalespeople = [
       ...(salespersonId ? [salespersonId] : []),
       ...itemSalespeople,
@@ -555,8 +570,10 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
           storeId,
           status: { equals: "active", mode: "insensitive" },
         },
+        include: { department: true, user: { select: { role: true, isActive: true } } },
       });
-      ensure(activeEmp, `Salesperson #${spId} must be active in this store`);
+      ensure(activeEmp, "Select an active salesperson assigned to this store.");
+      ensure(activeEmp.user?.isActive !== false && isCommissionEligibleEmployee(activeEmp), "Select an eligible salesperson assigned to this store.");
     }
     for (const payment of payments) {
       const configured = await tx.pOSPaymentMethod.findUnique({
@@ -589,7 +606,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     const invoiceNo = `POS-${String(sequence[0]!.n).padStart(10, "0")}`;
     const itemsToCreate = snapshots.map((s, idx) => ({
       ...s,
-      salespersonId: items[idx]?.salespersonId ?? s.salespersonId ?? salespersonId ?? null,
+      salespersonId: items[idx]?.salespersonId !== undefined ? items[idx]!.salespersonId : salespersonId ?? null,
     }));
     const sale = await tx.pOSSale.create({
       data: {
@@ -613,11 +630,11 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       include: {
         items: {
           include: {
-            salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+            salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
           },
         },
         payments: true,
-        salesperson: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+        salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
       },
     });
     for (const item of items)
@@ -901,7 +918,7 @@ type PricedInput = {
   discount: Prisma.Decimal;
   override?: Prisma.Decimal;
   reason?: string;
-  salespersonId?: number;
+  salespersonId?: number | null;
 };
 function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
   const items = list(raw)
@@ -927,7 +944,7 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
           ? undefined
           : text(v.priceOverrideReason, "priceOverrideReason", 500);
       const salespersonId =
-        v.salespersonId == null || v.salespersonId === ""
+        v.salespersonId === null ? null : v.salespersonId === undefined || v.salespersonId === ""
           ? undefined
           : integer(v.salespersonId, "salespersonId");
       return {

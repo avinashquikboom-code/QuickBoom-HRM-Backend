@@ -7,6 +7,7 @@ import { prisma } from "../src/utils/db";
 import routes from "../src/pos/routes";
 import { signAccessToken } from "../src/utils/jwt";
 import * as service from "../src/pos/service";
+import * as operations from "../src/pos/operations";
 import * as reports from "../src/pos/reports";
 import { Actor } from "../src/pos/auth";
 import { receiptFromSale } from "../../HRM-Admin-Pannel/src/features/pos/posReceipt";
@@ -31,6 +32,16 @@ async function run() {
     storeId: store.id,
     permissions: {},
   };
+
+  // Enable commission in POS configuration for this store
+  await operations.configure(actor, {
+    storeId: store.id,
+    commissionEnabled: true,
+    commissionBasis: "NET_EX_TAX",
+    fixedCommissionBasis: "LINE",
+    refundCommissionPolicy: "REVIEW_ADJUSTMENT",
+    returnWindowDays: 30,
+  });
 
   // 3. Create two active employees (Salesperson A and Salesperson B)
   const empA = await prisma.employee.create({
@@ -140,23 +151,19 @@ async function run() {
     const varM = product.variants.find((v: any) => v.size === "M")!;
 
     // Add inventory
-    await prisma.pOSInventoryMovement.createMany({
-      data: [
-        {
-          storeId: store.id,
-          variantId: varS.id,
-          quantityChange: 10,
-          movementType: "STOCK_IN",
-          reason: "Initial seed",
-        },
-        {
-          storeId: store.id,
-          variantId: varM.id,
-          quantityChange: 10,
-          movementType: "STOCK_IN",
-          reason: "Initial seed",
-        },
-      ],
+    await service.adjust(actor, {
+      storeId: store.id,
+      variantId: varS.id,
+      quantityDelta: 10,
+      type: "OPENING",
+      reason: "Initial seed",
+    });
+    await service.adjust(actor, {
+      storeId: store.id,
+      variantId: varM.id,
+      quantityDelta: 10,
+      type: "OPENING",
+      reason: "Initial seed",
     });
 
     // TEST 2: Single-Product Sale with Assigned Salesperson
@@ -164,6 +171,7 @@ async function run() {
     const singleCheckout = await service.checkout(actor, {
       storeId: store.id,
       sessionId: session.id,
+      idempotencyKey: randomUUID(),
       salespersonId: empA.id,
       items: [
         {
@@ -172,17 +180,17 @@ async function run() {
           salespersonId: empA.id,
         },
       ],
-      payments: [{ method: "Cash", amount: "1000.00" }],
+      payments: [{ method: "CASH", amount: "1000.00" }],
     });
 
-    assert.equal(singleCheckout.sale.items.length, 1);
-    assert.equal(singleCheckout.sale.items[0].salespersonId, empA.id, "Line item must store salespersonId");
-    assert.equal(singleCheckout.sale.items[0].salesperson?.firstName, "Sarah");
-    console.log(`✓ Single item saved with salespersonId: ${singleCheckout.sale.items[0].salespersonId} (${singleCheckout.sale.items[0].salesperson?.firstName})`);
+    assert.equal(singleCheckout.items.length, 1);
+    assert.equal(singleCheckout.items[0].salespersonId, empA.id, "Line item must store salespersonId");
+    assert.equal(singleCheckout.items[0].salesperson?.firstName, "Sarah");
+    console.log(`✓ Single item saved with salespersonId: ${singleCheckout.items[0].salespersonId} (${singleCheckout.items[0].salesperson?.firstName})`);
 
     // Verify Commission Accrual for Single Sale
     const singleComm = await prisma.commissionTransaction.findMany({
-      where: { billId: `POSSALE-${singleCheckout.sale.id}` },
+      where: { billId: `POSSALE-${singleCheckout.id}` },
     });
     assert.equal(singleComm.length, 1, "Exactly one commission transaction should exist");
     assert.equal(singleComm[0].employeeId, empA.id, "Attributed to empA");
@@ -196,6 +204,7 @@ async function run() {
     const multiCheckout = await service.checkout(actor, {
       storeId: store.id,
       sessionId: session.id,
+      idempotencyKey: randomUUID(),
       salespersonId: empA.id, // Order-level fallback
       items: [
         {
@@ -209,12 +218,12 @@ async function run() {
           salespersonId: empB.id, // Line 2: John Rambo (8% of 1200 = 96)
         },
       ],
-      payments: [{ method: "Cash", amount: "3200.00" }],
+      payments: [{ method: "CASH", amount: "3200.00" }],
     });
 
-    assert.equal(multiCheckout.sale.items.length, 2);
-    const item1 = multiCheckout.sale.items.find((i: any) => i.variantId === varS.id)!;
-    const item2 = multiCheckout.sale.items.find((i: any) => i.variantId === varM.id)!;
+    assert.equal(multiCheckout.items.length, 2);
+    const item1 = multiCheckout.items.find((i: any) => i.variantId === varS.id)!;
+    const item2 = multiCheckout.items.find((i: any) => i.variantId === varM.id)!;
 
     assert.equal(item1.salespersonId, empA.id, "Item 1 must have empA");
     assert.equal(item2.salespersonId, empB.id, "Item 2 must have empB");
@@ -224,7 +233,7 @@ async function run() {
 
     // Verify Commission Accruals for Multi-Product Sale
     const multiComm = await prisma.commissionTransaction.findMany({
-      where: { billId: `POSSALE-${multiCheckout.sale.id}` },
+      where: { billId: `POSSALE-${multiCheckout.id}` },
     });
     assert.equal(multiComm.length, 2, "Should create two distinct commission transactions on the same bill");
 
@@ -247,6 +256,7 @@ async function run() {
       await service.checkout(actor, {
         storeId: store.id,
         sessionId: session.id,
+        idempotencyKey: randomUUID(),
         items: [
           {
             variantId: varS.id,
@@ -254,45 +264,53 @@ async function run() {
             salespersonId: 999999, // Non-existent employee
           },
         ],
-        payments: [{ method: "Cash", amount: "1000.00" }],
+        payments: [{ method: "CASH", amount: "1000.00" }],
       });
     } catch (err: any) {
       errorCaught = true;
-      assert.ok(err.message.includes("Salesperson"), "Error message should mention salesperson");
+      assert.ok(err.message.toLowerCase().includes("salesperson"), `Expected salesperson in error: ${err.message}`);
       console.log(`✓ Rejection of invalid salesperson succeeded: "${err.message}"`);
     }
     assert.ok(errorCaught, "Should have thrown on invalid salesperson ID");
 
     // TEST 5: Sales History, Invoicing & Thermal Receipt Formatter
     console.log("\n--- TEST 5: Sales History & Thermal Receipt Details ---");
-    const retrievedSale = await service.getSale(multiCheckout.sale.id);
+    const saleRes = await fetch(`${baseUrl}/sales/${multiCheckout.id}`, { headers: authHeaders });
+    assert.equal(saleRes.status, 200, "Should return 200 OK");
+    const { data: retrievedSale } = await saleRes.json();
     assert.ok(retrievedSale, "Sale must be retrievable");
     assert.equal(retrievedSale.items.length, 2);
-    assert.equal(retrievedSale.items[0].salesperson?.firstName, "Sarah");
-    assert.equal(retrievedSale.items[1].salesperson?.firstName, "John");
+    const itemSarah = retrievedSale.items.find((i: any) => i.salespersonId === empA.id);
+    const itemJohn = retrievedSale.items.find((i: any) => i.salespersonId === empB.id);
+    assert.ok(itemSarah, "Item for Sarah must exist");
+    assert.ok(itemJohn, "Item for John must exist");
+    assert.equal(itemSarah.salesperson?.firstName, "Sarah");
+    assert.equal(itemJohn.salesperson?.firstName, "John");
 
     const receipt = receiptFromSale(retrievedSale as any);
     assert.ok(receipt, "Receipt data generated");
     assert.equal(receipt.items.length, 2);
-    assert.ok(receipt.items[0].salespersonName?.includes("Sarah"), "Receipt line 1 reflects Sarah");
-    assert.ok(receipt.items[1].salespersonName?.includes("John"), "Receipt line 2 reflects John");
-    console.log(`✓ Receipt formatter resolved line-level salesperson names: Line 1 = ${receipt.items[0].salespersonName}, Line 2 = ${receipt.items[1].salespersonName}`);
+    const rcptSarah = receipt.items.find((i: any) => i.salesmanName?.includes("Sarah"));
+    const rcptJohn = receipt.items.find((i: any) => i.salesmanName?.includes("John"));
+    assert.ok(rcptSarah, "Receipt reflects Sarah for her item");
+    assert.ok(rcptJohn, "Receipt reflects John for his item");
+    console.log(`✓ Receipt formatter resolved line-level salesperson names: Sarah item = ${rcptSarah?.salesmanName}, John item = ${rcptJohn?.salesmanName}`);
 
     // TEST 6: Salesperson Aggregation Reports
     console.log("\n--- TEST 6: Sales Report Aggregation by Salesperson ---");
-    const reportData = await reports.bySalesperson(store.id, new Date(Date.now() - 86400000), new Date(Date.now() + 86400000));
-    assert.ok(Array.isArray(reportData), "Report data must be an array");
-    const rptSarah = reportData.find((r: any) => r.employeeId === empA.id);
-    const rptJohn = reportData.find((r: any) => r.employeeId === empB.id);
+    const reportData = await reports.report(actor, { storeId: store.id });
+    assert.ok(Array.isArray(reportData.bySalesperson), "bySalesperson must be an array");
+    const rptSarah = reportData.bySalesperson.find((r: any) => r.salespersonId === empA.id);
+    const rptJohn = reportData.bySalesperson.find((r: any) => r.salespersonId === empB.id);
     assert.ok(rptSarah, "Sarah Connor must appear in report");
     assert.ok(rptJohn, "John Rambo must appear in report");
-    assert.ok(rptSarah.name.includes("Sarah"), "Name resolved from database");
-    assert.ok(rptJohn.name.includes("John"), "Name resolved from database");
+    assert.ok(rptSarah.salespersonName.includes("Sarah"), "Name resolved from database");
+    assert.ok(rptJohn.salespersonName.includes("John"), "Name resolved from database");
     // Sarah: 1000 (sale 1) + 2000 (sale 2) = 3000
-    assert.equal(Number(rptSarah.revenue), 3000, "Sarah's total attributed revenue = 3000");
+    assert.equal(Number(rptSarah._sum.grandTotal), 3000, "Sarah's total attributed revenue = 3000");
     // John: 1200 (sale 2) = 1200
-    assert.equal(Number(rptJohn.revenue), 1200, "John's total attributed revenue = 1200");
-    console.log(`✓ Report bySalesperson attributed items accurately: Sarah = Rs ${rptSarah.revenue}, John = Rs ${rptJohn.revenue}`);
+    assert.equal(Number(rptJohn._sum.grandTotal), 1200, "John's total attributed revenue = 1200");
+    console.log(`✓ Report bySalesperson attributed items accurately: Sarah = Rs ${rptSarah._sum.grandTotal}, John = Rs ${rptJohn._sum.grandTotal}`);
 
     console.log("\n=== ALL POS SALESPERSON INTEGRATION TESTS PASSED SUCCESSFULLY! ===");
   } finally {
