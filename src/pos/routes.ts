@@ -1,7 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
-import { isCommissionEligibleEmployee } from "../utils/salaryGross";
 import {
   authenticate,
   POSRequest,
@@ -461,7 +460,6 @@ router.get(
       salespeople: (
         await prisma.employee.findMany({
           where: {
-            ...(storeId ? { storeId } : {}),
             status: { equals: "active", mode: "insensitive" },
           },
           include: {
@@ -472,7 +470,7 @@ router.get(
           take: 500,
         })
       )
-        .filter((emp) => emp.user?.isActive !== false && isCommissionEligibleEmployee(emp))
+        .filter((emp) => emp.user?.isActive !== false)
         .map((emp) => ({
           id: emp.id,
           employeeCode: emp.employeeCode,
@@ -489,10 +487,8 @@ router.get(
   "/salespeople",
   route(async (r) => {
     permission(r.actor, "read");
-    const storeId = storeFilter(r.actor, r.query.storeId);
     const employees = await prisma.employee.findMany({
       where: {
-        ...(storeId ? { storeId } : {}),
         status: { equals: "active", mode: "insensitive" },
       },
       include: {
@@ -502,7 +498,7 @@ router.get(
       orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
       take: 500,
     });
-    const eligible = employees.filter((emp) => emp.user?.isActive !== false && isCommissionEligibleEmployee(emp));
+    const eligible = employees.filter((emp) => emp.user?.isActive !== false);
     return eligible.map((emp) => ({
       id: emp.id,
       employeeCode: emp.employeeCode,

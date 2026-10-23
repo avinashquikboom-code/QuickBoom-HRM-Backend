@@ -19,7 +19,6 @@ import {
   method,
   boolean,
 } from "./validation";
-import { isCommissionEligibleEmployee } from "../utils/salaryGross";
 import { lineTotals, refundComponents, round } from "./finance";
 const D = Prisma.Decimal;
 type D = Prisma.Decimal;
@@ -569,13 +568,12 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       const activeEmp = await tx.employee.findFirst({
         where: {
           id: spId,
-          storeId,
           status: { equals: "active", mode: "insensitive" },
         },
         include: { department: true, user: { select: { role: true, isActive: true } } },
       });
-      ensure(activeEmp, "Select an active salesperson assigned to this store.");
-      ensure(activeEmp.user?.isActive !== false && isCommissionEligibleEmployee(activeEmp), "Select an eligible salesperson assigned to this store.");
+      ensure(activeEmp, "Select an active employee.");
+      ensure(activeEmp.user?.isActive !== false, "Select an active employee.");
     }
     for (const payment of payments) {
       const configured = await tx.pOSPaymentMethod.findUnique({
