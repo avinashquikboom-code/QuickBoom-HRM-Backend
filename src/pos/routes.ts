@@ -572,7 +572,7 @@ router.get(
         ? {
             OR: [
               { name: { contains: search, mode: "insensitive" } },
-              { code: { contains: search, mode: "insensitive" } },
+              { code: r.query.searchMode === "name" ? { equals: search, mode: "insensitive" } : { contains: search, mode: "insensitive" } },
               ...(r.query.searchMode === "name" ? [] : [
               {
                 variants: {
@@ -625,12 +625,17 @@ router.get(
     scope(r.actor, storeId);
     const code = text(r.query.code, "barcode or SKU", 200);
     let matches = await prisma.pOSProductVariant.findMany({
-      where: {
-        OR: [{ barcode: code }, { sku: code }],
-      },
+      where: { barcode: code },
       include: { product: true, balances: { where: { storeId } } },
       take: 2,
     });
+    if (!matches.length) {
+      matches = await prisma.pOSProductVariant.findMany({
+        where: { sku: code },
+        include: { product: true, balances: { where: { storeId } } },
+        take: 2,
+      });
+    }
     // Preserve the existing case-insensitive fallback only after exact lookup.
     if (!matches.length) {
       matches = await prisma.pOSProductVariant.findMany({
