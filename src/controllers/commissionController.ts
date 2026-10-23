@@ -263,6 +263,11 @@ export const createCommissionTransaction = async (
 ): Promise<void> => {
   try {
     const transactionData = req.body;
+    // POS commission records are produced only by the transactional sale/return ledger.
+    if (String(transactionData.eventType || '').toUpperCase().startsWith('POS_') || /^POS(?:SALE|RETURN)-/i.test(String(transactionData.billId || ''))) {
+      res.status(409).json({success:false,message:'POS commissions must be created through POS sale and return workflows.'});
+      return;
+    }
     let transaction;
     if (transactionData.billId && transactionData.employeeId) {
       transaction = await prisma.commissionTransaction.upsert({

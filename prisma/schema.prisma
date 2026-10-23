@@ -328,6 +328,7 @@ model Shift {
 }
 
 model ShiftAssignment {
+  posSessions POSSession[]
   id            Int       @id @default(autoincrement())
   employeeId    Int
   shiftId       Int
@@ -1609,6 +1610,8 @@ model POSRegister {
   @@unique([storeId, name])
 }
 model POSSession {
+  shiftAssignmentId Int?
+  shiftAssignment ShiftAssignment? @relation(fields: [shiftAssignmentId], references: [id], onDelete: Restrict)
   cashMovements POSCashMovement[]
   id String @id @default(uuid()) @db.Uuid
   registerId String @db.Uuid
@@ -1661,6 +1664,7 @@ model POSSale {
   @@index([salespersonId, createdAt])
 }
 model POSSaleItem {
+  barcode String?
   commission POSCommissionLine?
   discountTotal Decimal @default(0) @db.Decimal(15,2)
   catalogUnitPrice Decimal @default(0) @db.Decimal(15,2)

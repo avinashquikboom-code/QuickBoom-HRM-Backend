@@ -36,3 +36,30 @@ export function refundAllocation(
     round(lineTotal.mul(alreadyReturned).div(quantity)),
   );
 }
+
+/** Allocate tax and taxable revenue separately, so a partial credit never has negative tax. */
+export function refundComponents(
+  lineTotal: Prisma.Decimal,
+  taxTotal: Prisma.Decimal,
+  quantity: number,
+  alreadyReturned: number,
+  returning: number,
+) {
+  const revenueRefund = refundAllocation(
+    lineTotal.minus(taxTotal),
+    quantity,
+    alreadyReturned,
+    returning,
+  );
+  const taxRefund = refundAllocation(
+    taxTotal,
+    quantity,
+    alreadyReturned,
+    returning,
+  );
+  return {
+    revenueRefund,
+    taxRefund,
+    refundAmount: revenueRefund.plus(taxRefund),
+  };
+}

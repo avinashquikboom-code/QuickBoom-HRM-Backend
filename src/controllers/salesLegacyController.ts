@@ -280,6 +280,11 @@ export const updateSales = async (
       return;
     }
 
+    if (transaction.eventType?.startsWith('POS_')) {
+      res.status(409).json({success:false,message:'POS invoice commissions cannot be edited through legacy sales. Use the POS return or exchange workflow.'});
+      return;
+    }
+
     // Recalculate commission
     let commissionAmount = 0;
     let commissionPercent = transaction.commissionPercent || 0;

@@ -1,3 +1,4 @@
+import { protectLegacyPOSReview } from '../pos/commissions';
 import { Router } from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import { roleMiddleware } from '../middlewares/roleMiddleware';
@@ -182,8 +183,8 @@ router.put('/commission/policies/:id', roleMiddleware(adminOnlyRoles), updateCom
 router.delete('/commission/policies/:id', roleMiddleware(adminOnlyRoles), deleteCommissionPolicy);
 router.get('/commission/transactions', roleMiddleware(storeManagerAllowedRoles), getCommissionTransactions);
 router.post('/commission/transactions', roleMiddleware(storeManagerAllowedRoles), createCommissionTransaction);
-router.put('/commission/transactions/:id/approve', roleMiddleware(adminOnlyRoles), approveCommissionTransaction);
-router.put('/commission/transactions/:id/reject', roleMiddleware(adminOnlyRoles), rejectCommissionTransaction);
+router.put('/commission/transactions/:id/approve', roleMiddleware(adminOnlyRoles), protectLegacyPOSReview('APPROVED'), approveCommissionTransaction);
+router.put('/commission/transactions/:id/reject', roleMiddleware(adminOnlyRoles), protectLegacyPOSReview('REJECTED'), rejectCommissionTransaction);
 router.get('/commission/targets', roleMiddleware(storeManagerAllowedRoles), getCommissionTargets);
 router.post('/commission/targets', roleMiddleware(adminOnlyRoles), createCommissionTarget);
 router.put('/commission/targets/:id', roleMiddleware(adminOnlyRoles), updateCommissionTarget);

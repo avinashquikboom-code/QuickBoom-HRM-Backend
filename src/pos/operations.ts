@@ -101,6 +101,7 @@ export async function savePaymentMethod(
   raw: unknown,
 ) {
   permission(actor, "configure");
+  ensure(code !== "EXCHANGE_CREDIT", "Exchange credit is an internal ledger method");
   ensure(/^[A-Z][A-Z0-9_]{0,39}$/.test(code), "Invalid payment method code");
   const b = object(raw);
   keys(b, ["storeId", "name", "enabled"]);
@@ -181,6 +182,22 @@ export async function reconcilePayment(
         reconciliationStatus: b.status,
         reconciledAt: new Date(),
         reconciliationNote: reason,
+      },
+    });
+    const statuses = await tx.pOSSalePayment.findMany({
+      where: { saleId: row.saleId },
+      select: { reconciliationStatus: true },
+    });
+    await tx.pOSSale.update({
+      where: { id: row.saleId },
+      data: {
+        paymentStatus: statuses.some(
+          (p) => p.reconciliationStatus === "DISPUTED",
+        )
+          ? "DISPUTED"
+          : statuses.every((p) => p.reconciliationStatus === "RECONCILED")
+            ? "RECONCILED"
+            : "RECORDED",
       },
     });
     await audit(tx, actor, "PAYMENT_RECONCILED", id, {

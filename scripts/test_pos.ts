@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { lineTotals, refundAllocation } from "../src/pos/finance";
+import {
+  lineTotals,
+  refundAllocation,
+  refundComponents,
+} from "../src/pos/finance";
 import { money, POSError } from "../src/pos/validation";
 import { scope, permission, Actor } from "../src/pos/auth";
 import { prisma } from "../src/utils/db";
@@ -24,6 +28,9 @@ import {
 } from "../src/pos/commissions";
 import authRoutes from "../src/routes/authRoutes";
 import bcrypt from "bcryptjs";
+import { createCommissionTransaction } from "../src/controllers/commissionController";
+import { updateSales } from "../src/controllers/salesLegacyController";
+import { authenticate } from "../src/pos/auth";
 const D = Prisma.Decimal;
 let passed = 0;
 async function test(name: string, fn: () => unknown | Promise<unknown>) {
@@ -53,6 +60,30 @@ async function main() {
     for (const v of [-1, "NaN", "0.001", "1e3", null])
       assert.throws(() => money(v));
     assert.throws(() => lineTotals(new D(10), 1, new D(11), new D(0)));
+  });
+  await test("partial credit allocation never produces negative tax and preserves original components", () => {
+    for (const quantity of [2, 3, 7]) {
+      let revenue = new D(0),
+        tax = new D(0),
+        total = new D(0);
+      for (let i = 0; i < quantity; i++) {
+        const refund = refundComponents(
+          new D("1.01"),
+          new D("0.01"),
+          quantity,
+          i,
+          1,
+        );
+        assert(refund.taxRefund.gte(0));
+        assert(refund.refundAmount.gte(refund.revenueRefund));
+        revenue = revenue.plus(refund.revenueRefund);
+        tax = tax.plus(refund.taxRefund);
+        total = total.plus(refund.refundAmount);
+      }
+      assert.equal(revenue.toFixed(2), "1.00");
+      assert.equal(tax.toFixed(2), "0.01");
+      assert.equal(total.toFixed(2), "1.01");
+    }
   });
   const clerk: Actor = {
     userId: 1,
@@ -814,8 +845,33 @@ async function main() {
       name: "Gift voucher",
       enabled: true,
     });
+    const shift = await prisma.shift.create({
+      data: {
+        name: `POS shift ${suffix}`,
+        startTime: "09:00",
+        endTime: "18:00",
+        workingDays: ["Friday"],
+      },
+    });
+    const assignment = await prisma.shiftAssignment.create({
+      data: {
+        employeeId: employee.id,
+        shiftId: shift.id,
+        effectiveFrom: new Date(Date.now() - 86400000),
+      },
+    });
+    const attendanceBefore = await prisma.attendance.count({
+      where: { employeeId: employee.id },
+    });
     const session2 = await pos.openRegister(actor, register.id, {
       openingCash: "1000",
+    });
+    await test("register sessions link the actual HRM shift without creating attendance", async () => {
+      assert.equal(session2.shiftAssignmentId, assignment.id);
+      assert.equal(
+        await prisma.attendance.count({ where: { employeeId: employee.id } }),
+        attendanceBefore,
+      );
     });
     let commissioned: Awaited<ReturnType<typeof pos.checkout>>;
     await test("custom tenders and commission proposals are atomic and retry-safe", async () => {
@@ -1020,6 +1076,71 @@ async function main() {
         );
       }
     });
+    await test("generic legacy editors cannot forge or rewrite POS commission records", async () => {
+      const original = await prisma.commissionTransaction.findUniqueOrThrow({
+        where: {
+          billId_employeeId: {
+            billId: `POSSALE-${commissioned!.id}`,
+            employeeId: employee.id,
+          },
+        },
+      });
+      const app = express();
+      app.use(express.json());
+      app.use(authenticate);
+      app.post("/commission", createCommissionTransaction);
+      app.post("/sale", updateSales);
+      const server = app.listen(0, "127.0.0.1");
+      await new Promise<void>((r) => server.once("listening", r));
+      const { port } = server.address() as { port: number };
+      const headers = {
+        Authorization: `Bearer ${signAccessToken({ id: user.id, role: "ADMIN" })}`,
+        "Content-Type": "application/json",
+      };
+      try {
+        assert.equal(
+          (
+            await fetch(`http://127.0.0.1:${port}/commission`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                billId: original.billId,
+                employeeId: employee.id,
+                eventType: "POS_SALE",
+                commissionAmount: 999,
+                status: "APPROVED",
+              }),
+            })
+          ).status,
+          409,
+        );
+        assert.equal(
+          (
+            await fetch(`http://127.0.0.1:${port}/sale`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                billId: original.billId,
+                saleAmount: "999",
+              }),
+            })
+          ).status,
+          409,
+        );
+        assert.equal(
+          (
+            await prisma.commissionTransaction.findUniqueOrThrow({
+              where: { id: original.id },
+            })
+          ).commissionAmount,
+          original.commissionAmount,
+        );
+      } finally {
+        await new Promise<void>((r, j) =>
+          server.close((e) => (e ? j(e) : r())),
+        );
+      }
+    });
     await test("payment and refund reconciliation are scoped, auditable and idempotent", async () => {
       const payment = commissioned!.payments[0]!;
       await operations.reconcilePayment(actor, payment.id, {
@@ -1049,6 +1170,75 @@ async function main() {
         ),
         /Store access/,
       );
+    });
+    await test("barcode uniqueness is enforced independently of SKU and failed creation rolls back", async () => {
+      const barcode = (
+        await prisma.pOSProductVariant.findUniqueOrThrow({
+          where: { id: v.id },
+        })
+      ).barcode;
+      await assert.rejects(
+        pos.createProduct(actor, {
+          name: "Barcode duplicate",
+          code: `BARCODE-DUP-${suffix}`,
+          variants: [
+            {
+              sku: `BARCODE-DUP-${suffix}`,
+              barcode,
+              size: "S",
+              color: "Red",
+              costPrice: "1",
+              sellingPrice: "2",
+            },
+          ],
+        }),
+      );
+      assert.equal(
+        await prisma.pOSProduct.count({
+          where: { code: `BARCODE-DUP-${suffix}` },
+        }),
+        0,
+      );
+    });
+    await test("commission basis including tax is snapshotted and pending refunds reduce the correct revenue", async () => {
+      await operations.configure(actor, {
+        storeId: store.id,
+        commissionEnabled: true,
+        commissionBasis: "NET_INCL_TAX",
+        fixedCommissionBasis: "LINE",
+        refundCommissionPolicy: "REVIEW_ADJUSTMENT",
+      });
+      const original = await pos.checkout(actor, {
+        storeId: store.id,
+        sessionId: session2.id,
+        salespersonId: employee.id,
+        items: [{ variantId: v.id, quantity: 2 }],
+        payments: [{ method: "CASH", amount: "420" }],
+        idempotencyKey: randomUUID(),
+      });
+      const key = { billId: `POSSALE-${original.id}`, employeeId: employee.id };
+      assert.equal(
+        (
+          await prisma.commissionTransaction.findUniqueOrThrow({
+            where: { billId_employeeId: key },
+          })
+        ).commissionAmount,
+        42,
+      );
+      await pos.returnSale(actor, original.id, {
+        sessionId: session2.id,
+        idempotencyKey: randomUUID(),
+        reason: "Partial tax-inclusive return",
+        refundMethod: "CASH",
+        items: [
+          { saleItemId: original.items[0]!.id, quantity: 1, resellable: true },
+        ],
+      });
+      const proposal = await prisma.commissionTransaction.findUniqueOrThrow({
+        where: { billId_employeeId: key },
+      });
+      assert.equal(proposal.commissionAmount, 21);
+      assert.equal(proposal.saleAmount, 210);
     });
     await test("disabled payment methods fail before committing a sale", async () => {
       await operations.savePaymentMethod(actor, "GIFT_VOUCHER", {
@@ -1121,6 +1311,75 @@ async function main() {
         (await returnReport(actor, { storeId: String(store.id) })).items
           .length > 0,
       );
+    });
+    await test("paid commission refunds do not rewrite frozen payroll or bypass adjustment approval", async () => {
+      const current = new Date(Date.now() + 19800000);
+      const slip = await prisma.payslip.create({
+        data: {
+          employeeId: employee.id,
+          month: current.getUTCMonth() + 1,
+          year: current.getUTCFullYear(),
+          baseSalary: 1000,
+          allowance: 0,
+          deductions: 0,
+          netSalary: 1000,
+          status: "PAID",
+          employeeCode: employee.employeeCode,
+          employeeName: "POS Test",
+          designation: "Sales",
+          department: "Retail",
+          officeName: "Test",
+          netInWords: "One thousand",
+        },
+      });
+      const original = await prisma.commissionTransaction.update({
+        where: {
+          billId_employeeId: {
+            billId: `POSSALE-${commissioned!.id}`,
+            employeeId: employee.id,
+          },
+        },
+        data: { status: "PAID", payrollId: slip.id, paidAt: new Date() },
+      });
+      const returned = await pos.returnSale(actor, commissioned!.id, {
+        sessionId: session2.id,
+        idempotencyKey: randomUUID(),
+        reason: "Refund after payroll paid",
+        refundMethod: "CASH",
+        items: [
+          {
+            saleItemId: commissioned!.items[0]!.id,
+            quantity: 1,
+            resellable: true,
+          },
+        ],
+      });
+      const debit = await prisma.commissionTransaction.findUniqueOrThrow({
+        where: {
+          billId_employeeId: {
+            billId: `POSRETURN-${returned.id}`,
+            employeeId: employee.id,
+          },
+        },
+      });
+      assert.equal(debit.commissionAmount, -20);
+      await assert.rejects(
+        reviewCommission(actor, debit.id, {
+          decision: "APPROVED",
+          reason: "Try frozen period",
+        }),
+        /frozen/,
+      );
+      assert.equal(
+        (await prisma.payslip.findUniqueOrThrow({ where: { id: slip.id } }))
+          .netSalary,
+        1000,
+      );
+      const stillPaid = await prisma.commissionTransaction.findUniqueOrThrow({
+        where: { id: original.id },
+      });
+      assert.equal(stillPaid.status, "PAID");
+      assert.equal(stillPaid.commissionAmount, 40);
     });
   }
   console.log(

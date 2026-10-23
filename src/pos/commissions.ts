@@ -189,7 +189,12 @@ export async function reverseCommission(
       item.quantity,
     );
     total = total.plus(amount);
-    revenue = revenue.plus(item.revenueRefund);
+    revenue = revenue.plus(
+      (commission.policySnapshot as Record<string, unknown>).basis ===
+        "NET_INCL_TAX"
+        ? item.refundAmount
+        : item.revenueRefund,
+    );
     await tx.pOSCommissionLine.update({
       where: { id: commission.id },
       data: { reversedAmount: { increment: amount } },
@@ -379,14 +384,10 @@ export function protectLegacyPOSReview(decision: string) {
           res.json({ success: true, transaction: data });
         } catch (e) {
           const err = e as { status?: number; message?: string };
-          res
-            .status(err.status ?? 500)
-            .json({
-              success: false,
-              message: err.status
-                ? err.message
-                : "POS commission review failed",
-            });
+          res.status(err.status ?? 500).json({
+            success: false,
+            message: err.status ? err.message : "POS commission review failed",
+          });
         }
       });
     } catch (e) {

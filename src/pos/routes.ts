@@ -218,28 +218,150 @@ router.get(
       "POS access required",
       403,
     );
-    const storeId = storeFilter(a, r.query.storeId);
+    let storeId: number | undefined;
+    if (r.query.storeId !== undefined && r.query.storeId !== "") {
+      const requestedStoreId = integer(Number(r.query.storeId), "storeId");
+      scope(a, requestedStoreId);
+      storeId = requestedStoreId;
+    } else if (!a.admin) {
+      ensure(
+        a.storeId,
+        "No store location is assigned to your employee account. Please contact an administrator to assign an active store.",
+        422,
+      );
+      storeId = a.storeId;
+    }
+
+    if (storeId !== undefined) {
+      const assignedStore = await prisma.store.findUnique({
+        where: { id: storeId },
+      });
+      ensure(
+        assignedStore && assignedStore.isActive,
+        "The assigned store location is inactive or does not exist.",
+        422,
+      );
+    }
+
+    const [stores, systemSetting, employee] = await Promise.all([
+      prisma.store.findMany({
+        where: { id: storeId, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          address: true,
+          country: true,
+          pincode: true,
+          isActive: true,
+        },
+        orderBy: { name: "asc" },
+      }),
+      prisma.systemSetting.findFirst({
+        select: { currency: true, company: true, platformName: true },
+      }),
+      a.employeeId
+        ? prisma.employee.findUnique({
+            where: { id: a.employeeId },
+            select: {
+              id: true,
+              employeeCode: true,
+              firstName: true,
+              lastName: true,
+              storeId: true,
+              status: true,
+            },
+          })
+        : null,
+    ]);
+
+    const activeStore = storeId
+      ? (stores.find((s) => s.id === storeId) ?? null)
+      : stores.length === 1
+        ? stores[0]
+        : null;
+
+    const resolvedStoreId = activeStore?.id ?? storeId;
+    let configuration = null;
+    let paymentMethods: {
+      id?: string;
+      code: string;
+      name: string;
+      enabled: boolean;
+    }[] = [];
+    if (resolvedStoreId) {
+      try {
+        configuration = await prisma.pOSConfiguration.findUnique({
+          where: { storeId: resolvedStoreId },
+        });
+      } catch {
+        configuration = null;
+      }
+      try {
+        paymentMethods = await prisma.pOSPaymentMethod.findMany({
+          where: { storeId: resolvedStoreId, enabled: true },
+          select: { id: true, code: true, name: true, enabled: true },
+        });
+      } catch {
+        paymentMethods = [];
+      }
+    }
+
+    const effectivePaymentMethods =
+      paymentMethods.length > 0
+        ? paymentMethods
+        : [
+            { code: "CASH", name: "Cash", enabled: true },
+            { code: "CARD", name: "Card", enabled: true },
+            { code: "UPI", name: "UPI", enabled: true },
+          ];
+
+    const salesperson = employee
+      ? {
+          id: employee.id,
+          name: `${employee.firstName} ${employee.lastName}`.trim(),
+          employeeCode: employee.employeeCode,
+          storeId: employee.storeId,
+        }
+      : null;
+
+    const company = systemSetting?.company ?? {
+      name: systemSetting?.platformName ?? "HOPKID",
+    };
+
     return {
       actor: a,
+      employee,
+      salesperson,
+      company,
+      activeStore,
+      stores,
+      configuration,
+      paymentMethods: effectivePaymentMethods,
       transferStores:
         a.admin || a.permissions["pos.inventory"] === true
           ? await prisma.store.findMany({
               where: { isActive: true },
-              select: { id: true, name: true },
+              select: { id: true, name: true, code: true },
+              orderBy: { name: "asc" },
             })
           : [],
-      stores: await prisma.store.findMany({
-        where: { id: storeId, isActive: true },
-        select: { id: true, name: true, code: true },
-      }),
       employees: await prisma.employee.findMany({
-        where: { storeId, status: { equals: "active", mode: "insensitive" } },
-        select: { id: true, firstName: true, lastName: true, storeId: true },
+        where: {
+          ...(storeId ? { storeId } : {}),
+          status: { equals: "active", mode: "insensitive" },
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          employeeCode: true,
+          storeId: true,
+        },
+        orderBy: { firstName: "asc" },
         take: 500,
       }),
-      currency:
-        (await prisma.systemSetting.findFirst({ select: { currency: true } }))
-          ?.currency ?? "INR",
+      currency: systemSetting?.currency ?? "INR",
     };
   }),
 );
@@ -451,6 +573,9 @@ router.get(
       p = page(r.query),
       where = {
         storeId,
+        ...(r.query.from || r.query.to
+          ? { createdAt: dateRange(r.query) }
+          : {}),
         ...(r.query.variantId ? { variantId: uuid(r.query.variantId) } : {}),
       };
     return {
@@ -458,7 +583,7 @@ router.get(
         where,
         skip: p.skip,
         take: p.take,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         include: { variant: true },
       }),
       total: await prisma.pOSStockMovement.count({ where }),
@@ -717,12 +842,20 @@ router.get(
     permission(r.actor, "read");
     const sale = await prisma.pOSSale.findUnique({
       where: { id: id(r) },
-      select: { storeId: true, returns: { select: { id: true } } },
+      select: {
+        storeId: true,
+        returns: { select: { id: true } },
+        payments: { select: { id: true } },
+      },
     });
     ensure(sale, "Invoice not found", 404);
     scope(r.actor, sale.storeId);
     const p = page(r.query);
-    const ids = [id(r), ...sale.returns.map((x) => x.id)];
+    const ids = [
+      id(r),
+      ...sale.returns.map((x) => x.id),
+      ...sale.payments.map((x) => x.id),
+    ];
     const where = { entityId: { in: ids } };
     return {
       items: await prisma.pOSAuditLog.findMany({
@@ -747,17 +880,15 @@ router.use((e: unknown, req: Request, res: Response, next: NextFunction) => {
       : ["P2003", "P2025"].includes(e.code)
         ? 400
         : 500;
-    res
-      .status(status)
-      .json({
-        success: false,
-        message:
-          status === 409
-            ? "Conflicting record or concurrent update. Retry with the same request key."
-            : status === 400
-              ? "Referenced record is missing or invalid."
-              : "POS database operation failed.",
-      });
+    res.status(status).json({
+      success: false,
+      message:
+        status === 409
+          ? "Conflicting record or concurrent update. Retry with the same request key."
+          : status === 400
+            ? "Referenced record is missing or invalid."
+            : "POS database operation failed.",
+    });
     return;
   }
   console.error(

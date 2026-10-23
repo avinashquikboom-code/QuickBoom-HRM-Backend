@@ -17,7 +17,7 @@ import {
   method,
   boolean,
 } from "./validation";
-import { lineTotals, refundAllocation, round } from "./finance";
+import { lineTotals, refundComponents, round } from "./finance";
 const D = Prisma.Decimal;
 type Tx = Prisma.TransactionClient;
 export const hash = (v: unknown) =>
@@ -362,11 +362,22 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
       "Register already open",
       409,
     );
+    const shiftAssignment = actor.employeeId
+      ? await tx.shiftAssignment.findFirst({
+          where: {
+            employeeId: actor.employeeId,
+            effectiveFrom: { lte: new Date() },
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
+          },
+          orderBy: [{ effectiveFrom: "desc" }, { id: "desc" }],
+        })
+      : null;
     const s = await tx.pOSSession.create({
       data: {
         registerId: id,
         userId: actor.userId,
         employeeId: actor.employeeId,
+        shiftAssignmentId: shiftAssignment?.id,
         openingCash,
       },
     });
@@ -687,19 +698,14 @@ export async function returnSale(
     for (const line of items) {
       const item = sale.items.find((i) => i.id === line.saleItemId);
       ensure(item, "Item does not belong to invoice");
-      const amount = refundAllocation(
+      const { refundAmount: amount, revenueRefund } = refundComponents(
         item.lineTotal,
+        item.taxTotal,
         item.quantity,
         item.returnedQuantity,
         line.quantity,
       );
       refundAmount = refundAmount.plus(amount);
-      const revenueRefund = refundAllocation(
-        item.lineTotal.minus(item.taxTotal),
-        item.quantity,
-        item.returnedQuantity,
-        line.quantity,
-      );
       snapshots.push({ ...line, refundAmount: amount, revenueRefund });
       await tx.pOSSaleItem.update({
         where: { id: item.id },
@@ -950,6 +956,7 @@ async function priceItems(
       variantId: v.id,
       name: v.product.name,
       sku: v.sku,
+      barcode: v.barcode,
       size: v.size,
       color: v.color,
       brand: v.product.brand,
@@ -1228,3 +1235,5 @@ export async function reconcileStock(actor: Actor, raw: unknown) {
     return { reference };
   });
 }
+
+/** Net tender exchange: internal credit offsets the replacement; only the difference moves external money. */

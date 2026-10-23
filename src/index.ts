@@ -324,6 +324,26 @@ const webSocketService = new WebSocketService(server);
 setWebSocketInstance(webSocketService);
 
 async function initRolePermissions() {
+  const defaultPosAdminPerms = {
+    'pos.read': true,
+    'pos.catalog': true,
+    'pos.inventory': true,
+    'pos.sell': true,
+    'pos.discount': true,
+    'pos.priceOverride': true,
+    'pos.refund': true,
+    'pos.reconcile': true,
+    'pos.reports': true,
+    'pos.configure': true,
+    'pos.commissionApprove': true,
+  };
+
+  const defaultPosOperationalPerms = {
+    'pos.read': true,
+    'pos.reports': true,
+    'pos.commissionApprove': true,
+  };
+
   const defaultSuperAdminPerms = {
     'sa-dashboard': true,
     'sa-companies': true,
@@ -333,6 +353,7 @@ async function initRolePermissions() {
     'sa-settings': true,
     'sa-user-rights': true,
     'sa-profile': true,
+    ...defaultPosAdminPerms,
   };
 
   const defaultPlatformAdminPerms = {
@@ -348,6 +369,7 @@ async function initRolePermissions() {
     'pa-reports': true,
     'pa-notifications': true,
     'pa-profile': true,
+    ...defaultPosOperationalPerms,
   };
 
   const defaultEmployeePerms = {
@@ -395,11 +417,33 @@ async function initRolePermissions() {
     canViewNotifications: true,
   };
 
+  const defaultStoreManagerPerms = {
+    ...defaultEmployeePerms,
+    'pos.read': true,
+    'pos.catalog': true,
+    'pos.inventory': true,
+    'pos.sell': true,
+    'pos.discount': true,
+    'pos.priceOverride': true,
+    'pos.refund': true,
+    'pos.reconcile': true,
+    'pos.reports': true,
+  };
+
+  const defaultSalesmanPerms = {
+    ...defaultEmployeePerms,
+    'pos.read': true,
+    'pos.sell': true,
+    'pos.discount': true,
+  };
+
   const rolesToInitialize = [
     { role: Role.SUPER_ADMIN, perms: defaultSuperAdminPerms },
     { role: Role.ADMIN, perms: defaultSuperAdminPerms },
     { role: Role.HR, perms: defaultPlatformAdminPerms },
     { role: Role.PLATFORM_ADMIN, perms: defaultPlatformAdminPerms },
+    { role: Role.STORE_MANAGER, perms: defaultStoreManagerPerms },
+    { role: Role.SALESMAN, perms: defaultSalesmanPerms },
     { role: Role.EMPLOYEE, perms: defaultEmployeePerms },
   ];
 
