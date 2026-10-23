@@ -98,7 +98,7 @@ async function run(){
    const register=await prisma.pOSRegister.create({data:{storeId:b.id,name:'Isolation'}});const session=await service.openRegister(actor,register.id,{openingCash:'100'});
    const sale=await service.checkout(actor,{storeId:b.id,sessionId:session.id,idempotencyKey:randomUUID(),items:[{variantId:v.id,quantity:1}],payments:[{method:'CASH',amount:'105'}]});
    await request('/api/v1/pos/sales/'+sale.id,undefined,tokenA,403);
-   await request('/api/v1/pos/payments/'+sale.payments[0]!.id+'/reconcile',{status:'RECONCILED'},tokenA,403);
+   await request('/api/v1/pos/payments/'+sale.payments[0]!.id+'/reconcile',{status:'RECONCILED',reason:'Cross-store test'},tokenA,403);
    await request('/api/v1/pos/sales/'+sale.id,undefined,tokenB);
    await request('/api/v1/pos/context',undefined,undefined,401);
   });
@@ -107,9 +107,13 @@ async function run(){
    assert(logs.some(l=>l.action==='SET_STORE_POS_CREDENTIALS'));assert(logs.some(l=>l.action==='RESET_STORE_POS_PASSWORD'));assert(logs.some(l=>l.action==='UPDATE_STORE_POS_ACCESS'));assert(!JSON.stringify(logs).includes('UniqueStorePassword!'));
   });
   await test('failed logins lock the store persistently after five attempts',async()=>{
-   for(let i=0;i<4;i++)await login(b.code!,'IncorrectPassword',401);
-   await login(b.code!,'IncorrectPassword',429);await login(b.code!,'123456',429);
+   const attempts=await Promise.all(Array.from({length:5},()=>fetch(origin+'/api/v1/pos/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({storeCode:b.code,password:'IncorrectPassword'})})));
+   assert.equal(attempts.filter(r=>r.status===401).length,4);assert.equal(attempts.filter(r=>r.status===429).length,1);
+   await login(b.code!,'123456',429);
    assert((await prisma.pOSStoreCredential.findUniqueOrThrow({where:{storeId:b.id}})).lockedUntil);
+  });
+  await test('IP limiter also bounds unknown-store attempts',async()=>{
+   let limited=false;for(let i=0;i<31;i++){const response=await fetch(origin+'/api/v1/pos/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({storeCode:'UNKNOWN-'+suffix,password:'wrong'})});if(response.status===429){limited=true;break;}assert.equal(response.status,401);}assert(limited);
   });
   console.log(`PASS ${count} real store POS authentication checks`);
  }finally{await new Promise<void>(r=>server.close(()=>r()));await prisma.$disconnect();}
