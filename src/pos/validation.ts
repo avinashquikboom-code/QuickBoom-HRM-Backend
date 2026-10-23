@@ -29,10 +29,21 @@ export function keys(value: Record<string, any>, allowed: string[]) {
 }
 export function text(value: unknown, name: string, max = 200): string {
   ensure(
-    typeof value === "string" && value.trim().length > 0 && value.length <= max,
+    typeof value === "string" && value!.trim().length > 0 && value!.length <= max,
     `Invalid ${name}`,
   );
-  return value.trim();
+  return value!.trim();
+}
+
+/** Optional string: absent, null or blank normalises to undefined; otherwise text(). */
+export function optionalText(
+  value: unknown,
+  name: string,
+  max = 200,
+): string | undefined {
+  if (value == null || (typeof value === "string" && value.trim() === ""))
+    return undefined;
+  return text(value, name, max);
 }
 export function uuid(value: unknown): string {
   const v = text(value, "UUID", 36);

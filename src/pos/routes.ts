@@ -554,7 +554,12 @@ router.get(
       search =
         typeof r.query.search === "string" ? r.query.search.trim().slice(0, 200) : "",
       storeId = storeFilter(r.actor, r.query.storeId);
-    ensure(r.query.searchMode === undefined || r.query.searchMode === "name", "Invalid product search mode");
+    ensure(
+      r.query.searchMode === undefined ||
+        ["all", "name", "barcode", "sku"].includes(String(r.query.searchMode)),
+      "Invalid product search mode",
+    );
+    const searchMode = r.query.searchMode as string | undefined;
     const where: Prisma.POSProductWhereInput = {
       ...(["true", "false"].includes(String(r.query.active))
         ? { active: r.query.active === "true" }
@@ -571,22 +576,29 @@ router.get(
       ...(search
         ? {
             OR: [
-              { name: { contains: search, mode: "insensitive" } },
-              { code: r.query.searchMode === "name" ? { equals: search, mode: "insensitive" } : { contains: search, mode: "insensitive" } },
-              ...(r.query.searchMode === "name" ? [] : [
-              {
-                variants: {
-                  some: {
-                    OR: [
-                      { barcode: search },
-                      { barcode: { equals: search, mode: "insensitive" } },
-                      { barcode: { contains: search, mode: "insensitive" } },
-                      { sku: { contains: search, mode: "insensitive" } },
-                    ],
-                  },
-                },
-              } as Prisma.POSProductWhereInput,
-              ]),
+              ...(searchMode === "barcode" || searchMode === "sku"
+                ? []
+                : [
+                    { name: { contains: search, mode: "insensitive" as const } },
+                    { code: searchMode === "name" ? { equals: search, mode: "insensitive" as const } : { contains: search, mode: "insensitive" as const } },
+                  ]),
+              ...(searchMode === "name"
+                ? []
+                : [
+                    {
+                      variants: {
+                        some: {
+                          OR: [
+                            { barcode: search },
+                            { barcode: { equals: search, mode: "insensitive" as const } },
+                            { barcode: { contains: search, mode: "insensitive" as const } },
+                            { sku: { equals: search, mode: "insensitive" as const } },
+                            { sku: { contains: search, mode: "insensitive" as const } },
+                          ],
+                        },
+                      },
+                    } as Prisma.POSProductWhereInput,
+                  ]),
             ],
           }
         : {}),
@@ -615,15 +627,15 @@ router.get(
     };
   }),
 );
-// Exact scan lookup is independent of paginated name search. SKU and barcode
-// are individually unique. Exact barcodes take precedence over SKU matches.
+// Exact scan lookup is independent of paginated name search.
+// Exact barcodes take priority over SKU collisions; ambiguous case-insensitive matches require a choice.
 router.get(
   "/products/lookup",
   route(async (r) => {
     permission(r.actor, "read");
     const storeId = integer(Number(r.query.storeId), "storeId");
     scope(r.actor, storeId);
-    const code = text(r.query.code, "barcode or SKU", 200);
+    const code = text(r.query.code, "barcode or SKU", 200).trim();
     let matches = await prisma.pOSProductVariant.findMany({
       where: { barcode: code },
       include: { product: true, balances: { where: { storeId } } },
@@ -636,7 +648,7 @@ router.get(
         take: 2,
       });
     }
-    // Preserve the existing case-insensitive fallback only after exact lookup.
+    // Fallback to case-insensitive lookup if no exact match is found
     if (!matches.length) {
       matches = await prisma.pOSProductVariant.findMany({
         where: {
@@ -646,7 +658,7 @@ router.get(
           ],
         },
         include: { product: true, balances: { where: { storeId } } },
-        take: 2,
+        take: 5,
       });
     }
     return { matches };

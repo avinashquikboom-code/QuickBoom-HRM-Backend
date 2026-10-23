@@ -113,8 +113,9 @@ async function main() {
       await call("/sales", { ...input, idempotencyKey: randomUUID(), salespersonId: seller.employeeID }, 400);
       assert.equal(await prisma.pOSSale.count(), before);
     });
-    await test("cross-store lookup, sale reads and unauthorized registration remain blocked", async () => {
+    await test("cross-store lookup/checkout and unauthorized registration remain blocked; assigned-store sale reads work", async () => {
       await call(`/products/lookup?storeId=${other.id}&code=${variant().barcode}`, undefined, 403, limitedToken);
+      await call("/sales", { ...input, storeId: other.id, idempotencyKey: randomUUID() }, 403, limitedToken);
       await call(`/sales/${sale.id}`, undefined, 200, limitedToken);
       await call("/products", registration("RESTRICTED"), 403, limitedToken);
     });

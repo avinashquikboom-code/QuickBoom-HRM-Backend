@@ -1674,8 +1674,9 @@ model POSSaleItem {
   id String @id @default(uuid()) @db.Uuid
   saleId String @db.Uuid
   sale POSSale @relation(fields: [saleId], references: [id], onDelete: Restrict)
-  variantId String @db.Uuid
-  variant POSProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  // Nullable so manually billed items (no catalog variant) can be stored without fabricating catalog records.
+  variantId String? @db.Uuid
+  variant POSProductVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
   name String
   sku String
   size String

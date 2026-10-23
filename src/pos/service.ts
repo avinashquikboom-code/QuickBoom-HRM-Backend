@@ -10,6 +10,7 @@ import {
   object,
   keys,
   text,
+  optionalText,
   uuid,
   integer,
   money,
@@ -912,14 +913,75 @@ export async function progressTransfer(
   });
 }
 
-type PricedInput = {
+type SalespersonRef = number | null | undefined;
+type CatalogInput = {
+  kind: "catalog";
   variantId: string;
   quantity: number;
   discount: Prisma.Decimal;
   override?: Prisma.Decimal;
   reason?: string;
-  salespersonId?: number | null;
+  salespersonId: SalespersonRef;
 };
+type ManualInput = {
+  kind: "manual";
+  /** Echoed back in the price snapshot so the buyer UI can align lines. */
+  key?: string;
+  name: string;
+  sku?: string;
+  barcode?: string;
+  size?: string;
+  color?: string;
+  brand?: string;
+  category?: string;
+  quantity: number;
+  unitPrice: Prisma.Decimal;
+  discount: Prisma.Decimal;
+  taxRate: Prisma.Decimal;
+  salespersonId: SalespersonRef;
+};
+type PricedInput = CatalogInput | ManualInput;
+function manualItem(
+  v: Record<string, any>,
+  discount: Prisma.Decimal,
+): ManualInput {
+  if (v.manual !== undefined && v.manual !== true)
+    throw new POSError(400, "Invalid manual flag");
+  // Cashier-supplied price and tax rate are the source of truth for a manual line.
+  // The server recomputes every total from them client-agnostically.
+  const unitPrice = money(v.unitPrice, "unit price");
+  const taxRate = money(v.taxRate ?? "0", "tax rate", "100");
+  ensure(unitPrice.gt(0), "Unit price must be greater than zero");
+  const salespersonId =
+    v.salespersonId === null
+      ? null
+      : v.salespersonId === undefined || v.salespersonId === ""
+        ? undefined
+        : integer(v.salespersonId, "salespersonId");
+  // Barcode acceptance mirrors catalog variants (variantData): printable ASCII, max 80.
+  const barcode = optionalText(v.barcode, "barcode", 80);
+  if (barcode)
+    ensure(
+      /^[\x20-\x7e]+$/.test(barcode),
+      "Barcode must use printable ASCII characters",
+    );
+  return {
+    kind: "manual",
+    key: optionalText(v.key, "item key", 100),
+    name: text(v.name, "item name", 200),
+    sku: optionalText(v.sku, "SKU", 80),
+    barcode,
+    size: optionalText(v.size, "size", 40),
+    color: optionalText(v.color, "color", 60),
+    brand: optionalText(v.brand, "brand", 80),
+    category: optionalText(v.category, "category", 80),
+    quantity: integer(v.quantity, "quantity", 1, 10000),
+    unitPrice,
+    discount,
+    taxRate,
+    salespersonId,
+  };
+}
 function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
   const items = list(raw)
     .map((raw) => {
@@ -931,9 +993,23 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
         "unitPriceOverride",
         "priceOverrideReason",
         "salespersonId",
+        "manual",
+        "key",
+        "name",
+        "sku",
+        "barcode",
+        "size",
+        "color",
+        "brand",
+        "category",
+        "unitPrice",
+        "taxRate",
       ]);
       const discount = money(v.discountPerUnit ?? "0");
       if (discount.gt(0)) permission(actor, "discount");
+      const isManual =
+        v.manual === true || v.variantId == null || v.variantId === "";
+      if (isManual) return manualItem(v, discount);
       const override =
         v.unitPriceOverride === undefined
           ? undefined
@@ -944,10 +1020,13 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
           ? undefined
           : text(v.priceOverrideReason, "priceOverrideReason", 500);
       const salespersonId =
-        v.salespersonId === null ? null : v.salespersonId === undefined || v.salespersonId === ""
-          ? undefined
-          : integer(v.salespersonId, "salespersonId");
-      return {
+        v.salespersonId === null
+          ? null
+          : v.salespersonId === undefined || v.salespersonId === ""
+            ? undefined
+            : integer(v.salespersonId, "salespersonId");
+      const catalog: CatalogInput = {
+        kind: "catalog",
         variantId: uuid(v.variantId),
         quantity: integer(v.quantity, "quantity", 1, 10000),
         discount,
@@ -955,9 +1034,14 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
         reason,
         salespersonId,
       };
-    })
-    .sort((a, b) => a.variantId.localeCompare(b.variantId));
-  unique(items.map((i) => i.variantId));
+      return catalog;
+    });
+  // Only catalog lines are keyed by a variant; manual lines may legitimately repeat.
+  unique(
+    items
+      .filter((i): i is CatalogInput => i.kind === "catalog")
+      .map((i) => i.variantId),
+  );
   return items;
 }
 async function priceItems(
@@ -965,26 +1049,83 @@ async function priceItems(
   items: PricedInput[],
   orderDiscount = new D(0),
 ) {
-  const variants = [];
+  /** Input-aligned rows: each pricing decision keeps the position of its item. */
+  const priced: {
+    item: PricedInput;
+    price: D;
+    taxRate: D;
+    totals: ReturnType<typeof lineTotals>;
+    catalog?: {
+      variantId: string;
+      name: string;
+      sku: string;
+      barcode: string;
+      size: string;
+      color: string;
+      brand: string;
+      category: string | null;
+      catalogUnitPrice: D;
+      costPrice: D;
+      discountEligible: boolean;
+    };
+  }[] = [];
   for (const item of items) {
-    await tx.$queryRaw`SELECT id FROM "POSProductVariant" WHERE id = ${item.variantId}::uuid FOR SHARE`;
-    const v = await tx.pOSProductVariant.findUnique({
-      where: { id: item.variantId },
-      include: { product: { include: { category: true } } },
-    });
-    ensure(v?.active && v.product.active, "Variant unavailable");
-    ensure(
-      item.discount.isZero() || v.product.discountEligible,
-      "Product does not allow discounts",
-    );
-    const price = item.override ?? v.sellingPrice,
-      totals = lineTotals(price, item.quantity, item.discount, v.taxRate);
-    variants.push({ item, v, price, totals });
+    if (item.kind === "catalog") {
+      await tx.$queryRaw`SELECT id FROM "POSProductVariant" WHERE id = ${item.variantId}::uuid FOR SHARE`;
+      const v = await tx.pOSProductVariant.findUnique({
+        where: { id: item.variantId },
+        include: { product: { include: { category: true } } },
+      });
+      ensure(v?.active && v.product.active, "Variant unavailable");
+      ensure(
+        item.discount.isZero() || v.product.discountEligible,
+        "Product does not allow discounts",
+      );
+      const price = item.override ?? v.sellingPrice;
+      priced.push({
+        item,
+        price,
+        taxRate: v.taxRate,
+        totals: lineTotals(price, item.quantity, item.discount, v.taxRate),
+        catalog: {
+          variantId: v.id,
+          name: v.product.name,
+          sku: v.sku,
+          barcode: v.barcode,
+          size: v.size,
+          color: v.color,
+          brand: v.product.brand,
+          category: v.product.category?.name,
+          catalogUnitPrice: v.sellingPrice,
+          costPrice: v.costPrice,
+          discountEligible: v.product.discountEligible,
+        },
+      });
+    } else {
+      // Manual item: the cashier supplies price and GST rate; the Decimal
+      // pipeline recomputes every total with the same rounding rules.
+      ensure(
+        item.discount.isZero() || item.discount.lte(item.unitPrice),
+        "Discount exceeds unit price",
+      );
+      priced.push({
+        item,
+        price: item.unitPrice,
+        taxRate: item.taxRate,
+        totals: lineTotals(
+          item.unitPrice,
+          item.quantity,
+          item.discount,
+          item.taxRate,
+        ),
+      });
+    }
   }
-  const eligible = variants.reduce(
-    (n, { v, totals }) =>
-      v.product.discountEligible
-        ? n.plus(totals.subtotal.minus(totals.discountTotal))
+  // Manual lines are always discount-eligible; catalog lines follow the product flag.
+  const eligible = priced.reduce(
+    (n, row) =>
+      (row.catalog?.discountEligible ?? true)
+        ? n.plus(row.totals.subtotal.minus(row.totals.discountTotal))
         : n,
     new D(0),
   );
@@ -998,46 +1139,76 @@ async function priceItems(
     discountTotal = new D(0),
     taxTotal = new D(0),
     grandTotal = new D(0);
-  const snapshots = variants.map(({ item, v, price, totals }) => {
-    const base = totals.subtotal.minus(totals.discountTotal);
-    let allocation = new D(0);
-    if (v.product.discountEligible && remainingBase.gt(0)) {
-      allocation = base.equals(remainingBase)
-        ? remainingDiscount
-        : D.min(base, round(remainingDiscount.mul(base).div(remainingBase)));
-      remainingDiscount = remainingDiscount.minus(allocation);
-      remainingBase = remainingBase.minus(base);
-    }
-    const lineDiscount = totals.discountTotal.plus(allocation),
-      taxable = totals.subtotal.minus(lineDiscount),
-      lineTax = round(taxable.mul(v.taxRate).div(100)),
-      total = taxable.plus(lineTax);
-    subtotal = subtotal.plus(totals.subtotal);
-    discountTotal = discountTotal.plus(lineDiscount);
-    taxTotal = taxTotal.plus(lineTax);
-    grandTotal = grandTotal.plus(total);
-    return {
-      variantId: v.id,
-      name: v.product.name,
-      sku: v.sku,
-      barcode: v.barcode,
-      size: v.size,
-      color: v.color,
-      brand: v.product.brand,
-      category: v.product.category?.name,
-      quantity: item.quantity,
-      unitPrice: price,
-      catalogUnitPrice: v.sellingPrice,
-      overrideReason: item.reason,
-      costPrice: v.costPrice,
-      discountPerUnit: item.discount,
-      discountTotal: lineDiscount,
-      taxRate: v.taxRate,
-      taxTotal: lineTax,
-      lineTotal: total,
-      salespersonId: item.salespersonId ?? null,
-    };
-  });
+  const snapshots: PricedSnapshot[] = priced.map(
+    ({ item, price, taxRate, totals, catalog }) => {
+      const base = totals.subtotal.minus(totals.discountTotal);
+      let allocation = new D(0);
+      if ((catalog?.discountEligible ?? true) && remainingBase.gt(0)) {
+        allocation = base.equals(remainingBase)
+          ? remainingDiscount
+          : D.min(base, round(remainingDiscount.mul(base).div(remainingBase)));
+        remainingDiscount = remainingDiscount.minus(allocation);
+        remainingBase = remainingBase.minus(base);
+      }
+      const lineDiscount = totals.discountTotal.plus(allocation),
+        taxable = totals.subtotal.minus(lineDiscount),
+        lineTax = round(taxable.mul(taxRate).div(100)),
+        total = taxable.plus(lineTax);
+      subtotal = subtotal.plus(totals.subtotal);
+      discountTotal = discountTotal.plus(lineDiscount);
+      taxTotal = taxTotal.plus(lineTax);
+      grandTotal = grandTotal.plus(total);
+      if (catalog) {
+        return {
+          key: item.kind === "manual" ? item.key : undefined,
+          variantId: catalog.variantId,
+          name: catalog.name,
+          sku: catalog.sku,
+          barcode: catalog.barcode,
+          size: catalog.size,
+          color: catalog.color,
+          brand: catalog.brand,
+          category: catalog.category,
+          quantity: item.quantity,
+          unitPrice: price,
+          catalogUnitPrice: catalog.catalogUnitPrice,
+          overrideReason:
+            item.kind === "catalog" ? item.reason : undefined,
+          costPrice: catalog.costPrice,
+          discountPerUnit: item.discount,
+          discountTotal: lineDiscount,
+          taxRate,
+          taxTotal: lineTax,
+          lineTotal: total,
+          salespersonId: item.salespersonId ?? null,
+        };
+      }
+      // Manual line: no fabricated catalog, cost or stock records.
+      const manual = item as ManualInput;
+      return {
+        key: manual.key,
+        variantId: null,
+        name: manual.name,
+        sku: manual.sku ?? "",
+        barcode: manual.barcode ?? null,
+        size: manual.size ?? "",
+        color: manual.color ?? "",
+        brand: manual.brand ?? "",
+        category: manual.category ?? null,
+        quantity: manual.quantity,
+        unitPrice: manual.unitPrice,
+        catalogUnitPrice: manual.unitPrice,
+        overrideReason: undefined,
+        costPrice: new D(0),
+        discountPerUnit: manual.discount,
+        discountTotal: lineDiscount,
+        taxRate: manual.taxRate,
+        taxTotal: lineTax,
+        lineTotal: total,
+        salespersonId: manual.salespersonId ?? null,
+      };
+    },
+  );
   ensure(remainingDiscount.isZero(), "Could not allocate order discount");
   return { subtotal, discountTotal, taxTotal, grandTotal, snapshots };
 }
