@@ -220,7 +220,7 @@ export async function authenticate(
     );
     const user = await prisma.user.findUnique({
       where: { id },
-      include: { employee: true, userPermission: true },
+      include: { employee: true, profile: true, userPermission: true },
     });
     ensure(user, "User account not found or session invalid", 401);
     ensure(user.isActive, "Account inactive", 403);
@@ -260,7 +260,8 @@ export async function authenticate(
     const empFullName = employee
       ? `${employee.firstName} ${employee.lastName || ""}`.trim()
       : null;
-    const cashierName = empFullName || "Unknown Cashier";
+    const profileFullName = user.profile?.fullName?.trim() || null;
+    const cashierName = empFullName || profileFullName || "Unknown Cashier";
     (req as POSRequest).actor = {
       userId: user.id,
       role: user.role,
@@ -360,7 +361,7 @@ export async function resolveOptionalActor(req: Request): Promise<Actor | null> 
     if (!Number.isSafeInteger(id) || id <= 0) return null;
     const user = await prisma.user.findUnique({
       where: { id },
-      include: { employee: true, userPermission: true },
+      include: { employee: true, profile: true, userPermission: true },
     });
     if (!user || !user.isActive) return null;
 
@@ -387,7 +388,8 @@ export async function resolveOptionalActor(req: Request): Promise<Actor | null> 
     const empFullName = employee
       ? `${employee.firstName} ${employee.lastName || ""}`.trim()
       : null;
-    const cashierName = empFullName || "Unknown Cashier";
+    const profileFullName = user.profile?.fullName?.trim() || null;
+    const cashierName = empFullName || profileFullName || "Unknown Cashier";
 
     return {
       userId: user.id,

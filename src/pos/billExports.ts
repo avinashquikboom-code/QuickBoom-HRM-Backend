@@ -7,7 +7,13 @@ import { ensure, object, keys, integer, uuid, dateRange } from "./validation";
 
 export const invoiceInclude = {
   store: { select: { id: true, name: true, address: true } },
-  cashier: { select: { email: true, profile: { select: { fullName: true } } } },
+  cashier: {
+    select: {
+      email: true,
+      profile: { select: { fullName: true } },
+      employee: { select: { firstName: true, lastName: true } },
+    },
+  },
   salesperson: { select: { firstName: true, lastName: true } },
   items: { include: { salesperson: { select: { firstName: true, lastName: true } } } },
   payments: { select: { method: true, amount: true } },
@@ -71,7 +77,7 @@ export const exportHeaders = ["Invoice number", "Date and time (IST)", "Store", 
 const itemHeaders = ["Product", "Barcode/SKU", "Quantity", "Unit price", "Item discount", "Item GST", "Line total", "Item salesperson"];
 export function invoiceRow(s: Invoice): (string | number)[] {
   return [s.invoiceNo, date(s.createdAt), s.store.name, s.customerName ?? "Walk-in Customer",
-    s.cashier.profile?.fullName || s.cashier.email || "", person(s.salesperson) || [...new Set(s.items.map(i => person(i.salesperson)).filter(Boolean))].join("; "),
+    person(s.cashier.employee) || s.cashier.profile?.fullName || "Unknown Cashier", person(s.salesperson) || [...new Set(s.items.map(i => person(i.salesperson)).filter(Boolean))].join("; "),
     s.items.reduce((n, i) => n + i.quantity, 0), s.subtotal.toFixed(2), s.discountTotal.toFixed(2),
     s.taxTotal.toFixed(2), s.grandTotal.toFixed(2), [...new Set(s.payments.map(p => p.method))].join(" + "),
     s.payments.map(p => `${p.method}: ${p.amount.toFixed(2)}`).join("; "), s.status];
@@ -123,7 +129,7 @@ export function invoicePdf(invoices: Invoice[], paper: string = "A4"): Promise<B
       { text: `Bill No: ${s.invoiceNo}`, bold: true, gap: 8 },
       { text: `Date / Time: ${date(s.createdAt)}` },
       { text: `Status: ${s.status}`, bold: true },
-      { text: `Cashier: ${s.cashier.profile?.fullName || s.cashier.email || "Unassigned"}` },
+      { text: `Cashier: ${person(s.cashier.employee) || s.cashier.profile?.fullName || "Unknown Cashier"}` },
       { text: `Salesperson: ${person(s.salesperson) || [...new Set(s.items.map(i => person(i.salesperson)).filter(Boolean))].join(", ") || "Unassigned"}` },
       { text: `Customer: ${s.customerName || "Walk-in Customer"}${s.customerPhone ? ` | ${s.customerPhone}` : ""}`, gap: 6 },
     ];
@@ -208,7 +214,8 @@ export async function downloadBillExport(actor: Actor, input: unknown, res: Resp
         orderBy: { id: "asc" }, take: 100, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
       if (!batch.length) break;
       if (!started) {
-        const filename = count === 1 ? batch[0].invoiceNo.replace(/[^a-zA-Z0-9_-]/g, "-") : `HopKid-store-${filter.storeId}-bills`;
+        let filename = count === 1 ? batch[0].invoiceNo.replace(/[^a-zA-Z0-9_-]/g, "-") : `HopKid-store-${filter.storeId}-bills`;
+        if (filter.format === "pdf") filename = filename.replace(/^POS-/i, "HK-").replace(/^HopKid-/i, "HK-");
         res.setHeader("Content-Type", filter.format === "pdf" ? "application/pdf" : filter.format === "xlsx" ?
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}.${filter.format}"`);

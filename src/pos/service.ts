@@ -1,4 +1,4 @@
-import { cashierUserSelect, cashierName, withCashierName } from "./cashierIdentity";
+import { cashierUserSelect, cashierEmployeeSelect, cashierName, withCashierName } from "./cashierIdentity";
 import { recognizedSaleWhere, receivedSaleWhere } from "./salesAccounting";
 import { checkoutPOSWork } from "./workSessions";
 import { accrueCommission, reverseCommission } from "./commissions";
@@ -496,10 +496,15 @@ async function ensureOrOpenSession(
     );
   }
 
-  const shiftAssignment = actor.employeeId
+  const effectiveEmployeeId =
+    actor.employeeId ??
+    (await tx.employee.findFirst({ where: { userId: actor.userId }, select: { id: true } }))?.id ??
+    null;
+
+  const shiftAssignment = effectiveEmployeeId
     ? await tx.shiftAssignment.findFirst({
         where: {
-          employeeId: actor.employeeId,
+          employeeId: effectiveEmployeeId,
           effectiveFrom: { lte: new Date() },
           OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
         },
@@ -511,7 +516,7 @@ async function ensureOrOpenSession(
     data: {
       registerId: register.id,
       userId: actor.userId,
-      employeeId: actor.employeeId,
+      employeeId: effectiveEmployeeId,
       shiftAssignmentId: shiftAssignment?.id,
       openingCash: new D(0),
     },
@@ -534,10 +539,15 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
     scope(actor, register.storeId);
     await activeStore(tx, register.storeId);
 
+    const effectiveEmployeeId =
+      actor.employeeId ??
+      (await tx.employee.findFirst({ where: { userId: actor.userId }, select: { id: true } }))?.id ??
+      null;
+
     // If this cashier already has an active open session on this register, resume it idempotently
     const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
-    if (actor.employeeId != null) {
-      cashierConditions.push({ employeeId: actor.employeeId });
+    if (effectiveEmployeeId != null) {
+      cashierConditions.push({ employeeId: effectiveEmployeeId });
     }
     const myExisting = await tx.pOSSession.findFirst({
       where: {
@@ -545,7 +555,11 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
         registerId: id,
         closedAt: null,
       },
-      include: { register: { include: { store: true } }, user: { select: cashierUserSelect } },
+      include: {
+        register: { include: { store: true } },
+        user: { select: cashierUserSelect },
+        employee: { select: cashierEmployeeSelect },
+      },
     });
     if (myExisting) {
       return withCashierName(myExisting);
@@ -558,10 +572,10 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
       "Register already open",
       409,
     );
-    const shiftAssignment = actor.employeeId
+    const shiftAssignment = effectiveEmployeeId
       ? await tx.shiftAssignment.findFirst({
           where: {
-            employeeId: actor.employeeId,
+            employeeId: effectiveEmployeeId,
             effectiveFrom: { lte: new Date() },
             OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
           },
@@ -572,12 +586,16 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
       data: {
         registerId: id,
         userId: actor.userId,
-        employeeId: actor.employeeId,
+        employeeId: effectiveEmployeeId,
         shiftAssignmentId: shiftAssignment?.id,
         openingCash,
         openingNotes,
       },
-      include: { register: { include: { store: true } }, user: { select: cashierUserSelect } },
+      include: {
+        register: { include: { store: true } },
+        user: { select: cashierUserSelect },
+        employee: { select: cashierEmployeeSelect },
+      },
     });
     await audit(tx, actor, "REGISTER_OPENED", s.id, {
       openingCash: openingCash.toString(),
@@ -603,9 +621,14 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
     await tx.$queryRaw`SELECT id FROM "Store" WHERE id = ${storeId} FOR UPDATE`;
 
     // 1. Check if the current cashier already has an active open session in this store
+    const effectiveEmployeeId =
+      actor.employeeId ??
+      (await tx.employee.findFirst({ where: { userId: actor.userId }, select: { id: true } }))?.id ??
+      null;
+
     const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
-    if (actor.employeeId != null) {
-      cashierConditions.push({ employeeId: actor.employeeId });
+    if (effectiveEmployeeId != null) {
+      cashierConditions.push({ employeeId: effectiveEmployeeId });
     }
 
     const existing = await tx.pOSSession.findFirst({
@@ -664,10 +687,10 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
     });
     ensure(!doubleCheck, "Register is already occupied by an active session", 409);
 
-    const shiftAssignment = actor.employeeId
+    const shiftAssignment = effectiveEmployeeId
       ? await tx.shiftAssignment.findFirst({
           where: {
-            employeeId: actor.employeeId,
+            employeeId: effectiveEmployeeId,
             effectiveFrom: { lte: new Date() },
             OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
           },
@@ -679,7 +702,7 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
       data: {
         registerId: register.id,
         userId: actor.userId,
-        employeeId: actor.employeeId,
+        employeeId: effectiveEmployeeId,
         shiftAssignmentId: shiftAssignment?.id,
         openingCash,
         openingNotes,
@@ -782,7 +805,16 @@ export async function computeSessionSummary(sessionId: string) {
   const actualCash = session.actualCash;
   const variance = session.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
 
-  const resolvedCashierName = cashierName(session.user);
+  let resolvedCashierName = cashierName(session);
+  if (resolvedCashierName === "Unknown Cashier" && session.userId) {
+    const emp = await prisma.employee.findFirst({
+      where: { userId: session.userId },
+      select: cashierEmployeeSelect,
+    });
+    if (emp) {
+      resolvedCashierName = cashierName({ employee: emp });
+    }
+  }
 
   return {
     session: {
@@ -1052,7 +1084,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
     const actualCash = sess.actualCash;
     const variance = sess.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
 
-    const resolvedCashierName = cashierName(sess.user);
+    const resolvedCashierName = cashierName(sess);
 
     return {
       id: sess.id,

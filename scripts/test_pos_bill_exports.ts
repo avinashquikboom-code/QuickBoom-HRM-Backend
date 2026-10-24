@@ -53,7 +53,7 @@ async function main() {
     });
     await test("individual completed invoice PDF with meaningful filename", async () => {
       const r = await request("download", { ...base, format: "pdf", paper: "80", saleIds: [a.id] });
-      assert.equal(r.status, 200); assert(r.headers.get("content-disposition")!.includes(a.invoiceNo + ".pdf"));
+      assert.equal(r.status, 200); assert(r.headers.get("content-disposition")!.includes(a.invoiceNo.replace(/^POS-/, "HK-") + ".pdf"));
       const data = Buffer.from(await r.arrayBuffer()); assert.equal(data.subarray(0, 4).toString(), "%PDF"); save("completed-80.pdf", data);
     });
     await test("cancelled invoice PDF remains exportable with its original amount", async () => {

@@ -135,6 +135,8 @@ router.get("/auth/me", (req: Request, res: Response) => {
     data: {
       userId: a.userId,
       role: a.role,
+      cashierName: a.cashierName,
+      employee: a.employee,
       isPosStoreSession: a.isPosStoreSession ?? false,
       store: a.storeId
         ? {
@@ -1172,7 +1174,14 @@ router.get(
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         include: {
           store: { select: { id: true, name: true, code: true } },
-          cashier: { select: { id: true, email: true, profile: { select: { fullName: true } } } },
+          cashier: {
+            select: {
+              id: true,
+              email: true,
+              profile: { select: { fullName: true } },
+              employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+            },
+          },
           salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
           payments: { select: { id: true, method: true, amount: true, reference: true } },
           items: {
@@ -1217,7 +1226,14 @@ router.get(
         payments: true,
         returns: { include: { items: true } },
         store: { select: { name: true, address: true } },
-        cashier: { select: { email: true, profile: { select: { fullName: true } } } },
+        cashier: {
+          select: {
+            id: true,
+            email: true,
+            profile: { select: { fullName: true } },
+            employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+          },
+        },
         salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
       },
     });
