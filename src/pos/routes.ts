@@ -898,6 +898,30 @@ router.post(
     });
   }),
 );
+router.get(
+  "/sessions/current",
+  route((r) => service.getCurrentCashierSession(r.actor, r.query.storeId)),
+);
+router.post(
+  "/sessions/open",
+  route((r) => service.openRegisterSession(r.actor, r.body)),
+);
+router.get(
+  "/sessions",
+  route((r) => service.getSessionHistory(r.actor, r.query)),
+);
+router.get(
+  "/sessions/:id/summary",
+  route((r) => service.computeSessionSummary(id(r))),
+);
+router.post(
+  "/sessions/:id/close",
+  route((r) => service.closeSession(r.actor, id(r), r.body)),
+);
+router.get(
+  "/sessions/:id/sales",
+  route((r) => service.getSessionSales(r.actor, id(r), r.query)),
+);
 router.post(
   "/registers/:id/open",
   route((r) => service.openRegister(r.actor, id(r), r.body)),
@@ -945,7 +969,19 @@ router.get(
     const storeId = storeFilter(r.actor, r.query.storeId),
       p = page(r.query);
     const where: Prisma.POSSaleWhereInput = {
-      storeId,
+      ...(storeId ? { storeId } : {}),
+      ...(r.query.sessionId ? { sessionId: String(r.query.sessionId) } : {}),
+      ...(r.query.paymentMode
+        ? {
+            payments: {
+              some: {
+                method: {
+                  equals: String(r.query.paymentMode).trim().toUpperCase(),
+                },
+              },
+            },
+          }
+        : {}),
       ...(r.query.from || r.query.to ? { createdAt: dateRange(r.query) } : {}),
       ...(r.query.status ? { status: text(r.query.status, "status") } : {}),
       ...(r.query.cashierId
@@ -961,10 +997,26 @@ router.get(
         : {}),
       ...(r.query.search
         ? {
-            invoiceNo: {
-              contains: text(r.query.search, "search"),
-              mode: "insensitive",
-            },
+            OR: [
+              {
+                invoiceNo: {
+                  contains: text(r.query.search, "search"),
+                  mode: "insensitive",
+                },
+              },
+              {
+                customerName: {
+                  contains: text(r.query.search, "search"),
+                  mode: "insensitive",
+                },
+              },
+              {
+                customerPhone: {
+                  contains: text(r.query.search, "search"),
+                  mode: "insensitive",
+                },
+              },
+            ],
           }
         : {}),
     };
@@ -975,7 +1027,10 @@ router.get(
         take: p.take,
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         include: {
+          store: { select: { id: true, name: true, code: true } },
+          cashier: { select: { id: true, email: true, profile: { select: { fullName: true } } } },
           salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
+          payments: { select: { id: true, method: true, amount: true, reference: true } },
           items: {
             include: {
               salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },

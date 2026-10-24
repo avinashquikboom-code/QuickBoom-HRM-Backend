@@ -1625,6 +1625,7 @@ model POSSession {
   actualCash Decimal? @db.Decimal(15,2)
   variance Decimal? @db.Decimal(15,2)
   closeReason String?
+  openingNotes String?
   openedAt DateTime @default(now())
   closedAt DateTime?
   sales POSSale[]

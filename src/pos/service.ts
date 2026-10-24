@@ -2,7 +2,7 @@ import { accrueCommission, reverseCommission } from "./commissions";
 import { createHash, randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
-import { Actor, permission, scope } from "./auth";
+import { Actor, permission, scope, storeFilter } from "./auth";
 import {
   methods,
   ensure,
@@ -19,6 +19,8 @@ import {
   unique,
   method,
   boolean,
+  page,
+  dateRange,
 } from "./validation";
 import { lineTotals, refundComponents, round } from "./finance";
 const D = Prisma.Decimal;
@@ -389,15 +391,24 @@ async function ensureOrOpenSession(
       where: { id: preferredSessionId },
       include: { register: true },
     });
-    if (session && !session.closedAt && session.register.active && session.register.storeId === storeId) {
+    if (session) {
+      if (session.closedAt != null) {
+        throw new POSError(409, "Cannot process sales on a closed register session. Please open a new register session.");
+      }
+      if (session.register.storeId !== storeId) {
+        throw new POSError(403, "Register session belongs to another store.");
+      }
       const isOwner =
         session.userId === actor.userId ||
-        (actor.employeeId != null && session.employeeId === actor.employeeId);
-      if (isOwner) {
-        await tx.$queryRaw`SELECT id FROM "POSSession" WHERE id = ${session.id}::uuid FOR UPDATE`;
-        return session.id;
+        (actor.employeeId != null && session.employeeId === actor.employeeId) ||
+        actor.isPosStoreSession;
+      if (!isOwner) {
+        throw new POSError(403, "Register session belongs to another cashier.");
       }
+      await tx.$queryRaw`SELECT id FROM "POSSession" WHERE id = ${session.id}::uuid FOR UPDATE`;
+      return session.id;
     }
+    throw new POSError(404, "Register session not found.");
   }
 
   // 2. Check if the current cashier already has a valid open session in this store
@@ -505,14 +516,34 @@ async function ensureOrOpenSession(
 export async function openRegister(actor: Actor, id: string, raw: unknown) {
   permission(actor, "sell");
   const b = object(raw);
-  keys(b, ["openingCash"]);
-  const openingCash = money(b.openingCash);
+  keys(b, ["openingCash", "openingNotes"]);
+  const openingCash = money(b.openingCash, "openingCash");
+  ensure(openingCash.gte(0), "Opening cash must be non-negative", 400);
+  const openingNotes = b.openingNotes ? text(b.openingNotes, "openingNotes", 500) : null;
   return transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "POSRegister" WHERE id = ${id}::uuid FOR UPDATE`;
     const register = await tx.pOSRegister.findUnique({ where: { id } });
     ensure(register?.active, "Register unavailable", 404);
     scope(actor, register.storeId);
     await activeStore(tx, register.storeId);
+
+    // If this cashier already has an active open session on this register, resume it idempotently
+    const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
+    if (actor.employeeId != null) {
+      cashierConditions.push({ employeeId: actor.employeeId });
+    }
+    const myExisting = await tx.pOSSession.findFirst({
+      where: {
+        OR: cashierConditions,
+        registerId: id,
+        closedAt: null,
+      },
+      include: { register: { include: { store: true } } },
+    });
+    if (myExisting) {
+      return myExisting;
+    }
+
     ensure(
       !(await tx.pOSSession.findFirst({
         where: { registerId: id, closedAt: null },
@@ -537,68 +568,567 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
         employeeId: actor.employeeId,
         shiftAssignmentId: shiftAssignment?.id,
         openingCash,
+        openingNotes,
       },
+      include: { register: { include: { store: true } } },
     });
-    await audit(tx, actor, "REGISTER_OPENED", s.id);
+    await audit(tx, actor, "REGISTER_OPENED", s.id, {
+      openingCash: openingCash.toString(),
+      openingNotes,
+    });
     return s;
   });
 }
-export async function closeRegister(actor: Actor, id: string, raw: unknown) {
-  permission(actor, "reconcile");
+
+export async function openRegisterSession(actor: Actor, raw: unknown) {
+  permission(actor, "sell");
   const b = object(raw);
-  keys(b, ["sessionId", "actualCash", "reason"]);
-  const sessionId = uuid(b.sessionId),
-    actualCash = money(b.actualCash),
-    reason = text(b.reason, "close reason", 1000);
+  keys(b, ["storeId", "registerId", "openingCash", "openingNotes"]);
+  const storeId = integer(b.storeId, "storeId");
+  scope(actor, storeId);
+  const openingCash = money(b.openingCash, "openingCash");
+  ensure(openingCash.gte(0), "Opening cash must be non-negative", 400);
+  const openingNotes = b.openingNotes ? text(b.openingNotes, "openingNotes", 500) : null;
+  const preferredRegisterId = optionalUuid(b.registerId, "registerId");
+
   return transaction(async (tx) => {
+    await activeStore(tx, storeId);
+    await tx.$queryRaw`SELECT id FROM "Store" WHERE id = ${storeId} FOR UPDATE`;
+
+    // 1. Check if the current cashier already has an active open session in this store
+    const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
+    if (actor.employeeId != null) {
+      cashierConditions.push({ employeeId: actor.employeeId });
+    }
+
+    const existing = await tx.pOSSession.findFirst({
+      where: {
+        OR: cashierConditions,
+        closedAt: null,
+        register: { storeId, active: true },
+      },
+      include: {
+        register: { include: { store: true } },
+        user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+        employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
+      orderBy: { openedAt: "desc" },
+    });
+
+    if (existing) {
+      return existing; // Resume existing session without asking again or creating duplicates
+    }
+
+    // 2. Find or allocate register
+    let register = null;
+    if (preferredRegisterId) {
+      register = await tx.pOSRegister.findFirst({
+        where: { id: preferredRegisterId, storeId, active: true },
+      });
+      ensure(register, "Selected register not found or inactive", 404);
+      const occupied = await tx.pOSSession.findFirst({
+        where: { registerId: register.id, closedAt: null },
+      });
+      ensure(!occupied, "Selected register is already occupied by an active session", 409);
+    } else {
+      register = await tx.pOSRegister.findFirst({
+        where: { storeId, active: true, sessions: { none: { closedAt: null } } },
+        orderBy: { name: "asc" },
+      });
+      if (!register) {
+        const count = await tx.pOSRegister.count({ where: { storeId, active: true } });
+        if (count > 0 && actor.isPosStoreSession) {
+          const terminalName = `Store POS Terminal (${actor.userId})`;
+          register = await tx.pOSRegister.findFirst({ where: { storeId, name: terminalName } });
+          if (!register) {
+            register = await tx.pOSRegister.create({ data: { storeId, name: terminalName, active: true } });
+          }
+        } else if (count === 0) {
+          register = await tx.pOSRegister.create({ data: { storeId, name: "Main Register", active: true } });
+        } else {
+          throw new POSError(409, "All registers in this store are currently occupied by active sessions.");
+        }
+      }
+    }
+
+    await tx.$queryRaw`SELECT id FROM "POSRegister" WHERE id = ${register.id}::uuid FOR UPDATE`;
+    const doubleCheck = await tx.pOSSession.findFirst({
+      where: { registerId: register.id, closedAt: null },
+    });
+    ensure(!doubleCheck, "Register is already occupied by an active session", 409);
+
+    const shiftAssignment = actor.employeeId
+      ? await tx.shiftAssignment.findFirst({
+          where: {
+            employeeId: actor.employeeId,
+            effectiveFrom: { lte: new Date() },
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: new Date() } }],
+          },
+          orderBy: [{ effectiveFrom: "desc" }, { id: "desc" }],
+        })
+      : null;
+
+    const newSession = await tx.pOSSession.create({
+      data: {
+        registerId: register.id,
+        userId: actor.userId,
+        employeeId: actor.employeeId,
+        shiftAssignmentId: shiftAssignment?.id,
+        openingCash,
+        openingNotes,
+      },
+      include: {
+        register: { include: { store: true } },
+        user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+        employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
+    });
+
+    await audit(tx, actor, "REGISTER_OPENED", newSession.id, {
+      openingCash: openingCash.toString(),
+      openingNotes,
+    });
+
+    return newSession;
+  });
+}
+
+export async function computeSessionSummary(sessionId: string) {
+  const session = await prisma.pOSSession.findUnique({
+    where: { id: sessionId },
+    include: {
+      register: { include: { store: true } },
+      user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+      employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+    },
+  });
+  ensure(session, "Session not found", 404);
+
+  // 1. Completed sales in this session
+  const salesAgg = await prisma.pOSSale.aggregate({
+    where: { sessionId, status: "COMPLETED" },
+    _sum: {
+      grandTotal: true,
+      subtotal: true,
+      discountTotal: true,
+      taxTotal: true,
+    },
+    _count: true,
+  });
+
+  // 2. Payments by method for completed sales in this session
+  const paymentsByMethod = await prisma.pOSSalePayment.groupBy({
+    by: ["method"],
+    where: { sale: { sessionId, status: "COMPLETED" } },
+    _sum: { amount: true },
+  });
+
+  let cashSales = new D(0);
+  let cardSales = new D(0);
+  let upiSales = new D(0);
+  let otherSales = new D(0);
+
+  for (const p of paymentsByMethod) {
+    const amt = p._sum.amount ?? 0;
+    const m = (p.method || "").toUpperCase();
+    if (m === "CASH") cashSales = cashSales.plus(amt);
+    else if (m === "CARD") cardSales = cardSales.plus(amt);
+    else if (m === "UPI") upiSales = upiSales.plus(amt);
+    else otherSales = otherSales.plus(amt);
+  }
+
+  // 3. Refunds for this session
+  const refundsAgg = await prisma.pOSReturn.aggregate({
+    where: { sessionId },
+    _sum: { refundAmount: true },
+    _count: true,
+  });
+  const cashRefundsAgg = await prisma.pOSReturn.aggregate({
+    where: { sessionId, refundMethod: "CASH" },
+    _sum: { refundAmount: true },
+  });
+
+  const totalRefunds = refundsAgg._sum.refundAmount ?? new D(0);
+  const cashRefunds = cashRefundsAgg._sum.refundAmount ?? new D(0);
+
+  // 4. Cash movements for this session
+  const cashMovements = await prisma.pOSCashMovement.findMany({
+    where: { sessionId },
+  });
+  let cashIn = new D(0);
+  let cashOut = new D(0);
+  for (const cm of cashMovements) {
+    if (cm.direction === "IN") cashIn = cashIn.plus(cm.amount);
+    else cashOut = cashOut.plus(cm.amount);
+  }
+
+  // Formula: Expected Cash = Opening Cash + Cash Sales - Cash Refunds + Cash In - Cash Out
+  const openingCash = session.openingCash ?? new D(0);
+  const expectedCash = openingCash
+    .plus(cashSales)
+    .minus(cashRefunds)
+    .plus(cashIn)
+    .minus(cashOut);
+
+  const totalBills = salesAgg._count;
+  const totalSales = salesAgg._sum.grandTotal ?? new D(0);
+  const actualCash = session.actualCash;
+  const variance = session.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
+
+  const cashierName =
+    session.employee?.firstName
+      ? `${session.employee.firstName} ${session.employee.lastName || ""}`.trim()
+      : session.user?.profile?.fullName || session.user?.email || `User #${session.userId}`;
+
+  return {
+    session: {
+      ...session,
+      cashierName,
+      storeName: session.register.store.name,
+      registerName: session.register.name,
+    },
+    summary: {
+      openingCash: Number(openingCash.toString()),
+      totalBills,
+      totalSales: Number(totalSales.toString()),
+      subtotal: Number((salesAgg._sum.subtotal ?? 0).toString()),
+      discountTotal: Number((salesAgg._sum.discountTotal ?? 0).toString()),
+      taxTotal: Number((salesAgg._sum.taxTotal ?? 0).toString()),
+      cashSales: Number(cashSales.toString()),
+      cardSales: Number(cardSales.toString()),
+      upiSales: Number(upiSales.toString()),
+      otherSales: Number(otherSales.toString()),
+      totalRefunds: Number(totalRefunds.toString()),
+      cashRefunds: Number(cashRefunds.toString()),
+      cashIn: Number(cashIn.toString()),
+      cashOut: Number(cashOut.toString()),
+      expectedCash: Number(expectedCash.toString()),
+      actualCash: actualCash != null ? Number(actualCash.toString()) : null,
+      variance: variance != null ? Number(variance.toString()) : null,
+      closeReason: session.closeReason,
+      openingNotes: session.openingNotes,
+      openedAt: session.openedAt,
+      closedAt: session.closedAt,
+      isClosed: !!session.closedAt,
+      cashierName,
+      storeName: session.register.store.name,
+      registerName: session.register.name,
+    },
+  };
+}
+
+export async function closeSession(actor: Actor, sessionId: string, raw: unknown) {
+  const b = object(raw);
+  keys(b, ["sessionId", "actualCash", "reason", "closeReason", "confirmDiscrepancy"]);
+  const actualCash = money(b.actualCash, "actualCash");
+  ensure(actualCash.gte(0), "Actual closing cash must be a non-negative number", 400);
+  const reason = b.closeReason != null ? String(b.closeReason).trim() : b.reason != null ? String(b.reason).trim() : "";
+
+  return transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "POSSession" WHERE id = ${sessionId}::uuid FOR UPDATE`;
     const previous = await tx.pOSSession.findUnique({
       where: { id: sessionId },
-      include: { register: true },
+      include: {
+        register: { include: { store: true } },
+        user: { select: { id: true, email: true } },
+        employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
     });
-    ensure(previous, "Session not found", 404);
+    ensure(previous, "Register session not found", 404);
     scope(actor, previous.register.storeId);
-    ensure(previous.registerId === id, "Register mismatch");
-    if (previous.closedAt) {
-      ensure(
-        previous.actualCash?.equals(actualCash) &&
-          previous.closeReason === reason,
-        "Session already closed with different values",
-        409,
-      );
-      return previous;
+
+    // Verify session ownership or reconcile permission:
+    const isOwner =
+      previous.userId === actor.userId ||
+      (actor.employeeId != null && previous.employeeId === actor.employeeId) ||
+      actor.isPosStoreSession;
+    if (!isOwner) {
+      permission(actor, "reconcile");
     }
-    const s = await openSession(tx, actor, sessionId, undefined, false);
-    ensure(s.registerId === id, "Register mismatch");
+
+    if (previous.closedAt) {
+      return previous; // Idempotent return
+    }
+
+    // Server-side calculation of expected cash:
+    // Expected Cash = Opening Cash + Cash Sales - Cash Refunds + Cash In - Cash Out
     const sales = await tx.pOSSalePayment.aggregate({
-      where: { method: "CASH", sale: { sessionId } },
+      where: { method: "CASH", sale: { sessionId, status: "COMPLETED" } },
       _sum: { amount: true },
     });
     const refunds = await tx.pOSReturn.aggregate({
       where: { sessionId, refundMethod: "CASH" },
       _sum: { refundAmount: true },
     });
-    const expectedCash = s.openingCash
-        .plus(sales._sum.amount ?? 0)
-        .minus(refunds._sum.refundAmount ?? 0)
-        .plus(await cashMovementNet(tx, sessionId)),
-      variance = actualCash.minus(expectedCash);
+    const cashNet = await cashMovementNet(tx, sessionId);
+    const expectedCash = previous.openingCash
+      .plus(sales._sum.amount ?? 0)
+      .minus(refunds._sum.refundAmount ?? 0)
+      .plus(cashNet);
+
+    const variance = actualCash.minus(expectedCash);
+
+    if (!variance.isZero() && !reason && !b.confirmDiscrepancy) {
+      throw new POSError(
+        400,
+        `Closing cash mismatch detected: Actual ₹${actualCash.toFixed(2)} differs from Expected ₹${expectedCash.toFixed(2)} by ₹${variance.toFixed(2)}. Please provide a discrepancy note to confirm closing.`,
+      );
+    }
+
     const result = await tx.pOSSession.update({
       where: { id: sessionId },
       data: {
         actualCash,
         expectedCash,
         variance,
-        closeReason: reason,
+        closeReason: reason || null,
         closedAt: new Date(),
       },
+      include: {
+        register: { include: { store: true } },
+        user: { select: { id: true, email: true } },
+        employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      },
     });
+
     await audit(tx, actor, "REGISTER_CLOSED", sessionId, {
       actualCash: actualCash.toString(),
       expectedCash: expectedCash.toString(),
+      variance: variance.toString(),
       reason,
     });
+
     return result;
   });
+}
+
+export async function closeRegister(actor: Actor, id: string, raw: unknown) {
+  const b = object(raw);
+  keys(b, ["sessionId", "actualCash", "reason", "closeReason", "confirmDiscrepancy"]);
+  const sessionId = uuid(b.sessionId);
+  const session = await prisma.pOSSession.findUnique({ where: { id: sessionId } });
+  ensure(session, "Session not found", 404);
+  ensure(session.registerId === id, "Register mismatch");
+  return closeSession(actor, sessionId, raw);
+}
+
+export async function getCurrentCashierSession(actor: Actor, storeIdParam: unknown) {
+  permission(actor, "read");
+  const storeId = storeFilter(actor, storeIdParam);
+  ensure(storeId, "storeId is required", 400);
+
+  const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
+  if (actor.employeeId != null) {
+    cashierConditions.push({ employeeId: actor.employeeId });
+  }
+
+  const session = await prisma.pOSSession.findFirst({
+    where: {
+      OR: cashierConditions,
+      closedAt: null,
+      register: { storeId, active: true },
+    },
+    include: {
+      register: { include: { store: true } },
+      user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+      employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+    },
+    orderBy: { openedAt: "desc" },
+  });
+
+  const registers = await prisma.pOSRegister.findMany({
+    where: { storeId, active: true },
+    include: {
+      sessions: {
+        where: { closedAt: null },
+        include: {
+          user: { select: { id: true, email: true } },
+          employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+        },
+      },
+    },
+    orderBy: { name: "asc" },
+  });
+
+  let summary = null;
+  if (session) {
+    const s = await computeSessionSummary(session.id);
+    summary = s.summary;
+  }
+
+  return {
+    session,
+    summary,
+    registers,
+  };
+}
+
+export async function getSessionHistory(actor: Actor, query: Record<string, any>) {
+  permission(actor, "read");
+  const storeId = storeFilter(actor, query.storeId);
+  const p = page(query);
+
+  const where: Prisma.POSSessionWhereInput = {
+    ...(storeId ? { register: { storeId } } : {}),
+    ...(query.registerId ? { registerId: optionalUuid(query.registerId, "registerId") } : {}),
+    ...(query.cashierId ? { userId: integer(query.cashierId, "cashierId") } : {}),
+    ...(query.from || query.to ? { openedAt: dateRange(query) } : {}),
+    ...(query.status === "OPEN" ? { closedAt: null } : query.status === "CLOSED" ? { closedAt: { not: null } } : {}),
+  };
+
+  const total = await prisma.pOSSession.count({ where });
+  const rawSessions = await prisma.pOSSession.findMany({
+    where,
+    skip: p.skip,
+    take: p.take,
+    orderBy: { openedAt: "desc" },
+    include: {
+      register: { include: { store: true } },
+      user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+      employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
+      sales: {
+        where: { status: "COMPLETED" },
+        select: {
+          id: true,
+          grandTotal: true,
+          payments: { select: { method: true, amount: true } },
+        },
+      },
+      returns: { select: { id: true, refundMethod: true, refundAmount: true } },
+      cashMovements: { select: { id: true, direction: true, amount: true } },
+    },
+  });
+
+  const items = rawSessions.map((sess) => {
+    let totalSales = new D(0);
+    let cashSales = new D(0);
+    let cardSales = new D(0);
+    let upiSales = new D(0);
+    let otherSales = new D(0);
+
+    for (const sale of sess.sales) {
+      totalSales = totalSales.plus(sale.grandTotal);
+      for (const p of sale.payments) {
+        const m = (p.method || "").toUpperCase();
+        if (m === "CASH") cashSales = cashSales.plus(p.amount);
+        else if (m === "CARD") cardSales = cardSales.plus(p.amount);
+        else if (m === "UPI") upiSales = upiSales.plus(p.amount);
+        else otherSales = otherSales.plus(p.amount);
+      }
+    }
+
+    let cashRefunds = new D(0);
+    let totalRefunds = new D(0);
+    for (const ret of sess.returns) {
+      totalRefunds = totalRefunds.plus(ret.refundAmount);
+      if ((ret.refundMethod || "").toUpperCase() === "CASH") {
+        cashRefunds = cashRefunds.plus(ret.refundAmount);
+      }
+    }
+
+    let cashIn = new D(0);
+    let cashOut = new D(0);
+    for (const cm of sess.cashMovements) {
+      if (cm.direction === "IN") cashIn = cashIn.plus(cm.amount);
+      else cashOut = cashOut.plus(cm.amount);
+    }
+
+    const openingCash = sess.openingCash ?? new D(0);
+    const expectedCash = sess.expectedCash ??
+      openingCash.plus(cashSales).minus(cashRefunds).plus(cashIn).minus(cashOut);
+
+    const actualCash = sess.actualCash;
+    const variance = sess.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
+
+    const cashierName =
+      sess.employee?.firstName
+        ? `${sess.employee.firstName} ${sess.employee.lastName || ""}`.trim()
+        : sess.user?.profile?.fullName || sess.user?.email || `User #${sess.userId}`;
+
+    return {
+      id: sess.id,
+      registerId: sess.registerId,
+      registerName: sess.register.name,
+      storeId: sess.register.storeId,
+      storeName: sess.register.store.name,
+      userId: sess.userId,
+      employeeId: sess.employeeId,
+      cashierName,
+      cashierEmail: sess.user?.email,
+      cashierCode: sess.employee?.employeeCode,
+      openedAt: sess.openedAt,
+      closedAt: sess.closedAt,
+      status: sess.closedAt ? "Closed" : "Open",
+      openingCash: Number(openingCash.toString()),
+      expectedCash: Number(expectedCash.toString()),
+      actualCash: actualCash != null ? Number(actualCash.toString()) : null,
+      variance: variance != null ? Number(variance.toString()) : null,
+      closeReason: sess.closeReason,
+      openingNotes: sess.openingNotes,
+      totalBills: sess.sales.length,
+      totalSales: Number(totalSales.toString()),
+      cashSales: Number(cashSales.toString()),
+      cardSales: Number(cardSales.toString()),
+      upiSales: Number(upiSales.toString()),
+      otherSales: Number(otherSales.toString()),
+      totalRefunds: Number(totalRefunds.toString()),
+      cashRefunds: Number(cashRefunds.toString()),
+      cashIn: Number(cashIn.toString()),
+      cashOut: Number(cashOut.toString()),
+    };
+  });
+
+  return {
+    items,
+    total,
+    page: p.page,
+    pageSize: p.take,
+    totalPages: Math.ceil(total / p.take) || 1,
+  };
+}
+
+export async function getSessionSales(actor: Actor, sessionId: string, query: Record<string, any>) {
+  permission(actor, "read");
+  const session = await prisma.pOSSession.findUnique({
+    where: { id: sessionId },
+    include: { register: true },
+  });
+  ensure(session, "Session not found", 404);
+  scope(actor, session.register.storeId);
+  const p = page(query);
+
+  const where: Prisma.POSSaleWhereInput = {
+    sessionId,
+    ...(query.status ? { status: text(query.status, "status") } : {}),
+    ...(query.search ? { invoiceNo: { contains: text(query.search, "search"), mode: "insensitive" } } : {}),
+  };
+
+  const total = await prisma.pOSSale.count({ where });
+  const items = await prisma.pOSSale.findMany({
+    where,
+    skip: p.skip,
+    take: p.take,
+    orderBy: { createdAt: "desc" },
+    include: {
+      items: {
+        include: {
+          salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
+        },
+      },
+      payments: true,
+      store: { select: { id: true, name: true, code: true } },
+      cashier: { select: { id: true, email: true, profile: { select: { fullName: true } } } },
+      salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
+    },
+  });
+
+  return {
+    items,
+    total,
+    page: p.page,
+    pageSize: p.take,
+    totalPages: Math.ceil(total / p.take) || 1,
+  };
 }
 export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
   permission(actor, "sell");
