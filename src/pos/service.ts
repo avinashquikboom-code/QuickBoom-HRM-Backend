@@ -1226,7 +1226,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
         }
         throw new POSError(409, "Idempotency key used for another request");
       }
-      const billingDraft = await checkoutPOSWork(tx, actor, storeId, billingDraftId, billingDraftRevision);
+      const billingDraft = await checkoutPOSWork(tx, actor, storeId, billingDraftId, billingDraftRevision, !!existingTx);
       const sessionId = await ensureOrOpenSession(tx, actor, storeId, providedSessionId, providedRegisterId);
       ensure(!billingDraft?.sessionId || billingDraft.sessionId === sessionId, "The draft belongs to another register session. Save it with your current open session first.", 409);
       const itemSalespeople = items

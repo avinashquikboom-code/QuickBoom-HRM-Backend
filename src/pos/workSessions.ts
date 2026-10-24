@@ -88,7 +88,10 @@ export async function savePOSWork(actor: Actor, raw: unknown, startBreak = false
       }
     }
     let draft = await current(tx, actor);
-    if (draft?.lastWriteKey === requestKey) return response(draft);
+    if (draft?.lastWriteKey === requestKey) {
+      ensure(!startBreak, "Request key already used for a draft save. Use a new key to start a break.", 409);
+      return response(draft);
+    }
     ensure(!draft || draft.status !== "ON_BREAK", "You are on break. Resume work before changing the bill.", 409);
     if (draft) {
       ensure(b.draftId === draft.id && revision === draft.revision, "This bill changed in another tab. Reload to restore the latest saved draft.", 409);
@@ -106,7 +109,7 @@ export async function savePOSWork(actor: Actor, raw: unknown, startBreak = false
       : await tx.pOSBillingDraft.create({data: {...data, storeId, userId: actor.userId, employeeId: actor.employeeId}});
     if (startBreak) {
       const pause = await tx.pOSWorkBreak.create({data: {draftId: saved.id, storeId, sessionId: resolvedSessionId, requestKey}});
-      await audit(tx, actor, "POS_BREAK_STARTED", saved.id, {breakId: pause.id, storeId, sessionId});
+      await audit(tx, actor, "POS_BREAK_STARTED", saved.id, {breakId: pause.id, storeId, sessionId: resolvedSessionId});
     }
     return response(await current(tx, actor));
   });
@@ -133,11 +136,14 @@ export async function resumePOSWork(actor: Actor, raw: unknown) {
   });
 }
 // Called inside the sale transaction, under the same per-user lock as break/save.
-export async function checkoutPOSWork(tx: Tx, actor: Actor, storeId: number, draftId?: string, revision?: number) {
+export async function checkoutPOSWork(tx: Tx, actor: Actor, storeId: number, draftId?: string, revision?: number, independentCheckout = false) {
   await lockPOSWork(tx, actor.userId);
   const draft = await current(tx, actor);
   ensure(draft?.status !== "ON_BREAK", "You are on break. Resume work before completing a sale.", 409);
   if (!draft) {ensure(!draftId, "Draft no longer active. Reload this bill.", 409);return null;}
+  // Exchanges compose their own replacement sale transaction. They must obey
+  // breaks, but must not consume an unrelated working terminal draft.
+  if (independentCheckout && !draftId) return null;
   ensure(draft.id === draftId && draft.storeId === storeId && draft.revision === revision, "Reload the latest saved draft before completing this bill.", 409);
   return draft;
 }
