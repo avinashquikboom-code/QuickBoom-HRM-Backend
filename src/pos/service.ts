@@ -367,7 +367,7 @@ async function openSession(
     ensure(s.register.storeId === storeId, "Session belongs to another store");
   if (owner)
     ensure(
-      s.userId === actor.userId,
+      s.userId === actor.userId || (actor.employeeId != null && s.employeeId === actor.employeeId),
       "Session belongs to another cashier",
       403,
     );
@@ -378,17 +378,37 @@ async function ensureOrOpenSession(
   actor: Actor,
   storeId: number,
   preferredSessionId?: string,
+  preferredRegisterId?: string,
 ): Promise<string> {
   await activeStore(tx, storeId);
   await tx.$queryRaw`SELECT id FROM "Store" WHERE id = ${storeId} FOR UPDATE`;
+
+  // 1. If preferredSessionId was provided, verify it belongs to storeId and actor, and is active
   if (preferredSessionId) {
-    const session = await openSession(tx, actor, preferredSessionId, storeId, true);
-    return session.id;
+    const session = await tx.pOSSession.findUnique({
+      where: { id: preferredSessionId },
+      include: { register: true },
+    });
+    if (session && !session.closedAt && session.register.active && session.register.storeId === storeId) {
+      const isOwner =
+        session.userId === actor.userId ||
+        (actor.employeeId != null && session.employeeId === actor.employeeId);
+      if (isOwner) {
+        await tx.$queryRaw`SELECT id FROM "POSSession" WHERE id = ${session.id}::uuid FOR UPDATE`;
+        return session.id;
+      }
+    }
+  }
+
+  // 2. Check if the current cashier already has a valid open session in this store
+  const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
+  if (actor.employeeId != null) {
+    cashierConditions.push({ employeeId: actor.employeeId });
   }
 
   const existing = await tx.pOSSession.findFirst({
     where: {
-      userId: actor.userId,
+      OR: cashierConditions,
       closedAt: null,
       register: { storeId, active: true },
     },
@@ -401,14 +421,29 @@ async function ensureOrOpenSession(
     return existing.id;
   }
 
-  let register = await tx.pOSRegister.findFirst({
-    where: { storeId, active: true, sessions: { none: { closedAt: null } } },
-    orderBy: { id: "asc" },
-  });
+  // 3. Current cashier doesn't have an open session. Find an available active register in this store
+  let register = null;
+  if (preferredRegisterId) {
+    register = await tx.pOSRegister.findFirst({
+      where: {
+        id: preferredRegisterId,
+        storeId,
+        active: true,
+        sessions: { none: { closedAt: null } },
+      },
+    });
+  }
 
   if (!register) {
-    const configured = await tx.pOSRegister.count({ where: { storeId } });
-    if (configured > 0) {
+    register = await tx.pOSRegister.findFirst({
+      where: { storeId, active: true, sessions: { none: { closedAt: null } } },
+      orderBy: { id: "asc" },
+    });
+  }
+
+  if (!register) {
+    const activeCount = await tx.pOSRegister.count({ where: { storeId, active: true } });
+    if (activeCount > 0) {
       // Store-password login has its own audit identity. An HRM cashier's open
       // register cannot be reused by that identity. Allocate one dedicated
       // terminal register rather than blocking billing or taking over the shift.
@@ -416,17 +451,31 @@ async function ensureOrOpenSession(
       const dedicated = actor.isPosStoreSession && actor.storeId === storeId
         ? await tx.pOSRegister.findFirst({ where: { storeId, name: terminalName } })
         : null;
-      const activeCount = await tx.pOSRegister.count({ where: { storeId, active: true } });
-      ensure(
-        actor.isPosStoreSession && actor.storeId === storeId && activeCount > 0 && !dedicated,
-        "No available register. Close the occupied cashier session or select an available active register.",
-        409,
-      );
-      register = await tx.pOSRegister.create({ data: { storeId, name: terminalName, active: true } });
+      if (actor.isPosStoreSession && actor.storeId === storeId && !dedicated) {
+        register = await tx.pOSRegister.create({ data: { storeId, name: terminalName, active: true } });
+        await audit(tx, actor, "REGISTER_CREATED", register.id);
+      } else {
+        throw new POSError(
+          409,
+          "No available register. Close the occupied cashier session or select an available active register.",
+        );
+      }
     } else {
-      register = await tx.pOSRegister.create({data: {storeId, name: "Main Register", active: true}});
+      register = await tx.pOSRegister.create({ data: { storeId, name: "Main Register", active: true } });
+      await audit(tx, actor, "REGISTER_CREATED", register.id);
     }
-    await audit(tx, actor, "REGISTER_CREATED", register.id);
+  }
+
+  await tx.$queryRaw`SELECT id FROM "POSRegister" WHERE id = ${register.id}::uuid FOR UPDATE`;
+
+  const occupiedCheck = await tx.pOSSession.findFirst({
+    where: { registerId: register.id, closedAt: null },
+  });
+  if (occupiedCheck) {
+    throw new POSError(
+      409,
+      "No available register. Close the occupied cashier session or select an available active register.",
+    );
   }
 
   const shiftAssignment = actor.employeeId
@@ -557,6 +606,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
   keys(b, [
     "storeId",
     "sessionId",
+    "registerId",
     "salespersonId",
     "customerName",
     "customerPhone",
@@ -568,6 +618,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
   ]);
   const storeId = integer(b.storeId, "storeId"),
     providedSessionId = optionalUuid(b.sessionId, "sessionId"),
+    providedRegisterId = optionalUuid(b.registerId, "registerId"),
     idempotencyKey = text(b.idempotencyKey, "idempotencyKey", 100);
   scope(actor, storeId);
   const items = pricingInput(actor, b.items),
@@ -640,7 +691,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
         }
         throw new POSError(409, "Idempotency key used for another request");
       }
-      const sessionId = await ensureOrOpenSession(tx, actor, storeId, providedSessionId);
+      const sessionId = await ensureOrOpenSession(tx, actor, storeId, providedSessionId, providedRegisterId);
       const itemSalespeople = items
         .map((i) => i.salespersonId)
         .filter((id): id is number => id !== undefined && id !== null);

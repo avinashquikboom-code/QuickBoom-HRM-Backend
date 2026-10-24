@@ -867,7 +867,13 @@ router.get(
     return prisma.pOSRegister.findMany({
       where: { storeId },
       include: {
-        sessions: { where: { closedAt: null } },
+        sessions: {
+          where: { closedAt: null },
+          include: {
+            user: { select: { id: true, email: true, role: true } },
+            employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
+          },
+        },
         store: { select: { name: true } },
       },
       take: 100,
