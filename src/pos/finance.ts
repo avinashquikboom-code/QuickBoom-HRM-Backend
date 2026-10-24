@@ -6,13 +6,12 @@ export const round = (n: Prisma.Decimal) =>
 export type DiscountType = "amount" | "percent";
 export function discountInput(value: unknown, type: unknown = "amount") {
   ensure(type === "amount" || type === "percent", "Invalid discount type");
-  const raw = value === "" || value === undefined ? "0" : String(value);
+  const raw = value === undefined ? "0" : typeof value === "string" ? value.trim() || "0" : String(value);
   ensure((typeof value === "string" || typeof value === "number" || value === undefined) &&
-    /^\d{1,10}(\.\d{1,4})?$/.test(raw), "Discount must be a nonnegative decimal");
+    /^(?:\d{1,10}(?:\.\d{0,20})?|\.\d{1,20})(?:e[+-]?\d{1,2})?$/i.test(raw), "Discount must be a nonnegative decimal");
   const amount = new D(raw);
   ensure(amount.isFinite() && amount.gte(0), "Discount cannot be negative");
   ensure(type !== "percent" || amount.lte(100), "Discount must be between 0% and 100%");
-  ensure(type !== "amount" || amount.decimalPlaces() <= 2, "Fixed discount must have at most two decimal places");
   return { value: amount, type: type as DiscountType };
 }
 export function lineTotals(price: Prisma.Decimal, quantity: number, discount: Prisma.Decimal,
@@ -23,7 +22,7 @@ export function lineTotals(price: Prisma.Decimal, quantity: number, discount: Pr
   ensure(discount.isFinite() && discount.gte(0) && discount.lte(type === "percent" ? 100 : price),
     type === "percent" ? "Discount must be between 0% and 100%" : "Discount exceeds unit price");
   const subtotal = round(price.mul(quantity));
-  const discountTotal = type === "percent" ? round(subtotal.mul(discount).div(100)) : discount.mul(quantity);
+  const discountTotal = type === "percent" ? round(subtotal.mul(discount).div(100)) : round(discount.mul(quantity));
   const taxable = subtotal.minus(discountTotal), taxTotal = round(taxable.mul(taxRate).div(100));
   return { subtotal, discountTotal, taxTotal, lineTotal: taxable.plus(taxTotal) };
 }
@@ -34,7 +33,7 @@ export function billTotals(lines: { price: Prisma.Decimal; quantity: number; dis
   const initial = lines.map(l => lineTotals(l.price, l.quantity, l.discount, l.taxRate, l.discountType));
   const eligible = initial.reduce((n, t, i) => lines[i].eligible === false ? n : n.plus(t.subtotal.minus(t.discountTotal)), new D(0));
   ensure(orderDiscount.gte(0) && orderDiscount.lte(orderDiscountType === "percent" ? 100 : eligible), "Order discount exceeds eligible taxable amount");
-  const orderDiscountTotal = orderDiscountType === "percent" ? round(eligible.mul(orderDiscount).div(100)) : orderDiscount;
+  const orderDiscountTotal = orderDiscountType === "percent" ? round(eligible.mul(orderDiscount).div(100)) : round(orderDiscount);
   let remaining = orderDiscountTotal, baseLeft = eligible;
   const snapshots = initial.map((t, i) => {
     const base = t.subtotal.minus(t.discountTotal);

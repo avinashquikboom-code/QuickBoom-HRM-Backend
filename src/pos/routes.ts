@@ -472,7 +472,7 @@ router.get(
             { code: "UPI", name: "UPI", enabled: true },
           ];
 
-    const salesperson = employee
+    const salesperson = employee && (!resolvedStoreId || employee.storeId === resolvedStoreId)
       ? {
           id: employee.id,
           name: `${employee.firstName} ${employee.lastName}`.trim(),
@@ -504,7 +504,7 @@ router.get(
           : [],
       employees: await prisma.employee.findMany({
         where: {
-          ...(storeId ? { storeId } : {}),
+          ...(resolvedStoreId ? { storeId: resolvedStoreId } : {}),
           status: { equals: "active", mode: "insensitive" },
         },
         select: {
@@ -521,6 +521,7 @@ router.get(
       salespeople: (
         await prisma.employee.findMany({
           where: {
+            ...(resolvedStoreId ? { storeId: resolvedStoreId } : {}),
             status: { equals: "active", mode: "insensitive" },
           },
           include: {
@@ -548,8 +549,10 @@ router.get(
   "/salespeople",
   route(async (r) => {
     permission(r.actor, "read");
+    const storeId = storeFilter(r.actor, r.query.storeId);
     const employees = await prisma.employee.findMany({
       where: {
+        ...(storeId ? { storeId } : {}),
         status: { equals: "active", mode: "insensitive" },
       },
       include: {

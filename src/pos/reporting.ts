@@ -19,6 +19,7 @@ function filters(actor: Actor, q: Record<string, any>) {
   const payment = q.paymentMode ?? "ALL", status = q.status ?? "ALL";
   ensure(["ALL", "CASH", "CARD", "UPI"].includes(payment), "Invalid payment filter");
   ensure(["ALL", "COMPLETED", "CANCELLED", "PARTIALLY_RETURNED", "RETURNED"].includes(status), "Invalid status filter");
+  ensure(q.search === undefined || typeof q.search === "string", "Invalid report search");
   const search = String(q.search ?? "").trim(); ensure(search.length <= 200, "Search is too long");
   const base = Prisma.sql`(${storeId ?? null}::int IS NULL OR s."storeId"=${storeId ?? null}::int)
     AND (${employee ?? null}::int IS NULL OR s."salespersonId"=${employee ?? null}::int OR EXISTS (SELECT 1 FROM "POSSaleItem" ei WHERE ei."saleId"=s.id AND ei."salespersonId"=${employee ?? null}::int))
@@ -50,7 +51,7 @@ export async function reportingOverview(actor: Actor, q: Record<string, any>) {
       accounting: "Sales, discounts and GST use original recognized invoices. Net collected subtracts ordinary refunds posted in the period. Cancelled invoices and their credits are excluded together." };
   }, { isolationLevel: "RepeatableRead" });
 }
-export async function reportingDetails(actor: Actor, q: Record<string, any>, db: Prisma.TransactionClient = prisma) {
+export async function reportingDetails(actor: Actor, q: Record<string, any>, db: Prisma.TransactionClient = prisma): Promise<any> {
   const f = filters(actor, q), kind = String(q.report ?? "sales"); ensure(kinds.includes(kind), "Unknown report");
   const direction = q.direction ?? "desc"; ensure(["asc","desc"].includes(direction), "Invalid sort direction");
   const sort = Prisma.raw(direction.toUpperCase());
@@ -60,20 +61,20 @@ export async function reportingDetails(actor: Actor, q: Record<string, any>, db:
   if (kind === "sessions") {
     // The existing service owns the physical cash ledger, including refunded cancellations.
     ensure(["ALL","OPEN","CLOSED"].includes(q.sessionStatus ?? "ALL"), "Invalid session status");
-    const result = await getSessionHistory(actor, { storeId: f.storeId, from: q.from, to: q.to, employeeId: f.employee, status: q.sessionStatus ?? "ALL", direction: q.direction, page: f.p.page, pageSize: f.p.take }, db);
+    const result = await getSessionHistory(actor, { storeId: f.storeId ?? "*", reportOverlap: true, from: q.from, to: q.to, employeeId: f.employee, status: q.sessionStatus ?? "ALL", direction: q.direction, page: f.p.page, pageSize: f.p.take }, db);
     return { ...result, definition: "Physical cash = opening + cash receipts - cash refunds + cash in - cash out. Closed sessions retain their recorded reconciliation snapshot." };
   }
   if (kind === "sales") {
     const grouping = q.groupBy ?? "day";
     const groups: Record<string, Prisma.Sql> = { day: Prisma.sql`to_char(s."createdAt"+interval '5 hours 30 minutes','YYYY-MM-DD')`, week: Prisma.sql`to_char(date_trunc('week',s."createdAt"+interval '5 hours 30 minutes'),'YYYY-MM-DD')`, month: Prisma.sql`to_char(s."createdAt"+interval '5 hours 30 minutes','YYYY-MM')`, hour: Prisma.sql`to_char(s."createdAt"+interval '5 hours 30 minutes','YYYY-MM-DD HH24:00')` };
-    ensure(groups[grouping], "Invalid sales grouping");
+    ensure(Object.prototype.hasOwnProperty.call(groups, grouping), "Invalid sales grouping");
     query = Prisma.sql`SELECT ${groups[grouping]} AS period,${saleTotals},COUNT(*) OVER()::int AS "totalGroups" FROM "POSSale" s WHERE ${completed} GROUP BY period ORDER BY period ${sort} ${limit}`;
   } else if (kind === "discounts" && q.groupBy && q.groupBy !== "invoice") {
     const dimensions: Record<string, Prisma.Sql> = {
       day: Prisma.sql`to_char(s."createdAt"+interval '5 hours 30 minutes','YYYY-MM-DD')`,
       store: Prisma.sql`st.name`, employee: Prisma.sql`u.email`,
     };
-    ensure(dimensions[q.groupBy], "Invalid discount grouping");
+    ensure(Object.prototype.hasOwnProperty.call(dimensions, q.groupBy), "Invalid discount grouping");
     query = Prisma.sql`WITH facts AS (SELECT ${dimensions[q.groupBy]} AS label,s."discountTotal" AS total,
       COALESCE((a.metadata->>'orderDiscountTotal')::numeric,(a.metadata->>'orderDiscount')::numeric) AS bill,
       COALESCE((SELECT SUM((j->>'amount')::numeric) FROM jsonb_array_elements(a.metadata->'itemDiscounts') j WHERE j->>'type'='percent'),0)
@@ -102,7 +103,7 @@ export async function reportingDetails(actor: Actor, q: Record<string, any>, db:
       ORDER BY s."createdAt" ${sort},s.id ${limit}`;
   } else if (kind === "payments" && q.groupBy && q.groupBy !== "invoice") {
     const dimensions: Record<string, Prisma.Sql> = { day: Prisma.sql`to_char(s."createdAt"+interval '5 hours 30 minutes','YYYY-MM-DD')`, store: Prisma.sql`st.name` };
-    ensure(dimensions[q.groupBy], "Invalid payment grouping");
+    ensure(Object.prototype.hasOwnProperty.call(dimensions, q.groupBy), "Invalid payment grouping");
     query = Prisma.sql`SELECT ${dimensions[q.groupBy]} AS label,p.method,COUNT(DISTINCT s.id)::int AS bills,SUM(p.amount) AS amount,COUNT(*) OVER()::int AS "totalGroups" FROM "POSSalePayment" p JOIN "POSSale" s ON s.id=p."saleId" JOIN "Store" st ON st.id=s."storeId" WHERE ${completed} AND (${f.payment}='ALL' OR p.method=${f.payment}) GROUP BY label,p.method ORDER BY label ${sort},p.method ${limit}`;
   } else if (kind === "payments") {
     query = Prisma.sql`SELECT s.id,s."invoiceNo",s."createdAt",st.name AS store,p.method,p.amount,p.reference,
@@ -137,7 +138,8 @@ export async function reportingDetails(actor: Actor, q: Record<string, any>, db:
     row.itemDiscount = bill == null ? null : new D(row.discountTotal).minus(bill).toFixed(2);
     row.billDiscount = bill;
   }
-  return { items, total: items[0]?.totalGroups ?? 0, page: f.p.page, pageSize: f.p.take,
+  const total = items[0]?.totalGroups ?? (f.p.skip > 0 ? (await reportingDetails(actor, { ...q, page: 1, pageSize: 1 }, db)).total : 0);
+  return { items, total, page: f.p.page, pageSize: f.p.take,
     definition: kind === "tax" ? "Stored GST only. CGST/SGST/IGST were not stored separately; no split is inferred." : kind === "discounts" ? "Item/bill discount types are available on newly recorded invoices. Missing historical metadata is shown as unavailable." : kind === "payments" ? "Amounts are saved payment receipts. Tendered amount/change are unavailable where not recorded; split-invoice tender totals repeat for context and must not be summed per payment row." : "Original recognized invoice values. Ordinary refunds are shown separately on their posting dates." };
 }
 export async function exportReport(actor: Actor, q: Record<string, any>, res: Response) {
@@ -145,6 +147,7 @@ export async function exportReport(actor: Actor, q: Record<string, any>, res: Re
   return prisma.$transaction(async tx => {
   const first = await reportingDetails(actor, { ...q, page: 1, pageSize: 100 }, tx);
   ensure(first.items.length, "No report rows match the filters",404);
+  ensure(first.total <= 1000000, "Report exceeds one million rows; narrow the date range",413);
   const columns = Object.keys(first.items[0]).filter(k=> !["id","storeId","totalGroups","sessionId","registerId","userId","employeeId","itemDiscountTypes"].includes(k));
   res.setHeader("Content-Type", q.format === "csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition",`attachment; filename="HopKid-${q.report}-report.${q.format}"`);res.setHeader("Cache-Control","private, no-store");res.setHeader("Access-Control-Expose-Headers","Content-Disposition");

@@ -971,14 +971,19 @@ export async function getCurrentCashierSession(actor: Actor, storeIdParam: unkno
 
 export async function getSessionHistory(actor: Actor, query: Record<string, any>, db: Prisma.TransactionClient = prisma) {
   permission(actor, "read");
-  const storeId = storeFilter(actor, query.storeId);
+  const allStores = query.storeId === "*" && !actor.isPosStoreSession &&
+    (actor.admin || actor.permissions["pos.allStores"] === true || actor.permissions["pos.manageStores"] === true);
+  ensure(query.storeId !== "*" || allStores, "All-store access denied", 403);
+  const storeId = allStores ? undefined : storeFilter(actor, query.storeId);
   const p = page(query);
 
   const where: Prisma.POSSessionWhereInput = {
     ...(storeId ? { register: { storeId } } : {}),
     ...(query.registerId ? { registerId: optionalUuid(query.registerId, "registerId") } : {}),
     ...(query.cashierId ? { userId: integer(query.cashierId, "cashierId") } : {}),
-    ...(query.from || query.to ? { OR: [{ openedAt: dateRange(query) }, { closedAt: dateRange(query) }] } : {}),
+    ...(query.from || query.to ? query.reportOverlap === true
+      ? { openedAt: { lt: dateRange(query).lt }, OR: [{ closedAt: null }, { closedAt: { gte: dateRange(query).gte } }] }
+      : { openedAt: dateRange(query) } : {}),
     ...(query.employeeId ? { AND: [{ OR: [{ employeeId: integer(Number(query.employeeId), "employeeId") },
       { sales: { some: { OR: [{ salespersonId: Number(query.employeeId) }, { items: { some: { salespersonId: Number(query.employeeId) } } }] } } }] }] } : {}),
     ...(query.status === "OPEN" ? { closedAt: null } : query.status === "CLOSED" ? { closedAt: { not: null } } : {}),
@@ -1191,14 +1196,18 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
   const customerPhone = optionalText(b.customerPhone, "customerPhone", 30);
   const requestHash = hash({
     storeId,
-    items,
+    items: items.map((item, index) => {
+      if (b.items[index]?.discountType !== undefined || b.items[index]?.discountValue !== undefined) return item;
+      const { discountType, ...legacy } = item;
+      return legacy;
+    }),
     payments,
     salespersonId,
     customerName,
     customerPhone,
     customerId,
     orderDiscount,
-    orderDiscountType: orderDiscountSpec.type,
+    ...(orderDiscountSpec.type === "percent" ? { orderDiscountType: "percent" } : {}),
   });
 
   const saleInclude = {
@@ -1251,12 +1260,13 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
         const activeEmp = await tx.employee.findFirst({
           where: {
             id: spId,
+            storeId: storeId,
             status: { equals: "active", mode: "insensitive" },
           },
           include: { department: true, user: { select: { role: true, isActive: true } } },
         });
-        ensure(activeEmp, "Select an active employee.");
-        ensure(activeEmp.user?.isActive !== false, "Select an active employee.");
+        ensure(activeEmp, `Salesperson #${spId} does not belong to this store or is inactive.`, 400);
+        ensure(activeEmp.user?.isActive !== false, `Salesperson #${spId} is inactive.`, 400);
       }
       for (const payment of payments) {
         const configured = await tx.pOSPaymentMethod.findUnique({
@@ -1781,7 +1791,7 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
       ]);
       const typed = v.discountType !== undefined || v.discountValue !== undefined;
       ensure(!typed || v.discountPerUnit === undefined, "Specify typed discount or discountPerUnit, not both");
-      const spec = discountInput(typed ? v.discountValue : v.discountPerUnit ?? "0", typed ? v.discountType : "amount");
+      const spec = typed ? discountInput(v.discountValue, v.discountType) : { value: money(v.discountPerUnit ?? "0"), type: "amount" as const };
       const discount = spec.value, discountType = spec.type;
       if (discount.gt(0)) permission(actor, "discount");
       const isManual =
@@ -1908,7 +1918,7 @@ async function priceItems(
     ({ item, price, taxRate, catalog }, index) => {
       const line = bill.snapshots[index];
       const lineDiscount = line.discountTotal, lineTax = line.taxTotal, total = line.lineTotal;
-      const perUnit = item.discountType === "percent" ? round(price.mul(item.discount).div(100)) : item.discount;
+      const perUnit = item.discountType === "percent" ? round(price.mul(item.discount).div(100)) : round(item.discount);
       if (catalog) {
         return {
           key: item.key,

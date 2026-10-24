@@ -329,7 +329,7 @@ async function main() {
         payments: [{ method: "CASH", amount: "100" }],
         idempotencyKey: randomUUID(),
       }),
-      /salesperson/,
+      /salesperson|active employee/,
     );
   });
 
