@@ -1,3 +1,4 @@
+import { previewBillExport, downloadBillExport } from "./billExports";
 import { Router, Request, Response, NextFunction } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
@@ -122,6 +123,11 @@ const route =
       next(e);
     }
   };
+router.post("/bill-exports/preview", route(r => previewBillExport(r.actor, r.body)));
+router.post("/bill-exports/download", async (req: Request, res: Response, next: NextFunction) => {
+  try { await downloadBillExport((req as POSRequest).actor, req.body, res); }
+  catch (error) { if (res.headersSent) res.destroy(error instanceof Error ? error : undefined); else next(error); }
+});
 const id = (r: Request) => uuid(r.params.id);
 router.get("/work-state", route(r => getPOSWork(r.actor)));
 router.put("/work-state", route(r => savePOSWork(r.actor, r.body)));
@@ -1105,7 +1111,6 @@ router.delete(
     service.deleteSale(r.actor, id(r), {
       reason:
         typeof r.query.reason === "string" ? r.query.reason : r.body?.reason,
-      permanent: r.query.permanent === "true" || r.body?.permanent === true,
     }),
   ),
 );

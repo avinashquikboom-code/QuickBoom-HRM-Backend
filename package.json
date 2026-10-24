@@ -23,7 +23,8 @@
     "test:pos:scan-salesperson": "ts-node --transpile-only scripts/test_pos_scan_salesperson.ts",
     "test:pos:billing-full": "ts-node --transpile-only scripts/test_pos_billing_full.ts",
     "test:pos:catalog-manual": "ts-node --transpile-only scripts/test_pos_catalog_and_manual.ts",
-    "test:pos:cancelled-sales": "ts-node --transpile-only scripts/test_pos_cancelled_sales.ts"
+    "test:pos:cancelled-sales": "ts-node --transpile-only scripts/test_pos_cancelled_sales.ts",
+    "test:pos:bill-exports": "ts-node --transpile-only scripts/test_pos_bill_exports.ts"
   },
   "keywords": [],
   "author": "",
@@ -46,6 +47,7 @@
     "firebase": "^12.14.0",
     "firebase-admin": "^13.10.0",
     "glob": "^13.0.6",
+    "jsbarcode": "^3.12.3",
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.6.0",
     "pdfmake": "^0.2.12",

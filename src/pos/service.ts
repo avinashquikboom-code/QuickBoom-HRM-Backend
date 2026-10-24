@@ -2053,35 +2053,45 @@ export async function cancelSale(actor: Actor, saleId: string, raw: unknown) {
       );
       return previous;
     }
-    ensure(
-      sale.items.every((i) => i.returnedQuantity === 0),
-      "Use item returns for partially returned invoices",
-    );
-    const result = await returnSale(
-      actor,
-      saleId,
-      {
-        ...b,
-        items: sale.items.map((i) => ({
-          saleItemId: i.id,
-          quantity: i.quantity,
-          resellable: true,
-        })),
-      },
-      tx,
-    );
-    await tx.pOSSale.update({
-      where: { id: saleId },
-      data: { status: "CANCELLED" },
-    });
-    await audit(tx, actor, "SALE_CANCELLED", saleId, {
-      returnId: result.id,
-      invoiceNo: sale.invoiceNo,
-      grandTotal: sale.grandTotal,
-      cancelledAt: new Date().toISOString(),
-      reason: b.reason,
-    });
-    return result;
+    if (b.sessionId && b.refundMethod) {
+      ensure(
+        sale.items.every((i) => i.returnedQuantity === 0),
+        "Use item returns for partially returned invoices",
+      );
+      const result = await returnSale(
+        actor,
+        saleId,
+        {
+          ...b,
+          items: sale.items.map((i) => ({
+            saleItemId: i.id,
+            quantity: i.quantity,
+            resellable: true,
+          })),
+        },
+        tx,
+      );
+      await tx.pOSSale.update({
+        where: { id: saleId },
+        data: { status: "CANCELLED" },
+      });
+      await audit(tx, actor, "SALE_CANCELLED", saleId, {
+        returnId: result.id,
+        invoiceNo: sale.invoiceNo,
+        grandTotal: sale.grandTotal,
+        cancelledAt: new Date().toISOString(),
+        reason: b.reason,
+      });
+      return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED", returnId: result.id };
+    } else {
+      await voidSale(
+        tx,
+        actor,
+        saleId,
+        (typeof b.reason === "string" ? b.reason : "") || "Manual bill cancellation",
+      );
+      return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
+    }
   });
 }
 
@@ -2277,81 +2287,138 @@ async function voidSale(tx: Tx, actor: Actor, saleId: string, reason: string) {
   });
 }
 
+/**
+ * Internal helper to permanently delete an eligible bill and dependent records.
+ * Enforces financial & accounting safety checks and safe foreign key dependent removal.
+ */
+async function deleteSaleInternal(tx: Tx, actor: Actor, saleId: string, reason: string) {
+  await tx.$queryRaw`SELECT id FROM "POSSale" WHERE id = ${saleId}::uuid FOR UPDATE`;
+  const sale = await tx.pOSSale.findUnique({
+    where: { id: saleId },
+    include: {
+      items: true,
+      payments: true,
+      returns: { include: { items: true } },
+    },
+  });
+  ensure(sale, "Invoice not found or already deleted", 404);
+  scope(actor, sale.storeId);
+  if (actor.storeId && actor.storeId !== sale.storeId && !actor.permissions["pos.allStores"]) {
+    ensure(false, "Store access denied: bill belongs to an unauthorized store", 403);
+  }
+
+  // Financial and accounting safety checks
+  const hasReconciledPayment = sale.payments.some(
+    (p) => p.reconciliationStatus === "RECONCILED",
+  );
+  ensure(
+    !hasReconciledPayment,
+    `Cannot permanently delete bill ${sale.invoiceNo}: payments have already been reconciled in accounting audits. Use 'Cancel Bill' instead.`,
+    400,
+  );
+
+  const hasReconciledReturn = sale.returns.some(
+    (r) => r.reconciliationStatus === "RECONCILED",
+  );
+  ensure(
+    !hasReconciledReturn,
+    `Cannot permanently delete bill ${sale.invoiceNo}: associated return records are already reconciled. Use 'Cancel Bill' instead.`,
+    400,
+  );
+
+  const saleItemIds = sale.items.map((i) => i.id);
+  if (saleItemIds.length > 0) {
+    const commLines = await tx.pOSCommissionLine.findMany({
+      where: { saleItemId: { in: saleItemIds } },
+    });
+    if (commLines.length > 0) {
+      const transactionIds = Array.from(new Set(commLines.map((l) => l.transactionId)));
+      const commTransactions = await tx.commissionTransaction.findMany({
+        where: { id: { in: transactionIds } },
+      });
+      const hasFinalizedCommission = commTransactions.some(
+        (ct) => ct.status === "PAID" || ct.status === "APPROVED",
+      );
+      ensure(
+        !hasFinalizedCommission,
+        `Cannot permanently delete bill ${sale.invoiceNo}: employee commissions have already been approved or paid in payroll. Use 'Cancel Bill' instead to record adjustment entries.`,
+        400,
+      );
+
+      const pendingTransIds = commTransactions
+        .filter((ct) => ct.status === "PENDING" || ct.status === "REJECTED")
+        .map((ct) => ct.id);
+      if (pendingTransIds.length > 0) {
+        await tx.commissionHistory.deleteMany({
+          where: { transactionId: { in: pendingTransIds } },
+        });
+        await tx.commissionTransaction.deleteMany({
+          where: { id: { in: pendingTransIds } },
+        });
+      }
+      await tx.pOSCommissionLine.deleteMany({
+        where: { saleItemId: { in: saleItemIds } },
+      });
+    }
+  }
+
+  // Remove linked billing drafts
+  await tx.pOSBillingDraft.deleteMany({ where: { saleId } });
+
+  const returnIds = sale.returns.map((r) => r.id);
+  if (returnIds.length > 0 || saleItemIds.length > 0) {
+    await tx.pOSReturnItem.deleteMany({
+      where: {
+        OR: [
+          ...(returnIds.length > 0 ? [{ returnId: { in: returnIds } }] : []),
+          ...(saleItemIds.length > 0 ? [{ saleItemId: { in: saleItemIds } }] : []),
+        ],
+      },
+    });
+  }
+  if (returnIds.length > 0) {
+    await tx.pOSReturn.deleteMany({ where: { id: { in: returnIds } } });
+  }
+
+  await tx.pOSSalePayment.deleteMany({ where: { saleId } });
+  await tx.pOSSaleItem.deleteMany({ where: { saleId } });
+  await tx.pOSSale.delete({ where: { id: saleId } });
+
+  // Restore inventory if sale was COMPLETED (stock had been deducted)
+  if (sale.status === "COMPLETED") {
+    for (const item of sale.items) {
+      if (item.variantId) {
+        await tx.pOSInventoryBalance.updateMany({
+          where: { storeId: sale.storeId, variantId: item.variantId },
+          data: { quantity: { increment: item.quantity } },
+        });
+      }
+    }
+  }
+
+  await audit(tx, actor, "SALE_PERMANENTLY_DELETED", saleId, {
+    invoiceNo: sale.invoiceNo,
+    storeId: sale.storeId,
+    reason,
+    grandTotal: sale.grandTotal,
+    previousStatus: sale.status,
+  });
+
+  return { id: saleId, invoiceNo: sale.invoiceNo, status: "DELETED", deleted: true };
+}
+
 export async function deleteSale(
   actor: Actor,
   saleId: string,
-  options: { reason?: string; permanent?: boolean } = {},
+  options: { reason?: string } = {},
 ) {
   ensure(
-    actor.admin || actor.permissions["pos.refund"] === true,
-    "Permission denied: pos.refund or admin required",
+    actor.admin,
+    "Permission denied: Administrator required to permanently delete bills",
     403,
   );
-  if (options.permanent) {
-    ensure(actor.admin, "Administrator required for permanent deletion", 403);
-  }
   return transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "POSSale" WHERE id = ${saleId}::uuid FOR UPDATE`;
-    const sale = await tx.pOSSale.findUnique({
-      where: { id: saleId },
-      include: { items: true },
-    });
-    ensure(sale, "Invoice not found", 404);
-    scope(actor, sale.storeId);
-
-    if (options.permanent) {
-      const saleItemIds = sale.items.map((i) => i.id);
-      const returns = await tx.pOSReturn.findMany({
-        where: { saleId },
-        select: { id: true },
-      });
-      const returnIds = returns.map((r) => r.id);
-      if (returnIds.length > 0 || saleItemIds.length > 0) {
-        await tx.pOSReturnItem.deleteMany({
-          where: {
-            OR: [
-              ...(returnIds.length > 0 ? [{ returnId: { in: returnIds } }] : []),
-              ...(saleItemIds.length > 0 ? [{ saleItemId: { in: saleItemIds } }] : []),
-            ],
-          },
-        });
-      }
-      if (returnIds.length > 0) {
-        await tx.pOSReturn.deleteMany({ where: { id: { in: returnIds } } });
-      }
-      if (saleItemIds.length > 0) {
-        await tx.pOSCommissionLine.deleteMany({ where: { saleItemId: { in: saleItemIds } } });
-      }
-      await tx.pOSSalePayment.deleteMany({ where: { saleId } });
-      await tx.pOSSaleItem.deleteMany({ where: { saleId } });
-      await tx.pOSSale.delete({ where: { id: saleId } });
-
-      if (sale.status === "COMPLETED") {
-        for (const item of sale.items) {
-          if (item.variantId) {
-            await tx.pOSInventoryBalance.updateMany({
-              where: { storeId: sale.storeId, variantId: item.variantId },
-              data: { quantity: { increment: item.quantity } },
-            });
-          }
-        }
-      }
-
-      await audit(tx, actor, "SALE_DELETED", saleId, {
-        invoiceNo: sale.invoiceNo,
-        storeId: sale.storeId,
-        reason: options.reason || "Manual bill deletion",
-        grandTotal: sale.grandTotal,
-      });
-
-      return { id: saleId, invoiceNo: sale.invoiceNo, status: "DELETED" };
-    } else {
-      if (sale.status === "CANCELLED") {
-        return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
-      }
-      await voidSale(tx, actor, saleId, options.reason || "Manual bill cancellation");
-      return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
-    }
+    return deleteSaleInternal(tx, actor, saleId, options.reason || "Manual bill deletion");
   });
 }
 
@@ -2382,62 +2449,17 @@ export async function bulkCancelSales(actor: Actor, raw: unknown) {
     const saleId = uuid(rawId);
     try {
       const res = await transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "POSSale" WHERE id = ${saleId}::uuid FOR UPDATE`;
-        const sale = await tx.pOSSale.findUnique({
-          where: { id: saleId },
-          include: { items: true },
-        });
-        ensure(sale, "Invoice not found", 404);
-        scope(actor, sale.storeId);
-
         if (permanent) {
-          const saleItemIds = sale.items.map((i) => i.id);
-          const returns = await tx.pOSReturn.findMany({
-            where: { saleId },
-            select: { id: true },
-          });
-          const returnIds = returns.map((r) => r.id);
-
-          if (returnIds.length > 0 || saleItemIds.length > 0) {
-            await tx.pOSReturnItem.deleteMany({
-              where: {
-                OR: [
-                  ...(returnIds.length > 0 ? [{ returnId: { in: returnIds } }] : []),
-                  ...(saleItemIds.length > 0 ? [{ saleItemId: { in: saleItemIds } }] : []),
-                ],
-              },
-            });
-          }
-          if (returnIds.length > 0) {
-            await tx.pOSReturn.deleteMany({ where: { id: { in: returnIds } } });
-          }
-          if (saleItemIds.length > 0) {
-            await tx.pOSCommissionLine.deleteMany({ where: { saleItemId: { in: saleItemIds } } });
-          }
-          await tx.pOSSalePayment.deleteMany({ where: { saleId } });
-          await tx.pOSSaleItem.deleteMany({ where: { saleId } });
-          await tx.pOSSale.delete({ where: { id: saleId } });
-
-          if (sale.status === "COMPLETED") {
-            for (const item of sale.items) {
-              if (item.variantId) {
-                await tx.pOSInventoryBalance.updateMany({
-                  where: { storeId: sale.storeId, variantId: item.variantId },
-                  data: { quantity: { increment: item.quantity } },
-                });
-              }
-            }
-          }
-
-          await audit(tx, actor, "SALE_DELETED", saleId, {
-            invoiceNo: sale.invoiceNo,
-            storeId: sale.storeId,
-            reason,
-            grandTotal: sale.grandTotal,
-          });
-
-          return { invoiceNo: sale.invoiceNo };
+          const deleted = await deleteSaleInternal(tx, actor, saleId, reason);
+          return { invoiceNo: deleted.invoiceNo };
         } else {
+          await tx.$queryRaw`SELECT id FROM "POSSale" WHERE id = ${saleId}::uuid FOR UPDATE`;
+          const sale = await tx.pOSSale.findUnique({
+            where: { id: saleId },
+            include: { items: true },
+          });
+          ensure(sale, "Invoice not found", 404);
+          scope(actor, sale.storeId);
           if (sale.status === "CANCELLED") {
             return { invoiceNo: sale.invoiceNo };
           }
@@ -2450,7 +2472,7 @@ export async function bulkCancelSales(actor: Actor, raw: unknown) {
       results.push({
         id: saleId,
         success: false,
-        error: err instanceof Error ? err.message : "Cancellation failed",
+        error: err instanceof Error ? err.message : "Operation failed",
       });
     }
   }
