@@ -1,3 +1,4 @@
+import { reportingOverview, reportingDetails, exportReport } from "./reporting";
 import { previewBillExport, downloadBillExport } from "./billExports";
 import { Router, Request, Response, NextFunction } from "express";
 import { Prisma } from "@prisma/client";
@@ -157,6 +158,12 @@ router.post("/bill-exports/preview", route(r => previewBillExport(r.actor, r.bod
 router.post("/bill-exports/download", async (req: Request, res: Response, next: NextFunction) => {
   try { await downloadBillExport((req as POSRequest).actor, req.body, res); }
   catch (error) { if (res.headersSent) res.destroy(error instanceof Error ? error : undefined); else next(error); }
+});
+router.get("/reports/overview", route(r => reportingOverview(r.actor, r.query)));
+router.get("/reports/details", route(r => reportingDetails(r.actor, r.query)));
+router.get("/reports/export", async (req: Request, res: Response, next: NextFunction) => {
+  try { await exportReport((req as POSRequest).actor, req.query, res); }
+  catch(error) { if(res.headersSent) res.destroy(error instanceof Error ? error : undefined); else next(error); }
 });
 const id = (r: Request) => uuid(r.params.id);
 router.get("/work-state", route(r => getPOSWork(r.actor)));
@@ -1032,66 +1039,123 @@ router.post(
   "/data-management/clear",
   route((r) => service.dataManagementClear(r.actor, r.body)),
 );
+function buildPOSSaleWhere(actor: any, query: Record<string, any>): { where: Prisma.POSSaleWhereInput; explicitStatus?: string } {
+  const storeId = storeFilter(actor, query.storeId);
+  const explicitStatus = query.status ? text(query.status, "status").toUpperCase() : undefined;
+  const where: Prisma.POSSaleWhereInput = {
+    ...(storeId ? { storeId } : {}),
+    ...(query.sessionId ? { sessionId: String(query.sessionId) } : {}),
+    ...(query.paymentMode
+      ? {
+          payments: {
+            some: {
+              method: {
+                equals: String(query.paymentMode).trim().toUpperCase(),
+              },
+            },
+          },
+        }
+      : {}),
+    ...(query.from || query.to ? { createdAt: dateRange(query) } : {}),
+    ...(explicitStatus ? { status: explicitStatus } : {}),
+    ...(query.cashierId
+      ? { cashierId: integer(Number(query.cashierId), "cashierId") }
+      : {}),
+    ...(query.salespersonId
+      ? {
+          salespersonId: integer(
+            Number(query.salespersonId),
+            "salespersonId",
+          ),
+        }
+      : {}),
+    ...(query.search
+      ? {
+          OR: [
+            {
+              invoiceNo: {
+                contains: text(query.search, "search"),
+                mode: "insensitive",
+              },
+            },
+            {
+              customerName: {
+                contains: text(query.search, "search"),
+                mode: "insensitive",
+              },
+            },
+            {
+              customerPhone: {
+                contains: text(query.search, "search"),
+                mode: "insensitive",
+              },
+            },
+          ],
+        }
+      : {}),
+  };
+  return { where, explicitStatus };
+}
+
+async function getPOSSalesSummary(where: Prisma.POSSaleWhereInput, explicitStatus?: string) {
+  const isCancelledFilter = explicitStatus === "CANCELLED";
+  const isCompletedFilter = explicitStatus && ["COMPLETED", "PARTIALLY_RETURNED", "RETURNED"].includes(explicitStatus);
+  const isOtherStatusFilter = explicitStatus && !isCancelledFilter && !isCompletedFilter;
+
+  const completedWhere: Prisma.POSSaleWhereInput = isOtherStatusFilter || isCancelledFilter
+    ? { id: "00000000-0000-0000-0000-000000000000" }
+    : {
+        ...where,
+        status: isCompletedFilter
+          ? explicitStatus
+          : { in: ["COMPLETED", "PARTIALLY_RETURNED", "RETURNED"] },
+      };
+
+  const cancelledWhere: Prisma.POSSaleWhereInput = isOtherStatusFilter || isCompletedFilter
+    ? { id: "00000000-0000-0000-0000-000000000000" }
+    : {
+        ...where,
+        status: "CANCELLED",
+      };
+
+  const [totalBills, completedAgg, cancelledAgg, itemsAgg] = await Promise.all([
+    prisma.pOSSale.count({ where }),
+    prisma.pOSSale.aggregate({
+      _count: { id: true },
+      _sum: { grandTotal: true },
+      where: completedWhere,
+    }),
+    prisma.pOSSale.aggregate({
+      _count: { id: true },
+      _sum: { grandTotal: true },
+      where: cancelledWhere,
+    }),
+    prisma.pOSSaleItem.aggregate({
+      _sum: { quantity: true },
+      where: {
+        sale: completedWhere,
+      },
+    }),
+  ]);
+
+  return {
+    totalBills,
+    completedBills: completedAgg._count.id ?? 0,
+    totalSales: Number(completedAgg._sum.grandTotal ?? 0),
+    cancelledBills: cancelledAgg._count.id ?? 0,
+    cancelledAmount: Number(cancelledAgg._sum.grandTotal ?? 0),
+    totalItemsSold: itemsAgg._sum.quantity ?? 0,
+  };
+}
+
 router.get(
   "/sales",
   route(async (r) => {
     permission(r.actor, "read");
-    const storeId = storeFilter(r.actor, r.query.storeId),
-      p = page(r.query);
-    const where: Prisma.POSSaleWhereInput = {
-      ...(storeId ? { storeId } : {}),
-      ...(r.query.sessionId ? { sessionId: String(r.query.sessionId) } : {}),
-      ...(r.query.paymentMode
-        ? {
-            payments: {
-              some: {
-                method: {
-                  equals: String(r.query.paymentMode).trim().toUpperCase(),
-                },
-              },
-            },
-          }
-        : {}),
-      ...(r.query.from || r.query.to ? { createdAt: dateRange(r.query) } : {}),
-      ...(r.query.status ? { status: text(r.query.status, "status") } : {}),
-      ...(r.query.cashierId
-        ? { cashierId: integer(Number(r.query.cashierId), "cashierId") }
-        : {}),
-      ...(r.query.salespersonId
-        ? {
-            salespersonId: integer(
-              Number(r.query.salespersonId),
-              "salespersonId",
-            ),
-          }
-        : {}),
-      ...(r.query.search
-        ? {
-            OR: [
-              {
-                invoiceNo: {
-                  contains: text(r.query.search, "search"),
-                  mode: "insensitive",
-                },
-              },
-              {
-                customerName: {
-                  contains: text(r.query.search, "search"),
-                  mode: "insensitive",
-                },
-              },
-              {
-                customerPhone: {
-                  contains: text(r.query.search, "search"),
-                  mode: "insensitive",
-                },
-              },
-            ],
-          }
-        : {}),
-    };
-    return {
-      items: await prisma.pOSSale.findMany({
+    const { where, explicitStatus } = buildPOSSaleWhere(r.actor, r.query);
+    const p = page(r.query);
+    const [items, total, summary] = await Promise.all([
+      prisma.pOSSale.findMany({
         where,
         skip: p.skip,
         take: p.take,
@@ -1108,9 +1172,24 @@ router.get(
           },
         },
       }),
-      total: await prisma.pOSSale.count({ where }),
+      prisma.pOSSale.count({ where }),
+      getPOSSalesSummary(where, explicitStatus),
+    ]);
+    return {
+      items,
+      total,
       page: p.page,
+      summary,
     };
+  }),
+);
+
+router.get(
+  "/sales/summary",
+  route(async (r) => {
+    permission(r.actor, "read");
+    const { where, explicitStatus } = buildPOSSaleWhere(r.actor, r.query);
+    return getPOSSalesSummary(where, explicitStatus);
   }),
 );
 router.get(

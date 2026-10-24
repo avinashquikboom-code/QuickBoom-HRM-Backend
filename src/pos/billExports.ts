@@ -18,7 +18,7 @@ const formats = ["pdf", "csv", "xlsx"];
 export function exportFilter(actor: Actor, input: unknown) {
   permission(actor, "read");
   const b = object(input);
-  keys(b, ["storeId", "from", "to", "status", "paymentMode", "saleIds", "format", "detailed", "paper"]);
+  keys(b, ["storeId", "from", "to", "status", "paymentMode", "saleIds", "format", "detailed", "paper", "search", "employeeId"]);
   const storeId = integer(b.storeId, "storeId");
   scope(actor, storeId); // Deliberately require one explicit store, even for administrators.
   const status = b.status ?? "ALL", payment = b.paymentMode ?? "ALL", format = b.format ?? "pdf";
@@ -34,8 +34,16 @@ export function exportFilter(actor: Actor, input: unknown) {
     ids = [...new Set<string>(b.saleIds.map((id: unknown) => uuid(id)))];
   }
   ensure((b.from === undefined) === (b.to === undefined), "Specify both date boundaries");
+  const search = b.search ?? "";
+  ensure(typeof search === "string" && search.length <= 200, "Invalid invoice search");
+  const employeeId = b.employeeId ? integer(Number(b.employeeId), "employeeId") : undefined;
   const where: Prisma.POSSaleWhereInput = {
-    storeId, ...(ids ? { id: { in: ids } } : {}),
+    storeId, AND: [
+      ...(search ? [{ OR: [{ invoiceNo: { contains: search, mode: "insensitive" as const } },
+        { customerName: { contains: search, mode: "insensitive" as const } }, { customerPhone: { contains: search, mode: "insensitive" as const } },
+        { items: { some: { OR: [{ name: { contains: search, mode: "insensitive" as const } }, { sku: { contains: search, mode: "insensitive" as const } }, { barcode: { contains: search, mode: "insensitive" as const } }] } } }] }] : []),
+      ...(employeeId ? [{ OR: [{ salespersonId: employeeId }, { items: { some: { salespersonId: employeeId } } }] }] : []),
+    ], ...(ids ? { id: { in: ids } } : {}),
     ...(b.from !== undefined ? { createdAt: (() => {
       const start = dateRange({ from: b.from, to: b.from }).gte;
       const end = dateRange({ from: b.to, to: b.to }).lt;

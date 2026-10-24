@@ -420,12 +420,22 @@ export function storeFilter(actor: Actor, input: unknown): number | undefined {
     );
     return actor.storeId;
   }
+  if (input === "*" || input === "all") {
+    ensure(
+      actor.admin ||
+        actor.permissions["pos.allStores"] === true ||
+        actor.permissions["pos.manageStores"] === true,
+      "Store access denied: Cannot query all stores",
+      403,
+    );
+    return undefined;
+  }
   if (input !== undefined && input !== "") {
     const id = Number(input);
     scope(actor, id);
     return id;
   }
-  if (actor.admin) return undefined;
+  if (actor.admin || actor.permissions["pos.allStores"] === true) return undefined;
   ensure(
     actor.storeId,
     "No store location is assigned to your employee account. Please contact an administrator to assign an active store.",

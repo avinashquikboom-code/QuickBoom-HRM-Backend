@@ -24,7 +24,7 @@ import {
   page,
   dateRange,
 } from "./validation";
-import { lineTotals, refundComponents, round } from "./finance";
+import { lineTotals, billTotals, discountInput, DiscountType, refundComponents, round } from "./finance";
 const D = Prisma.Decimal;
 type D = Prisma.Decimal;
 type Tx = Prisma.TransactionClient;
@@ -969,7 +969,7 @@ export async function getCurrentCashierSession(actor: Actor, storeIdParam: unkno
   };
 }
 
-export async function getSessionHistory(actor: Actor, query: Record<string, any>) {
+export async function getSessionHistory(actor: Actor, query: Record<string, any>, db: Prisma.TransactionClient = prisma) {
   permission(actor, "read");
   const storeId = storeFilter(actor, query.storeId);
   const p = page(query);
@@ -978,16 +978,18 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
     ...(storeId ? { register: { storeId } } : {}),
     ...(query.registerId ? { registerId: optionalUuid(query.registerId, "registerId") } : {}),
     ...(query.cashierId ? { userId: integer(query.cashierId, "cashierId") } : {}),
-    ...(query.from || query.to ? { openedAt: dateRange(query) } : {}),
+    ...(query.from || query.to ? { OR: [{ openedAt: dateRange(query) }, { closedAt: dateRange(query) }] } : {}),
+    ...(query.employeeId ? { AND: [{ OR: [{ employeeId: integer(Number(query.employeeId), "employeeId") },
+      { sales: { some: { OR: [{ salespersonId: Number(query.employeeId) }, { items: { some: { salespersonId: Number(query.employeeId) } } }] } } }] }] } : {}),
     ...(query.status === "OPEN" ? { closedAt: null } : query.status === "CLOSED" ? { closedAt: { not: null } } : {}),
   };
 
-  const total = await prisma.pOSSession.count({ where });
-  const rawSessions = await prisma.pOSSession.findMany({
+  const total = await db.pOSSession.count({ where });
+  const rawSessions = await db.pOSSession.findMany({
     where,
     skip: p.skip,
     take: p.take,
-    orderBy: { openedAt: "desc" },
+    orderBy: { openedAt: query.direction === "asc" ? "asc" : "desc" },
     include: {
       register: { include: { store: true } },
       user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
@@ -1151,6 +1153,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     "payments",
     "idempotencyKey",
     "orderDiscount",
+    "orderDiscountType",
     "customerId",
     "billingDraftId",
     "billingDraftRevision",
@@ -1163,14 +1166,15 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     idempotencyKey = text(b.idempotencyKey, "idempotencyKey", 100);
   scope(actor, storeId);
   const items = pricingInput(actor, b.items),
-    orderDiscount = money(b.orderDiscount ?? "0", "orderDiscount");
+    orderDiscountSpec = discountInput(b.orderDiscount ?? "0", b.orderDiscountType ?? "amount"),
+    orderDiscount = orderDiscountSpec.value;
   if (orderDiscount.gt(0)) permission(actor, "discount");
   const payments = list(b.payments, 10).map((raw) => {
     const p = object(raw);
     keys(p, ["method", "amount", "reference", "gatewayTransactionId"]);
     const m = method(p.method),
       amount = money(p.amount);
-    ensure(amount.gt(0), "Payment must be positive");
+    ensure(amount.gte(0), "Payment cannot be negative");
     return {
       method: m,
       amount,
@@ -1194,6 +1198,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     customerPhone,
     customerId,
     orderDiscount,
+    orderDiscountType: orderDiscountSpec.type,
   });
 
   const saleInclude = {
@@ -1268,13 +1273,16 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
           })
         : null;
       ensure(!customerId || customer, "Customer not found in this store");
-      const { subtotal, discountTotal, taxTotal, grandTotal, snapshots } =
-        await priceItems(tx, items, orderDiscount);
+      const { subtotal, discountTotal, taxTotal, grandTotal, snapshots, orderDiscountTotal } =
+        await priceItems(tx, items, orderDiscount, orderDiscountSpec.type);
       ensure(
-        grandTotal.gt(0) && grandTotal.lte("9999999999999.99"),
+        grandTotal.gte(0) && grandTotal.lte("9999999999999.99"),
         "Invalid invoice total",
       );
 
+      ensure(grandTotal.isZero() ? payments.every(p => p.amount.isZero()) : payments.every(p => p.amount.gt(0)),
+        "Payments must be positive unless the invoice is fully discounted");
+      const tenderedTotal = payments.reduce((n, p) => n.plus(p.amount), new D(0));
       // Payment alignment & cash change handling
       if (payments.length === 1) {
         if (payments[0].method === "CASH" && payments[0].amount.gte(grandTotal)) {
@@ -1342,7 +1350,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
           taxTotal,
           grandTotal,
           items: { create: itemsToCreate },
-          payments: { create: payments },
+          payments: { create: payments.filter(p => p.amount.gt(0)) },
         },
         include: saleInclude,
       });
@@ -1365,6 +1373,12 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
         invoiceNo,
         salespersonId: resolvedSalespersonId,
         orderDiscount: orderDiscount.toString(),
+        orderDiscountType: orderDiscountSpec.type,
+        orderDiscountTotal: orderDiscountTotal.toString(),
+        itemDiscounts: items.map((item, index) => ({ amount: lineTotals(snapshots[index].unitPrice, item.quantity, item.discount, snapshots[index].taxRate, item.discountType).discountTotal.toString(), key: item.key, variantId: item.kind === "catalog" ? item.variantId : null,
+          type: item.discountType, value: item.discount.toString() })),
+        tenderedTotal: tenderedTotal.toString(),
+        changeReturned: D.max(0, tenderedTotal.minus(grandTotal)).toString(),
         overrides: snapshots
           .filter((i) => i.overrideReason)
           .map((i) => ({
@@ -1657,6 +1671,7 @@ type CatalogInput = {
   variantId: string;
   quantity: number;
   discount: Prisma.Decimal;
+  discountType: DiscountType;
   override?: Prisma.Decimal;
   reason?: string;
   salespersonId: SalespersonRef;
@@ -1673,6 +1688,7 @@ type ManualInput = {
   quantity: number;
   unitPrice: Prisma.Decimal;
   discount: Prisma.Decimal;
+  discountType: DiscountType;
   taxRate: Prisma.Decimal;
   salespersonId: SalespersonRef;
 };
@@ -1700,6 +1716,7 @@ type PricedSnapshot = {
 function manualItem(
   v: Record<string, any>,
   discount: Prisma.Decimal,
+  discountType: DiscountType,
 ): ManualInput {
   if (v.manual !== undefined && v.manual !== true)
     throw new POSError(400, "Invalid manual flag");
@@ -1732,6 +1749,7 @@ function manualItem(
     quantity: integer(v.quantity, "quantity", 1, 10000),
     unitPrice,
     discount,
+    discountType,
     taxRate,
     salespersonId,
   };
@@ -1744,6 +1762,8 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
         "variantId",
         "quantity",
         "discountPerUnit",
+        "discountType",
+        "discountValue",
         "unitPriceOverride",
         "priceOverrideReason",
         "salespersonId",
@@ -1759,13 +1779,16 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
         "unitPrice",
         "taxRate",
       ]);
-      const discount = money(v.discountPerUnit ?? "0");
+      const typed = v.discountType !== undefined || v.discountValue !== undefined;
+      ensure(!typed || v.discountPerUnit === undefined, "Specify typed discount or discountPerUnit, not both");
+      const spec = discountInput(typed ? v.discountValue : v.discountPerUnit ?? "0", typed ? v.discountType : "amount");
+      const discount = spec.value, discountType = spec.type;
       if (discount.gt(0)) permission(actor, "discount");
       const isManual =
         v.manual === true ||
         !v.variantId ||
         (typeof v.variantId === "string" && v.variantId.trim() === "");
-      if (isManual) return manualItem(v, discount);
+      if (isManual) return manualItem(v, discount, discountType);
       const override =
         v.unitPriceOverride === undefined
           ? undefined
@@ -1787,6 +1810,7 @@ function pricingInput(actor: Actor, raw: unknown): PricedInput[] {
         variantId: uuid(v.variantId),
         quantity: integer(v.quantity, "quantity", 1, 10000),
         discount,
+        discountType,
         override,
         reason,
         salespersonId,
@@ -1805,6 +1829,7 @@ async function priceItems(
   tx: Tx,
   items: PricedInput[],
   orderDiscount = new D(0),
+  orderDiscountType: DiscountType = "amount",
 ) {
   /** Input-aligned rows: each pricing decision keeps the position of its item. */
   const priced: {
@@ -1841,7 +1866,7 @@ async function priceItems(
         item,
         price,
         taxRate: v.taxRate,
-        totals: lineTotals(price, item.quantity, item.discount, v.taxRate),
+        totals: lineTotals(price, item.quantity, item.discount, v.taxRate, item.discountType),
         catalog: {
           variantId: v.id,
           name: v.product.name,
@@ -1858,7 +1883,7 @@ async function priceItems(
       // Manual item: the cashier supplies price and GST rate; the Decimal
       // pipeline recomputes every total with the same rounding rules.
       ensure(
-        item.discount.isZero() || item.discount.lte(item.unitPrice),
+        item.discount.lte(item.discountType === "percent" ? 100 : item.unitPrice),
         "Discount exceeds unit price",
       );
       priced.push({
@@ -1870,47 +1895,20 @@ async function priceItems(
           item.quantity,
           item.discount,
           item.taxRate,
+          item.discountType,
         ),
       });
     }
   }
-  // Manual lines are always discount-eligible; catalog lines follow the product flag.
-  const eligible = priced.reduce(
-    (n, row) =>
-      (row.catalog?.discountEligible ?? true)
-        ? n.plus(row.totals.subtotal.minus(row.totals.discountTotal))
-        : n,
-    new D(0),
-  );
-  ensure(
-    orderDiscount.lte(eligible),
-    "Order discount exceeds eligible taxable amount",
-  );
-  let remainingDiscount = orderDiscount,
-    remainingBase = eligible;
-  let subtotal = new D(0),
-    discountTotal = new D(0),
-    taxTotal = new D(0),
-    grandTotal = new D(0);
+  const bill = billTotals(priced.map(row => ({ price: row.price, quantity: row.item.quantity,
+    discount: row.item.discount, discountType: row.item.discountType, taxRate: row.taxRate,
+    eligible: row.catalog?.discountEligible ?? true })), orderDiscount, orderDiscountType);
+  const { subtotal, discountTotal, taxTotal, grandTotal } = bill;
   const snapshots: PricedSnapshot[] = priced.map(
-    ({ item, price, taxRate, totals, catalog }) => {
-      const base = totals.subtotal.minus(totals.discountTotal);
-      let allocation = new D(0);
-      if ((catalog?.discountEligible ?? true) && remainingBase.gt(0)) {
-        allocation = base.equals(remainingBase)
-          ? remainingDiscount
-          : D.min(base, round(remainingDiscount.mul(base).div(remainingBase)));
-        remainingDiscount = remainingDiscount.minus(allocation);
-        remainingBase = remainingBase.minus(base);
-      }
-      const lineDiscount = totals.discountTotal.plus(allocation),
-        taxable = totals.subtotal.minus(lineDiscount),
-        lineTax = round(taxable.mul(taxRate).div(100)),
-        total = taxable.plus(lineTax);
-      subtotal = subtotal.plus(totals.subtotal);
-      discountTotal = discountTotal.plus(lineDiscount);
-      taxTotal = taxTotal.plus(lineTax);
-      grandTotal = grandTotal.plus(total);
+    ({ item, price, taxRate, catalog }, index) => {
+      const line = bill.snapshots[index];
+      const lineDiscount = line.discountTotal, lineTax = line.taxTotal, total = line.lineTotal;
+      const perUnit = item.discountType === "percent" ? round(price.mul(item.discount).div(100)) : item.discount;
       if (catalog) {
         return {
           key: item.key,
@@ -1926,7 +1924,7 @@ async function priceItems(
           overrideReason:
             item.kind === "catalog" ? item.reason : undefined,
           costPrice: catalog.costPrice,
-          discountPerUnit: item.discount,
+          discountPerUnit: perUnit,
           discountTotal: lineDiscount,
           taxRate,
           taxTotal: lineTax,
@@ -1949,7 +1947,7 @@ async function priceItems(
         catalogUnitPrice: manual.unitPrice,
         overrideReason: undefined,
         costPrice: new D(0),
-        discountPerUnit: manual.discount,
+        discountPerUnit: perUnit,
         discountTotal: lineDiscount,
         taxRate: manual.taxRate,
         taxTotal: lineTax,
@@ -1958,18 +1956,18 @@ async function priceItems(
       };
     },
   );
-  ensure(remainingDiscount.isZero(), "Could not allocate order discount");
-  return { subtotal, discountTotal, taxTotal, grandTotal, snapshots };
+  return { subtotal, discountTotal, taxTotal, grandTotal, snapshots, itemDiscountTotal: bill.itemDiscountTotal, orderDiscountTotal: bill.orderDiscountTotal };
 }
 export async function quote(actor: Actor, raw: unknown) {
   permission(actor, "sell");
   const b = object(raw);
-  keys(b, ["storeId", "items", "orderDiscount"]);
+  keys(b, ["storeId", "items", "orderDiscount", "orderDiscountType"]);
   scope(actor, integer(b.storeId, "storeId"));
   const items = pricingInput(actor, b.items),
-    orderDiscount = money(b.orderDiscount ?? "0", "orderDiscount");
+    orderDiscountSpec = discountInput(b.orderDiscount ?? "0", b.orderDiscountType ?? "amount"),
+    orderDiscount = orderDiscountSpec.value;
   if (orderDiscount.gt(0)) permission(actor, "discount");
-  return transaction((tx) => priceItems(tx, items, orderDiscount));
+  return transaction((tx) => priceItems(tx, items, orderDiscount, orderDiscountSpec.type));
 }
 
 // One database transaction composes both documented workflows. No intermediate stock/refund commits.
