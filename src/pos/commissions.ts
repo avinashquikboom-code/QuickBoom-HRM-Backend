@@ -324,7 +324,7 @@ export async function reviewCommission(actor: Actor, id: number, raw: unknown) {
           const sale = await tx.pOSSale.findFirst({
             where: {
               id: record.billId?.replace(/^POSSALE-/, ""),
-              status: { notIn: ["CANCELLED", "RETURNED"] },
+              status: { in: ["COMPLETED", "PARTIALLY_RETURNED"] },
             },
           });
           ensure(

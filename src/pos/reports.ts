@@ -1,3 +1,4 @@
+import { recognizedSaleWhere, recognizedSaleSQL } from "./salesAccounting";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
 import { Actor, permission, storeFilter } from "./auth";
@@ -7,13 +8,13 @@ export async function report(actor: Actor, query: Record<string, any>) {
   const storeId = storeFilter(actor, query.storeId),
     range = dateRange(query),
     pagination = page(query);
-  const filter = Prisma.sql`(${storeId ?? null}::integer IS NULL OR s."storeId" = ${storeId ?? null}::integer)`;
+  const filter = Prisma.sql`${recognizedSaleSQL} AND (${storeId ?? null}::integer IS NULL OR s."storeId" = ${storeId ?? null}::integer)`;
   const period = Prisma.sql`s."createdAt" >= ${range.gte} AND s."createdAt" < ${range.lt}`;
   // Aggregations run in one consistent database snapshot. Refunds are attributed to their posting date.
   return prisma.$transaction(
     async (tx) => {
       const sales = await tx.pOSSale.aggregate({
-        where: { storeId, createdAt: range },
+        where: { ...recognizedSaleWhere, storeId, createdAt: range },
         _sum: {
           subtotal: true,
           discountTotal: true,
@@ -23,29 +24,29 @@ export async function report(actor: Actor, query: Record<string, any>) {
         _count: true,
       });
       const returns = await tx.pOSReturn.aggregate({
-        where: { sale: { storeId }, createdAt: range },
+        where: { sale: { ...recognizedSaleWhere, storeId }, createdAt: range },
         _sum: { refundAmount: true },
         _count: true,
       });
       const payments = await tx.pOSSalePayment.groupBy({
         by: ["method"],
-        where: { sale: { storeId, createdAt: range } },
+        where: { sale: { ...recognizedSaleWhere, storeId, createdAt: range } },
         _sum: { amount: true },
       });
       const refundsByMethod = await tx.pOSReturn.groupBy({
         by: ["refundMethod"],
-        where: { sale: { storeId }, createdAt: range },
+        where: { sale: { ...recognizedSaleWhere, storeId }, createdAt: range },
         _sum: { refundAmount: true },
       });
       const byStore = await tx.pOSSale.groupBy({
         by: ["storeId"],
-        where: { storeId, createdAt: range },
+        where: { ...recognizedSaleWhere, storeId, createdAt: range },
         _sum: { grandTotal: true },
         _count: true,
       });
       const byCashier = await tx.pOSSale.groupBy({
         by: ["cashierId"],
-        where: { storeId, createdAt: range },
+        where: { ...recognizedSaleWhere, storeId, createdAt: range },
         _sum: { grandTotal: true },
         _count: true,
       });
@@ -62,7 +63,7 @@ export async function report(actor: Actor, query: Record<string, any>) {
           FROM "POSSaleItem" i
           JOIN "POSSale" s ON s.id = i."saleId"
           LEFT JOIN "Employee" e ON e.id = COALESCE(i."salespersonId", s."salespersonId")
-          WHERE s."storeId" = ${storeId} AND s."createdAt" >= ${range.gte} AND s."createdAt" < ${range.lt}
+          WHERE ${filter} AND ${period}
           GROUP BY COALESCE(i."salespersonId", s."salespersonId"), e."firstName", e."lastName"
         `,
       );
@@ -95,7 +96,7 @@ export async function report(actor: Actor, query: Record<string, any>) {
           returnCost[0]?.cogs ?? 0,
         );
       const returnsReport = await tx.pOSReturn.findMany({
-        where: { sale: { storeId }, createdAt: range },
+        where: { sale: { ...recognizedSaleWhere, storeId }, createdAt: range },
         select: {
           id: true,
           saleId: true,
@@ -199,8 +200,8 @@ export async function groupedSales(actor: Actor, query: Record<string, any>) {
   const dimension = expressions[String(query.groupBy ?? "day")];
   ensure(dimension, "Unsupported sales dimension");
   const facts = Prisma.sql`WITH facts AS (
- SELECT s."createdAt" AS at,s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,i.quantity AS units,i."unitPrice"*i.quantity AS gross,i."discountTotal" AS discount,i."taxTotal" AS tax,i."lineTotal" AS collected,0::numeric AS refunds,i."costPrice"*i.quantity AS cost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id=i."saleId"
- UNION ALL SELECT r."createdAt",s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,-ri.quantity,0,0,-(ri."refundAmount"-ri."revenueRefund"),0,ri."refundAmount",CASE WHEN ri.resellable THEN -i."costPrice"*ri.quantity ELSE 0 END FROM "POSReturnItem" ri JOIN "POSReturn" r ON r.id=ri."returnId" JOIN "POSSaleItem" i ON i.id=ri."saleItemId" JOIN "POSSale" s ON s.id=r."saleId")`;
+ SELECT s."createdAt" AS at,s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,i.quantity AS units,i."unitPrice"*i.quantity AS gross,i."discountTotal" AS discount,i."taxTotal" AS tax,i."lineTotal" AS collected,0::numeric AS refunds,i."costPrice"*i.quantity AS cost FROM "POSSaleItem" i JOIN "POSSale" s ON s.id=i."saleId" WHERE ${recognizedSaleSQL}
+ UNION ALL SELECT r."createdAt",s."storeId",s."cashierId",COALESCE(i."salespersonId", s."salespersonId") AS "salespersonId",i.name,i.category,i.brand,-ri.quantity,0,0,-(ri."refundAmount"-ri."revenueRefund"),0,ri."refundAmount",CASE WHEN ri.resellable THEN -i."costPrice"*ri.quantity ELSE 0 END FROM "POSReturnItem" ri JOIN "POSReturn" r ON r.id=ri."returnId" JOIN "POSSaleItem" i ON i.id=ri."saleItemId" JOIN "POSSale" s ON s.id=r."saleId" WHERE ${recognizedSaleSQL})`;
   const rows = await prisma.$queryRaw<Record<string, unknown>[]>(
     Prisma.sql`${facts} SELECT ${dimension} AS label,SUM(units)::integer AS units,SUM(gross) AS gross,SUM(discount) AS discounts,SUM(tax) AS taxes,SUM(refunds) AS refunds,SUM(collected-refunds) AS "netCollected",SUM(collected-refunds-tax) AS "netRevenue",SUM(cost) AS "costOfGoodsSold",SUM(collected-refunds-tax-cost) AS "grossMargin",COUNT(*) OVER()::integer AS "totalGroups" FROM facts f WHERE (${storeId ?? null}::integer IS NULL OR f."storeId"=${storeId ?? null}::integer) AND f.at >= ${range.gte} AND f.at < ${range.lt} GROUP BY label ORDER BY label LIMIT ${p.take} OFFSET ${p.skip}`,
   );
@@ -274,6 +275,7 @@ export async function returnReport(actor: Actor, query: Record<string, any>) {
   const storeId = storeFilter(actor, query.storeId),
     range = dateRange(query),
     p = page(query);
+  // Operational refund history retains cancellation payouts for auditing.
   const where = { sale: { storeId }, createdAt: range };
   const items = await prisma.pOSReturn.findMany({
     where,

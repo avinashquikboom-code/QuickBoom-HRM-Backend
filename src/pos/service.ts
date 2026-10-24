@@ -1,3 +1,4 @@
+import { recognizedSaleWhere, receivedSaleWhere } from "./salesAccounting";
 import { checkoutPOSWork } from "./workSessions";
 import { accrueCommission, reverseCommission } from "./commissions";
 import { createHash, randomUUID } from "crypto";
@@ -37,9 +38,13 @@ export async function transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
         timeout: 20000,
       });
     } catch (e) {
+      const adapterError = e instanceof Prisma.PrismaClientKnownRequestError
+        ? e.meta?.driverAdapterError as { cause?: { originalCode?: string } } | undefined
+        : undefined;
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === "P2034" &&
+        (e.code === "P2034" ||
+          (e.code === "P2010" && ["40001", "40P01"].includes(String(e.meta?.code ?? adapterError?.cause?.originalCode)))) &&
         attempt < 3
       )
         continue;
@@ -707,7 +712,7 @@ export async function computeSessionSummary(sessionId: string) {
 
   // 1. Completed sales in this session
   const salesAgg = await prisma.pOSSale.aggregate({
-    where: { sessionId, status: "COMPLETED" },
+    where: { sessionId, ...recognizedSaleWhere },
     _sum: {
       grandTotal: true,
       subtotal: true,
@@ -720,7 +725,7 @@ export async function computeSessionSummary(sessionId: string) {
   // 2. Payments by method for completed sales in this session
   const paymentsByMethod = await prisma.pOSSalePayment.groupBy({
     by: ["method"],
-    where: { sale: { sessionId, status: "COMPLETED" } },
+    where: { sale: { sessionId, ...receivedSaleWhere } },
     _sum: { amount: true },
   });
 
@@ -854,7 +859,7 @@ export async function closeSession(actor: Actor, sessionId: string, raw: unknown
     // Server-side calculation of expected cash:
     // Expected Cash = Opening Cash + Cash Sales - Cash Refunds + Cash In - Cash Out
     const sales = await tx.pOSSalePayment.aggregate({
-      where: { method: "CASH", sale: { sessionId, status: "COMPLETED" } },
+      where: { method: "CASH", sale: { sessionId, ...receivedSaleWhere } },
       _sum: { amount: true },
     });
     const refunds = await tx.pOSReturn.aggregate({
@@ -988,10 +993,11 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
       user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
       employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
       sales: {
-        where: { status: "COMPLETED" },
+        where: receivedSaleWhere,
         select: {
           id: true,
           grandTotal: true,
+          status: true,
           payments: { select: { method: true, amount: true } },
         },
       },
@@ -1008,7 +1014,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
     let otherSales = new D(0);
 
     for (const sale of sess.sales) {
-      totalSales = totalSales.plus(sale.grandTotal);
+      if (sale.status !== "CANCELLED") totalSales = totalSales.plus(sale.grandTotal);
       for (const p of sale.payments) {
         const m = (p.method || "").toUpperCase();
         if (m === "CASH") cashSales = cashSales.plus(p.amount);
@@ -1066,7 +1072,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
       variance: variance != null ? Number(variance.toString()) : null,
       closeReason: sess.closeReason,
       openingNotes: sess.openingNotes,
-      totalBills: sess.sales.length,
+      totalBills: sess.sales.filter((s) => s.status !== "CANCELLED").length,
       totalSales: Number(totalSales.toString()),
       cashSales: Number(cashSales.toString()),
       cardSales: Number(cardSales.toString()),
@@ -1459,6 +1465,7 @@ export async function returnSale(
     });
     ensure(sale, "Invoice not found", 404);
     scope(actor, sale.storeId);
+    ensure(["COMPLETED", "PARTIALLY_RETURNED"].includes(sale.status), "Invoice is not returnable", 409);
     const config = await tx.pOSConfiguration.findUnique({
       where: { storeId: sale.storeId },
     });
@@ -1498,7 +1505,7 @@ export async function returnSale(
     }
     if (refundMethod === "CASH") {
       const cashIn = await tx.pOSSalePayment.aggregate({
-        where: { method: "CASH", sale: { sessionId } },
+        where: { method: "CASH", sale: { sessionId, ...receivedSaleWhere } },
         _sum: { amount: true },
       });
       const cashOut = await tx.pOSReturn.aggregate({
@@ -2069,6 +2076,9 @@ export async function cancelSale(actor: Actor, saleId: string, raw: unknown) {
     });
     await audit(tx, actor, "SALE_CANCELLED", saleId, {
       returnId: result.id,
+      invoiceNo: sale.invoiceNo,
+      grandTotal: sale.grandTotal,
+      cancelledAt: new Date().toISOString(),
       reason: b.reason,
     });
     return result;
@@ -2126,7 +2136,7 @@ export async function cashMovement(
     const s = await openSession(tx, actor, sessionId, undefined, false);
     if (b.direction === "OUT") {
       const incoming = await tx.pOSSalePayment.aggregate({
-          where: { method: "CASH", sale: { sessionId } },
+          where: { method: "CASH", sale: { sessionId, ...receivedSaleWhere } },
           _sum: { amount: true },
         }),
         outgoing = await tx.pOSReturn.aggregate({
@@ -2214,6 +2224,59 @@ export async function reconcileStock(actor: Actor, raw: unknown) {
   });
 }
 
+/** Administrative void: no refund is paid; original payments remain for audit only. */
+async function voidSale(tx: Tx, actor: Actor, saleId: string, reason: string) {
+  await tx.$queryRaw`SELECT id FROM "POSSale" WHERE id = ${saleId}::uuid FOR UPDATE`;
+  const sale = await tx.pOSSale.findUniqueOrThrow({ where: { id: saleId }, include: { items: true } });
+  scope(actor, sale.storeId);
+  if (sale.status === "CANCELLED") return;
+  ensure(sale.status === "COMPLETED" && sale.items.every((i) => i.returnedQuantity === 0),
+    "Only completed bills without returns can be voided; use item returns for returned invoices", 409);
+  for (const item of sale.items) {
+    if (item.variantId) await movement(tx, actor, sale.storeId, item.variantId,
+      item.quantity, 0, "CANCELLATION", saleId, reason);
+  }
+  const lines = await tx.pOSCommissionLine.findMany({
+    where: { saleItemId: { in: sale.items.map((i) => i.id) } },
+  });
+  for (const transactionId of new Set(lines.map((l) => l.transactionId))) {
+    await tx.$queryRaw`SELECT id FROM "CommissionTransaction" WHERE id = ${transactionId} FOR UPDATE`;
+    const original = await tx.commissionTransaction.findUniqueOrThrow({ where: { id: transactionId } });
+    const amount = lines.filter((l) => l.transactionId === transactionId)
+      .reduce((n, l) => n.plus(l.amount.minus(l.reversedAmount)), new D(0));
+    if (original.status === "PENDING") {
+      await tx.commissionTransaction.update({ where: { id: transactionId },
+        data: { status: "REJECTED", commissionAmount: 0, saleAmount: 0 } });
+      await tx.commissionHistory.create({ data: {
+        transactionId, employeeId: original.employeeId, action: "ADJUSTED",
+        previousStatus: original.status, newStatus: "REJECTED",
+        previousAmount: original.commissionAmount, newAmount: 0,
+        performedBy: actor.userId, reason,
+      } });
+    } else if (["APPROVED", "PAID"].includes(original.status) && amount.gt(0)) {
+      // Preserve the existing rule: paid/approved commission reversals require review.
+      const debit = await tx.commissionTransaction.create({ data: {
+        employeeId: original.employeeId, storeId: sale.storeId,
+        billId: `POSVOID-${saleId}-${transactionId}`, invoiceNumber: sale.invoiceNo,
+        saleAmount: -original.saleAmount, commissionAmount: amount.negated().toNumber(),
+        commissionType: original.commissionType, eventType: "POS_RETURN", status: "PENDING", notes: reason,
+      } });
+      await tx.commissionHistory.create({ data: {
+        transactionId: debit.id, employeeId: debit.employeeId, action: "CREATED",
+        newStatus: "PENDING", newAmount: debit.commissionAmount, performedBy: actor.userId, reason,
+      } });
+    }
+  }
+  for (const line of lines) await tx.pOSCommissionLine.update({
+    where: { id: line.id }, data: { reversedAmount: line.amount },
+  });
+  await tx.pOSSale.update({ where: { id: saleId }, data: { status: "CANCELLED" } });
+  await audit(tx, actor, "SALE_CANCELLED", saleId, {
+    invoiceNo: sale.invoiceNo, storeId: sale.storeId, grandTotal: sale.grandTotal,
+    reason, paymentEffect: "VOID", cancelledAt: new Date().toISOString(),
+  });
+}
+
 export async function deleteSale(
   actor: Actor,
   saleId: string,
@@ -2228,6 +2291,7 @@ export async function deleteSale(
     ensure(actor.admin, "Administrator required for permanent deletion", 403);
   }
   return transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "POSSale" WHERE id = ${saleId}::uuid FOR UPDATE`;
     const sale = await tx.pOSSale.findUnique({
       where: { id: saleId },
       include: { items: true },
@@ -2285,36 +2349,7 @@ export async function deleteSale(
       if (sale.status === "CANCELLED") {
         return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
       }
-      for (const item of sale.items) {
-        if (item.variantId) {
-          await tx.pOSInventoryBalance.updateMany({
-            where: { storeId: sale.storeId, variantId: item.variantId },
-            data: { quantity: { increment: item.quantity } },
-          });
-        }
-      }
-      await tx.pOSSale.update({
-        where: { id: saleId },
-        data: { status: "CANCELLED" },
-      });
-      const saleItemIds = sale.items.map((i) => i.id);
-      if (saleItemIds.length > 0) {
-        const commLines = await tx.pOSCommissionLine.findMany({
-          where: { saleItemId: { in: saleItemIds } },
-        });
-        for (const line of commLines) {
-          await tx.pOSCommissionLine.update({
-            where: { id: line.id },
-            data: { reversedAmount: line.amount },
-          });
-        }
-      }
-      await audit(tx, actor, "SALE_CANCELLED", saleId, {
-        invoiceNo: sale.invoiceNo,
-        storeId: sale.storeId,
-        reason: options.reason || "Bill cancelled and deleted from completed",
-        grandTotal: sale.grandTotal,
-      });
+      await voidSale(tx, actor, saleId, options.reason || "Manual bill cancellation");
       return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
     }
   });
@@ -2335,7 +2370,7 @@ export async function bulkCancelSales(actor: Actor, raw: unknown) {
   );
   ensure(b.saleIds.length <= 500, "Maximum 500 bills can be processed at once", 400);
   const reason = text(b.reason || "Bulk cancellation", "reason", 1000);
-  const refundMethod = b.refundMethod ? text(b.refundMethod, "refundMethod", 50) : "CASH";
+  if (b.refundMethod) text(b.refundMethod, "refundMethod", 50);
   const permanent = b.permanent === true;
   if (permanent) {
     ensure(actor.admin, "Administrator required for permanent deletion", 403);
@@ -2347,6 +2382,7 @@ export async function bulkCancelSales(actor: Actor, raw: unknown) {
     const saleId = uuid(rawId);
     try {
       const res = await transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "POSSale" WHERE id = ${saleId}::uuid FOR UPDATE`;
         const sale = await tx.pOSSale.findUnique({
           where: { id: saleId },
           include: { items: true },
@@ -2405,37 +2441,7 @@ export async function bulkCancelSales(actor: Actor, raw: unknown) {
           if (sale.status === "CANCELLED") {
             return { invoiceNo: sale.invoiceNo };
           }
-          for (const item of sale.items) {
-            if (item.variantId) {
-              await tx.pOSInventoryBalance.updateMany({
-                where: { storeId: sale.storeId, variantId: item.variantId },
-                data: { quantity: { increment: item.quantity } },
-              });
-            }
-          }
-          await tx.pOSSale.update({
-            where: { id: saleId },
-            data: { status: "CANCELLED" },
-          });
-          const saleItemIds = sale.items.map((i) => i.id);
-          if (saleItemIds.length > 0) {
-            const commLines = await tx.pOSCommissionLine.findMany({
-              where: { saleItemId: { in: saleItemIds } },
-            });
-            for (const line of commLines) {
-              await tx.pOSCommissionLine.update({
-                where: { id: line.id },
-                data: { reversedAmount: line.amount },
-              });
-            }
-          }
-          await audit(tx, actor, "SALE_CANCELLED", saleId, {
-            invoiceNo: sale.invoiceNo,
-            storeId: sale.storeId,
-            reason,
-            refundMethod,
-            grandTotal: sale.grandTotal,
-          });
+          await voidSale(tx, actor, saleId, reason);
           return { invoiceNo: sale.invoiceNo };
         }
       });
@@ -2688,36 +2694,7 @@ export async function dataManagementClear(actor: Actor, raw: unknown) {
       const completedSales = sales.filter((s) => s.status === "COMPLETED");
       const completedIds = completedSales.map((s) => s.id);
 
-      for (const s of completedSales) {
-        for (const item of s.items) {
-          if (item.variantId) {
-            await tx.pOSInventoryBalance.updateMany({
-              where: { storeId: s.storeId, variantId: item.variantId },
-              data: { quantity: { increment: item.quantity } },
-            });
-          }
-        }
-      }
-
-      if (completedIds.length > 0) {
-        await tx.pOSSale.updateMany({
-          where: { id: { in: completedIds } },
-          data: { status: "CANCELLED" },
-        });
-
-        const completedItemIds = completedSales.flatMap((s) => s.items.map((it) => it.id));
-        if (completedItemIds.length > 0) {
-          const commLines = await tx.pOSCommissionLine.findMany({
-            where: { saleItemId: { in: completedItemIds } },
-          });
-          for (const line of commLines) {
-            await tx.pOSCommissionLine.update({
-              where: { id: line.id },
-              data: { reversedAmount: line.amount },
-            });
-          }
-        }
-      }
+      for (const s of completedSales) await voidSale(tx, actor, s.id, reason);
 
       await audit(tx, actor, "DATA_MANAGEMENT_CANCEL", "DATA_MANAGEMENT", {
         scope: scopeType,

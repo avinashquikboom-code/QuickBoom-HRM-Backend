@@ -22,7 +22,8 @@
     "test:pos:barcode": "ts-node --transpile-only scripts/test_pos_barcode_search.ts",
     "test:pos:scan-salesperson": "ts-node --transpile-only scripts/test_pos_scan_salesperson.ts",
     "test:pos:billing-full": "ts-node --transpile-only scripts/test_pos_billing_full.ts",
-    "test:pos:catalog-manual": "ts-node --transpile-only scripts/test_pos_catalog_and_manual.ts"
+    "test:pos:catalog-manual": "ts-node --transpile-only scripts/test_pos_catalog_and_manual.ts",
+    "test:pos:cancelled-sales": "ts-node --transpile-only scripts/test_pos_cancelled_sales.ts"
   },
   "keywords": [],
   "author": "",
