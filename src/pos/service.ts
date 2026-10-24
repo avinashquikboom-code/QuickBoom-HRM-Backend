@@ -408,8 +408,24 @@ async function ensureOrOpenSession(
 
   if (!register) {
     const configured = await tx.pOSRegister.count({ where: { storeId } });
-    ensure(configured === 0, "No available register. Close the occupied cashier session or select an available active register.", 409);
-    register = await tx.pOSRegister.create({data: {storeId, name: "Main Register", active: true}});
+    if (configured > 0) {
+      // Store-password login has its own audit identity. An HRM cashier's open
+      // register cannot be reused by that identity. Allocate one dedicated
+      // terminal register rather than blocking billing or taking over the shift.
+      const terminalName = `Store POS Terminal (${actor.userId})`;
+      const dedicated = actor.isPosStoreSession && actor.storeId === storeId
+        ? await tx.pOSRegister.findFirst({ where: { storeId, name: terminalName } })
+        : null;
+      const activeCount = await tx.pOSRegister.count({ where: { storeId, active: true } });
+      ensure(
+        actor.isPosStoreSession && actor.storeId === storeId && activeCount > 0 && !dedicated,
+        "No available register. Close the occupied cashier session or select an available active register.",
+        409,
+      );
+      register = await tx.pOSRegister.create({ data: { storeId, name: terminalName, active: true } });
+    } else {
+      register = await tx.pOSRegister.create({data: {storeId, name: "Main Register", active: true}});
+    }
     await audit(tx, actor, "REGISTER_CREATED", register.id);
   }
 

@@ -24,7 +24,7 @@ async function main() {
  const payload={storeId:store.id,items:[item],payments:[{method:'CASH',amount:'100'}],idempotencyKey:randomUUID()};
  try {
   const auth=await post('/sales',payload,false);assert.equal(auth.status,401);console.log('AUTH RESPONSE',JSON.stringify(auth));
-  for(const [patch,expected] of [[{quantity:0},'quantity'],[{unitPrice:'0'},'greater than zero'],[{name:''},'item name'],[{discountPerUnit:'101'},'Discount exceeds'],[{taxRate:'101'},'tax rate'],[{barcode:'\ninvalid'},'printable ASCII'],[{salespersonId:999999},'active employee']] as const){
+  for(const [patch,expected] of [[{quantity:0},'quantity'],[{unitPrice:'0'},'greater than zero'],[{name:''},'item name'],[{discountPerUnit:'101'},'Discount exceeds'],[{taxRate:'101'},'tax rate'],[{barcode:'invalid\nbarcode'},'printable ASCII'],[{salespersonId:999999},'active employee']] as const){
    const invalid=await post('/sales',{...payload,idempotencyKey:randomUUID(),items:[{...item,...patch}]});assert.equal(invalid.status,400,JSON.stringify(invalid));assert.match(invalid.body.message,new RegExp(expected));console.log('400 RESPONSE',JSON.stringify(invalid.body));
   }
   const mismatch=await post('/sales',{...payload,payments:[{method:'CASH',amount:'50'}]});assert.equal(mismatch.status,400);assert.match(mismatch.body.message,/Payments must equal/);
