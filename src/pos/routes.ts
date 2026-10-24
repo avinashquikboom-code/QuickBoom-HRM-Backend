@@ -1080,6 +1080,8 @@ router.get(
 );
 router.use((e: unknown, req: Request, res: Response, next: NextFunction) => {
   if (e instanceof POSError) {
+    // Record rejection type without logging tokens, customer data or sale payloads.
+    console.warn(JSON.stringify({ module: "pos", event: "request_rejected", method: req.method, path: req.path, status: e.status, reason: e.message }));
     res.status(e.status).json({ success: false, message: e.message });
     return;
   }
@@ -1093,9 +1095,12 @@ router.use((e: unknown, req: Request, res: Response, next: NextFunction) => {
         : 500;
     res.status(status).json({
       success: false,
+      code: e.code,
       message:
-        status === 409
-          ? "Conflicting record or concurrent update. Retry with the same request key."
+        e.code === "P2034"
+          ? "Checkout could not finish because of concurrent updates. Your cart is unchanged; retry this same sale once."
+          : e.code === "P2002"
+          ? "A unique POS record already exists. Review the register session or saved invoice before retrying."
           : status === 400
             ? "Referenced record is missing or invalid."
             : "POS database operation failed.",

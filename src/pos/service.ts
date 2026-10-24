@@ -777,7 +777,8 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       if (concurrentSale) {
         if (
           concurrentSale.cashierId === actor.userId &&
-          concurrentSale.storeId === storeId
+          concurrentSale.storeId === storeId &&
+          concurrentSale.requestHash === requestHash
         ) {
           return concurrentSale;
         }
