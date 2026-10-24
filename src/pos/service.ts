@@ -711,6 +711,10 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
           salespersonId: items[idx]?.salespersonId !== undefined ? items[idx]!.salespersonId : salespersonId ?? null,
         };
       });
+      const resolvedSalespersonId =
+        salespersonId ??
+        itemsToCreate.find((i) => i.salespersonId != null)?.salespersonId ??
+        null;
       const sale = await tx.pOSSale.create({
         data: {
           invoiceNo,
@@ -719,7 +723,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
           storeId,
           sessionId,
           cashierId: actor.userId,
-          salespersonId,
+          salespersonId: resolvedSalespersonId,
           customerId,
           customerName: customer?.name ?? customerName,
           customerPhone: customer?.phone ?? customerPhone,
@@ -748,7 +752,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
       await accrueCommission(tx, actor, sale.id);
       await audit(tx, actor, "SALE_COMPLETED", sale.id, {
         invoiceNo,
-        salespersonId: salespersonId ?? null,
+        salespersonId: resolvedSalespersonId,
         orderDiscount: orderDiscount.toString(),
         overrides: snapshots
           .filter((i) => i.overrideReason)
