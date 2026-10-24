@@ -7,6 +7,7 @@ datasource db {
 }
 
 model User {
+  posBillingDrafts POSBillingDraft[]
   posCashMovements POSCashMovement[]
   posSessions POSSession[]
   posSales POSSale[]
@@ -98,6 +99,7 @@ model Department {
 }
 
 model Employee {
+  posBillingDrafts POSBillingDraft[]
   posSales POSSale[]
   posSaleItems POSSaleItem[] @relation("EmployeeSaleItems")
   posSessions POSSession[]
@@ -634,6 +636,8 @@ model CustomRole {
 
 
 model Store {
+  posBillingDrafts POSBillingDraft[]
+  posWorkBreaks POSWorkBreak[]
   posCredential POSStoreCredential?
   posConfiguration POSConfiguration?
   posCustomers POSCustomer[]
@@ -1610,6 +1614,8 @@ model POSRegister {
   @@unique([storeId, name])
 }
 model POSSession {
+  billingDrafts POSBillingDraft[]
+  workBreaks POSWorkBreak[]
   shiftAssignmentId Int?
   shiftAssignment ShiftAssignment? @relation(fields: [shiftAssignmentId], references: [id], onDelete: Restrict)
   cashMovements POSCashMovement[]
@@ -1633,6 +1639,7 @@ model POSSession {
   @@index([registerId, closedAt])
 }
 model POSSale {
+  billingDraft POSBillingDraft?
   customerId String? @db.Uuid
   customer POSCustomer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
   paymentStatus String @default("RECORDED")
@@ -1848,4 +1855,42 @@ model POSStoreCredential {
   updatedAt      DateTime  @updatedAt
 
   @@index([storeId])
+}
+
+// A draft is never an invoice. The migration enforces one active draft per user.
+model POSBillingDraft {
+  id String @id @default(uuid()) @db.Uuid
+  userId Int
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  employeeId Int?
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  sessionId String? @db.Uuid
+  session POSSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  saleId String? @unique @db.Uuid
+  sale POSSale? @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  status String @default("WORKING")
+  revision Int @default(1)
+  snapshot Json
+  lastWriteKey String @unique @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  breaks POSWorkBreak[]
+  @@index([userId, status])
+}
+
+model POSWorkBreak {
+  id String @id @default(uuid()) @db.Uuid
+  draftId String @db.Uuid
+  draft POSBillingDraft @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  storeId Int
+  store Store @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  sessionId String? @db.Uuid
+  session POSSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  requestKey String @unique @db.Uuid
+  startedAt DateTime @default(now())
+  endedAt DateTime?
+  durationSeconds Int?
+  @@index([draftId, startedAt])
 }

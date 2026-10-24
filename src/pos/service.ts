@@ -1,3 +1,4 @@
+import { checkoutPOSWork } from "./workSessions";
 import { accrueCommission, reverseCommission } from "./commissions";
 import { createHash, randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
@@ -1145,7 +1146,11 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
     "idempotencyKey",
     "orderDiscount",
     "customerId",
+    "billingDraftId",
+    "billingDraftRevision",
   ]);
+  const billingDraftId = b.billingDraftId ? uuid(b.billingDraftId) : undefined;
+  const billingDraftRevision = b.billingDraftRevision == null ? undefined : integer(b.billingDraftRevision, "billingDraftRevision", 1);
   const storeId = integer(b.storeId, "storeId"),
     providedSessionId = optionalUuid(b.sessionId, "sessionId"),
     providedRegisterId = optionalUuid(b.registerId, "registerId"),
@@ -1221,7 +1226,9 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
         }
         throw new POSError(409, "Idempotency key used for another request");
       }
+      const billingDraft = await checkoutPOSWork(tx, actor, storeId, billingDraftId, billingDraftRevision);
       const sessionId = await ensureOrOpenSession(tx, actor, storeId, providedSessionId, providedRegisterId);
+      ensure(!billingDraft?.sessionId || billingDraft.sessionId === sessionId, "The draft belongs to another register session. Save it with your current open session first.", 409);
       const itemSalespeople = items
         .map((i) => i.salespersonId)
         .filter((id): id is number => id !== undefined && id !== null);
@@ -1346,6 +1353,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
             sale.id,
             invoiceNo,
           );
+      if (billingDraft) await tx.pOSBillingDraft.update({where: {id: billingDraft.id}, data: {status: "COMPLETED", saleId: sale.id, revision: {increment: 1}}});
       await accrueCommission(tx, actor, sale.id);
       await audit(tx, actor, "SALE_COMPLETED", sale.id, {
         invoiceNo,
@@ -2206,4 +2214,531 @@ export async function reconcileStock(actor: Actor, raw: unknown) {
   });
 }
 
-/** Net tender exchange: internal credit offsets the replacement; only the difference moves external money. */
+export async function deleteSale(
+  actor: Actor,
+  saleId: string,
+  options: { reason?: string; permanent?: boolean } = {},
+) {
+  ensure(
+    actor.admin || actor.permissions["pos.refund"] === true,
+    "Permission denied: pos.refund or admin required",
+    403,
+  );
+  if (options.permanent) {
+    ensure(actor.admin, "Administrator required for permanent deletion", 403);
+  }
+  return transaction(async (tx) => {
+    const sale = await tx.pOSSale.findUnique({
+      where: { id: saleId },
+      include: { items: true },
+    });
+    ensure(sale, "Invoice not found", 404);
+    scope(actor, sale.storeId);
+
+    if (options.permanent) {
+      const saleItemIds = sale.items.map((i) => i.id);
+      const returns = await tx.pOSReturn.findMany({
+        where: { saleId },
+        select: { id: true },
+      });
+      const returnIds = returns.map((r) => r.id);
+      if (returnIds.length > 0 || saleItemIds.length > 0) {
+        await tx.pOSReturnItem.deleteMany({
+          where: {
+            OR: [
+              ...(returnIds.length > 0 ? [{ returnId: { in: returnIds } }] : []),
+              ...(saleItemIds.length > 0 ? [{ saleItemId: { in: saleItemIds } }] : []),
+            ],
+          },
+        });
+      }
+      if (returnIds.length > 0) {
+        await tx.pOSReturn.deleteMany({ where: { id: { in: returnIds } } });
+      }
+      if (saleItemIds.length > 0) {
+        await tx.pOSCommissionLine.deleteMany({ where: { saleItemId: { in: saleItemIds } } });
+      }
+      await tx.pOSSalePayment.deleteMany({ where: { saleId } });
+      await tx.pOSSaleItem.deleteMany({ where: { saleId } });
+      await tx.pOSSale.delete({ where: { id: saleId } });
+
+      if (sale.status === "COMPLETED") {
+        for (const item of sale.items) {
+          if (item.variantId) {
+            await tx.pOSInventoryBalance.updateMany({
+              where: { storeId: sale.storeId, variantId: item.variantId },
+              data: { quantity: { increment: item.quantity } },
+            });
+          }
+        }
+      }
+
+      await audit(tx, actor, "SALE_DELETED", saleId, {
+        invoiceNo: sale.invoiceNo,
+        storeId: sale.storeId,
+        reason: options.reason || "Manual bill deletion",
+        grandTotal: sale.grandTotal,
+      });
+
+      return { id: saleId, invoiceNo: sale.invoiceNo, status: "DELETED" };
+    } else {
+      if (sale.status === "CANCELLED") {
+        return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
+      }
+      for (const item of sale.items) {
+        if (item.variantId) {
+          await tx.pOSInventoryBalance.updateMany({
+            where: { storeId: sale.storeId, variantId: item.variantId },
+            data: { quantity: { increment: item.quantity } },
+          });
+        }
+      }
+      await tx.pOSSale.update({
+        where: { id: saleId },
+        data: { status: "CANCELLED" },
+      });
+      const saleItemIds = sale.items.map((i) => i.id);
+      if (saleItemIds.length > 0) {
+        const commLines = await tx.pOSCommissionLine.findMany({
+          where: { saleItemId: { in: saleItemIds } },
+        });
+        for (const line of commLines) {
+          await tx.pOSCommissionLine.update({
+            where: { id: line.id },
+            data: { reversedAmount: line.amount },
+          });
+        }
+      }
+      await audit(tx, actor, "SALE_CANCELLED", saleId, {
+        invoiceNo: sale.invoiceNo,
+        storeId: sale.storeId,
+        reason: options.reason || "Bill cancelled and deleted from completed",
+        grandTotal: sale.grandTotal,
+      });
+      return { id: saleId, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
+    }
+  });
+}
+
+export async function bulkCancelSales(actor: Actor, raw: unknown) {
+  ensure(
+    actor.admin || actor.permissions["pos.refund"] === true,
+    "Permission denied: pos.refund or admin required",
+    403,
+  );
+  const b = object(raw);
+  keys(b, ["saleIds", "reason", "refundMethod", "permanent"]);
+  ensure(
+    Array.isArray(b.saleIds) && b.saleIds.length > 0,
+    "At least one sale ID is required",
+    400,
+  );
+  ensure(b.saleIds.length <= 500, "Maximum 500 bills can be processed at once", 400);
+  const reason = text(b.reason || "Bulk cancellation", "reason", 1000);
+  const refundMethod = b.refundMethod ? text(b.refundMethod, "refundMethod", 50) : "CASH";
+  const permanent = b.permanent === true;
+  if (permanent) {
+    ensure(actor.admin, "Administrator required for permanent deletion", 403);
+  }
+
+  const results: Array<{ id: string; invoiceNo?: string; success: boolean; error?: string }> = [];
+
+  for (const rawId of b.saleIds) {
+    const saleId = uuid(rawId);
+    try {
+      const res = await transaction(async (tx) => {
+        const sale = await tx.pOSSale.findUnique({
+          where: { id: saleId },
+          include: { items: true },
+        });
+        ensure(sale, "Invoice not found", 404);
+        scope(actor, sale.storeId);
+
+        if (permanent) {
+          const saleItemIds = sale.items.map((i) => i.id);
+          const returns = await tx.pOSReturn.findMany({
+            where: { saleId },
+            select: { id: true },
+          });
+          const returnIds = returns.map((r) => r.id);
+
+          if (returnIds.length > 0 || saleItemIds.length > 0) {
+            await tx.pOSReturnItem.deleteMany({
+              where: {
+                OR: [
+                  ...(returnIds.length > 0 ? [{ returnId: { in: returnIds } }] : []),
+                  ...(saleItemIds.length > 0 ? [{ saleItemId: { in: saleItemIds } }] : []),
+                ],
+              },
+            });
+          }
+          if (returnIds.length > 0) {
+            await tx.pOSReturn.deleteMany({ where: { id: { in: returnIds } } });
+          }
+          if (saleItemIds.length > 0) {
+            await tx.pOSCommissionLine.deleteMany({ where: { saleItemId: { in: saleItemIds } } });
+          }
+          await tx.pOSSalePayment.deleteMany({ where: { saleId } });
+          await tx.pOSSaleItem.deleteMany({ where: { saleId } });
+          await tx.pOSSale.delete({ where: { id: saleId } });
+
+          if (sale.status === "COMPLETED") {
+            for (const item of sale.items) {
+              if (item.variantId) {
+                await tx.pOSInventoryBalance.updateMany({
+                  where: { storeId: sale.storeId, variantId: item.variantId },
+                  data: { quantity: { increment: item.quantity } },
+                });
+              }
+            }
+          }
+
+          await audit(tx, actor, "SALE_DELETED", saleId, {
+            invoiceNo: sale.invoiceNo,
+            storeId: sale.storeId,
+            reason,
+            grandTotal: sale.grandTotal,
+          });
+
+          return { invoiceNo: sale.invoiceNo };
+        } else {
+          if (sale.status === "CANCELLED") {
+            return { invoiceNo: sale.invoiceNo };
+          }
+          for (const item of sale.items) {
+            if (item.variantId) {
+              await tx.pOSInventoryBalance.updateMany({
+                where: { storeId: sale.storeId, variantId: item.variantId },
+                data: { quantity: { increment: item.quantity } },
+              });
+            }
+          }
+          await tx.pOSSale.update({
+            where: { id: saleId },
+            data: { status: "CANCELLED" },
+          });
+          const saleItemIds = sale.items.map((i) => i.id);
+          if (saleItemIds.length > 0) {
+            const commLines = await tx.pOSCommissionLine.findMany({
+              where: { saleItemId: { in: saleItemIds } },
+            });
+            for (const line of commLines) {
+              await tx.pOSCommissionLine.update({
+                where: { id: line.id },
+                data: { reversedAmount: line.amount },
+              });
+            }
+          }
+          await audit(tx, actor, "SALE_CANCELLED", saleId, {
+            invoiceNo: sale.invoiceNo,
+            storeId: sale.storeId,
+            reason,
+            refundMethod,
+            grandTotal: sale.grandTotal,
+          });
+          return { invoiceNo: sale.invoiceNo };
+        }
+      });
+      results.push({ id: saleId, invoiceNo: res.invoiceNo, success: true });
+    } catch (err: unknown) {
+      results.push({
+        id: saleId,
+        success: false,
+        error: err instanceof Error ? err.message : "Cancellation failed",
+      });
+    }
+  }
+
+  const processedCount = results.filter((r) => r.success).length;
+  const failedCount = results.filter((r) => !r.success).length;
+
+  return {
+    success: failedCount === 0,
+    totalRequested: b.saleIds.length,
+    processedCount,
+    failedCount,
+    results,
+  };
+}
+
+export async function dataManagementPreview(actor: Actor, query: Record<string, unknown>) {
+  permission(actor, "reports");
+  const scopeType = text(query.scope || "current", "scope");
+  ensure(["current", "selected", "all"].includes(scopeType), "Scope must be current, selected, or all");
+
+  let storeIds: number[] = [];
+  if (scopeType === "all") {
+    ensure(actor.admin, "Administrator required for all-store preview", 403);
+    const allStores = await prisma.store.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    storeIds = allStores.map((s) => s.id);
+  } else if (scopeType === "selected") {
+    ensure(actor.admin || actor.permissions["pos.allStores"] === true, "Administrator or multi-store access required", 403);
+    const rawIds = query.storeIds;
+    const parsed = Array.isArray(rawIds)
+      ? rawIds.map(Number)
+      : typeof rawIds === "string"
+      ? rawIds.split(",").map(Number)
+      : [];
+    ensure(parsed.length > 0, "At least one store must be selected", 400);
+    for (const sid of parsed) {
+      scope(actor, sid);
+    }
+    storeIds = parsed;
+  } else {
+    const sid = integer(Number(query.currentStoreId || actor.storeId), "currentStoreId");
+    scope(actor, sid);
+    storeIds = [sid];
+  }
+
+  const where: Prisma.POSSaleWhereInput = {
+    storeId: { in: storeIds },
+    ...(query.status && query.status !== "ALL" ? { status: text(query.status, "status") } : {}),
+    ...(query.startDate || query.endDate
+      ? {
+          createdAt: {
+            ...(query.startDate ? { gte: new Date(String(query.startDate)) } : {}),
+            ...(query.endDate ? { lte: new Date(String(query.endDate) + "T23:59:59.999Z") } : {}),
+          },
+        }
+      : {}),
+  };
+
+  const storeBreakdowns = await prisma.pOSSale.groupBy({
+    by: ["storeId"],
+    where,
+    _count: { id: true },
+    _sum: { grandTotal: true },
+  });
+
+  const stores = await prisma.store.findMany({
+    where: { id: { in: storeIds } },
+    select: { id: true, name: true, code: true },
+  });
+
+  const storeMap = new Map(stores.map((s) => [s.id, s]));
+
+  const breakdown = storeIds.map((sid) => {
+    const stat = storeBreakdowns.find((b) => b.storeId === sid);
+    const storeInfo = storeMap.get(sid);
+    return {
+      storeId: sid,
+      storeName: storeInfo?.name || `Store #${sid}`,
+      storeCode: storeInfo?.code || "",
+      billCount: stat?._count.id ?? 0,
+      totalAmount: Number(stat?._sum.grandTotal ?? 0),
+    };
+  });
+
+  const totalBills = breakdown.reduce((sum, s) => sum + s.billCount, 0);
+  const totalAmount = breakdown.reduce((sum, s) => sum + s.totalAmount, 0);
+  const affectedStores = breakdown.filter((s) => s.billCount > 0);
+
+  return {
+    scope: scopeType,
+    totalBills,
+    totalAmount,
+    affectedStoreCount: affectedStores.length,
+    stores: breakdown,
+  };
+}
+
+export async function dataManagementClear(actor: Actor, raw: unknown) {
+  const b = object(raw);
+  keys(b, [
+    "scope",
+    "storeIds",
+    "currentStoreId",
+    "startDate",
+    "endDate",
+    "status",
+    "actionType",
+    "reason",
+    "confirmationText",
+  ]);
+
+  ensure(
+    actor.admin || actor.permissions["pos.refund"] === true,
+    "Permission denied: pos.refund or admin required",
+    403,
+  );
+  const scopeType = text(b.scope || "current", "scope");
+  ensure(["current", "selected", "all"].includes(scopeType), "Scope must be current, selected, or all");
+  const actionType = text(b.actionType || "CANCEL", "actionType");
+  ensure(["CANCEL", "DELETE"].includes(actionType), "actionType must be CANCEL or DELETE");
+  const reason = b.reason ? text(b.reason, "reason", 1000) : "Data management clear";
+
+  if (scopeType === "all" || actionType === "DELETE") {
+    ensure(actor.admin, "Administrator authorization required for this action", 403);
+    ensure(
+      b.confirmationText === "DELETE",
+      "Type DELETE to confirm permanent operation",
+      400,
+    );
+  }
+
+  let storeIds: number[] = [];
+  if (scopeType === "all") {
+    const allStores = await prisma.store.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    storeIds = allStores.map((s) => s.id);
+  } else if (scopeType === "selected") {
+    ensure(actor.admin || actor.permissions["pos.allStores"] === true, "Administrator or multi-store access required", 403);
+    ensure(Array.isArray(b.storeIds) && b.storeIds.length > 0, "At least one store must be selected", 400);
+    const parsed = b.storeIds.map((id: unknown) => integer(Number(id), "storeId"));
+    for (const sid of parsed) {
+      scope(actor, sid);
+    }
+    storeIds = parsed;
+  } else {
+    const sid = integer(Number(b.currentStoreId || actor.storeId), "currentStoreId");
+    scope(actor, sid);
+    storeIds = [sid];
+  }
+
+  const where: Prisma.POSSaleWhereInput = {
+    storeId: { in: storeIds },
+    ...(b.status && b.status !== "ALL" ? { status: text(b.status, "status") } : {}),
+    ...(b.startDate || b.endDate
+      ? {
+          createdAt: {
+            ...(b.startDate ? { gte: new Date(String(b.startDate)) } : {}),
+            ...(b.endDate ? { lte: new Date(String(b.endDate) + "T23:59:59.999Z") } : {}),
+          },
+        }
+      : {}),
+  };
+
+  return transaction(async (tx) => {
+    const sales = await tx.pOSSale.findMany({
+      where,
+      include: { items: true },
+    });
+
+    const affectedBills = sales.length;
+    const affectedAmount = sales.reduce((sum, s) => sum + Number(s.grandTotal), 0);
+    const saleIds = sales.map((s) => s.id);
+
+    if (affectedBills === 0) {
+      return {
+        success: true,
+        affectedBills: 0,
+        affectedAmount: 0,
+        affectedStoreCount: 0,
+        message: "No matching bills found for the selected criteria.",
+      };
+    }
+
+    if (actionType === "DELETE") {
+      const chunkSize = 100;
+      for (let i = 0; i < saleIds.length; i += chunkSize) {
+        const chunk = saleIds.slice(i, i + chunkSize);
+        const chunkSales = sales.filter((s) => chunk.includes(s.id));
+        const saleItemIds = chunkSales.flatMap((s) => s.items.map((it) => it.id));
+        const returns = await tx.pOSReturn.findMany({
+          where: { saleId: { in: chunk } },
+          select: { id: true },
+        });
+        const returnIds = returns.map((r) => r.id);
+
+        if (returnIds.length > 0 || saleItemIds.length > 0) {
+          await tx.pOSReturnItem.deleteMany({
+            where: {
+              OR: [
+                ...(returnIds.length > 0 ? [{ returnId: { in: returnIds } }] : []),
+                ...(saleItemIds.length > 0 ? [{ saleItemId: { in: saleItemIds } }] : []),
+              ],
+            },
+          });
+        }
+        if (returnIds.length > 0) {
+          await tx.pOSReturn.deleteMany({ where: { id: { in: returnIds } } });
+        }
+        if (saleItemIds.length > 0) {
+          await tx.pOSCommissionLine.deleteMany({ where: { saleItemId: { in: saleItemIds } } });
+        }
+        await tx.pOSSalePayment.deleteMany({ where: { saleId: { in: chunk } } });
+        await tx.pOSSaleItem.deleteMany({ where: { saleId: { in: chunk } } });
+        await tx.pOSSale.deleteMany({ where: { id: { in: chunk } } });
+      }
+
+      await audit(tx, actor, "DATA_MANAGEMENT_PURGE", "DATA_MANAGEMENT", {
+        scope: scopeType,
+        storeIds,
+        affectedBills,
+        affectedAmount,
+        reason,
+        startDate: b.startDate,
+        endDate: b.endDate,
+        statusFilter: b.status,
+      });
+
+      return {
+        success: true,
+        affectedBills,
+        affectedAmount,
+        affectedStoreCount: storeIds.length,
+        message: `Permanently deleted ${affectedBills} bills across ${storeIds.length} store(s).`,
+      };
+    } else {
+      const completedSales = sales.filter((s) => s.status === "COMPLETED");
+      const completedIds = completedSales.map((s) => s.id);
+
+      for (const s of completedSales) {
+        for (const item of s.items) {
+          if (item.variantId) {
+            await tx.pOSInventoryBalance.updateMany({
+              where: { storeId: s.storeId, variantId: item.variantId },
+              data: { quantity: { increment: item.quantity } },
+            });
+          }
+        }
+      }
+
+      if (completedIds.length > 0) {
+        await tx.pOSSale.updateMany({
+          where: { id: { in: completedIds } },
+          data: { status: "CANCELLED" },
+        });
+
+        const completedItemIds = completedSales.flatMap((s) => s.items.map((it) => it.id));
+        if (completedItemIds.length > 0) {
+          const commLines = await tx.pOSCommissionLine.findMany({
+            where: { saleItemId: { in: completedItemIds } },
+          });
+          for (const line of commLines) {
+            await tx.pOSCommissionLine.update({
+              where: { id: line.id },
+              data: { reversedAmount: line.amount },
+            });
+          }
+        }
+      }
+
+      await audit(tx, actor, "DATA_MANAGEMENT_CANCEL", "DATA_MANAGEMENT", {
+        scope: scopeType,
+        storeIds,
+        affectedBills,
+        cancelledCompletedBills: completedIds.length,
+        affectedAmount,
+        reason,
+        startDate: b.startDate,
+        endDate: b.endDate,
+        statusFilter: b.status,
+      });
+
+      return {
+        success: true,
+        affectedBills,
+        affectedAmount,
+        affectedStoreCount: storeIds.length,
+        message: `Successfully cancelled ${completedIds.length} completed bills (${affectedBills} total affected) across ${storeIds.length} store(s).`,
+      };
+    }
+  });
+}
+

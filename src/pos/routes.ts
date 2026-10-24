@@ -33,6 +33,8 @@ import { reviewCommission } from "./commissions";
 import { authenticateStorePassword } from "./storeCredentials";
 import { signAccessToken } from "../utils/jwt";
 
+import { getPOSWork, savePOSWork, resumePOSWork } from "./workSessions";
+
 const router = Router();
 
 // --- PUBLIC POS AUTH ROUTES ---
@@ -91,6 +93,8 @@ router.post("/auth/logout", async (_req: Request, res: Response) => {
 // All POS routes below this line require authentication
 router.use(authenticate);
 
+
+
 router.get("/auth/me", (req: Request, res: Response) => {
   const a = (req as POSRequest).actor;
   res.json({
@@ -119,6 +123,10 @@ const route =
     }
   };
 const id = (r: Request) => uuid(r.params.id);
+router.get("/work-state", route(r => getPOSWork(r.actor)));
+router.put("/work-state", route(r => savePOSWork(r.actor, r.body)));
+router.post("/work-state/break", route(r => savePOSWork(r.actor, r.body, true)));
+router.post("/work-state/resume", route(r => resumePOSWork(r.actor, r.body)));
 router.get(
   "/access/users",
   route(async (r) => {
@@ -962,6 +970,22 @@ router.post(
   "/sales",
   route((r) => service.checkout(r.actor, r.body)),
 );
+router.post(
+  "/sales/bulk-cancel",
+  route((r) => service.bulkCancelSales(r.actor, r.body)),
+);
+router.post(
+  "/sales/bulk-delete",
+  route((r) => service.bulkCancelSales(r.actor, { ...r.body, permanent: true })),
+);
+router.get(
+  "/data-management/preview",
+  route((r) => service.dataManagementPreview(r.actor, r.query)),
+);
+router.post(
+  "/data-management/clear",
+  route((r) => service.dataManagementClear(r.actor, r.body)),
+);
 router.get(
   "/sales",
   route(async (r) => {
@@ -1074,6 +1098,16 @@ router.post(
 router.post(
   "/sales/:id/cancel",
   route((r) => service.cancelSale(r.actor, id(r), r.body)),
+);
+router.delete(
+  "/sales/:id",
+  route((r) =>
+    service.deleteSale(r.actor, id(r), {
+      reason:
+        typeof r.query.reason === "string" ? r.query.reason : r.body?.reason,
+      permanent: r.query.permanent === "true" || r.body?.permanent === true,
+    }),
+  ),
 );
 router.post(
   "/sales/:id/returns",
