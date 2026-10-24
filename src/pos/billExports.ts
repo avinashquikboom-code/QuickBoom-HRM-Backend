@@ -105,7 +105,7 @@ export function invoicePdf(invoices: Invoice[], paper: string = "A4"): Promise<B
   const width = paper === "A4" ? 595.28 : Number(paper) * 72 / 25.4;
   const margin = paper === "A4" ? 42 : 10, contentWidth = width - margin * 2;
   const fontSize = paper === "58" ? 8 : paper === "80" ? 9 : 11;
-  type Line = { text: string; bold?: boolean; center?: boolean; size?: number; gap?: number; barcode?: boolean; logo?: boolean; itemStart?: boolean };
+  type Line = { text: string; bold?: boolean; center?: boolean; size?: number; gap?: number; barcode?: boolean; logo?: boolean; itemStart?: boolean; summaryStart?: boolean };
   for (const s of invoices) {
     const lines: Line[] = [
       { text: "hopkid", logo: true, bold: true, center: true, size: paper === "A4" ? 42 : 28 },
@@ -127,7 +127,7 @@ export function invoicePdf(invoices: Invoice[], paper: string = "A4"): Promise<B
       { text: `Total: ₹ ${i.lineTotal.toFixed(2)}${i.salesperson ? ` | ${person(i.salesperson)}` : ""}`, bold: true },
     ));
     lines.push(
-      { text: `Total items: ${s.items.reduce((n, i) => n + i.quantity, 0)}`, gap: 8 },
+      { text: `Total items: ${s.items.reduce((n, i) => n + i.quantity, 0)}`, gap: 8, summaryStart: true },
       { text: `Sub Total: ₹ ${s.subtotal.toFixed(2)}` },
       { text: `Discount: ₹ ${s.discountTotal.toFixed(2)}` },
       { text: `Tax (GST): ₹ ${s.taxTotal.toFixed(2)}` },
@@ -155,7 +155,8 @@ export function invoicePdf(invoices: Invoice[], paper: string = "A4"): Promise<B
     };
     for (let index = 0; index < measured.length; index++) {
       const line = measured[index];
-      const blockHeight = line.itemStart ? measured.slice(index, index + 5).reduce((n, l) => n + l.height, 0) : line.height;
+      const blockHeight = line.summaryStart ? measured.slice(index).reduce((n, l) => n + l.height, 0)
+        : line.itemStart ? measured.slice(index, index + 5).reduce((n, l) => n + l.height, 0) : line.height;
       if (y + blockHeight > height - margin && y > margin && blockHeight < height - margin * 2) continuation();
       if (y + line.height > height - margin && y > margin) continuation();
       y += line.gap ?? 0;
@@ -190,6 +191,7 @@ export async function downloadBillExport(actor: Actor, input: unknown, res: Resp
     const headers = [...exportHeaders, ...(filter.detailed ? itemHeaders : [])];
     let workbook: ExcelJS.stream.xlsx.WorkbookWriter | undefined;
     let sheet: ExcelJS.Worksheet | undefined;
+    let sheetRows = 1, sheetNumber = 1;
     let cursor: string | undefined;
     const invoices: Invoice[] = [];
     let started = false;
@@ -212,7 +214,13 @@ export async function downloadBillExport(actor: Actor, input: unknown, res: Resp
       }
       if (filter.format === "pdf") invoices.push(...batch);
       else for (const sale of batch) for (const row of rows(sale, filter.detailed)) {
-        if (sheet) sheet.addRow(row).commit();
+        if (sheet && workbook) {
+          if (sheetRows >= 1000000) {
+            sheet.commit(); sheet = workbook.addWorksheet(`Invoices ${++sheetNumber}`);
+            sheet.addRow(headers).commit(); sheetRows = 1;
+          }
+          sheet.addRow(row).commit(); sheetRows++;
+        }
         else await write(res, row.map(csvCell).join(",") + "\r\n");
       }
       cursor = batch[batch.length - 1].id;
