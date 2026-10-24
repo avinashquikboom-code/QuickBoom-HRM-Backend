@@ -344,7 +344,7 @@ async function run() {
     });
     assert.equal(singleSaleRes.status, 200);
     const singleSale = singleSaleRes.data.data;
-    assert.match(singleSale.invoiceNo, /^POS-\d+/);
+    assert.match(singleSale.invoiceNo, /^HK-\d{10}$/);
     assert.equal(singleSale.items.length, 1);
     assert.equal(singleSale.items[0].variantId, varShirtM.id);
     assert.equal(singleSale.items[0].quantity, 1);

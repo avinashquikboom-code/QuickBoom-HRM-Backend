@@ -75,10 +75,17 @@ export async function manageStorePOSCredential(req:AuthenticatedRequest, rawId:u
 export async function authenticateStorePassword(storeId:number,password:string) {
   return prisma.$transaction(async tx=>{
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(${storeId}::bigint)::text`;
-    const store=await tx.store.findUnique({where:{id:storeId},include:{posCredential:true}});
-    if(!store)return {error:new POSError(401,'Store not found or invalid credentials.')};
-    if(!store.isActive||!store.posCredential?.posEnabled)return {error:new POSError(403,'This store is inactive or POS access is disabled. Contact a Super Admin.')};
-    const cred=store.posCredential;
+    let store = await tx.store.findUnique({where:{id:storeId},include:{posCredential:true}});
+    if (!store) return {error:new POSError(401,'Store not found or invalid credentials.')};
+    if (!store.isActive) return {error:new POSError(403,'This store is inactive. Contact a Super Admin.')};
+    let cred = store.posCredential;
+    if (!cred) {
+      const data = await defaultPOSCredential();
+      cred = await tx.pOSStoreCredential.create({
+        data: { storeId: store.id, ...data },
+      });
+    }
+    if (!cred.posEnabled) return {error:new POSError(403,'POS access is disabled for this store. Contact a Super Admin.')};
     if(cred.lockedUntil&&cred.lockedUntil>new Date())return {error:new POSError(429,'Too many failed attempts. Try again after 15 minutes or contact a Super Admin.')};
     const correct=await bcrypt.compare(password,cred.passwordHash);
     if(!correct){

@@ -269,6 +269,120 @@ export async function authenticate(
   }
 }
 
+export async function resolveOptionalActor(req: Request): Promise<Actor | null> {
+  try {
+    const cookies: Record<string, string> = {
+      ...parseCookieHeader(req.headers.cookie),
+      ...((req as any).cookies || {}),
+    };
+
+    const authHeader =
+      req.headers.authorization ||
+      (req.headers["x-access-token"] as string | undefined) ||
+      (req.headers["x-auth-token"] as string | undefined);
+
+    let rawToken: string | undefined;
+    if (typeof authHeader === "string" && authHeader.trim().length > 0) {
+      rawToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    } else if (typeof req.query?.token === "string" && req.query.token.trim().length > 0) {
+      rawToken = (req.query.token as string).trim();
+    } else {
+      const cookieCandidate =
+        cookies.pos_store_token ||
+        cookies.token ||
+        cookies.auth_token ||
+        cookies.hrm_token ||
+        cookies.super_hrm_token ||
+        cookies.admin_hrm_token ||
+        cookies.employee_hrm_token;
+      if (typeof cookieCandidate === "string" && cookieCandidate.trim().length > 0) {
+        rawToken = cookieCandidate.trim();
+      }
+    }
+
+    if (!rawToken || rawToken === "undefined" || rawToken === "null") {
+      return null;
+    }
+
+    const payload = verifyToken(rawToken);
+    if (!payload) return null;
+
+    if (payload.isPosStoreSession || payload.role === "STORE_POS") {
+      const storeId = Number(payload.storeId);
+      if (!Number.isSafeInteger(storeId) || storeId <= 0) return null;
+      const store = await prisma.store.findUnique({
+        where: { id: storeId },
+        include: { posCredential: true },
+      });
+      if (!store || !store.isActive || store.posCredential?.posEnabled === false) return null;
+      return {
+        userId: payload.id,
+        role: "STORE_POS",
+        storeId: store.id,
+        storeName: store.name,
+        storeCode: store.code ?? undefined,
+        admin: false,
+        isPosStoreSession: true,
+        permissions: {
+          "pos.read": true,
+          "pos.sell": true,
+          "pos.discount": true,
+          "pos.reports": true,
+          "pos.refund": true,
+          "pos.reconcile": true,
+          "pos.catalog": false,
+          "pos.inventory": false,
+        },
+      };
+    }
+
+    const id = Number(payload.id ?? (payload as any).userId);
+    if (!Number.isSafeInteger(id) || id <= 0) return null;
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: { employee: true, userPermission: true },
+    });
+    if (!user || !user.isActive) return null;
+
+    let employee = user.employee;
+    if (!employee) {
+      employee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            ...(user.employeeID
+              ? [{ employeeID: user.employeeID }, { employeeCode: user.employeeID }]
+              : []),
+            ...(user.email ? [{ user: { email: user.email } }] : []),
+          ],
+        },
+      });
+    }
+
+    if (employee && employee.status.toLowerCase() !== "active") return null;
+
+    const defaults = await prisma.rolePermission.findUnique({
+      where: { role: user.role },
+    });
+    const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[user.role] ?? {};
+
+    return {
+      userId: user.id,
+      role: user.role,
+      employeeId: employee?.id,
+      storeId: employee?.storeId ?? undefined,
+      admin: ["SUPER_ADMIN", "ADMIN"].includes(user.role),
+      isPosStoreSession: false,
+      permissions: {
+        ...defaultRolePerms,
+        ...((defaults?.permissions ?? {}) as object),
+        ...((user.userPermission?.permissions ?? {}) as object),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function permission(actor: Actor, name: string) {
   ensure(
     actor.admin || actor.permissions[`pos.${name}`] === true,

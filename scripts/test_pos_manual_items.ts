@@ -396,7 +396,7 @@ async function main() {
       payments: [{ method: "CASH", amount: "500" }],
       idempotencyKey: key,
     });
-    assert.match(sale.invoiceNo, /^POS-\d{10}$/);
+    assert.match(sale.invoiceNo, /^HK-\d{10}$/);
     try {
       await pos.checkout(actor, {
         storeId: store.id,

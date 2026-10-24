@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
 import {
   authenticate,
+  resolveOptionalActor,
   POSRequest,
   permission,
   scope,
@@ -39,20 +40,49 @@ import { getPOSWork, savePOSWork, resumePOSWork } from "./workSessions";
 const router = Router();
 
 // --- PUBLIC POS AUTH ROUTES ---
-router.get("/auth/stores", async (_req: Request, res: Response, next: NextFunction) => {
+router.get("/auth/stores", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const stores = await prisma.store.findMany({
-      where: {
-        isActive: true,
-        posCredential: { posEnabled: true },
+    const actor = await resolveOptionalActor(req);
+
+    // If an employee with a specific assigned store (and not all-stores admin), restrict to their store
+    const isRestrictedEmployee =
+      actor &&
+      !actor.admin &&
+      !actor.permissions["pos.allStores"] &&
+      !actor.permissions["pos.manageStores"] &&
+      Boolean(actor.storeId);
+
+    const where: Prisma.StoreWhereInput = {
+      isActive: true,
+      NOT: {
+        posCredential: { posEnabled: false },
       },
+      ...(isRestrictedEmployee ? { id: actor.storeId } : {}),
+    };
+
+    const rawStores = await prisma.store.findMany({
+      where,
       select: {
         id: true,
         name: true,
         code: true,
+        isActive: true,
       },
       orderBy: { name: "asc" },
     });
+
+    // Deduplicate strictly by primary key (id) and ensure alphabetical sorting
+    const storeMap = new Map<number, typeof rawStores[0]>();
+    for (const store of rawStores) {
+      if (!storeMap.has(store.id)) {
+        storeMap.set(store.id, store);
+      }
+    }
+
+    const stores = Array.from(storeMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
+
     res.json({ success: true, data: stores });
   } catch (e) {
     next(e);
@@ -350,11 +380,11 @@ router.get(
         a.permissions["pos.allStores"] === true ||
         a.permissions["pos.manageStores"] === true);
 
-    const [stores, systemSetting, employee] = await Promise.all([
+    const [rawStores, systemSetting, employee] = await Promise.all([
       prisma.store.findMany({
         where: canAccessAllStores
-          ? { isActive: true }
-          : { id: a.storeId, isActive: true },
+          ? { isActive: true, NOT: { posCredential: { posEnabled: false } } }
+          : { id: a.storeId, isActive: true, NOT: { posCredential: { posEnabled: false } } },
         select: {
           id: true,
           name: true,
@@ -383,6 +413,16 @@ router.get(
           })
         : null,
     ]);
+
+    const storeMap = new Map<number, typeof rawStores[0]>();
+    for (const s of rawStores) {
+      if (!storeMap.has(s.id)) {
+        storeMap.set(s.id, s);
+      }
+    }
+    const stores = Array.from(storeMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+    );
 
     const activeStore = storeId
       ? (stores.find((s) => s.id === storeId) ?? null)

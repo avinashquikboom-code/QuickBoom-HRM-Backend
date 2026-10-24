@@ -1300,7 +1300,7 @@ export async function checkout(actor: Actor, raw: unknown, existingTx?: Tx) {
         const sequence = await tx.$queryRaw<
           { n: bigint }[]
         >`SELECT nextval('"POSInvoiceSequence"') AS n`;
-        const candidate = `POS-${String(sequence[0]!.n).padStart(10, "0")}`;
+        const candidate = `HK-${String(sequence[0]!.n).padStart(10, "0")}`;
         const conflict = await tx.pOSSale.findUnique({
           where: { invoiceNo: candidate },
           select: { id: true },
