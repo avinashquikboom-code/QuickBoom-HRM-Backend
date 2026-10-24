@@ -90,7 +90,7 @@ All new APIs enforce `pos.reports`, explicit store scope and validated filters:
 
 Details support `page`, `pageSize` (max 100), `direction`, `groupBy`, `from`,
 `to`, `storeId`, `employeeId`, `paymentMode`, `status` and `search`.
-Report CSV/Excel exports read all matching pages in one repeatable-read snapshot.
+Report CSV/Excel exports read all matching pages in one repeatable-read snapshot (up to one million rows per export).
 CSV is quoted and protected against spreadsheet formula injection. A two-minute
 transaction bounds long exports. Print includes report/store/date/generated-time
 metadata, summary and current detail page, with matching count/page disclosed.
@@ -109,6 +109,7 @@ Frontend: `src/features/pos/POSBillingScreen.tsx`,
 `src/features/pos/POSReports.tsx`, `src/features/pos/POSWorkspace.tsx`,
 `src/features/pos/POSBillExportDialog.tsx`,
 `src/features/pos/billExportClient.ts`, `src/features/pos/posReceipt.ts`,
+`src/features/pos/receipt.css`,
 `scripts/test_pos_discounts_reports.cjs`, `package.json`.
 
 ## Verification
@@ -125,5 +126,5 @@ employee-validation assertion to the current wording.
 Chrome end-to-end verification passed discount type/quantity changes, bill
 allocation, payment/change, saved totals, receipt print-document contents,
 report summaries/tabs/search/grouping, CSV/report print, filtered bill exports
-and mobile layout, with no browser runtime errors or invalid quote responses
+and mobile layout, plus report print-media inspection, with no browser runtime errors or invalid quote responses
 for the valid input flow. Tests use isolated local PostgreSQL, never production.

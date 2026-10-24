@@ -1,3 +1,4 @@
+import { cashierUserSelect, cashierName, withCashierName } from "./cashierIdentity";
 import { recognizedSaleWhere, receivedSaleWhere } from "./salesAccounting";
 import { checkoutPOSWork } from "./workSessions";
 import { accrueCommission, reverseCommission } from "./commissions";
@@ -544,10 +545,10 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
         registerId: id,
         closedAt: null,
       },
-      include: { register: { include: { store: true } } },
+      include: { register: { include: { store: true } }, user: { select: cashierUserSelect } },
     });
     if (myExisting) {
-      return myExisting;
+      return withCashierName(myExisting);
     }
 
     ensure(
@@ -576,13 +577,13 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
         openingCash,
         openingNotes,
       },
-      include: { register: { include: { store: true } } },
+      include: { register: { include: { store: true } }, user: { select: cashierUserSelect } },
     });
     await audit(tx, actor, "REGISTER_OPENED", s.id, {
       openingCash: openingCash.toString(),
       openingNotes,
     });
-    return s;
+    return withCashierName(s);
   });
 }
 
@@ -615,14 +616,14 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
       },
       include: {
         register: { include: { store: true } },
-        user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+        user: { select: cashierUserSelect },
         employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
       },
       orderBy: { openedAt: "desc" },
     });
 
     if (existing) {
-      return existing; // Resume existing session without asking again or creating duplicates
+      return withCashierName(existing); // Resume existing session without asking again or creating duplicates
     }
 
     // 2. Find or allocate register
@@ -685,7 +686,7 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
       },
       include: {
         register: { include: { store: true } },
-        user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+        user: { select: cashierUserSelect },
         employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
       },
     });
@@ -695,7 +696,7 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
       openingNotes,
     });
 
-    return newSession;
+    return withCashierName(newSession);
   });
 }
 
@@ -704,7 +705,7 @@ export async function computeSessionSummary(sessionId: string) {
     where: { id: sessionId },
     include: {
       register: { include: { store: true } },
-      user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+      user: { select: cashierUserSelect },
       employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
     },
   });
@@ -781,15 +782,12 @@ export async function computeSessionSummary(sessionId: string) {
   const actualCash = session.actualCash;
   const variance = session.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
 
-  const cashierName =
-    session.employee?.firstName
-      ? `${session.employee.firstName} ${session.employee.lastName || ""}`.trim()
-      : session.user?.profile?.fullName || session.user?.email || `User #${session.userId}`;
+  const resolvedCashierName = cashierName(session.user);
 
   return {
     session: {
       ...session,
-      cashierName,
+      cashierName: resolvedCashierName,
       storeName: session.register.store.name,
       registerName: session.register.name,
     },
@@ -816,7 +814,7 @@ export async function computeSessionSummary(sessionId: string) {
       openedAt: session.openedAt,
       closedAt: session.closedAt,
       isClosed: !!session.closedAt,
-      cashierName,
+      cashierName: resolvedCashierName,
       storeName: session.register.store.name,
       registerName: session.register.name,
     },
@@ -836,7 +834,7 @@ export async function closeSession(actor: Actor, sessionId: string, raw: unknown
       where: { id: sessionId },
       include: {
         register: { include: { store: true } },
-        user: { select: { id: true, email: true } },
+        user: { select: cashierUserSelect },
         employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
       },
     });
@@ -853,7 +851,7 @@ export async function closeSession(actor: Actor, sessionId: string, raw: unknown
     }
 
     if (previous.closedAt) {
-      return previous; // Idempotent return
+      return withCashierName(previous); // Idempotent return
     }
 
     // Server-side calculation of expected cash:
@@ -892,7 +890,7 @@ export async function closeSession(actor: Actor, sessionId: string, raw: unknown
       },
       include: {
         register: { include: { store: true } },
-        user: { select: { id: true, email: true } },
+        user: { select: cashierUserSelect },
         employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
       },
     });
@@ -904,7 +902,7 @@ export async function closeSession(actor: Actor, sessionId: string, raw: unknown
       reason,
     });
 
-    return result;
+    return withCashierName(result);
   });
 }
 
@@ -936,7 +934,7 @@ export async function getCurrentCashierSession(actor: Actor, storeIdParam: unkno
     },
     include: {
       register: { include: { store: true } },
-      user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+      user: { select: cashierUserSelect },
       employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
     },
     orderBy: { openedAt: "desc" },
@@ -948,7 +946,7 @@ export async function getCurrentCashierSession(actor: Actor, storeIdParam: unkno
       sessions: {
         where: { closedAt: null },
         include: {
-          user: { select: { id: true, email: true } },
+          user: { select: cashierUserSelect },
           employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
         },
       },
@@ -963,9 +961,9 @@ export async function getCurrentCashierSession(actor: Actor, storeIdParam: unkno
   }
 
   return {
-    session,
+    session: session ? withCashierName(session) : null,
     summary,
-    registers,
+    registers: registers.map(register => ({ ...register, sessions: register.sessions.map(withCashierName) })),
   };
 }
 
@@ -997,7 +995,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
     orderBy: { openedAt: query.direction === "asc" ? "asc" : "desc" },
     include: {
       register: { include: { store: true } },
-      user: { select: { id: true, email: true, role: true, profile: { select: { fullName: true } } } },
+      user: { select: cashierUserSelect },
       employee: { select: { id: true, employeeCode: true, firstName: true, lastName: true } },
       sales: {
         where: receivedSaleWhere,
@@ -1054,10 +1052,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
     const actualCash = sess.actualCash;
     const variance = sess.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
 
-    const cashierName =
-      sess.employee?.firstName
-        ? `${sess.employee.firstName} ${sess.employee.lastName || ""}`.trim()
-        : sess.user?.profile?.fullName || sess.user?.email || `User #${sess.userId}`;
+    const resolvedCashierName = cashierName(sess.user);
 
     return {
       id: sess.id,
@@ -1067,7 +1062,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
       storeName: sess.register.store.name,
       userId: sess.userId,
       employeeId: sess.employeeId,
-      cashierName,
+      cashierName: resolvedCashierName,
       cashierEmail: sess.user?.email,
       cashierCode: sess.employee?.employeeCode,
       openedAt: sess.openedAt,

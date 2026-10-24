@@ -8,6 +8,13 @@ export interface Actor {
   userId: number;
   role: string;
   employeeId?: number;
+  cashierName?: string;
+  employee?: {
+    id: number;
+    firstName: string;
+    lastName: string;
+    employeeCode?: string | null;
+  };
   storeId?: number;
   storeName?: string;
   storeCode?: string;
@@ -250,10 +257,23 @@ export async function authenticate(
       where: { role: user.role },
     });
     const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[user.role] ?? {};
+    const empFullName = employee
+      ? `${employee.firstName} ${employee.lastName || ""}`.trim()
+      : null;
+    const cashierName = empFullName || "Unknown Cashier";
     (req as POSRequest).actor = {
       userId: user.id,
       role: user.role,
       employeeId: employee?.id,
+      cashierName,
+      employee: employee
+        ? {
+            id: employee.id,
+            firstName: employee.firstName,
+            lastName: employee.lastName,
+            employeeCode: employee.employeeCode,
+          }
+        : undefined,
       storeId: employee?.storeId ?? undefined,
       admin: ["SUPER_ADMIN", "ADMIN"].includes(user.role),
       isPosStoreSession: false,
@@ -364,11 +384,24 @@ export async function resolveOptionalActor(req: Request): Promise<Actor | null> 
       where: { role: user.role },
     });
     const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[user.role] ?? {};
+    const empFullName = employee
+      ? `${employee.firstName} ${employee.lastName || ""}`.trim()
+      : null;
+    const cashierName = empFullName || "Unknown Cashier";
 
     return {
       userId: user.id,
       role: user.role,
       employeeId: employee?.id,
+      cashierName,
+      employee: employee
+        ? {
+            id: employee.id,
+            firstName: employee.firstName,
+            lastName: employee.lastName,
+            employeeCode: employee.employeeCode,
+          }
+        : undefined,
       storeId: employee?.storeId ?? undefined,
       admin: ["SUPER_ADMIN", "ADMIN"].includes(user.role),
       isPosStoreSession: false,

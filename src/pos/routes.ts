@@ -1,3 +1,4 @@
+import { cashierUserSelect, cashierName, withCashierName } from "./cashierIdentity";
 import { reportingOverview, reportingDetails, exportReport } from "./reporting";
 import { previewBillExport, downloadBillExport } from "./billExports";
 import { Router, Request, Response, NextFunction } from "express";
@@ -486,7 +487,7 @@ router.get(
     };
 
     return {
-      actor: a,
+      actor: { ...a, cashierName: cashierName(await prisma.user.findUnique({ where: { id: a.userId }, select: cashierUserSelect })) },
       employee,
       salesperson,
       company,
@@ -976,7 +977,13 @@ router.get(
 );
 router.get(
   "/sessions/:id/summary",
-  route((r) => service.computeSessionSummary(id(r))),
+  route(async (r) => {
+    permission(r.actor, "read");
+    const session = await prisma.pOSSession.findUnique({ where: { id: id(r) }, include: { register: true } });
+    ensure(session, "Register session not found", 404);
+    scope(r.actor, session.register.storeId);
+    return service.computeSessionSummary(session.id);
+  }),
 );
 router.post(
   "/sessions/:id/close",
@@ -1008,13 +1015,13 @@ router.get(
     ensure(register, "Register not found", 404);
     scope(r.actor, register.storeId);
     const p = page(r.query);
-    return prisma.pOSSession.findMany({
+    return (await prisma.pOSSession.findMany({
       where: { registerId: register.id },
-      include: { cashMovements: true },
+      include: { cashMovements: true, user: { select: cashierUserSelect } },
       skip: p.skip,
       take: p.take,
       orderBy: { openedAt: "desc" },
-    });
+    })).map(withCashierName);
   }),
 );
 // Sale creation completes atomically. No separate unsafe draft-completion endpoint.
