@@ -34,7 +34,7 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
   requireValue(!event.includes('EXCHANGE'), 'EXCHANGE_REQUIRES_LINKED_SALE_AND_RETURN_DOCUMENTS');
   const refund = event.includes('CREDIT') || event.includes('REFUND') || !!data.creditNote;
   const inv = refund ? data.creditNote ?? data : data.invoice ?? data;
-  requireValue(refund || event.includes('INVOICE') || event.includes('SALE') || !!data.invoice, 'UNSUPPORTED_EVENT');
+  requireValue(refund || event.includes('INVOICE') || event.includes('SALE') || !!data.invoice || !!pick(data, ['invoiceId','invoiceNo','billId']), 'UNSUPPORTED_EVENT');
   const externalId = identifier(pick(inv, refund ? ['creditNoteNo', 'cnNo', 'CreditNoteNo', 'id'] : ['invoiceId', 'InvoiceID', 'salesID', 'SalesID', 'billId', 'invoiceNo', 'invoiceNumber']) ?? pick(data, ['billId', 'invoiceNo']), 'DOCUMENT_ID');
   const storeId = Number(pick(inv, ['storeId', 'StoreID', 'branchId', 'BranchID']) ?? pick(data, ['storeId', 'StoreID', 'branchId', 'BranchID']));
   requireValue(Number.isSafeInteger(storeId) && storeId > 0, 'STORE_ID_MISSING');

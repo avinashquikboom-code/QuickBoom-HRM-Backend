@@ -41,10 +41,10 @@ async function audit(tx: Prisma.TransactionClient, userId: number, action: strin
   await tx.hrmCommissionAudit.create({ data: { userId, action, data: JSON.parse(JSON.stringify(data)) } });
 }
 router.get('/configuration', route(async req => {
-  access(req);
-  return { settings: await prisma.hrmCommissionSettings.findUnique({ where: { id: 1 } }),
+  const actor = access(req);
+  return { canConfigure: actor.admin, settings: await prisma.hrmCommissionSettings.findUnique({ where: { id: 1 } }),
     subcategories: await prisma.hrmCommissionSubcategory.findMany({ orderBy: { name: 'asc' } }),
-    rates: await prisma.hrmCommissionRate.findMany({ orderBy: { effectiveFrom: 'desc' }, take: 500 }),
+    rates: await prisma.hrmCommissionRate.findMany({ where: actor.admin || actor.role === 'HR' ? {} : { storeKey: { in: [0, actor.storeId ?? 0] } }, orderBy: { effectiveFrom: 'desc' }, take: 500 }),
     mappings: await prisma.hrmCommissionMapping.findMany({ orderBy: { effectiveFrom: 'desc' }, take: 500 }) };
 }));
 router.put('/settings', route(async req => {

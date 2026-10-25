@@ -114,6 +114,19 @@ async function main() {
     const result=await ingest({eventType:'salesExchange.created',data:{salesExchange:{exchangeNo:randomUUID(),storeId:store.id,exchangeDate:'2026-01-11',originalInvoiceId:id},SalesExchangeProductList:[{lineItemId:'old',productID:'a',quantity:1,IsOld:true,originalSaleItemId:'a'}, {...item('replacement',b.externalId,'2000',2),IsOld:false}]}});
     assert.equal(result.status,'PROCESSED'); assert.equal((await total(id)).commission,0);
   });
+  await test('store-specific rate overrides global policy and fixed unit commission respects quantity', async () => {
+    await prisma.hrmCommissionRate.create({data:{subcategoryId:a.id,storeKey:store.id,rate:7,type:'PERCENTAGE',basis:'NET_EX_TAX',fixedBasis:'UNIT',effectiveFrom:since,createdBy:user.id}});
+    const id=randomUUID();await ingest(invoice(id,[item()]));assert.equal((await total(id)).commission,70);
+    const sub=await prisma.hrmCommissionSubcategory.create({data:{externalId:`unit-${key}`,name:'Unit fixed'}});
+    await prisma.hrmCommissionRate.create({data:{subcategoryId:sub.id,rate:12,type:'FIXED',basis:'NET_INCL_TAX',fixedBasis:'UNIT',effectiveFrom:since,createdBy:user.id}});
+    const fixed=randomUUID();await ingest(invoice(fixed,[item('unit',sub.externalId,'1000',3)]));assert.equal((await total(fixed)).commission,36);
+  });
+  await test('failed exchange replacement rolls back original-return side atomically', async () => {
+    const id=randomUUID();await ingest(invoice(id,[item()]));
+    const before=(await total(id)).commission;
+    const result=await ingest({eventType:'salesExchange.created',data:{salesExchange:{exchangeNo:randomUUID(),storeId:store.id,exchangeDate:'2026-01-11',originalInvoiceId:id},SalesExchangeProductList:[{lineItemId:'old',productID:'a',quantity:1,IsOld:true,originalSaleItemId:'a'},{lineItemId:'new',productID:'unmapped',quantity:1,netAmountExTax:2000,IsOld:false}]}});
+    assert.equal(result.status,'EXCEPTION');assert.equal((await total(id)).commission,before);
+  });
   await test('ambiguous line identities, malformed amounts and invalid dates are explicit exceptions', async () => {
     const bad = await ingest(invoice(randomUUID(),[item(),item()])); assert.equal(bad.error,'AMBIGUOUS_DUPLICATE_PRODUCT_LINES');
     assert.equal((await ingest(invoice(randomUUID(),[item('a',a.externalId,'-5')]))).error,'NET_EX_TAX_INVALID');
@@ -129,6 +142,15 @@ async function main() {
       const r=await request(`/report?storeId=${store.id}&from=2026-01-01&to=2026-02-28`);assert.equal(r.status,200);assert(r.body.data.rows.length>0);assert(r.body.data.rows.every((x:any)=>x.storeId===store.id));assert(!('employeeId' in r.body.data.rows[0]));assert(r.body.data.storeTotals.length===1);
       const other=await request(`/report?storeId=${otherStore.id}&from=2026-01-01&to=2026-02-28`);assert.equal(other.body.data.rows.length,0);
       const date=new Date(Date.now()+19800000).toISOString().slice(0,10);assert.equal((await request(`/report?storeId=${store.id}&dateBasis=posting&from=${date}&to=${date}`)).status,200);
+    });
+    await test('subcategory reports show exact mixed-store totals and zero eligible transactions after full refunds', async()=>{
+      const isolated=await prisma.store.create({data:{name:`Exact report ${key}`}}), id=randomUUID();
+      await ingest(invoice(id,[item(),item('b',b.externalId,'2000',2)],{storeId:isolated.id}));
+      const path=`/report?storeId=${isolated.id}&from=2026-01-01&to=2026-01-31`;
+      let r=await request(path);assert.equal(Number(r.body.data.totals.commissionAmount),110);assert.equal(Number(r.body.data.totals.eligibleNetSales),3000);
+      await ingest(credit(randomUUID(),id,{lineItemId:'r1',productID:'a',quantity:1},{storeId:isolated.id}));
+      await ingest(credit(randomUUID(),id,{lineItemId:'r2',productID:'b',quantity:2},{storeId:isolated.id}));
+      r=await request(path);assert.equal(Number(r.body.data.totals.commissionAmount),0);assert.equal(Number(r.body.data.totals.netUnits),0);assert(r.body.data.rows.every((row:any)=>row.earningTransactions===0));
     });
     await test('API denies employee, POS credentials and cross-store report access',async()=>{
       assert.equal((await request('/configuration','GET',undefined,token('EMPLOYEE'))).status,403);
