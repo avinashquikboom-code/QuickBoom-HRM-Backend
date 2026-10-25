@@ -1,3 +1,4 @@
+import { recoverSavedInvoiceItems } from './invoiceItemRecovery';
 import { CommissionTransaction, Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
 import { extractWebhookMeta, fetchHopkidInvoiceDetails, getNumericInvoiceNumber } from '../utils/commissionHelper';
@@ -22,14 +23,22 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
   const complete = lines.length > 0 && lines.every(l => l.commissionAmount !== null && l.commissionState === 'CONFIGURED');
   const total = complete ? money(lines.reduce((sum,l) => sum.plus(String(l.commissionAmount)),new D(0))).toNumber() : null;
   const rates = new Set(lines.filter(l => l.commissionRate !== null).map(l => `${l.commissionType}:${l.commissionRate}:${l.fixedBasis}`));
-  const uniform = complete && lines.every(l=>l.commissionRate!==null) && rates.size === 1;
+  const uniform = lines.length > 0 && lines.every(l=>l.commissionRate!==null) && rates.size === 1;
   const rate = uniform ? lines[0].commissionRate : null;
-  return { commissionSource: 'SUBCATEGORY', commissionState: complete ? state : 'MISSING_CONFIGURATION', commissionAmount: total,
-    commissionEarned: total, totalCommission: total, newCommission: total, calculatedCommissionAmount: total,
-    commissionRate: rate, commissionPercent: rate, commissionPercentage: rate,
-    rateDisplay: !complete ? 'Configuration required' : !uniform ? 'Multiple subcategory rates' : lines[0].commissionType === 'FIXED' ? 'Fixed subcategory commission' : `${rate}%`,
-    eligibleSaleAmount: complete && lines.every(l=>l.eligibleSaleAmount!==null) ? money(lines.reduce((s,l)=>s.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber() : null,
-    hasMissingConfiguration: !complete, productCommissionBreakdown: lines };
+  const missingConfiguration = lines.some(l=>['SUBCATEGORY_MAPPING_REQUIRED','HISTORICAL_OR_CURRENT_RATE_MISSING'].includes(l.missingReason));
+  const missingData = !complete && !missingConfiguration;
+  return { commissionSource:'SUBCATEGORY', commissionState:complete?state:missingData?'INVOICE_DATA_MISSING':'MISSING_CONFIGURATION',
+    commissionAmount:total,commissionEarned:total,totalCommission:total,newCommission:total,calculatedCommissionAmount:total,
+    commissionRate:rate,commissionPercent:rate,commissionPercentage:rate,
+    rateDisplay:uniform?(lines[0].commissionType==='FIXED'?'Fixed subcategory commission':`${rate}%`):complete?'Multiple subcategory rates':missingData?'Invoice item data unavailable':'Configuration required',
+    eligibleSaleAmount:complete&&lines.every(l=>l.eligibleSaleAmount!==null)?money(lines.reduce((n,l)=>n.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber():null,
+    hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines };
+}
+function invoiceDataMessage(reason: string) {
+  if(reason==='PRODUCT_LINES_MISSING') return 'Invoice item data is unavailable. The saved invoice needs its original product details.';
+  if(reason==='PRODUCT_ID_MISSING') return 'The saved product is missing its catalog ID. Its subcategory cannot be verified yet.';
+  if(reason==='QUANTITY_INVALID') return 'The saved product quantity is unavailable or invalid.';
+  return 'Invoice item data could not be verified. The configured commission rate has not been changed.';
 }
 function displayLine(raw: any, index: number) {
   const meta = extractProductLineMeta(raw);
@@ -42,6 +51,16 @@ function displayLine(raw: any, index: number) {
     commissionAmount: null as number|null, commissionType: null as string|null, fixedBasis: null as string|null,
     rateId: null as string|null, commissionState: 'MISSING_CONFIGURATION', missingReason: 'SUBCATEGORY_MAPPING_REQUIRED',
     configurationMessage: messages.SUBCATEGORY_MAPPING_REQUIRED };
+}
+
+async function projectedInvoiceLine(tx: Tx, snapshot: any, base: any) {
+  const returns=await tx.hrmCommissionLine.findMany({where:{originalSaleLineId:snapshot.id}});
+  const revenue=snapshot.eligibleRevenue.minus(returns.reduce((n,r)=>n.plus(r.eligibleRevenue),new D(0)));
+  const commission=snapshot.commissionAmount.minus(returns.reduce((n,r)=>n.plus(r.commissionAmount),new D(0)));
+  return {...base,subcategoryId:snapshot.subcategoryId,subcategoryName:snapshot.subcategoryName,subcategory:snapshot.subcategoryName,
+    eligibleSaleAmount:revenue.toNumber(),saleAmount:revenue.toNumber(),commissionRate:snapshot.rate.toNumber(),commissionAmount:commission.toNumber(),
+    commissionType:snapshot.type,fixedBasis:snapshot.fixedBasis,rateId:snapshot.rateId,basis:snapshot.basis,
+    commissionState:'CONFIGURED',missingReason:null,configurationMessage:null};
 }
 
 /** Read-only invoice calculation. Approved/paid records are never recalculated using current policy. */
@@ -71,51 +90,58 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
     return {...result,commissionSource:saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,recordedCommissionAmount:total.toNumber(),approvalStatus:sale!.status};
   }
 
+  const documents = await tx.hrmCommissionDocument.findMany({ where: { storeId: context.storeId, kind: 'SALE', OR: [
+    { externalId: context.reference }, { externalId: String(meta?.billId ?? context.reference) }, { invoiceNumber: String(sale?.invoiceNumber ?? meta?.invoiceNumber ?? context.reference) },
+  ] } });
+  const projected = documents.length===1 ? await tx.hrmCommissionLine.findMany({where:{documentId:documents[0].id}}) : [];
+  if(!raws.length && projected.length) {
+    const lines=[];
+    for(const snapshot of projected) {
+      const matches=saved.filter(l=>String(l.saleItemId??l.lineItemId??'')===snapshot.externalLineId);
+      const raw=matches.length===1?matches[0]:saved.find(l=>String(l.productID??l.productId)===snapshot.productId&&String(l.variantId??l.sku??'')===snapshot.variantId);
+      const base=displayLine(raw??{productID:snapshot.productId,quantity:snapshot.quantity.toNumber()},lines.length);
+      lines.push(await projectedInvoiceLine(tx,snapshot,base));
+    }
+    return {...summarizeInvoiceLines(lines),itemDataSource:'HRM_LEDGER_SNAPSHOT',approvalStatus:sale?.status??'PENDING'};
+  }
+  const calculationItems = raws.length ? raws : await recoverSavedInvoiceItems(tx,saved);
+  const itemDataSource = raws.length ? 'INVOICE_PAYLOAD' : saved.length ? 'SAVED_PRODUCT_BREAKDOWN' : 'UNAVAILABLE';
   const settings = await tx.hrmCommissionSettings.findUnique({ where: { id: 1 } });
   let doc;
   try {
     doc = normalizePayload({ eventType: 'INVOICE_CREATED', data: { invoice: { ...(meta?.invoice ?? {}),
       invoiceId: context.reference, invoiceDate: meta?.invoice?.invoiceDate ?? meta?.invoice?.date ?? context.at.toISOString(),
-      storeId: context.storeId, lineItems: raws } } }, settings ?? { netField:'productNetAmount',netBasis:'UNVERIFIED',discounted:false });
+      storeId: context.storeId, lineItems: calculationItems } } }, settings ?? { netField:'productNetAmount',netBasis:'UNVERIFIED',discounted:false });
   } catch (e: any) {
-    const lines = display.map(l => ({ ...l, missingReason: e.message, configurationMessage: 'Invoice product data requires verification.' }));
-    return { ...summarizeInvoiceLines(lines), approvalStatus: sale?.status ?? 'PENDING', reconciliationMessage: e.message };
+    const lines = display.map(l => ({ ...l, missingReason: e.message, commissionState:'INVOICE_DATA_MISSING', configurationMessage: invoiceDataMessage(e.message) }));
+    return { ...summarizeInvoiceLines(lines),itemDataSource,approvalStatus:sale?.status??'PENDING',reconciliationMessage:invoiceDataMessage(e.message),invoiceDataReason:e.message };
   }
-  const documents = await tx.hrmCommissionDocument.findMany({ where: { storeId: context.storeId, kind: 'SALE', OR: [
-    { externalId: context.reference }, { externalId: String(meta?.billId ?? context.reference) }, { invoiceNumber: String(sale?.invoiceNumber ?? meta?.invoiceNumber ?? context.reference) },
-  ] } });
   if (doc.cancelled || (documents.length===1 && documents[0].status==='CANCELLED')) return {
     ...summarizeInvoiceLines([]), commissionState:'CANCELLED',commissionAmount:0,commissionEarned:0,totalCommission:0,newCommission:0,
     calculatedCommissionAmount:0,eligibleSaleAmount:0,hasMissingConfiguration:false,rateDisplay:'Commission reversed',approvalStatus:sale?.status??'REJECTED',
     productCommissionBreakdown:display.map(l=>({...l,eligibleSaleAmount:0,saleAmount:0,commissionAmount:0,commissionState:'CANCELLED',missingReason:null,configurationMessage:null})),
   };
-  const projected = documents.length === 1 ? await tx.hrmCommissionLine.findMany({ where:{ documentId:documents[0].id } }) : [];
   const lines: any[] = [];
   for (let i=0;i<doc.lines.length;i++) {
     const source: NormalizedLine = doc.lines[i], line = display[i] ?? displayLine(raws[i] ?? {},i);
     try {
       const snapshots = projected.filter(l => l.externalLineId === source.id);
       if (snapshots.length === 1) {
-        const s=snapshots[0];
-        const returns = await tx.hrmCommissionLine.findMany({ where: { originalSaleLineId:s.id } });
-        const revenue = s.eligibleRevenue.minus(returns.reduce((n,r)=>n.plus(r.eligibleRevenue),new D(0)));
-        const commission = s.commissionAmount.minus(returns.reduce((n,r)=>n.plus(r.commissionAmount),new D(0)));
-        lines.push({ ...line, subcategoryId:s.subcategoryId, subcategoryName:s.subcategoryName, subcategory:s.subcategoryName,
-          eligibleSaleAmount:revenue.toNumber(),saleAmount:revenue.toNumber(),commissionRate:s.rate.toNumber(),commissionAmount:commission.toNumber(),
-          commissionType:s.type,fixedBasis:s.fixedBasis,rateId:s.rateId,basis:s.basis,commissionState:'CONFIGURED',missingReason:null,configurationMessage:null }); continue;
+        lines.push(await projectedInvoiceLine(tx,snapshots[0],line)); continue;
       }
       const subcategory=await resolveSubcategory(tx,source,doc.occurredAt);
       if (!subcategory) throw new Error('SUBCATEGORY_MAPPING_REQUIRED');
       Object.assign(line,{ subcategoryId:subcategory.id,subcategoryName:subcategory.name,subcategory:subcategory.name });
       const rate=await resolveSubcategoryRate(tx,subcategory.id,context.storeId,doc.occurredAt);
+      Object.assign(line,{commissionRate:rate.rate.toNumber(),commissionType:rate.type,fixedBasis:rate.fixedBasis,rateId:rate.id,basis:rate.basis});
       const revenue=rate.basis==='NET_EX_TAX'?source.exTax:source.inclTax;
-      if (revenue===undefined) throw new Error('DISCOUNTED_NET_AMOUNT_BASIS_UNVERIFIED');
+      if (revenue===undefined) { Object.assign(line,{eligibleSaleAmount:null,saleAmount:null}); throw new Error('DISCOUNTED_NET_AMOUNT_BASIS_UNVERIFIED'); }
       lines.push({ ...line,eligibleSaleAmount:revenue.toNumber(),saleAmount:revenue.toNumber(),commissionRate:rate.rate.toNumber(),
         commissionAmount:revenue.isZero()?0:earning(revenue,source.quantity,rate).toNumber(),commissionType:rate.type,fixedBasis:rate.fixedBasis,rateId:rate.id,
         basis:rate.basis,commissionState:'CONFIGURED',missingReason:null,configurationMessage:null });
     } catch(e:any) { lines.push({ ...line,missingReason:e.message,configurationMessage:messages[e.message] ?? 'Subcategory commission configuration requires review.' }); }
   }
-  return { ...summarizeInvoiceLines(lines), approvalStatus: sale?.status ?? 'PENDING' };
+  return { ...summarizeInvoiceLines(lines),itemDataSource,approvalStatus:sale?.status??'PENDING' };
 }
 
 export async function findInvoicePayload(tx: Tx, aliases: string[], storeId?: number | null) {
@@ -176,8 +202,8 @@ export async function prepareInvoiceApproval(tx: Tx, sale: CommissionTransaction
   const siblings=await tx.commissionTransaction.count({where:{storeId:sale.storeId,OR:[...(sale.billId?[{billId:sale.billId}]:[]),...(sale.invoiceNumber?[{invoiceNumber:sale.invoiceNumber}]:[])],employeeId:{not:sale.employeeId},eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']}}});
   if(siblings) throw Object.assign(new Error('Shared invoice allocation requires accounting review before approval'),{status:409});
   const payload=await findInvoicePayload(tx,[sale.billId??'',sale.invoiceNumber??''],sale.storeId);
-  if(!sale.storeId||!payload) throw Object.assign(new Error('Invoice product data is required before commission approval'),{status:409});
-  const result=await calculateInvoiceCommission(tx,sale,payload.raw,{storeId:sale.storeId,at:sale.createdAt,reference:sale.billId??sale.invoiceNumber??String(sale.id)});
+  if(!sale.storeId) throw Object.assign(new Error('Invoice store is required before commission approval'),{status:409});
+  const result=await calculateInvoiceCommission(tx,sale,payload?.raw,{storeId:sale.storeId,at:sale.createdAt,reference:sale.billId??sale.invoiceNumber??String(sale.id)});
   if(result.commissionAmount===null) throw Object.assign(new Error('Subcategory commission configuration or invoice data is incomplete'),{status:409});
   return { commissionAmount:result.commissionAmount,newCommission:result.commissionAmount,commissionPercent:result.commissionRate,
     commissionType:result.productCommissionBreakdown.every((l:any)=>l.commissionType==='FIXED')?'FIXED':'PERCENTAGE',

@@ -75,12 +75,25 @@ Flutter:
 
 ## Verification
 
-- test:mobile:invoice-subcategory: 19 isolated PostgreSQL/API integration groups passed (mixed rates, employee/override independence, exact mapping, configured zero, missing mapping/rate, fixed-unit rates, cross-store source scoping, header/item parity, historical mismatch and approved zero preservation, approval idempotency/authorization, unknown/cross-employee access, shared allocation guard, actual ingestion and frozen updates).
+- test:mobile:invoice-subcategory: 27 isolated PostgreSQL/API integration groups passed (mixed rates, employee/override independence, exact mapping, configured zero, missing mapping/rate, fixed-unit rates, cross-store source scoping, header/item parity, historical mismatch and approved zero preservation, approval idempotency/authorization, unknown/cross-employee access, shared allocation guard, actual ingestion and frozen updates).
 - test:hrm:subcategory-commission: existing 24 integration/API groups passed, including original-rate refunds, partial/full reversals, cancellations, exchanges, rounding and store/date reports.
-- Flutter invoice_subcategory_commission_test.dart: 10 model/widget tests passed, including 320px/390px layouts and the reported mismatch.
+- Flutter invoice_subcategory_commission_test.dart: 11 model/widget tests passed, including 320px/390px layouts and the reported mismatch.
 - Flutter analyze for the two modified source files and the test: no issues.
 - Backend npm run build: passed.
 - Flutter Android debug APK build: passed; artifact build/app/outputs/flutter-apk/app-debug.apk. Existing firebase_core/Kotlin future-compatibility warning does not fail the build.
 - Existing salary-gross regression suite: 26/26 checks passed.
 
 Integration fixtures use only the isolated localhost HRM test database on port 55439; no live invoice or production payroll data was changed.
+
+
+## HWM-121 saved-item recovery follow-up
+
+The reported PRODUCT_LINES_MISSING state exposed a second source mismatch: product display could use CommissionTransaction.productBreakdown while normalization still received an empty raw invoice item list. Pending invoice calculation and approval now use the same recovered items. They also use existing HRM ledger line snapshots when the source payload is absent. Applied approved/paid history remains on the original immutable handling path.
+
+src/services/invoiceItemRecovery.ts reconstructs recorded product/variant identity, quantity, actual external subcategory identity and verified eligible amount fields. It translates a saved HRM subcategory UUID back to its external ID. A recorded basis, recorded rate-version basis, or the existing verified generic-net source contract governs amount interpretation. It never guesses a rate, uses an employee percentage, multiplies unit price into eligible revenue, or matches a product/subcategory by its display name. Current configured rates are reused; no rate setting or database schema was changed.
+
+The API reports itemDataSource as INVOICE_PAYLOAD, SAVED_PRODUCT_BREAKDOWN, HRM_LEDGER_SNAPSHOT, or UNAVAILABLE. INVOICE_DATA_MISSING is distinct from MISSING_CONFIGURATION. A known configured rate remains visible when an eligible amount cannot be verified; genuinely missing IDs/quantities/amount basis receive readable messages rather than PRODUCT_LINES_MISSING or a misleading instruction to configure an existing rate. The mobile screen renders Invoice item data unavailable for this state.
+
+Eight added invoice checks cover saved BLAZO/1195 with existing configured rate, sparse payloads, verified generic net fields, stored rate-version basis, visible configured rate with unverified amount, missing catalog identity, ledger-only recovery and approval with recovered items. An additional Flutter widget test covers the distinct data-error message. All 27 invoice integration checks and 11 Flutter tests pass; analysis and backend build pass. Android debug APK was rebuilt for the new screen state.
+
+The database configured in this workspace did not contain HWM-121 during a read-only inspection. This fix is validated against the matching saved-record fixture pattern, not by rewriting or claiming verification of that live invoice. Deploy the updated backend and mobile build to the environment serving that invoice. No live invoice or rate was modified.
