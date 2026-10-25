@@ -74,7 +74,7 @@ export async function groupAndCalculateCommissionBySalesman(
   const commissionMap = new Map<number, { salesman: any; totalAmount: number; totalCommission: number; effectiveRate: number; products: any[] }>();
 
   const resolvedInvoice = await calculateInvoiceCommission(prisma, null, { eventType:'INVOICE_CREATED', data:{invoice:{
-    invoiceId:invoiceData.invoiceNo,invoiceNo:invoiceData.invoiceNo,invoiceDate:new Date(invoiceData.invoiceDate).toISOString(),
+    invoiceId:invoiceData.invoiceNo,invoiceNo:invoiceData.invoiceNo,invoiceDate:invoiceData.invoiceDate instanceof Date?invoiceData.invoiceDate.toISOString():invoiceData.invoiceDate,
     storeId:invoiceData.metaStoreId,netAmount:invoiceData.netAmount,lineItems,
   }}}, {storeId:invoiceData.metaStoreId??0,at:new Date(invoiceData.invoiceDate),reference:invoiceData.invoiceNo});
 
@@ -433,7 +433,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
 
   const commissionMap = await groupAndCalculateCommissionBySalesman(itemsToProcess, {
     invoiceNo: String(primaryBillId),
-    invoiceDate: validDate,
+    invoiceDate: dateStr || validDate,
     netAmount: primaryAmount,
     metaStoreId: meta.storeId,
     defaultIdentifier: meta.employeeIdentifier,
@@ -464,6 +464,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
   console.log(`Applicable Amounts: ${Array.from(commissionMap.values()).map(c => `₹${c.totalAmount}`).join(', ')}`);
 
   await prisma.$transaction(async (tx) => {
+    // Serialize invoice updates with review so an approval cannot be overwritten using a stale status.
+    await tx.$queryRaw`SELECT id FROM "CommissionTransaction" WHERE "billId"=${billIdKey} ORDER BY id FOR UPDATE`;
     const existingTransactions = await tx.commissionTransaction.findMany({
       where: { billId: billIdKey }
     });
@@ -626,6 +628,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         let upsertedTx: any;
         let wasCreated = false;
 
+        if (existingTxInDb && ['APPROVED','PAID'].includes(existingTxInDb.status) && !isCancelledOrReturned) continue;
         if (existingTxInDb) {
           upsertedTx = await tx.commissionTransaction.update({
             where: { id: existingTxInDb.id },

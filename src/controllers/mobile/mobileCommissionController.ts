@@ -916,31 +916,12 @@ export const getMobileCommissionBills = async (
  */
 export const getMobileCommissionBillDetail = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const raw = req.params.billId;
-    const billIdStr = Array.isArray(raw) ? String(raw[0]) : String(raw);
-
-    const employee = await prisma.employee.findFirst({
-      where: { userId: req.user?.id },
-      include: { store: true },
-    });
-
-    if (employee) {
-      try {
-        const posDetail = await getEmployeeRetailCommissionBillDetail(employee.id, billIdStr);
-        if (posDetail) {
-          res.json({ success: true, data: posDetail });
-          return;
-        }
-      } catch (posErr: any) {
-        console.warn(`[getMobileCommissionBillDetail] POSRetailCommission check failed: ${posErr.message}`);
-      }
-    }
-
-    const data = await mobileInvoiceDetail(req.user!.id, billIdStr, req.user!.role);
-    res.json({ success: true, data });
-  } catch (error: any) {
-    const status = error.status ?? 500;
-    if (status === 500) console.error('[Invoice commission detail]', error.message);
-    res.status(status).json({ success: false, message: status === 500 ? 'Unable to load invoice commission details' : error.message });
+    const raw=req.params.billId;
+    const data=await mobileInvoiceDetail(req.user!.id,Array.isArray(raw)?String(raw[0]):String(raw),req.user!.role);
+    res.json({success:true,data});
+  } catch(error:any) {
+    const status=error.status??500;
+    if(status===500) console.error('[Invoice commission detail]',error.message);
+    res.status(status).json({success:false,message:status===500?'Unable to load invoice commission details':error.message});
   }
 };

@@ -50,67 +50,25 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
   const raws = list(meta?.lineItems);
   const saved = list(sale?.productBreakdown);
   const display = (raws.length ? raws : saved).map(displayLine);
-  if (frozen(sale) || (saved.length > 0 && raws.length === 0)) {
-    const total = new D(String(sale?.commissionAmount ?? 0));
+  if (frozen(sale)) {
+    const total = new D(String(sale!.commissionAmount));
     const valid = saved.length > 0 && saved.every(l => amount(l.commissionAmount ?? l.productCommission) !== null);
-    if (frozen(sale) && (!valid || !saved.reduce((s,l) => s.plus(String(l.commissionAmount ?? l.productCommission)),new D(0)).equals(total))) {
-      const reason = valid ? 'HISTORICAL_TOTAL_MISMATCH' : 'HISTORICAL_SNAPSHOT_MISSING';
-      const lines = display.map(l => ({ ...l, commissionState: reason, missingReason: reason, configurationMessage: messages[reason] }));
-      return { ...summarizeInvoiceLines(lines), commissionSource: 'APPROVED_HISTORY', commissionState: 'HISTORICAL_RECONCILIATION_REQUIRED', rateDisplay: 'Approved item breakdown unavailable',
-        recordedCommissionAmount: total.toNumber(), reconciliationMessage: messages[reason], approvalStatus: sale!.status };
+    const sum = valid ? saved.reduce((n,l)=>n.plus(String(l.commissionAmount??l.productCommission)),new D(0)) : null;
+    if (!valid || !sum!.equals(total)) {
+      const reason=valid?'HISTORICAL_TOTAL_MISMATCH':'HISTORICAL_SNAPSHOT_MISSING';
+      const lines=display.map(l=>({...l,commissionState:reason,missingReason:reason,configurationMessage:messages[reason]}));
+      return {...summarizeInvoiceLines(lines),commissionSource:'APPROVED_HISTORY',commissionState:'HISTORICAL_RECONCILIATION_REQUIRED',rateDisplay:'Approved item breakdown unavailable',recordedCommissionAmount:total.toNumber(),reconciliationMessage:messages[reason],approvalStatus:sale!.status};
     }
-    const lines = await Promise.all(saved.map(async (s,i) => {
-      const raw = raws.find(r => String(r.lineItemId ?? r.saleItemId ?? '') === String(s.saleItemId ?? s.lineItemId ?? '__missing')) ??
-        raws.find(r => String(r.productID ?? r.productId) === String(s.productID ?? s.productId)) ?? s;
-      const base = displayLine({ ...raw, ...s },i);
-      let subcatId = s.subcategoryId ?? null;
-      let subcatName = s.subcategoryName ?? s.subcategory ?? base.subcategoryName;
-      let rateVal = amount(s.commissionRate);
-      let commAmt = amount(s.commissionAmount ?? s.productCommission);
-      let commType = s.commissionType ?? 'PERCENTAGE';
-      let fixedBasis = s.fixedBasis ?? 'UNIT';
-      let saleAmt = amount(s.eligibleSaleAmount ?? s.eligibleRevenue ?? s.saleAmount ?? s.productNetAmount) ?? 0;
-
-      if ((rateVal === null || rateVal === 0 || commAmt === null || commAmt === 0) && saleAmt > 0) {
-        try {
-          const subcategory = await resolveSubcategory(tx, {
-            id: String(s.saleItemId ?? s.lineItemId ?? s.productID ?? i),
-            productId: String(s.productID ?? s.productId ?? base.productName),
-            variantId: String(s.variantId ?? s.sku ?? ''),
-            quantity: new D(String(s.quantity ?? 1)),
-            subcategoryExternalId: s.subcategoryId ?? s.subcategoryExternalId ?? undefined,
-            subcategoryName: subcatName ?? undefined,
-          }, context.at);
-          if (subcategory) {
-            subcatId = subcategory.id;
-            subcatName = subcategory.name;
-            const rateObj = await resolveSubcategoryRate(tx, subcategory.id, context.storeId, context.at);
-            if (rateObj && rateObj.rate) {
-              rateVal = rateObj.rate.toNumber();
-              commType = rateObj.type;
-              fixedBasis = rateObj.fixedBasis;
-              commAmt = commType === 'PERCENTAGE'
-                ? Math.round(((saleAmt * rateVal) / 100) * 100) / 100
-                : rateVal * (Number(s.quantity ?? 1));
-            }
-          }
-        } catch {}
-      }
-
-      return { ...base, subcategoryId: subcatId, subcategoryName: subcatName,
-        subcategory: subcatName,
-        eligibleSaleAmount: saleAmt,
-        saleAmount: saleAmt,
-        commissionRate: rateVal, commissionAmount: commAmt,
-        commissionType: commType, fixedBasis, rateId: s.rateId ?? null,
-        commissionState: rateVal !== null && commAmt !== null ? 'CONFIGURED' : 'MISSING_CONFIGURATION',
-        missingReason: rateVal !== null && commAmt !== null ? null : 'SUBCATEGORY_MAPPING_REQUIRED',
-        configurationMessage: rateVal !== null && commAmt !== null ? null : messages.SUBCATEGORY_MAPPING_REQUIRED };
-    }));
-    const result = summarizeInvoiceLines(lines,'HISTORICAL_SNAPSHOT');
-    return { ...result, commissionSource: saved.every(l=>l.commissionSource==='SUBCATEGORY') ? 'SUBCATEGORY_SNAPSHOT' : 'APPROVED_HISTORY',
-      rateDisplay: result.commissionRate === null ? 'Recorded item commissions' : result.rateDisplay,
-      recordedCommissionAmount: total.toNumber(), approvalStatus: sale?.status ?? 'PENDING' };
+    const lines=saved.map((snapshot,i)=>{
+      const raw=raws.find(r=>String(r.lineItemId??r.saleItemId??'')===String(snapshot.saleItemId??snapshot.lineItemId??'__missing'))??raws.find(r=>String(r.productID??r.productId)===String(snapshot.productID??snapshot.productId))??snapshot;
+      const base=displayLine({...raw,...snapshot},i);
+      const revenue=amount(snapshot.eligibleSaleAmount??snapshot.eligibleRevenue??snapshot.saleAmount??snapshot.productNetAmount);
+      return {...base,subcategoryId:snapshot.subcategoryId??null,subcategoryName:snapshot.subcategoryName??snapshot.subcategory??base.subcategoryName,subcategory:snapshot.subcategoryName??snapshot.subcategory??null,
+        eligibleSaleAmount:revenue,saleAmount:revenue,commissionRate:amount(snapshot.commissionRate),commissionAmount:Number(snapshot.commissionAmount??snapshot.productCommission),
+        commissionType:snapshot.commissionType??sale!.commissionType,fixedBasis:snapshot.fixedBasis??null,rateId:snapshot.rateId??null,commissionState:'CONFIGURED',missingReason:null,configurationMessage:null};
+    });
+    const result=summarizeInvoiceLines(lines,'HISTORICAL_SNAPSHOT');
+    return {...result,commissionSource:saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,recordedCommissionAmount:total.toNumber(),approvalStatus:sale!.status};
   }
 
   const settings = await tx.hrmCommissionSettings.findUnique({ where: { id: 1 } });
@@ -160,20 +118,20 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
   return { ...summarizeInvoiceLines(lines), approvalStatus: sale?.status ?? 'PENDING' };
 }
 
-export async function findInvoicePayload(tx: Tx, aliases: string[]) {
+export async function findInvoicePayload(tx: Tx, aliases: string[], storeId?: number | null) {
   const ids=[...new Set(aliases.filter(Boolean))];
-  const primary=await tx.webhookLog.findFirst({ where:{ OR:[{id:{in:ids}},{billId:{in:ids}}], eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']} },orderBy:{createdAt:'desc'} });
-  if (primary) { try {return { raw:JSON.parse(primary.payload),id:primary.id,createdAt:primary.createdAt };} catch {} }
-  const other=await tx.hopkidWebhookLog.findFirst({ where:{OR:[{id:{in:ids}},{billId:{in:ids}}]},orderBy:{createdAt:'desc'} });
-  if (other) {try{return {raw:JSON.parse(other.rawPayload),id:other.id,createdAt:other.createdAt};}catch{}}
-  for (const id of ids) {
-    try {
-      const fetched = await fetchHopkidInvoiceDetails(id);
-      if (fetched) {
-        return { raw: fetched, id, createdAt: new Date() };
-      }
-    } catch {}
-  }
+  const primary=await tx.webhookLog.findMany({ where:{ OR:[{id:{in:ids}},{billId:{in:ids}}], eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']} },orderBy:{createdAt:'desc'},take:50 });
+  for(const row of primary) { try {
+    const raw=JSON.parse(row.payload),meta=extractWebhookMeta(raw);
+    if(storeId && meta.storeId!==storeId) continue;
+    return {raw,id:row.id,createdAt:row.createdAt};
+  }catch{} }
+  const other=await tx.hopkidWebhookLog.findMany({ where:{OR:[{id:{in:ids}},{billId:{in:ids}}]},orderBy:{createdAt:'desc'},take:50 });
+  for(const row of other) { try {
+    const raw=JSON.parse(row.rawPayload),meta=extractWebhookMeta(raw);
+    if(storeId && (meta.storeId??row.storeId)!==storeId) continue;
+    return {raw,id:row.id,createdAt:row.createdAt};
+  }catch{} }
   return null;
 }
 
@@ -184,7 +142,7 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
     const aliases=[billId,...(/^\d+$/.test(billId)?[`HWM-${billId}`]:[])];
     let sale=await tx.commissionTransaction.findFirst({where:{employeeId:employee.id,OR:[{billId:{in:aliases}},{invoiceNumber:{in:aliases}}]},orderBy:{id:'desc'}});
     if(!sale&&/^\d+$/.test(billId)&&Number(billId)<=2147483647) sale=await tx.commissionTransaction.findFirst({where:{employeeId:employee.id,id:Number(billId)}});
-    const payload=await findInvoicePayload(tx,[...aliases,sale?.billId??'',sale?.invoiceNumber??'']);
+    const payload=await findInvoicePayload(tx,[...aliases,sale?.billId??'',sale?.invoiceNumber??''],sale?.storeId);
     const meta=payload?extractWebhookMeta(payload.raw):null;
     if(!sale) {
       const identifiers=new Set([employee.employeeID,employee.employeeCode,employee.mobileNumber].filter(Boolean).map(String));
@@ -217,7 +175,7 @@ export async function prepareInvoiceApproval(tx: Tx, sale: CommissionTransaction
   if(!isExternalInvoice(sale)||frozen(sale)) return {};
   const siblings=await tx.commissionTransaction.count({where:{storeId:sale.storeId,OR:[...(sale.billId?[{billId:sale.billId}]:[]),...(sale.invoiceNumber?[{invoiceNumber:sale.invoiceNumber}]:[])],employeeId:{not:sale.employeeId},eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']}}});
   if(siblings) throw Object.assign(new Error('Shared invoice allocation requires accounting review before approval'),{status:409});
-  const payload=await findInvoicePayload(tx,[sale.billId??'',sale.invoiceNumber??'']);
+  const payload=await findInvoicePayload(tx,[sale.billId??'',sale.invoiceNumber??''],sale.storeId);
   if(!sale.storeId||!payload) throw Object.assign(new Error('Invoice product data is required before commission approval'),{status:409});
   const result=await calculateInvoiceCommission(tx,sale,payload.raw,{storeId:sale.storeId,at:sale.createdAt,reference:sale.billId??sale.invoiceNumber??String(sale.id)});
   if(result.commissionAmount===null) throw Object.assign(new Error('Subcategory commission configuration or invoice data is incomplete'),{status:409});
