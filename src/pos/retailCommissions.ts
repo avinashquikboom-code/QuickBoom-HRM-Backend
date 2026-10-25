@@ -835,14 +835,44 @@ export async function getEmployeeRetailCommissionBills(
  * Mobile: Detailed subcategory-wise lines for a specific bill
  */
 export async function getEmployeeRetailCommissionBillDetail(employeeId: number, billId: string) {
+  // Resolve numeric billId (e.g. CommissionTransaction.id = 38) to invoiceNumber via CommissionTransaction
+  let resolvedInvoiceNumber: string | null = null;
+  let resolvedSaleId: string | null = null;
+  if (/^\d+$/.test(billId)) {
+    const txn = await prisma.commissionTransaction.findFirst({
+      where: {
+        OR: [
+          { id: parseInt(billId, 10) },
+          { billId: billId },
+        ],
+        employeeId,
+      },
+      select: { invoiceNumber: true, billId: true },
+    });
+    if (txn) {
+      resolvedInvoiceNumber = txn.invoiceNumber || null;
+      // CommissionTransaction.billId is like "POSSALE-<uuid>"; extract the UUID part
+      const saleUuid = txn.billId?.replace(/^POSSALE-/i, '') || null;
+      resolvedSaleId = saleUuid && /^[0-9a-f-]{36}$/i.test(saleUuid) ? saleUuid : null;
+    }
+  }
+
+  const orClauses: any[] = [
+    { invoiceNumber: billId },
+    { invoiceNumber: `HWM-${billId}` },
+    { invoiceNumber: `POS-${billId.padStart(10, '0')}` },
+    { saleId: billId },
+  ];
+  if (resolvedInvoiceNumber) {
+    orClauses.push({ invoiceNumber: resolvedInvoiceNumber });
+  }
+  if (resolvedSaleId) {
+    orClauses.push({ saleId: resolvedSaleId });
+  }
+
   const lines = await prisma.pOSRetailCommission.findMany({
     where: {
-      OR: [
-        { saleId: billId },
-        { invoiceNumber: billId },
-        { invoiceNumber: `HWM-${billId}` },
-        { invoiceNumber: `POS-${billId.padStart(10, '0')}` },
-      ],
+      OR: orClauses,
       status: { not: "DELETED" },
     },
     orderBy: { createdAt: "desc" },
@@ -861,10 +891,29 @@ export async function getEmployeeRetailCommissionBillDetail(employeeId: number, 
   const store = await prisma.store.findUnique({ where: { id: first.storeId } });
   const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
 
+  // Build subcategory-wise product commission breakdown for the mobile invoice detail screen.
+  // When rate is null it means no commission is configured for that subcategory — expose a
+  // configurationNote instead of silently showing 0%.
+  const productCommissionBreakdown = lines.map(l => ({
+    productName: l.subcategoryName || "General Retail",
+    category: l.subcategoryName,
+    subcategoryId: l.subcategoryId,
+    quantity: Number(l.quantity) - Number(l.returnedQuantity),
+    saleAmount: Number(l.eligibleRevenue) - Number(l.reversedRevenue),
+    commissionRate: l.rate !== null ? Number(l.rate) : 0,
+    commissionAmount: Number(l.amount) - Number(l.reversedAmount),
+    commissionType: l.commissionType || "PERCENTAGE",
+    // Explicitly flag when no rate is configured so the UI can show a meaningful message
+    configurationNote: l.rate === null
+      ? "No commission rate configured for this subcategory"
+      : undefined,
+  }));
+
   return {
     billId: parsedBillId,
     invoiceNumber: first.invoiceNumber,
     saleAmount: Math.round(totalSale * 100) / 100,
+    grossSale: Math.round(totalSale * 100) / 100,
     commissionRate: Math.round(effRate * 100) / 100,
     commissionAmount: Math.round(totalComm * 100) / 100,
     oldAmount: 0,
@@ -876,6 +925,12 @@ export async function getEmployeeRetailCommissionBillDetail(employeeId: number, 
     status: first.status,
     description: `Subcategory Commission - ${lines.map(l => l.subcategoryName).filter(Boolean).join(", ")}`,
     createdAt: first.createdAt.toISOString(),
+    storeName: store?.name || `Store #${first.storeId}`,
+    customerName: null as string | null,
+    customerPhone: null as string | null,
+    paymentMode: null as string | null,
+    discount: 0,
+    tax: 0,
     employee: {
       id: employee?.id || employeeId,
       name: employee ? `${employee.firstName} ${employee.lastName}` : "Sales Staff",
@@ -887,14 +942,19 @@ export async function getEmployeeRetailCommissionBillDetail(employeeId: number, 
       name: store?.name || `Store #${first.storeId}`,
       code: store?.code || "",
     },
+    // products array with fields compatible with both ProductItem and ProductCommissionLine models
     products: lines.map(l => ({
+      name: l.subcategoryName || "General Retail",
       productName: l.subcategoryName || "General Retail",
       category: l.subcategoryName,
-      quantity: l.quantity - l.returnedQuantity,
+      quantity: Number(l.quantity) - Number(l.returnedQuantity),
+      price: Number(l.eligibleRevenue) - Number(l.reversedRevenue),
+      total: Number(l.eligibleRevenue) - Number(l.reversedRevenue),
       saleAmount: Number(l.eligibleRevenue) - Number(l.reversedRevenue),
       commissionRate: l.rate !== null ? Number(l.rate) : 0,
       commissionAmount: Number(l.amount) - Number(l.reversedAmount),
     })),
+    productCommissionBreakdown,
     subcategories: lines.map(l => ({
       subcategoryId: l.subcategoryId,
       subcategoryName: l.subcategoryName || "General Retail",
@@ -902,8 +962,7 @@ export async function getEmployeeRetailCommissionBillDetail(employeeId: number, 
       commissionType: l.commissionType || "PERCENTAGE",
       eligibleSales: Number(l.eligibleRevenue) - Number(l.reversedRevenue),
       commissionEarned: Number(l.amount) - Number(l.reversedAmount),
-      quantity: l.quantity - l.returnedQuantity,
+      quantity: Number(l.quantity) - Number(l.returnedQuantity),
     })),
   };
 }
-

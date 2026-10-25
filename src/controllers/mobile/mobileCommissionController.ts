@@ -6,6 +6,7 @@ import { getCommissionStats, extractWebhookMeta, safeParseAmount, fetchHopkidInv
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
 import { CommissionService } from '../../services/commissionService';
 import { deduplicateCommissionTransactions } from '../../utils/commissionDeduplicator';
+import { getEmployeeRetailCommissionBillDetail } from '../../pos/retailCommissions';
 
 // Get commission dashboard stats for logged-in user
 export const getMobileCommissionDashboard = async (
@@ -929,7 +930,65 @@ export const getMobileCommissionBillDetail = async (
     }
 
     const rawBillId = req.params.billId;
+    // Normalize billId to string (Express params can theoretically be string[]
+    // in some configurations; coerce early to avoid TS errors in both paths).
     const billIdStr = Array.isArray(rawBillId) ? String(rawBillId[0]) : String(rawBillId);
+
+    // ── PRIMARY PATH: POSRetailCommission (subcategory-wise, real rates) ──────────
+    // This is the source of truth for commission in the Hopkid retail POS integration.
+    // Always try this first; fall back to the legacy CommissionTransaction path only
+    // when no POSRetailCommission lines exist for this bill (e.g. very old invoices).
+    try {
+      const posDetail = await getEmployeeRetailCommissionBillDetail(employee.id, billIdStr);
+      if (posDetail) {
+        // Enrich with WebhookLog payload (customer name, payment mode, gross/discount/tax)
+        // but keep commissionRate/commissionAmount from the authoritative POS source.
+        let customerName: string | null = posDetail.customerName;
+        let customerPhone: string | null = posDetail.customerPhone;
+        let paymentMode: string | null = posDetail.paymentMode;
+        let grossSale: number = posDetail.grossSale;
+        let discount: number = posDetail.discount;
+        let tax: number = posDetail.tax;
+
+        // Try to enrich from WebhookLog for this invoice
+        const wLog = await prisma.webhookLog.findFirst({
+          where: { billId: { in: [posDetail.invoiceNumber, billIdStr] } },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (wLog?.payload) {
+          const meta = extractWebhookMeta(wLog.payload);
+          customerName = meta.customerName || customerName;
+          customerPhone = meta.customerPhone || customerPhone;
+          paymentMode = meta.paymentMode || paymentMode;
+          const invoiceData = meta.invoice || {};
+          if (Number(invoiceData.grandTotal || invoiceData.grossAmount || 0) > 0) {
+            grossSale = safeParseAmount(invoiceData.grandTotal || invoiceData.grossAmount);
+            discount = safeParseAmount(invoiceData.discount || invoiceData.discountAmount || 0);
+            tax = safeParseAmount(invoiceData.tax || invoiceData.taxAmount || 0);
+          }
+        }
+
+        console.log(`[MOBILE-BILL-DETAIL] POSRetailCommission path | billId=${billIdStr} | inv=${posDetail.invoiceNumber} | sale=₹${posDetail.saleAmount} | rate=${posDetail.commissionRate}% | comm=₹${posDetail.commissionAmount}`);
+
+        res.json({
+          success: true,
+          data: {
+            ...posDetail,
+            customerName,
+            customerPhone,
+            paymentMode,
+            grossSale,
+            discount,
+            tax,
+            storeName: posDetail.storeName,
+          },
+        });
+        return;
+      }
+    } catch (posErr: any) {
+      console.warn(`[MOBILE-BILL-DETAIL] POSRetailCommission lookup failed for billId=${billIdStr}: ${posErr.message}`);
+    }
+    // ── END PRIMARY PATH ─────────────────────────────────────────────────────────
 
     // Only populate possibleTxnIds if billIdStr is not a UUID / hex string and fits safely into 32-bit signed Int
     const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/i.test(billIdStr);

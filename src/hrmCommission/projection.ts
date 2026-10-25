@@ -1,3 +1,4 @@
+import { resolveSubcategory, resolveSubcategoryRate } from './resolution';
 import { Prisma, HrmCommissionLine } from '@prisma/client';
 import { prisma } from '../utils/db';
 import { CommissionInputError, normalizeDocuments, economicHash, requireValue, earning, money, NormalizedDocument, NormalizedLine } from './normalize';
@@ -64,20 +65,12 @@ async function applyDocument(tx: Tx, sourceLogId: string, receivedAt: Date, doc:
       requireValue(line.productId === source.productId && line.variantId === source.variantId, 'SALE_LINE_ID_REUSED_FOR_DIFFERENT_PRODUCT');
       policy = { ...line, id: line.rateId }; subcategoryName = line.subcategoryName;
     } else {
-      let subcategory;
-      if (source.subcategoryExternalId) {
-        subcategory = await tx.hrmCommissionSubcategory.findUnique({ where: { externalId: source.subcategoryExternalId } });
-        if (!subcategory && source.subcategoryName) subcategory = await tx.hrmCommissionSubcategory.create({ data: {
-          externalId: source.subcategoryExternalId, name: String(source.subcategoryName), categoryExternalId: source.categoryExternalId == null ? null : String(source.categoryExternalId),
-        } });
-      } else {
-        const mapping = await tx.hrmCommissionMapping.findFirst({ where: { productId: source.productId, variantId: source.variantId, effectiveFrom: { lte: doc.occurredAt } }, orderBy: { effectiveFrom: 'desc' } });
-        if (mapping) subcategory = await tx.hrmCommissionSubcategory.findUnique({ where: { id: mapping.subcategoryId } });
-      }
+      let subcategory = await resolveSubcategory(tx, source, doc.occurredAt);
+      if (!subcategory && source.subcategoryExternalId && source.subcategoryName) subcategory = await tx.hrmCommissionSubcategory.create({ data: {
+        externalId: source.subcategoryExternalId, name: String(source.subcategoryName), categoryExternalId: source.categoryExternalId == null ? null : String(source.categoryExternalId),
+      } });
       requireValue(subcategory, 'SUBCATEGORY_MAPPING_REQUIRED');
-      const rates = await tx.hrmCommissionRate.findMany({ where: { subcategoryId: subcategory.id, storeKey: { in: [0, doc.storeId] }, effectiveFrom: { lte: doc.occurredAt } }, orderBy: [{ storeKey: 'desc' }, { effectiveFrom: 'desc' }] });
-      requireValue(rates.length, 'HISTORICAL_OR_CURRENT_RATE_MISSING');
-      policy = rates[0]; subcategoryName = subcategory.name;
+      policy = await resolveSubcategoryRate(tx, subcategory.id, doc.storeId, doc.occurredAt); subcategoryName = subcategory.name;
     }
     let revenue = policy.basis === 'NET_EX_TAX' ? source.exTax : source.inclTax;
     if (original && revenue === undefined) {
