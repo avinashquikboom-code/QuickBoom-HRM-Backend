@@ -75,6 +75,9 @@ async function main() {
     await request(0,`/sessions/${second.id}/close`,{actualCash:'100'});
     await prisma.pOSSession.update({where:{id:first.id},data:{employeeId:null}});
     assert.equal((await request(0,`/sessions/${first.id}/summary`)).summary.cashierName,'Unknown Cashier');
+    const saleBody={storeId:stores[0].id,salespersonId:employees[1].id,items:[{manual:true,name:'Legacy guard',quantity:1,unitPrice:'10',taxRate:'0'}],payments:[{method:'CASH',amount:'10'}],idempotencyKey:randomUUID()};
+    await request(0,'/sales',{...saleBody,sessionId:first.id},409);
+    await request(0,'/sales',{...saleBody,idempotencyKey:randomUUID()},409);
     assert.equal((await request(0,`/sessions/${first.id}/close`,{actualCash:'100'})).employeeId,null);
     console.log('PASS cashier conflict and legacy sessions retain missing identity without arbitrary historical assignment');
   } finally { await new Promise<void>(resolve=>server.close(()=>resolve())); }

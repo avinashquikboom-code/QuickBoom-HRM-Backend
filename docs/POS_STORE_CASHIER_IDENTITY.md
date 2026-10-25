@@ -22,3 +22,9 @@ Frontend:
 - npm run test:pos:store-cashiers
 
 The new backend suite covers three named cashiers across two stores plus an empty store, missing/invalid/inactive/foreign-store selections, integer-string normalization, simultaneous cashier sessions, register conflicts, real checkout, unchanged bill/item salesperson IDs, bill list/detail/session history, summary, current sessions, reconciliation, CSV exports, closing, and legacy null cashier IDs. The browser suite runs a real store-password login against local APIs and PostgreSQL, checks an initially unselected required dropdown, store-specific options, opening request data, and the selected cashier in the closing summary.
+
+## Changed files
+
+Backend: src/pos/auth.ts, src/pos/cashierIdentity.ts, src/pos/service.ts, src/pos/routes.ts, src/pos/reports.ts, src/pos/billExports.ts, scripts/test_pos_store_cashiers.ts, scripts/serve_pos_store_auth_e2e.ts, package.json, and this document.
+
+Frontend: src/features/pos/POSOpeningModal.tsx, src/features/pos/POSBillingScreen.tsx, scripts/test_pos_store_cashiers.cjs, and package.json. Existing history/receipt components consume the corrected cashier.employee response without styling changes.
