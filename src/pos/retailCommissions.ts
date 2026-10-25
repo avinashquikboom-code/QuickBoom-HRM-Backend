@@ -1,8 +1,11 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
-import { Actor, permission, scope, storeFilter } from "./auth";
+import { Actor, DEFAULT_ROLE_POS_PERMISSIONS, permission, scope, storeFilter } from "./auth";
+import { resolveUserEmployee, cashierName as employeeDisplayName } from "./cashierIdentity";
 import { dateRange, ensure, keys, object, text, uuid } from "./validation";
 import { refundAllocation, round } from "./finance";
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const D = Prisma.Decimal;
 type Tx = Prisma.TransactionClient;
 
@@ -135,37 +138,102 @@ export function parseFlexibleDateRange(query: Record<string, any>) {
 
   const fStr = typeof from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : "2020-01-01";
   const tStr = typeof to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : todayStr;
-  const gte = new Date(`${fStr}T00:00:00+05:30`);
-  const lt = new Date(new Date(`${tStr}T00:00:00+05:30`).getTime() + 86400000);
+  let gte = new Date(`${fStr}T00:00:00+05:30`);
+  let lt = new Date(new Date(`${tStr}T00:00:00+05:30`).getTime() + 86400000);
+
+  if (isNaN(gte.getTime())) {
+    gte = new Date("2020-01-01T00:00:00+05:30");
+  }
+  if (isNaN(lt.getTime())) {
+    lt = new Date("2099-12-31T23:59:59+05:30");
+  }
+  if (gte.getTime() > lt.getTime()) {
+    const tmp = gte;
+    gte = lt;
+    lt = tmp;
+  }
   return { gte, lt, displayFrom: fStr, displayTo: tStr };
 }
 
-export function resolveActorFromRequest(req: any): Actor {
+export async function resolveActorFromRequest(req: any): Promise<Actor> {
   if (req.actor) return req.actor;
   const user = req.user || {};
-  const role = user.role || "ADMIN";
-  const isAdmin = ["SUPER_ADMIN", "ADMIN", "SUPERADMIN", "PLATFORM_ADMIN"].includes(role);
-  return {
-    userId: user.id || user.userId || 1,
+  const userId = Number(user.id || user.userId);
+  let dbUser: any = null;
+  let employee: any = null;
+  let store: any = null;
+
+  if (Number.isSafeInteger(userId) && userId > 0) {
+    dbUser = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        employee: {
+          include: { store: true },
+        },
+        profile: true,
+        userPermission: true,
+      },
+    });
+  }
+
+  const role = String(dbUser?.role || user.role || "EMPLOYEE").toUpperCase();
+  const isAdmin = ["SUPER_ADMIN", "ADMIN", "SUPERADMIN", "PLATFORM_ADMIN", "HR"].includes(role);
+
+  if (dbUser) {
+    employee = dbUser.employee ?? (await resolveUserEmployee(dbUser));
+    if (employee && !employee.store && employee.storeId) {
+      store = await prisma.store.findUnique({ where: { id: employee.storeId } });
+    } else if (employee?.store) {
+      store = employee.store;
+    }
+  }
+
+  const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[role] ?? {};
+  const defaults = await prisma.rolePermission.findUnique({
+    where: { role: (dbUser?.role || role) as any },
+  }).catch(() => null);
+
+  const actor: Actor = {
+    userId: dbUser?.id || userId || 1,
     role,
-    employeeId: user.employeeId,
-    storeId: user.storeId,
+    employeeId: employee?.id ?? user.employeeId,
+    cashierName: dbUser ? employeeDisplayName({ employee, profile: dbUser.profile }) : undefined,
+    employee: employee
+      ? {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          employeeCode: employee.employeeCode,
+        }
+      : undefined,
+    storeId: employee?.storeId ?? user.storeId,
+    storeName: store?.name ?? user.storeName,
+    storeCode: store?.code ?? user.storeCode,
+    storeIsActive: store ? Boolean(store.isActive) : (user.storeIsActive ?? undefined),
     admin: isAdmin,
-    isPosStoreSession: false,
+    isPosStoreSession: Boolean(user.isPosStoreSession),
     permissions: {
       "pos.read": true,
       "pos.reports": true,
       "pos.configure": isAdmin,
       "pos.commissionApprove": isAdmin,
+      ...(isAdmin ? { "pos.allStores": true, "pos.manageStores": true } : {}),
+      ...defaultRolePerms,
+      ...((defaults?.permissions ?? {}) as object),
+      ...((dbUser?.userPermission?.permissions ?? {}) as object),
       ...(user.permissions || {}),
     },
   };
+
+  req.actor = actor;
+  return actor;
 }
 
 export async function retailCommissionReport(actor: Actor, query: Record<string, any>) {
   permission(actor, "reports");
   const storeId = storeFilter(actor, query.storeId);
-  const subcategoryId = query.subcategoryId && query.subcategoryId !== "all" ? query.subcategoryId : null;
+  const rawSubcat = typeof query.subcategoryId === "string" ? query.subcategoryId.trim() : null;
+  const subcategoryId = rawSubcat && rawSubcat !== "all" && UUID_REGEX.test(rawSubcat) ? rawSubcat : null;
   const search = query.search ? `%${String(query.search).trim()}%` : null;
   const range = parseFlexibleDateRange(query);
 
@@ -235,13 +303,16 @@ export async function retailCommissionReport(actor: Actor, query: Record<string,
 export async function retailCommissionTransactions(actor: Actor, query: Record<string, any>) {
   permission(actor, "reports");
   const storeId = storeFilter(actor, query.storeId);
-  const subcategoryId = query.subcategoryId && query.subcategoryId !== "all" ? query.subcategoryId : null;
+  const rawSubcat = typeof query.subcategoryId === "string" ? query.subcategoryId.trim() : null;
+  const subcategoryId = rawSubcat && rawSubcat !== "all" && UUID_REGEX.test(rawSubcat) ? rawSubcat : null;
   const status = query.status && query.status !== "ALL" ? query.status : "ACTIVE";
   const search = query.search ? `%${String(query.search).trim()}%` : null;
   const range = parseFlexibleDateRange(query);
 
-  const page = Math.max(1, Number(query.page || 1));
-  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize || 20)));
+  const rawPage = parseInt(String(query.page || 1), 10);
+  const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+  const rawPageSize = parseInt(String(query.pageSize || 20), 10);
+  const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize > 0 ? Math.min(100, rawPageSize) : 20;
   const offset = (page - 1) * pageSize;
 
   const countRows = await prisma.$queryRaw<any[]>(Prisma.sql`
@@ -304,7 +375,8 @@ export async function retailCommissionTransactions(actor: Actor, query: Record<s
 export async function retailCommissionDashboard(actor: Actor, query: Record<string, any>) {
   permission(actor, "reports");
   const storeId = storeFilter(actor, query.storeId);
-  const subcategoryId = query.subcategoryId && query.subcategoryId !== "all" ? query.subcategoryId : null;
+  const rawSubcat = typeof query.subcategoryId === "string" ? query.subcategoryId.trim() : null;
+  const subcategoryId = rawSubcat && rawSubcat !== "all" && UUID_REGEX.test(rawSubcat) ? rawSubcat : null;
   const search = query.search ? `%${String(query.search).trim()}%` : null;
   const range = parseFlexibleDateRange(query);
 

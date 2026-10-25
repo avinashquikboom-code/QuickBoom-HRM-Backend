@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, UserJWTPayload } from '../utils/jwt';
 import { prisma } from '../utils/db';
+import { resolveUserEmployee } from '../pos/cashierIdentity';
 
 // Extend Express Request type
 export interface AuthenticatedRequest extends Request {
   user?: UserJWTPayload;
+  actor?: any;
 }
 
 export const authMiddleware = async (
@@ -182,10 +184,20 @@ export const authMiddleware = async (
         isActive: true,
         email: true,
         role: true,
+        employeeID: true,
         employee: {
           select: {
             id: true,
             status: true,
+            storeId: true,
+            store: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                isActive: true,
+              },
+            },
           },
         },
       },
@@ -203,8 +215,17 @@ export const authMiddleware = async (
       return;
     }
 
-    const isAdminRole = dbUser.role === 'SUPER_ADMIN' || dbUser.role === 'ADMIN';
-    const isEmployeeInactive = dbUser.employee?.status && dbUser.employee.status.toLowerCase() !== 'active';
+    const employee = dbUser.employee ?? (await resolveUserEmployee(dbUser));
+    let store = (employee as any)?.store;
+    if (employee && !store && employee.storeId) {
+      store = await prisma.store.findUnique({
+        where: { id: employee.storeId },
+        select: { id: true, name: true, code: true, isActive: true },
+      });
+    }
+
+    const isAdminRole = ["SUPER_ADMIN", "ADMIN", "SUPERADMIN", "PLATFORM_ADMIN", "HR"].includes(dbUser.role);
+    const isEmployeeInactive = employee?.status && employee.status.toLowerCase() !== 'active';
     if (!isAdminRole && isEmployeeInactive) {
       res.status(403).json({
         success: false,
@@ -213,6 +234,15 @@ export const authMiddleware = async (
       });
       return;
     }
+
+    req.user = {
+      ...decoded,
+      employeeId: employee?.id,
+      storeId: employee?.storeId ?? undefined,
+      storeName: store?.name ?? undefined,
+      storeCode: store?.code ?? undefined,
+      storeIsActive: store ? Boolean(store.isActive) : undefined,
+    };
 
     next();
   } catch (error) {

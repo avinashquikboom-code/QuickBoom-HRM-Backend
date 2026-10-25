@@ -27,7 +27,7 @@ router.use(authMiddleware);
 // GET /api/commission/transactions (Subcategory-wise with database pagination)
 router.get('/transactions', async (req: Request, res: Response): Promise<void> => {
   try {
-    const actor = resolveActorFromRequest(req);
+    const actor = await resolveActorFromRequest(req);
     const result = await retailCommissionTransactions(actor, req.query);
     res.json(result);
   } catch (error: any) {
@@ -53,7 +53,7 @@ router.put('/transactions/:id/reject', protectLegacyPOSReview('REJECTED'), rejec
 // GET /api/commission/dashboard (Subcategory-wise metrics)
 router.get('/dashboard', async (req: Request, res: Response): Promise<void> => {
   try {
-    const actor = resolveActorFromRequest(req);
+    const actor = await resolveActorFromRequest(req);
     const dashboard = await retailCommissionDashboard(actor, req.query);
     res.json(dashboard);
   } catch (error: any) {
@@ -74,7 +74,7 @@ router.get('/dashboard', async (req: Request, res: Response): Promise<void> => {
 // GET /api/commission/subcategories
 router.get('/subcategories', async (req: Request, res: Response): Promise<void> => {
   try {
-    const actor = resolveActorFromRequest(req);
+    const actor = await resolveActorFromRequest(req);
     const result = await listSubcategories(actor);
     res.json(result);
   } catch (error: any) {
@@ -97,7 +97,7 @@ router.get('/search/:billId', searchSalesByBillId);
 // GET /api/commission/report (Subcategory-wise report)
 router.get('/report', async (req: Request, res: Response): Promise<void> => {
   try {
-    const actor = resolveActorFromRequest(req);
+    const actor = await resolveActorFromRequest(req);
     const report = await retailCommissionReport(actor, req.query);
     res.json({ success: true, data: report });
   } catch (error: any) {
@@ -117,7 +117,7 @@ router.get('/report', async (req: Request, res: Response): Promise<void> => {
 // POST /api/commission/sync-sales
 router.post('/sync-sales', async (req: Request, res: Response): Promise<void> => {
   try {
-    const actor = resolveActorFromRequest(req);
+    const actor = await resolveActorFromRequest(req);
     const result = await syncRetailCommissionsFromSales(actor, req.body);
     res.json(result);
   } catch (error: any) {

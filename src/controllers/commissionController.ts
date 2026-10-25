@@ -32,7 +32,7 @@ export const getCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
-    const actor = resolveActorFromRequest(req);
+    const actor = await resolveActorFromRequest(req);
     const dashboard = await retailCommissionDashboard(actor, req.query);
     res.json(dashboard);
   } catch (error: any) {
@@ -382,7 +382,7 @@ export const getCommissionTransactions = async (
     const { employeeId, storeId, status, startDate, endDate, search, billId } = req.query;
 
     if (!employeeId && req.user?.role !== 'EMPLOYEE') {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const result = await retailCommissionTransactions(actor, req.query);
       res.json(result);
       return;
@@ -1155,7 +1155,7 @@ export const fetchCommissionReport = async (
 ): Promise<void> => {
   try {
     if (!req.user?.role || !['EMPLOYEE', 'SALESMAN', 'HELPER'].includes(req.user.role)) {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const report = await retailCommissionReport(actor, req.query);
       res.json({ success: true, data: report });
       return;

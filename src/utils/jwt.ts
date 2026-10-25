@@ -8,9 +8,11 @@ export interface UserJWTPayload {
   id: number;
   email?: string | null;
   role: string;
+  employeeId?: number;
   storeId?: number;
   storeCode?: string;
   storeName?: string;
+  storeIsActive?: boolean;
   isPosStoreSession?: boolean;
   credentialVersion?: string;
 }

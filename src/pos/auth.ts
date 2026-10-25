@@ -19,6 +19,7 @@ export interface Actor {
   storeId?: number;
   storeName?: string;
   storeCode?: string;
+  storeIsActive?: boolean;
   permissions: Record<string, unknown>;
   admin: boolean;
   isPosStoreSession?: boolean;
@@ -44,6 +45,8 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
     "pos.reports": true,
     "pos.configure": true,
     "pos.commissionApprove": true,
+    "pos.allStores": true,
+    "pos.manageStores": true,
   },
   ADMIN: {
     "pos.read": true,
@@ -57,6 +60,8 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
     "pos.reports": true,
     "pos.configure": true,
     "pos.commissionApprove": true,
+    "pos.allStores": true,
+    "pos.manageStores": true,
   },
   STORE_MANAGER: {
     "pos.read": true,
@@ -86,11 +91,17 @@ export const DEFAULT_ROLE_POS_PERMISSIONS: Record<
     "pos.read": true,
     "pos.reports": true,
     "pos.commissionApprove": true,
+    "pos.configure": true,
+    "pos.allStores": true,
+    "pos.manageStores": true,
   },
   PLATFORM_ADMIN: {
     "pos.read": true,
     "pos.reports": true,
     "pos.commissionApprove": true,
+    "pos.configure": true,
+    "pos.allStores": true,
+    "pos.manageStores": true,
   },
 };
 
@@ -221,13 +232,23 @@ export async function authenticate(
     );
     const user = await prisma.user.findUnique({
       where: { id },
-      include: { employee: true, profile: true, userPermission: true },
+      include: {
+        employee: {
+          include: { store: true },
+        },
+        profile: true,
+        userPermission: true,
+      },
     });
     ensure(user, "User account not found or session invalid", 401);
     ensure(user.isActive, "Account inactive", 403);
     ensure(!/^pos-store-\d+@hopkid\.local$/i.test(user.email ?? ""), "Store terminal accounts must use the dedicated POS login.", 401);
 
     const employee = user.employee ?? await resolveUserEmployee(user);
+    let store = (employee as any)?.store;
+    if (employee && !store && employee.storeId) {
+      store = await prisma.store.findUnique({ where: { id: employee.storeId } });
+    }
 
     ensure(
       !employee || employee.status.toLowerCase() === "active",
@@ -236,9 +257,11 @@ export async function authenticate(
     );
     const defaults = await prisma.rolePermission.findUnique({
       where: { role: user.role },
-    });
+    }).catch(() => null);
     const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[user.role] ?? {};
     const cashierName = employeeDisplayName({ employee, profile: user.profile });
+    const isAdmin = ["SUPER_ADMIN", "ADMIN", "SUPERADMIN", "PLATFORM_ADMIN", "HR"].includes(user.role);
+
     (req as POSRequest).actor = {
       userId: user.id,
       role: user.role,
@@ -253,9 +276,13 @@ export async function authenticate(
           }
         : undefined,
       storeId: employee?.storeId ?? undefined,
-      admin: ["SUPER_ADMIN", "ADMIN"].includes(user.role),
+      storeName: store?.name ?? undefined,
+      storeCode: store?.code ?? undefined,
+      storeIsActive: store ? Boolean(store.isActive) : undefined,
+      admin: isAdmin,
       isPosStoreSession: false,
       permissions: {
+        ...(isAdmin ? { "pos.allStores": true, "pos.manageStores": true } : {}),
         ...defaultRolePerms,
         ...((defaults?.permissions ?? {}) as object),
         ...((user.userPermission?.permissions ?? {}) as object),
@@ -338,19 +365,30 @@ export async function resolveOptionalActor(req: Request): Promise<Actor | null> 
     if (!Number.isSafeInteger(id) || id <= 0) return null;
     const user = await prisma.user.findUnique({
       where: { id },
-      include: { employee: true, profile: true, userPermission: true },
+      include: {
+        employee: {
+          include: { store: true },
+        },
+        profile: true,
+        userPermission: true,
+      },
     });
     if (!user || !user.isActive) return null;
 
     const employee = user.employee ?? await resolveUserEmployee(user);
+    let store = (employee as any)?.store;
+    if (employee && !store && employee.storeId) {
+      store = await prisma.store.findUnique({ where: { id: employee.storeId } });
+    }
 
     if (employee && employee.status.toLowerCase() !== "active") return null;
 
     const defaults = await prisma.rolePermission.findUnique({
       where: { role: user.role },
-    });
+    }).catch(() => null);
     const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[user.role] ?? {};
     const cashierName = employeeDisplayName({ employee, profile: user.profile });
+    const isAdmin = ["SUPER_ADMIN", "ADMIN", "SUPERADMIN", "PLATFORM_ADMIN", "HR"].includes(user.role);
 
     return {
       userId: user.id,
@@ -366,9 +404,13 @@ export async function resolveOptionalActor(req: Request): Promise<Actor | null> 
           }
         : undefined,
       storeId: employee?.storeId ?? undefined,
-      admin: ["SUPER_ADMIN", "ADMIN"].includes(user.role),
+      storeName: store?.name ?? undefined,
+      storeCode: store?.code ?? undefined,
+      storeIsActive: store ? Boolean(store.isActive) : undefined,
+      admin: isAdmin,
       isPosStoreSession: false,
       permissions: {
+        ...(isAdmin ? { "pos.allStores": true, "pos.manageStores": true } : {}),
         ...defaultRolePerms,
         ...((defaults?.permissions ?? {}) as object),
         ...((user.userPermission?.permissions ?? {}) as object),
@@ -397,14 +439,24 @@ export function scope(actor: Actor, storeId: number) {
     );
     return;
   }
-  ensure(
+  if (
     actor.admin ||
-      actor.permissions["pos.allStores"] === true ||
-      actor.permissions["pos.manageStores"] === true ||
-      actor.storeId === storeId,
+    actor.permissions["pos.allStores"] === true ||
+    actor.permissions["pos.manageStores"] === true
+  ) {
+    return;
+  }
+  ensure(
+    actor.storeId === storeId,
     "Store access denied",
     403,
   );
+  if (actor.storeIsActive === false) {
+    throw new POSError(
+      422,
+      "The assigned store location is inactive or does not exist. Ask an administrator to activate it or update your store assignment in HRM Employees.",
+    );
+  }
 }
 
 export function storeFilter(actor: Actor, input: unknown): number | undefined {
@@ -437,5 +489,11 @@ export function storeFilter(actor: Actor, input: unknown): number | undefined {
     "No store location is assigned to your employee account. Please contact an administrator to assign an active store.",
     422,
   );
+  if (actor.storeIsActive === false) {
+    throw new POSError(
+      422,
+      "The assigned store location is inactive or does not exist. Ask an administrator to activate it or update your store assignment in HRM Employees.",
+    );
+  }
   return actor.storeId;
 }

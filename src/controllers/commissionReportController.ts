@@ -31,7 +31,7 @@ router.get(
   roleMiddleware(allowedRoles),
   async (req: Request, res: Response) => {
     try {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const dashboard = await retailCommissionDashboard(actor, req.query);
       res.json(dashboard);
     } catch (error: any) {
@@ -61,7 +61,7 @@ router.get(
   roleMiddleware(allowedRoles),
   async (req: Request, res: Response) => {
     try {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const result = await retailCommissionTransactions(actor, req.query);
       res.json(result);
     } catch (error: any) {
@@ -87,7 +87,7 @@ router.get(
   roleMiddleware(allowedRoles),
   async (req: Request, res: Response) => {
     try {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const report = await retailCommissionReport(actor, req.query);
       res.json({
         success: true,
@@ -119,7 +119,7 @@ router.get(
   roleMiddleware(allowedRoles),
   async (req: Request, res: Response) => {
     try {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const result = await listSubcategories(actor);
       res.json(result);
     } catch (error: any) {
@@ -143,7 +143,7 @@ router.post(
   roleMiddleware(allowedRoles),
   async (req: Request, res: Response) => {
     try {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const result = await syncRetailCommissionsFromSales(actor, req.body);
       res.json(result);
     } catch (error: any) {
@@ -166,7 +166,7 @@ router.get(
   roleMiddleware(allowedRoles),
   async (req: Request, res: Response) => {
     try {
-      const actor = resolveActorFromRequest(req);
+      const actor = await resolveActorFromRequest(req);
       const report = await retailCommissionReport(actor, req.query);
 
       let csv = 'Store,Product Subcategory,Commission Type,Rate (%),Basis,Eligible Net Sales (₹),Commission Amount (₹),Completed Bills,Eligible Items\n';
