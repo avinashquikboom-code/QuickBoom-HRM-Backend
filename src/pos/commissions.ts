@@ -1,11 +1,10 @@
+import { reverseRetailCommission } from "./retailCommissions";
 import { Prisma } from "@prisma/client";
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../utils/db";
-import { calculateEffectiveCommissionForLineItem } from "../utils/commissionHelper";
-import { isCommissionEligibleEmployee } from "../utils/salaryGross";
 import { Actor, authenticate, POSRequest, permission, scope } from "./auth";
 import { ensure, integer, object, keys, text } from "./validation";
-import { refundAllocation, round } from "./finance";
+import { refundAllocation } from "./finance";
 type Tx = Prisma.TransactionClient;
 const D = Prisma.Decimal;
 
@@ -44,143 +43,8 @@ export function commissionPayrollWhere(
     ],
   };
 }
-export async function accrueCommission(tx: Tx, actor: Actor, saleId: string) {
-  const sale = await tx.pOSSale.findUniqueOrThrow({
-    where: { id: saleId },
-    include: {
-      salesperson: { include: { user: true, department: true } },
-      items: {
-        include: {
-          salesperson: { include: { user: true, department: true } },
-          variant: { include: { product: { include: { category: true } } } },
-        },
-      },
-    },
-  });
-  const config = await tx.pOSConfiguration.findUnique({
-    where: { storeId: sale.storeId },
-  });
-  if (!config?.commissionEnabled) return;
-
-  type Emp = NonNullable<typeof sale.salesperson>;
-  const groups = new Map<number, { emp: Emp; items: typeof sale.items }>();
-
-  for (const item of sale.items) {
-    const emp = (item.salesperson ?? sale.salesperson) as Emp | null;
-    if (!emp || !isCommissionEligibleEmployee(emp)) continue;
-    const existing = groups.get(emp.id);
-    if (existing) {
-      existing.items.push(item);
-    } else {
-      groups.set(emp.id, { emp, items: [item] });
-    }
-  }
-
-  if (groups.size === 0) return;
-
-  for (const [, { emp, items: empItems }] of groups.entries()) {
-    const policies = await tx.commissionPolicy.findMany({
-      where: {
-        isActive: true,
-        effectiveFrom: { lte: sale.createdAt },
-        AND: [
-          {
-            OR: [{ effectiveTo: null }, { effectiveTo: { gte: sale.createdAt } }],
-          },
-          { OR: [{ employeeId: null }, { employeeId: emp.id }] },
-          { OR: [{ storeId: null }, { storeId: sale.storeId }] },
-          { OR: [{ departmentId: null }, { departmentId: emp.departmentId }] },
-          { OR: [{ designationId: null }, { designationId: emp.designationId }] },
-          { OR: [{ roleId: null }, { roleId: emp.user?.role ?? "" }] },
-          { brandId: null },
-        ],
-      },
-      orderBy: [{ priority: "desc" }, { id: "asc" }],
-    });
-    const lines = empItems
-      .map((item) => {
-        const product = item.variant?.product;
-        // Explicit mappings only: a UUID/name is never guessed to be an external numeric policy ID.
-        const applicable = policies.filter(
-          (p) =>
-            (p.productId == null ||
-              (product && p.productId === product.externalCommissionProductId)) &&
-            (p.categoryId == null ||
-              (product && p.categoryId === product.category?.externalCommissionCategoryId)),
-        );
-        const eligibleRevenue =
-          config.commissionBasis === "NET_INCL_TAX"
-            ? item.lineTotal
-            : item.lineTotal.minus(item.taxTotal);
-        const resolution = calculateEffectiveCommissionForLineItem({
-          saleAmount: eligibleRevenue.toNumber(),
-          salesman: emp,
-          storeId: sale.storeId,
-          productId: product?.externalCommissionProductId,
-          categoryId: product?.category?.externalCommissionCategoryId,
-          policies: applicable,
-        });
-        const amount = round(
-          new D(String(resolution.commissionAmount)).mul(
-            resolution.commissionType === "FIXED" &&
-              config.fixedCommissionBasis === "UNIT"
-              ? item.quantity
-              : 1,
-          ),
-        );
-      ensure(amount.gte(0), "Commission policy resolved a negative earning");
-      return {
-        saleItemId: item.id,
-        eligibleRevenue,
-        amount,
-        policySnapshot: {
-          ...resolution,
-          basis: config.commissionBasis!,
-          fixedBasis: config.fixedCommissionBasis!,
-          refundPolicy: config.refundCommissionPolicy!,
-        },
-      };
-      })
-      .filter((l): l is NonNullable<typeof l> => l !== null);
-    // An employee whose whole batch was manual lines has no commissionable revenue.
-    if (!lines.length) continue;
-    const total = lines.reduce((n, l) => n.plus(l.amount), new D(0));
-    const txRecord = await tx.commissionTransaction.create({
-      data: {
-        employeeId: emp.id,
-        storeId: sale.storeId,
-        billId: `POSSALE-${sale.id}`,
-        invoiceNumber: sale.invoiceNo,
-        saleAmount: lines
-          .reduce((n, l) => n.plus(l.eligibleRevenue), new D(0))
-          .toNumber(),
-        commissionType: "PERCENTAGE",
-        commissionAmount: total.toNumber(),
-        eventType: "POS_SALE",
-        status: "PENDING",
-        notes: `POS proposal for ${emp.firstName} ${emp.lastName}; excluded from payroll until approved`,
-        productBreakdown: lines.map((l) => ({
-          saleItemId: l.saleItemId,
-          amount: l.amount.toFixed(2),
-          eligibleRevenue: l.eligibleRevenue.toFixed(2),
-          ...l.policySnapshot,
-        })),
-        posLines: { create: lines },
-      },
-    });
-    await tx.commissionHistory.create({
-      data: {
-        transactionId: txRecord.id,
-        employeeId: emp.id,
-        action: "CREATED",
-        newStatus: "PENDING",
-        newAmount: total.toNumber(),
-        performedBy: actor.userId,
-        reason: `POS sale ${sale.invoiceNo} attributed to ${emp.firstName} ${emp.lastName}`,
-      },
-    });
-  }
-}
+// New retail accrual never enters the employee/payroll commission ledger.
+export { accrueRetailCommission as accrueCommission } from "./retailCommissions";
 export async function reverseCommission(
   tx: Tx,
   actor: Actor,
@@ -193,6 +57,7 @@ export async function reverseCommission(
       items: { include: { saleItem: { include: { commission: true } } } },
     },
   });
+  await reverseRetailCommission(tx, ret.id, ret.items.map(i => ({ id: i.saleItemId, returnedQuantity: i.saleItem.returnedQuantity })));
   const lines = ret.items.filter((i) => i.saleItem.commission);
   if (!lines.length) return;
 

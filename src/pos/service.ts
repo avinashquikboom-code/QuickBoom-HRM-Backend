@@ -1,3 +1,4 @@
+import { closeRetailCommission } from "./retailCommissions";
 import { cashierUserSelect, cashierEmployeeSelect, resolveCashierName, withCashierName, saleCashier } from "./cashierIdentity";
 import { recognizedSaleWhere, receivedSaleWhere } from "./salesAccounting";
 import { checkoutPOSWork } from "./workSessions";
@@ -2073,6 +2074,8 @@ export async function cancelSale(actor: Actor, saleId: string, raw: unknown) {
     ensure(sale, "Invoice not found", 404);
     scope(actor, sale.storeId);
     if (sale.status === "CANCELLED") {
+      // Administrative voids have no POSReturn/idempotency key. Repeating them is a no-op.
+      if (!b.sessionId && !b.refundMethod) return { id: sale.id, invoiceNo: sale.invoiceNo, status: "CANCELLED" };
       const previous = await tx.pOSReturn.findUnique({
         where: {
           idempotencyKey: text(b.idempotencyKey, "idempotencyKey", 100),
@@ -2088,7 +2091,7 @@ export async function cancelSale(actor: Actor, saleId: string, raw: unknown) {
         "Cancellation key conflict",
         409,
       );
-      return previous;
+      return { id: sale.id, invoiceNo: sale.invoiceNo, status: "CANCELLED", returnId: previous.id };
     }
     if (b.sessionId && b.refundMethod) {
       ensure(
@@ -2108,6 +2111,7 @@ export async function cancelSale(actor: Actor, saleId: string, raw: unknown) {
         },
         tx,
       );
+      await closeRetailCommission(tx, saleId, "CANCELLED");
       await tx.pOSSale.update({
         where: { id: saleId },
         data: { status: "CANCELLED" },
@@ -2283,6 +2287,7 @@ async function voidSale(tx: Tx, actor: Actor, saleId: string, reason: string) {
     if (item.variantId) await movement(tx, actor, sale.storeId, item.variantId,
       item.quantity, 0, "CANCELLATION", saleId, reason);
   }
+  await closeRetailCommission(tx, saleId, "CANCELLED");
   const lines = await tx.pOSCommissionLine.findMany({
     where: { saleItemId: { in: sale.items.map((i) => i.id) } },
   });
@@ -2363,6 +2368,7 @@ async function deleteSaleInternal(tx: Tx, actor: Actor, saleId: string, reason: 
     400,
   );
 
+  await closeRetailCommission(tx, saleId, "DELETED");
   const saleItemIds = sale.items.map((i) => i.id);
   if (saleItemIds.length > 0) {
     const commLines = await tx.pOSCommissionLine.findMany({

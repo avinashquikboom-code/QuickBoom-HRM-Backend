@@ -1525,6 +1525,8 @@ model RkdRequest {
 
 // Fashion retail POS: independent documents, shared HRM identities and stores.
 model POSCategory {
+  commissionType String?
+  commissionRate Decimal? @db.Decimal(15,4)
   externalCommissionCategoryId Int?
   id String @id @default(uuid()) @db.Uuid
   name String @unique
@@ -1893,4 +1895,51 @@ model POSWorkBreak {
   endedAt DateTime?
   durationSeconds Int?
   @@index([draftId, startedAt])
+}
+
+// Retail-only snapshots. Scalar catalog/sale IDs deliberately retain audit records after bill deletion.
+model POSRetailCommission {
+  id String @id @default(uuid()) @db.Uuid
+  saleItemId String @unique @db.Uuid
+  saleId String @db.Uuid
+  storeId Int
+  invoiceNumber String
+  subcategoryId String? @db.Uuid
+  subcategoryName String?
+  commissionType String?
+  rate Decimal? @db.Decimal(15,4)
+  basis String
+  fixedBasis String
+  quantity Int
+  returnedQuantity Int @default(0)
+  eligibleRevenue Decimal @db.Decimal(15,2)
+  amount Decimal @db.Decimal(15,2)
+  reversedRevenue Decimal @default(0) @db.Decimal(15,2)
+  reversedAmount Decimal @default(0) @db.Decimal(15,2)
+  exclusionReason String?
+  status String @default("ACTIVE")
+  createdAt DateTime
+  @@index([storeId, createdAt])
+  @@index([saleId])
+  @@index([status, createdAt])
+  @@index([subcategoryId, status])
+  @@index([storeId, subcategoryId, createdAt])
+}
+
+// Reviewable retail refund/void debits, separate from HRM payroll adjustments.
+model POSRetailCommissionAdjustment {
+  id String @id @default(uuid()) @db.Uuid
+  eventKey String @unique
+  saleId String @db.Uuid
+  saleItemId String @db.Uuid
+  storeId Int
+  amount Decimal @db.Decimal(15,2)
+  eligibleRevenue Decimal @db.Decimal(15,2)
+  reason String
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+  reviewedAt DateTime?
+  reviewedBy Int?
+  reviewReason String?
+  @@index([storeId, createdAt])
 }

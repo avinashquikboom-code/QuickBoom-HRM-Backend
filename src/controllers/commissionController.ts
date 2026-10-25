@@ -18,6 +18,12 @@ import {
 } from '../utils/commissionHelper';
 import { deduplicateCommissionTransactions } from '../utils/commissionDeduplicator';
 import { notifyEmployee, sendHRNotification } from '../utils/hrNotificationHelper';
+import {
+  retailCommissionReport,
+  retailCommissionTransactions,
+  retailCommissionDashboard,
+  resolveActorFromRequest,
+} from '../pos/retailCommissions';
 
 // Commission Dashboard Stats
 export const getCommissionDashboard = async (
@@ -25,43 +31,19 @@ export const getCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { employeeId, storeId, startDate, endDate } = req.query;
-
-    let targetEmpId: number | null = null;
-    if (employeeId) {
-      targetEmpId = await resolveEmployeeId(employeeId as string);
-      if (targetEmpId === null) targetEmpId = -1;
-    }
-
-    let parsedStoreId: number | null = null;
-    if (storeId && storeId !== 'all' && storeId !== '' && !isNaN(parseInt(storeId as string, 10))) {
-      parsedStoreId = parseInt(storeId as string, 10);
-    }
-
-    const start = startDate ? String(startDate) : undefined;
-    const end = endDate ? String(endDate) : undefined;
-
-    console.log(`[Commission API]\nFilter:\nmonth: ${startDate ? String(startDate).slice(0, 7) : 'all'}\nstoreId: ${parsedStoreId || 'all'}\nemployeeId: ${targetEmpId || 'all'}\nstartDate: ${start || 'none'}\nendDate: ${end || 'none'}`);
-
-    const stats = await getCommissionStats({
-      employeeId: targetEmpId,
-      storeId: parsedStoreId,
-      startDate: start,
-      endDate: end,
-    });
-
-    res.json({ success: true, stats });
-  } catch (error) {
+    const actor = resolveActorFromRequest(req);
+    const dashboard = await retailCommissionDashboard(actor, req.query);
+    res.json(dashboard);
+  } catch (error: any) {
     console.error('Get commission dashboard error:', error);
     res.json({
       success: true,
       stats: {
         today: { commission: 0, sales: 0, transactions: 0 },
         month: { commission: 0, sales: 0, transactions: 0 },
-        pending: { commission: 0, transactions: 0 },
-        paid: { commission: 0, transactions: 0 },
-        lifetime: { commission: 0, sales: 0, transactions: 0 },
-        topPerformers: [],
+        period: { commission: 0, sales: 0, transactions: 0 },
+        topSubcategories: [],
+        recentTransactions: [],
       },
     });
   }
@@ -397,6 +379,13 @@ export const getCommissionTransactions = async (
 ): Promise<void> => {
   try {
     const { employeeId, storeId, status, startDate, endDate, search, billId } = req.query;
+
+    if (!employeeId && req.user?.role !== 'EMPLOYEE') {
+      const actor = resolveActorFromRequest(req);
+      const result = await retailCommissionTransactions(actor, req.query);
+      res.json(result);
+      return;
+    }
 
     const conditions: any[] = [];
     if (employeeId) {
@@ -1166,6 +1155,13 @@ export const fetchCommissionReport = async (
   res: Response
 ): Promise<void> => {
   try {
+    if (!req.user?.role || !['EMPLOYEE', 'SALESMAN', 'HELPER'].includes(req.user.role)) {
+      const actor = resolveActorFromRequest(req);
+      const report = await retailCommissionReport(actor, req.query);
+      res.json({ success: true, data: report });
+      return;
+    }
+
     const fromStr = req.query.from as string;
     const toStr = req.query.to as string;
     const groupBy = ((req.query.groupBy as string) || 'day').toLowerCase();

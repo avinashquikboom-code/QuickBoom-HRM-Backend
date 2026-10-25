@@ -1,3 +1,4 @@
+import { configureSubcategoryCommission, retailCommissionReport, retailAdjustments, reviewRetailAdjustment } from "./retailCommissions";
 import { cashierUserSelect, cashierName, withCashierName, saleCashier } from "./cashierIdentity";
 import { reportingOverview, reportingDetails, exportReport } from "./reporting";
 import { previewBillExport, downloadBillExport } from "./billExports";
@@ -296,6 +297,10 @@ router.post(
   "/products/bulk-update",
   route((r) => operations.bulkCatalog(r.actor, r.body)),
 );
+router.get("/commissions/adjustments", route(r => retailAdjustments(r.actor, r.query)));
+router.post("/commissions/adjustments/:id/review", route(r => reviewRetailAdjustment(r.actor, id(r), r.body)));
+router.get("/commissions/subcategories", route(r => retailCommissionReport(r.actor, r.query)));
+router.patch("/categories/:id/commission", route(r => configureSubcategoryCommission(r.actor, id(r), r.body)));
 router.get(
   "/commissions",
   route(async (r) => {

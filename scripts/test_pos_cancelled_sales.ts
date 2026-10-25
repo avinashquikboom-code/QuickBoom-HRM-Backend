@@ -38,12 +38,13 @@ async function main() {
       taxRate: "0", discountPerUnit: "0", ...(sid === store.id ? { salespersonId: employee.id } : {}) }],
     payments: [{ method, amount }],
   });
+  const voidBill = (saleId: string, reason = "Test void") => pos.cancelSale(actor, saleId, { reason });
   const a = await make("1000"); const b = await make("500", "CARD"); const c = await make("300", "UPI");
   await make("75", "CASH", second.id, session2.id);
   const before = await report(actor, { storeId: store.id });
   assert.equal(Number(before.collectedSales), 1800);
   await test("A=1000 + B=500, cancelled C=300 => 1500, two invoices", async () => {
-    await pos.deleteSale(actor, c.id, { reason: "Test void" });
+    await voidBill(c.id);
     const r = await report(actor, { storeId: store.id });
     assert.equal(Number(r.collectedSales), 1500); assert.equal(Number(r.netCollected), 1500); assert.equal(r.invoices, 2);
     assert.equal(Number(r.byStore[0]._sum.grandTotal), 1500);
@@ -76,12 +77,13 @@ async function main() {
     assert.equal(Number((await report(actor, { storeId: second.id })).collectedSales), 75);
   });
   await test("cancelled history and audit survive repeated and concurrent voids", async () => {
-    await Promise.all([pos.deleteSale(actor, c.id), pos.deleteSale(actor, c.id)]);
+    await Promise.all([voidBill(c.id), voidBill(c.id)]);
     const history = await pos.getSessionSales(actor, session.id, { status: "CANCELLED" });
     assert.equal(history.items[0].invoiceNo, c.invoiceNo); assert.equal(Number(history.items[0].grandTotal), 300);
     assert.equal(await prisma.pOSAuditLog.count({ where: { entityId: c.id, action: "SALE_CANCELLED" } }), 1);
-    const commission = await prisma.commissionTransaction.findFirstOrThrow({ where: { billId: `POSSALE-${c.id}` } });
-    assert.equal(commission.status, "REJECTED"); assert.equal(commission.commissionAmount, 0);
+    const commission = await prisma.pOSRetailCommission.findUniqueOrThrow({ where: { saleItemId: c.items[0].id } });
+    assert.equal(commission.status, "CANCELLED"); assert.equal(Number(commission.amount), 0);
+    assert.equal(commission.exclusionReason, "NO_SUBCATEGORY");
     assert.equal(Number((await report(actor, { storeId: store.id })).collectedSales), 1500);
   });
   await test("refunded cancellation excludes both sales and cancellation credit from revenue", async () => {
@@ -122,9 +124,14 @@ async function main() {
   });
   await test("approved commissions create one reviewable debit on repeated voids", async () => {
     const sale = await make("100", "CARD");
-    const original = await prisma.commissionTransaction.findFirstOrThrow({ where: { billId: `POSSALE-${sale.id}` } });
-    await prisma.commissionTransaction.update({ where: { id: original.id }, data: { status: "APPROVED", approvedAt: new Date() } });
-    await pos.deleteSale(actor, sale.id); await pos.deleteSale(actor, sale.id);
+    // Simulate a pre-migration approved employee commission; new retail sales never create these.
+    const original = await prisma.commissionTransaction.create({ data: {
+      billId: `POSSALE-${sale.id}`, employeeId: employee.id, storeId: store.id,
+      saleAmount: 100, commissionType: "PERCENTAGE", commissionAmount: 10,
+      eventType: "POS_SALE", status: "APPROVED", approvedAt: new Date(),
+      posLines: { create: { saleItemId: sale.items[0].id, amount: 10, eligibleRevenue: 100, policySnapshot: { basis: "NET_EX_TAX" } } },
+    } });
+    await voidBill(sale.id); await voidBill(sale.id);
     const debits = await prisma.commissionTransaction.findMany({ where: { billId: `POSVOID-${sale.id}-${original.id}` } });
     assert.equal(debits.length, 1); assert.equal(debits[0].status, "PENDING");
     assert.equal(debits[0].commissionAmount, -original.commissionAmount);
@@ -138,7 +145,7 @@ async function main() {
       items: [{ saleItemId: sale.items[0].id, quantity: 1, resellable: true }] };
     await pos.returnSale(actor, sale.id, payload); await pos.returnSale(actor, sale.id, payload);
     assert.equal(Number((await report(actor, { storeId: store.id })).netCollected), 1050);
-    await assert.rejects(pos.deleteSale(actor, sale.id), /without returns/);
+    await assert.rejects(voidBill(sale.id), /without returns/);
     await pos.returnSale(actor, sale.id, { ...payload, idempotencyKey: randomUUID() });
     assert.equal(Number((await report(actor, { storeId: store.id })).netCollected), 1000);
   });
