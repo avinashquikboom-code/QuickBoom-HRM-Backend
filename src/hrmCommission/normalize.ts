@@ -62,10 +62,20 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
       if (inclTax && !exTax) { requireValue(inclTax.gte(t), 'TAX_EXCEEDS_NET'); exTax = inclTax.minus(t); }
       if (exTax && inclTax) requireValue(inclTax.minus(exTax).equals(t), 'TAX_TOTAL_MISMATCH');
     }
-    if (!exTax && !inclTax && item[contract.netField] !== undefined && contract.discounted && ['NET_EX_TAX', 'NET_INCL_TAX'].includes(contract.netBasis)) {
-      const amount = decimal(item[contract.netField], 'CONTRACT_NET_AMOUNT');
-      if (contract.netBasis === 'NET_EX_TAX') { exTax = amount; if (tax !== undefined) inclTax = amount.plus(decimal(tax, 'TAX')); }
-      else { inclTax = amount; if (tax !== undefined) { const t = decimal(tax, 'TAX'); requireValue(amount.gte(t), 'TAX_EXCEEDS_NET'); exTax = amount.minus(t); } }
+    if (!exTax && !inclTax) {
+      if (item[contract.netField] !== undefined && contract.discounted && ['NET_EX_TAX', 'NET_INCL_TAX'].includes(contract.netBasis)) {
+        const amount = decimal(item[contract.netField], 'CONTRACT_NET_AMOUNT');
+        if (contract.netBasis === 'NET_EX_TAX') { exTax = amount; if (tax !== undefined) inclTax = amount.plus(decimal(tax, 'TAX')); }
+        else { inclTax = amount; if (tax !== undefined) { const t = decimal(tax, 'TAX'); requireValue(amount.gte(t), 'TAX_EXCEEDS_NET'); exTax = amount.minus(t); } }
+      } else {
+        const rawNet = pick(item, ['productNetAmount', 'netAmount', 'saleAmount', 'lineTotal', 'amount', 'creditAmount', 'refundAmount']) ??
+          (item.unitPrice !== undefined ? Number(item.unitPrice) * Number(item.quantity ?? item.qty ?? 1) : undefined);
+        if (rawNet !== undefined) {
+          const netD = decimal(rawNet, 'NET_AMOUNT');
+          exTax = netD;
+          inclTax = tax !== undefined ? netD.plus(decimal(tax, 'TAX')) : netD;
+        }
+      }
     }
     const subId = pick(item, ['subcategoryId', 'subCategoryId', 'SubCategoryID', 'SubCategoryId', 'subcategory_id']);
     return { id, productId, variantId, quantity, exTax, inclTax,

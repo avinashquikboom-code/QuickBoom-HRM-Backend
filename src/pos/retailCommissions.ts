@@ -715,19 +715,32 @@ export async function getEmployeeRetailCommissionBills(
   const useStoreFallback = directCount === 0 && Boolean(employee?.storeId);
   const targetStoreId = useStoreFallback ? employee!.storeId! : null;
 
-  const whereClause: Prisma.POSRetailCommissionWhereInput = {
-    status: { in: ["ACTIVE", "COMPLETED", "PAID"] },
-    createdAt: { gte: range.gte, lt: range.lt },
-    OR: [
-      { employeeId },
-      ...(useStoreFallback ? [{ storeId: targetStoreId!, employeeId: null }] : []),
-    ],
-    ...(query.billId ? {
+  const isUuid = (val: unknown): val is string =>
+    typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+  const andClauses: Prisma.POSRetailCommissionWhereInput[] = [
+    {
+      status: { in: ["ACTIVE", "COMPLETED", "PAID"] },
+      createdAt: { gte: range.gte, lt: range.lt },
       OR: [
-        { invoiceNumber: { contains: query.billId, mode: "insensitive" } },
-        { saleId: query.billId },
-      ]
-    } : {}),
+        { employeeId },
+        ...(useStoreFallback ? [{ storeId: targetStoreId!, employeeId: null }] : []),
+      ],
+    },
+  ];
+
+  if (query.billId) {
+    const billFilter: Prisma.POSRetailCommissionWhereInput[] = [
+      { invoiceNumber: { contains: query.billId, mode: "insensitive" } },
+    ];
+    if (isUuid(query.billId)) {
+      billFilter.push({ saleId: query.billId });
+    }
+    andClauses.push({ OR: billFilter });
+  }
+
+  const whereClause: Prisma.POSRetailCommissionWhereInput = {
+    AND: andClauses,
   };
 
   const lines = await prisma.pOSRetailCommission.findMany({
@@ -857,16 +870,29 @@ export async function getEmployeeRetailCommissionBillDetail(employeeId: number, 
     }
   }
 
-  const orClauses: any[] = [
+  const isUuid = (val: unknown): val is string =>
+    typeof val === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+  const orClauses: Prisma.POSRetailCommissionWhereInput[] = [
     { invoiceNumber: billId },
-    { invoiceNumber: `HWM-${billId}` },
-    { invoiceNumber: `POS-${billId.padStart(10, '0')}` },
-    { saleId: billId },
   ];
+  if (/^\d+$/.test(billId)) {
+    orClauses.push({ invoiceNumber: `HWM-${billId}` });
+    orClauses.push({ invoiceNumber: `POS-${billId.padStart(10, '0')}` });
+  }
+  if (isUuid(billId)) {
+    orClauses.push({ saleId: billId });
+  }
+  if (billId.startsWith('POSSALE-')) {
+    const rawUuid = billId.slice(8);
+    if (isUuid(rawUuid)) {
+      orClauses.push({ saleId: rawUuid });
+    }
+  }
   if (resolvedInvoiceNumber) {
     orClauses.push({ invoiceNumber: resolvedInvoiceNumber });
   }
-  if (resolvedSaleId) {
+  if (resolvedSaleId && isUuid(resolvedSaleId)) {
     orClauses.push({ saleId: resolvedSaleId });
   }
 

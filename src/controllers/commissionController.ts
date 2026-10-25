@@ -1,3 +1,4 @@
+import { prepareInvoiceApproval, isExternalInvoice } from '../services/invoiceCommissionService';
 import { ordinaryCommissionFilter } from '../services/rkdPayrollService';
 import { enrichProductBreakdown } from '../utils/productLineMeta';
 import { Response } from 'express';
@@ -736,29 +737,27 @@ export const approveCommissionTransaction = async (
     const transactionId = Array.isArray(id) ? id[0] : id;
     const { notes } = req.body;
 
-    const transaction = await prisma.commissionTransaction.update({
-      where: { id: parseInt(transactionId) },
-      data: {
-        status: 'APPROVED',
-        approvedBy: req.user?.id,
-        approvedAt: new Date(),
-        notes,
-      },
-      include: {
-        employee: true,
-        store: true,
-        policy: true,
-      },
-    });
+    const transaction = await prisma.$transaction(async tx => {
+      const numericId=Number(transactionId);
+      if(!Number.isSafeInteger(numericId)||numericId<=0) throw Object.assign(new Error('Invalid transaction ID'),{status:400});
+      await tx.$queryRaw`SELECT id FROM "CommissionTransaction" WHERE id=${numericId} FOR UPDATE`;
+      const existing=await tx.commissionTransaction.findUniqueOrThrow({where:{id:numericId}});
+      if(isExternalInvoice(existing)&&!['ADMIN','SUPER_ADMIN','SUPERADMIN','PLATFORM_ADMIN','HR'].includes(req.user?.role??'')) throw Object.assign(new Error('Commission approval requires an authorized administrator'),{status:403});
+      if(['APPROVED','PAID'].includes(existing.status)) return tx.commissionTransaction.findUniqueOrThrow({where:{id:numericId},include:{employee:true,store:true,policy:true}});
+      const resolved=await prepareInvoiceApproval(tx,existing);
+      const result=await tx.commissionTransaction.update({where:{id:numericId},data:{...resolved,status:'APPROVED',approvedBy:req.user?.id,approvedAt:new Date(),notes:notes??existing.notes},include:{employee:true,store:true,policy:true}});
+      if(isExternalInvoice(existing)) await tx.commissionHistory.create({data:{transactionId:numericId,employeeId:existing.employeeId,action:'APPROVED',previousStatus:existing.status,newStatus:'APPROVED',previousAmount:existing.commissionAmount,newAmount:result.commissionAmount,performedBy:req.user!.id,reason:'Approved from saved subcategory item calculations'}});
+      return result;
+    },{timeout:30000});
 
     res.json({
       success: true,
       message: 'Commission transaction approved successfully.',
       transaction,
     });
-  } catch (error) {
-    console.error('Approve commission transaction error:', error);
-    res.status(500).json({ success: false, message: 'Failed to approve commission transaction.' });
+  } catch (error:any) {
+    console.error('Approve commission transaction error:', error.message);
+    res.status(error.status??500).json({ success: false, message: error.status?error.message:'Failed to approve commission transaction.' });
   }
 };
 

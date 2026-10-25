@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { NormalizedLine, requireValue } from './normalize';
 
-/** Exact external subcategory or effective-dated catalog mapping; never employee/category fallback. */
+/** Exact external subcategory or effective-dated HRM catalog mapping. No POS/name/default fallbacks. */
 export async function resolveSubcategory(tx: Prisma.TransactionClient, line: NormalizedLine, at: Date) {
   if (line.subcategoryExternalId) return tx.hrmCommissionSubcategory.findUnique({ where: { externalId: line.subcategoryExternalId } });
   const mapping = await tx.hrmCommissionMapping.findFirst({ where: { productId: line.productId, variantId: line.variantId, effectiveFrom: { lte: at } }, orderBy: { effectiveFrom: 'desc' } });

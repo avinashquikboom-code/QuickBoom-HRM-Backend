@@ -876,6 +876,12 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     ? payload.data.lineItems
     : Array.isArray(payload?.lineItems)
     ? payload.lineItems
+    : Array.isArray(invoice?.lineItems)
+    ? invoice.lineItems
+    : Array.isArray(invoice?.items)
+    ? invoice.items
+    : Array.isArray(invoice?.products)
+    ? invoice.products
     : Array.isArray(payload?.data?.SalesProductList)
     ? payload.data.SalesProductList
     : Array.isArray(payload?.SalesProductList)

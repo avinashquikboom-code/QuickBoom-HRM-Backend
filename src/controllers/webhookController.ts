@@ -1,3 +1,4 @@
+import { calculateInvoiceCommission } from '../services/invoiceCommissionService';
 import { extractProductLineMeta } from '../utils/productLineMeta';
 import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
@@ -72,11 +73,10 @@ export async function groupAndCalculateCommissionBySalesman(
 ): Promise<Map<number, { salesman: any; totalAmount: number; totalCommission: number; effectiveRate: number; products: any[] }>> {
   const commissionMap = new Map<number, { salesman: any; totalAmount: number; totalCommission: number; effectiveRate: number; products: any[] }>();
 
-  // Fetch all active policies once for line item evaluation
-  const allPolicies = await prisma.commissionPolicy.findMany({
-    where: { isActive: true },
-    orderBy: { priority: 'asc' },
-  });
+  const resolvedInvoice = await calculateInvoiceCommission(prisma, null, { eventType:'INVOICE_CREATED', data:{invoice:{
+    invoiceId:invoiceData.invoiceNo,invoiceNo:invoiceData.invoiceNo,invoiceDate:new Date(invoiceData.invoiceDate).toISOString(),
+    storeId:invoiceData.metaStoreId,netAmount:invoiceData.netAmount,lineItems,
+  }}}, {storeId:invoiceData.metaStoreId??0,at:new Date(invoiceData.invoiceDate),reference:invoiceData.invoiceNo});
 
   for (let i = 0; i < lineItems.length; i++) {
     const lineItem = lineItems[i];
@@ -88,6 +88,7 @@ export async function groupAndCalculateCommissionBySalesman(
 
       const rawProdAmount =
         lineItem.productNetAmount ??
+        lineItem.netAmountExTax ?? lineItem.netAmountInclTax ?? lineItem.taxableAmount ??
         lineItem.netAmount ??
         lineItem.amount ??
         lineItem.saleAmount ??
@@ -191,33 +192,8 @@ export async function groupAndCalculateCommissionBySalesman(
 
       const targetStoreId = invoiceData.metaStoreId || salesman.storeId;
 
-      // Prioritize lineMeta directCommissionAmount & directCommissionRate from ERP webhook payload
-      const directLineCommAmount =
-        lineMeta.directCommissionAmount !== null
-          ? lineMeta.directCommissionAmount
-          : (lineItem.commissionAmount !== null && lineItem.commissionAmount !== undefined && !isNaN(Number(lineItem.commissionAmount))
-            ? Number(lineItem.commissionAmount)
-            : (lineItem.commission_amount !== null && lineItem.commission_amount !== undefined && !isNaN(Number(lineItem.commission_amount)) ? Number(lineItem.commission_amount) : null));
-
-      const directLineCommRate =
-        lineMeta.directCommissionRate !== null
-          ? lineMeta.directCommissionRate
-          : (lineItem.commission !== null && lineItem.commission !== undefined && !isNaN(Number(lineItem.commission))
-            ? Number(lineItem.commission)
-            : (lineItem.commissionRate !== null && lineItem.commissionRate !== undefined && !isNaN(Number(lineItem.commissionRate)) ? Number(lineItem.commissionRate) : null));
-
-      const commResult = calculateEffectiveCommissionForLineItem({
-        productId: lineMeta.numericProductId ?? lineMeta.productId ?? productId,
-        productName: lineMeta.productName ?? productName,
-        categoryId: lineMeta.categoryId ?? lineMeta.rawCategoryId ?? lineItem.CategoryID,
-        categoryName: lineMeta.category ?? lineItem.category ?? lineItem.Category,
-        saleAmount: productNetAmount,
-        salesman,
-        storeId: targetStoreId,
-        directCommissionAmount: directLineCommAmount,
-        directCommissionRate: directLineCommRate,
-        policies: allPolicies,
-      });
+      const resolvedLine = resolvedInvoice.productCommissionBreakdown[i];
+      const commResult = {commissionAmount:Number(resolvedLine?.commissionAmount??0),commissionRate:Number(resolvedLine?.commissionRate??0),policyId:null,appliedLevel:'SUBCATEGORY'};
 
       const productCommission = commResult.commissionAmount;
       const commissionRate = commResult.commissionRate;
@@ -231,56 +207,18 @@ export async function groupAndCalculateCommissionBySalesman(
 
       const categoryDisplay = lineMeta.category || (lineMeta.categoryId ? `Category ${lineMeta.categoryId}` : null);
 
-      if (commissionMap.has(salesman.id)) {
-        const existing = commissionMap.get(salesman.id)!;
-        existing.totalAmount += effectiveProdAmount;
-        existing.totalCommission += effectiveProdComm;
-        existing.products.push({
-          productID: productId,
-          productName: productName,
-          sku: lineMeta.sku,
-          category: categoryDisplay,
-          categoryId: lineMeta.categoryId,
-          variant: lineMeta.variant,
-          quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1) || 1,
-          saleAmount: effectiveProdAmount,
-          commissionRate,
-          commissionAmount: effectiveProdComm,
-          productNetAmount: effectiveProdAmount,
-          productCommission: effectiveProdComm,
-          policyId: appliedPolicyId,
-          storeId: targetStoreId,
-          appliedLevel: commResult.appliedLevel,
-          isOld,
-        });
-      } else {
-        commissionMap.set(salesman.id, {
-          salesman,
-          totalAmount: effectiveProdAmount,
-          totalCommission: effectiveProdComm,
-          effectiveRate: 0,
-          products: [
-            {
-              productID: productId,
-              productName: productName,
-              sku: lineMeta.sku,
-              category: categoryDisplay,
-              categoryId: lineMeta.categoryId,
-              variant: lineMeta.variant,
-              quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1) || 1,
-              saleAmount: effectiveProdAmount,
-              commissionRate,
-              commissionAmount: effectiveProdComm,
-              productNetAmount: effectiveProdAmount,
-              productCommission: effectiveProdComm,
-              policyId: appliedPolicyId,
-              storeId: targetStoreId,
-              appliedLevel: commResult.appliedLevel,
-              isOld,
-            },
-          ],
-        });
-      }
+      const productSnapshot = {
+        ...resolvedLine, commissionSource:'SUBCATEGORY', productID:productId, productName,
+        sku:lineMeta.sku,category:categoryDisplay,categoryId:lineMeta.categoryId,variant:lineMeta.variant,
+        quantity:Number(lineItem.quantity??lineItem.qty??1),saleAmount:effectiveProdAmount,productNetAmount:effectiveProdAmount,
+        commissionRate:resolvedLine?.commissionRate??null,
+        commissionAmount:resolvedLine?.commissionAmount==null?null:effectiveProdComm,
+        productCommission:resolvedLine?.commissionAmount==null?null:effectiveProdComm,
+        policyId:appliedPolicyId,storeId:targetStoreId,appliedLevel:'SUBCATEGORY',isOld,
+      };
+      const existing=commissionMap.get(salesman.id);
+      if(existing) { existing.totalAmount+=effectiveProdAmount;existing.totalCommission+=effectiveProdComm;existing.products.push(productSnapshot); }
+      else commissionMap.set(salesman.id,{salesman,totalAmount:effectiveProdAmount,totalCommission:effectiveProdComm,effectiveRate:0,products:[productSnapshot]});
     } catch (productError: any) {
       console.error(`[Product ${i + 1}] ❌ Error processing product:`, productError.message);
       continue;
@@ -291,9 +229,7 @@ export async function groupAndCalculateCommissionBySalesman(
     entry.effectiveRate =
       entry.totalAmount > 0 && entry.totalCommission > 0
         ? Math.round(((entry.totalCommission / entry.totalAmount) * 100) * 100) / 100
-        : (entry.salesman.commissionPercentage !== null && entry.salesman.commissionPercentage !== undefined
-            ? Number(entry.salesman.commissionPercentage)
-            : 0);
+        : 0;
   }
 
   return commissionMap;
@@ -539,7 +475,9 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       const salesman = commissionData.salesman;
 
       const saleAmount = Math.round(commissionData.totalAmount * 100) / 100;
-      const commAmt = Math.round(commissionData.totalCommission * 100) / 100;
+      const incompleteCommission=commissionData.products.some(p=>p.commissionState!=='CONFIGURED');
+      const commAmt = incompleteCommission?0:Math.round(commissionData.totalCommission * 100) / 100;
+      const invoiceCommissionStatus = isCancelledOrReturned?'REJECTED':incompleteCommission?'PENDING':'APPROVED';
       const targetStoreId = commissionData.products[0]?.storeId || meta.storeId || salesman.storeId;
       const targetPolicyId = commissionData.products[0]?.policyId ?? null;
       const productNamesSummary = commissionData.products.map(p => p.productName).filter(Boolean).join(', ');
@@ -570,6 +508,13 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       console.log(`IsOld: ${commissionData.products.some(p => p.isOld) ? 1 : 0}`);
       console.log(`Event Type: ${targetEventType}`);
 
+      if (existingTx && ['APPROVED','PAID'].includes(existingTx.status) && !isCancelledOrReturned) {
+        if (Math.abs(existingTx.commissionAmount-commAmt)>0.005 || Math.abs(existingTx.saleAmount-saleAmount)>0.005) {
+          const reason=`Approved invoice change requires accounting adjustment review (event ${resolvedEventId??targetEventType})`;
+          if(!await tx.commissionHistory.findFirst({where:{transactionId:existingTx.id,action:'REVIEW_REQUIRED',reason}})) await tx.commissionHistory.create({data:{transactionId:existingTx.id,employeeId:existingTx.employeeId,action:'REVIEW_REQUIRED',previousStatus:existingTx.status,newStatus:existingTx.status,previousAmount:existingTx.commissionAmount,newAmount:existingTx.commissionAmount,reason}});
+        }
+        continue;
+      }
       if (existingTx) {
         // ═══════════════════════════════════════════════════════════════
         // INVOICE UPDATED / EXISTING RECORD PATH
@@ -578,9 +523,9 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         // ═══════════════════════════════════════════════════════════════
         const effectiveRate = newSaleAmount > 0 && commAmt > 0
           ? Math.round(((commAmt / newSaleAmount) * 100) * 100) / 100
-          : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : (existingTx.commissionPercent ?? 0));
-        const oldComm = existingTx.commissionAmount || (oldSaleAmount > 0 ? Math.round(((oldSaleAmount * (existingTx.commissionPercent ?? effectiveRate)) / 100) * 100) / 100 : (existingTx.oldCommission || 0));
-        const newComm = commAmt > 0 ? commAmt : (newSaleAmount > 0 && effectiveRate > 0 ? Math.round(((newSaleAmount * effectiveRate) / 100) * 100) / 100 : (commAmt === 0 ? 0 : newCommissionAmount));
+          : 0;
+        const oldComm = existingTx.commissionAmount;
+        const newComm = commAmt;
         const totalCommissionEarned = isCancelledOrReturned ? 0 : newComm;
         const commDelta = Math.round((totalCommissionEarned - oldCommission) * 100) / 100;
         const saleDelta = newSaleAmount - oldSaleAmount;
@@ -611,7 +556,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             newCommission: newComm,
             commissionDifference: commDelta,
             eventType: targetEventType,
-            status: targetCommStatus,
+            status: invoiceCommissionStatus,
             notes: updateNoteText,
             productBreakdown: isCancelledOrReturned ? [] : commissionData.products,
             updatedAt: new Date(),
@@ -671,8 +616,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         const finalSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
         const effectiveRate = finalSaleAmount > 0 && commAmt > 0
           ? Math.round(((commAmt / finalSaleAmount) * 100) * 100) / 100
-          : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0);
-        const finalCommAmount = isCancelledOrReturned ? 0 : (commAmt > 0 ? commAmt : (effectiveRate > 0 ? Math.round(((finalSaleAmount * effectiveRate) / 100) * 100) / 100 : 0));
+          : 0;
+        const finalCommAmount = isCancelledOrReturned ? 0 : commAmt;
 
         const existingTxInDb = await tx.commissionTransaction.findFirst({
           where: { billId: billIdKey, employeeId: salesman.id }
@@ -694,7 +639,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               newCommission: finalCommAmount,
               commissionDifference: finalCommAmount - (existingTxInDb.commissionAmount || 0),
               eventType: targetEventType || 'INVOICE_CREATED',
-              status: targetCommStatus,
+              status: invoiceCommissionStatus,
               notes: noteText,
               productBreakdown: isCancelledOrReturned ? [] : commissionData.products,
               updatedAt: new Date(),
@@ -719,7 +664,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               eventType: targetEventType || 'INVOICE_CREATED',
               billId: billIdKey,
               invoiceNumber: invNum,
-              status: targetCommStatus,
+              status: invoiceCommissionStatus,
               notes: noteText,
               productBreakdown: isCancelledOrReturned ? [] : commissionData.products,
               createdAt: validDate,
@@ -769,7 +714,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         console.log(`[Commission Audit]   eventId: ${resolvedEventId || 'N/A'}`);
         console.log(`[WEBHOOK_PERSISTED] (CREATE) dbRecordId: ${upsertedTx?.id || 'new'} | invoiceNo: ${meta.invoiceNumber || billIdKey} | employeeCode: ${salesman.employeeCode || salesman.id} | commissionAmount: ₹${finalCommAmount}`);
 
-        if (!isCancelledOrReturned && finalCommAmount > 0) {
+        if (invoiceCommissionStatus==='APPROVED' && finalCommAmount > 0) {
           if (wasCreated) {
             console.log(`[Commission Audit]   Wallet credit: +₹${finalCommAmount} (new commission)`);
             await updateEmployeeWalletCommission(
@@ -791,6 +736,7 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
 
     // Handle salesmen removed during an Invoice Updated event
     for (const oldTx of existingTransactions) {
+      if (!isCancelledOrReturned && ['APPROVED','PAID'].includes(oldTx.status)) continue;
       if (!activeSalesmanIds.has(oldTx.employeeId) && (oldTx.commissionAmount > 0 || oldTx.saleAmount > 0)) {
         const reversedCommission = oldTx.commissionAmount;
 
@@ -862,7 +808,9 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
   for (const [salesmanId, commissionData] of commissionMap.entries()) {
     try {
       const saleAmount = Math.round(commissionData.totalAmount * 100) / 100;
-      const commAmt = Math.round(commissionData.totalCommission * 100) / 100;
+      const incompleteCommission=commissionData.products.some(p=>p.commissionState!=='CONFIGURED');
+      const commAmt = incompleteCommission?0:Math.round(commissionData.totalCommission * 100) / 100;
+      const invoiceCommissionStatus = isCancelledOrReturned?'REJECTED':incompleteCommission?'PENDING':'APPROVED';
       await broadcastCommissionEvent(salesmanId, {
         success: true,
         eventType: targetEventType,
@@ -1035,7 +983,7 @@ export async function processCreditNoteCreated(payload: any, eventId?: string | 
       const salesman = empData.employee;
       const rateVal = originalTx?.commissionPercent !== null && originalTx?.commissionPercent !== undefined
         ? Number(originalTx.commissionPercent)
-        : (salesman.commissionPercentage !== null && salesman.commissionPercentage !== undefined ? Number(salesman.commissionPercentage) : 0);
+        : 0;
       const returnAmount = empData.totalReturnAmount > 0 ? empData.totalReturnAmount : totalAmount;
       const returnCommission = Math.round(((returnAmount * rateVal) / 100) * 100) / 100;
 
