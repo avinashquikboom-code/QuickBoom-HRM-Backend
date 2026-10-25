@@ -25,7 +25,7 @@ export function date(value: unknown, field: string) {
 export type SourceContract = { netField: string; netBasis: string; discounted: boolean };
 export type NormalizedLine = { id: string; productId: string; variantId: string; quantity: Prisma.Decimal;
   subcategoryExternalId?: string; subcategoryName?: string; categoryExternalId?: string;
-  exTax?: Prisma.Decimal; inclTax?: Prisma.Decimal; originalLineId?: string; originalInvoiceId?: string };
+  exTax?: Prisma.Decimal; inclTax?: Prisma.Decimal; unverifiedAmount?: boolean; originalLineId?: string; originalInvoiceId?: string };
 export type NormalizedDocument = { externalId: string; invoiceNumber?: string; kind: 'SALE' | 'REFUND'; storeId: number; occurredAt: Date;
   updatedAt?: Date; cancelled: boolean; lines: NormalizedLine[]; originalInvoiceId?: string };
 export function normalizePayload(raw: any, contract: SourceContract): NormalizedDocument {
@@ -41,10 +41,8 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
   const occurredAt = date(pick(inv, refund ? ['creditDate', 'date', 'createdAt'] : ['invoiceDate', 'saleDate', 'date', 'createdAt']), 'SALE_DATE');
   const revision = pick(inv, ['updatedAt', 'modifiedAt', 'lastModifiedAt']);
   const status = String(inv.status ?? data.status ?? (event.includes('CANCEL') || event.includes('DELET') ? 'CANCELLED' : 'ACTIVE')).toUpperCase();
-  requireValue(['ACTIVE', 'COMPLETED', 'PAID', 'APPROVED', 'CANCELLED', 'CANCELED', 'CANCEL', 'DELETED', 'INACTIVE', 'RETURNED', 'RETURN'].includes(status), 'UNRECOGNIZED_SALE_STATUS');
-  // A returned invoice is not itself a line-specific credit note; do not double reverse credits.
-  requireValue(!['RETURNED', 'RETURN'].includes(status), 'RETURNED_STATUS_REQUIRES_LINKED_CREDIT_NOTE');
-  const cancelled = ['CANCELLED', 'CANCELED', 'CANCEL', 'DELETED', 'INACTIVE'].includes(status);
+  requireValue(['ACTIVE', 'COMPLETED', 'PAID', 'APPROVED', 'CANCELLED', 'CANCELED', 'CANCEL', 'DELETED', 'INACTIVE', 'RETURNED', 'RETURN', 'PARTIALLY_RETURNED'].includes(status), 'UNRECOGNIZED_SALE_STATUS');
+  const cancelled = ['CANCELLED', 'CANCELED', 'CANCEL', 'DELETED', 'INACTIVE', 'RETURNED', 'RETURN'].includes(status);
   const items = pick(inv, ['lineItems', 'items', 'products', 'SalesProductList', 'CreditNoteProducts']) ?? pick(data, ['lineItems', 'items', 'products', 'SalesProductList', 'CreditNoteProducts']) ?? pick(raw, ['lineItems', 'SalesProductList', 'CreditNoteProducts']);
   requireValue(cancelled || (Array.isArray(items) && items.length > 0), 'PRODUCT_LINES_MISSING');
   const originalInvoiceId = refund ? pick(inv, ['originalInvoiceId', 'originalBillId', 'salesID', 'SalesID', 'invoiceNo', 'invoiceNumber']) : undefined;
@@ -71,6 +69,7 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
     }
     const subId = pick(item, ['subcategoryId', 'subCategoryId', 'SubCategoryID', 'SubCategoryId', 'subcategory_id']);
     return { id, productId, variantId, quantity, exTax, inclTax,
+      unverifiedAmount: !exTax && !inclTax && pick(item, ['creditAmount', 'productNetAmount', 'netAmount', 'lineTotal', 'amount', 'refundAmount']) !== undefined,
       subcategoryExternalId: subId == null ? undefined : identifier(subId, 'SUBCATEGORY_ID'),
       subcategoryName: pick(item, ['subcategoryName', 'subCategoryName', 'SubCategoryName']),
       categoryExternalId: pick(item, ['categoryId', 'CategoryID']),

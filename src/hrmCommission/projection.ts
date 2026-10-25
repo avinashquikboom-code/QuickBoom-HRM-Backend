@@ -80,7 +80,10 @@ async function applyDocument(tx: Tx, sourceLogId: string, receivedAt: Date, doc:
       policy = rates[0]; subcategoryName = subcategory.name;
     }
     let revenue = policy.basis === 'NET_EX_TAX' ? source.exTax : source.inclTax;
-    if (original && revenue === undefined) revenue = money(original.eligibleRevenue.mul(source.quantity).div(original.quantity));
+    if (original && revenue === undefined) {
+      requireValue(!source.unverifiedAmount, 'REFUND_AMOUNT_BASIS_UNVERIFIED');
+      revenue = money(original.eligibleRevenue.mul(source.quantity).div(original.quantity));
+    }
     requireValue(revenue !== undefined, 'DISCOUNTED_NET_AMOUNT_BASIS_UNVERIFIED');
     let commission = revenue.isZero() ? new D(0) : earning(revenue, source.quantity, policy);
     if (original) {

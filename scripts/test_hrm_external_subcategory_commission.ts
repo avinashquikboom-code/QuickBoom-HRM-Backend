@@ -71,6 +71,13 @@ async function main() {
     const sum = await total(mixed); assert.equal(sum.commission,0); assert.equal(sum.revenue,0); assert.equal(sum.quantity,0);
     assert.equal((await ingest(credit(randomUUID(),mixed,{ lineItemId:'r4', productID:'a', quantity:1 }))).error,'ORIGINAL_SALE_NOT_FOUND_OR_CANCELLED');
   });
+  await test('fully returned invoice status reverses only remaining earnings; unknown refund amounts are held', async () => {
+    const id=randomUUID();await ingest(invoice(id,[item('a',a.externalId,'2000',2)]));
+    const ambiguous=await ingest(credit(randomUUID(),id,{lineItemId:'unknown-money',productID:'a',quantity:1,creditAmount:200}));
+    assert.equal(ambiguous.error,'REFUND_AMOUNT_BASIS_UNVERIFIED');assert.equal((await total(id)).commission,100);
+    await ingest(credit(randomUUID(),id,{lineItemId:'partial',productID:'a',quantity:1}));
+    await ingest(invoice(id,[],{status:'RETURNED'}));assert.equal((await total(id)).commission,0);assert.equal((await total(id)).revenue,0);
+  });
   await test('missing subcategory or historical rate blocks entire bill, never falls back to employee/category', async () => {
     const raw = invoice(randomUUID(),[item(), { lineItemId:'bad',productID:'unknown',quantity:1,categoryId:a.externalId,netAmountExTax:100,commissionPercentage:99 }]);
     assert.equal((await ingest(raw)).error,'SUBCATEGORY_MAPPING_REQUIRED');
