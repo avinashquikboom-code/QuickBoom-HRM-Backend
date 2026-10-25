@@ -1,4 +1,4 @@
-import { cashierUserSelect, cashierName, withCashierName } from "./cashierIdentity";
+import { cashierUserSelect, cashierName, withCashierName, saleCashier } from "./cashierIdentity";
 import { reportingOverview, reportingDetails, exportReport } from "./reporting";
 import { previewBillExport, downloadBillExport } from "./billExports";
 import { Router, Request, Response, NextFunction } from "express";
@@ -489,7 +489,7 @@ router.get(
     };
 
     return {
-      actor: { ...a, cashierName: cashierName(await prisma.user.findUnique({ where: { id: a.userId }, select: cashierUserSelect })) },
+      actor: { ...a, cashierName: a.cashierName || cashierName({ employee, profile: (await prisma.user.findUnique({ where: { id: a.userId }, select: cashierUserSelect }))?.profile }) },
       employee,
       salesperson,
       company,
@@ -1017,13 +1017,13 @@ router.get(
     ensure(register, "Register not found", 404);
     scope(r.actor, register.storeId);
     const p = page(r.query);
-    return (await prisma.pOSSession.findMany({
+    return Promise.all((await prisma.pOSSession.findMany({
       where: { registerId: register.id },
-      include: { cashMovements: true, user: { select: cashierUserSelect } },
+      include: { cashMovements: true, user: { select: cashierUserSelect }, employee: { select: cashierUserSelect.employee.select } },
       skip: p.skip,
       take: p.take,
       orderBy: { openedAt: "desc" },
-    })).map(withCashierName);
+    })).map(withCashierName));
   }),
 );
 // Sale creation completes atomically. No separate unsafe draft-completion endpoint.
@@ -1160,6 +1160,17 @@ async function getPOSSalesSummary(where: Prisma.POSSaleWhereInput, explicitStatu
   };
 }
 
+router.get("/cashiers", route(async r => {
+  permission(r.actor, "sell");
+  const storeId = integer(Number(r.query.storeId), "storeId");
+  scope(r.actor, storeId);
+  return prisma.employee.findMany({
+    where: { storeId, status: { equals: "active", mode: "insensitive" } },
+    select: { id: true, firstName: true, lastName: true, employeeCode: true },
+    orderBy: [{ firstName: "asc" }, { lastName: "asc" }, { id: "asc" }],
+  });
+}));
+
 router.get(
   "/sales",
   route(async (r) => {
@@ -1174,14 +1185,8 @@ router.get(
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         include: {
           store: { select: { id: true, name: true, code: true } },
-          cashier: {
-            select: {
-              id: true,
-              email: true,
-              profile: { select: { fullName: true } },
-              employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
-            },
-          },
+          cashier: { select: cashierUserSelect },
+          session: { select: { employee: { select: cashierUserSelect.employee.select } } },
           salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
           payments: { select: { id: true, method: true, amount: true, reference: true } },
           items: {
@@ -1195,7 +1200,7 @@ router.get(
       getPOSSalesSummary(where, explicitStatus),
     ]);
     return {
-      items,
+      items: await Promise.all(items.map(async sale => ({ ...sale, cashier: await saleCashier(sale.cashier, sale.session.employee) }))),
       total,
       page: p.page,
       summary,
@@ -1226,20 +1231,14 @@ router.get(
         payments: true,
         returns: { include: { items: true } },
         store: { select: { name: true, address: true } },
-        cashier: {
-          select: {
-            id: true,
-            email: true,
-            profile: { select: { fullName: true } },
-            employee: { select: { id: true, firstName: true, lastName: true, employeeCode: true } },
-          },
-        },
+        cashier: { select: cashierUserSelect },
+          session: { select: { employee: { select: cashierUserSelect.employee.select } } },
         salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
       },
     });
     ensure(s, "Invoice not found", 404);
     scope(r.actor, s.storeId);
-    return s;
+    return { ...s, cashier: await saleCashier(s.cashier, s.session.employee) };
   }),
 );
 router.post(

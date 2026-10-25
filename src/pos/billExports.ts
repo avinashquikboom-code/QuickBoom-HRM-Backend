@@ -1,3 +1,4 @@
+import { cashierUserSelect, saleCashier } from "./cashierIdentity";
 import { Prisma } from "@prisma/client";
 import { Response } from "express";
 import ExcelJS from "exceljs";
@@ -7,13 +8,8 @@ import { ensure, object, keys, integer, uuid, dateRange } from "./validation";
 
 export const invoiceInclude = {
   store: { select: { id: true, name: true, address: true } },
-  cashier: {
-    select: {
-      email: true,
-      profile: { select: { fullName: true } },
-      employee: { select: { firstName: true, lastName: true } },
-    },
-  },
+  cashier: { select: cashierUserSelect },
+  session: { select: { employee: { select: cashierUserSelect.employee.select } } },
   salesperson: { select: { firstName: true, lastName: true } },
   items: { include: { salesperson: { select: { firstName: true, lastName: true } } } },
   payments: { select: { method: true, amount: true } },
@@ -213,6 +209,9 @@ export async function downloadBillExport(actor: Actor, input: unknown, res: Resp
       const batch = await tx.pOSSale.findMany({ where: filter.where, include: invoiceInclude,
         orderBy: { id: "asc" }, take: 100, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
       if (!batch.length) break;
+      for (const sale of batch) {
+        sale.cashier = await saleCashier(sale.cashier, sale.session.employee);
+      }
       if (!started) {
         let filename = count === 1 ? batch[0].invoiceNo.replace(/[^a-zA-Z0-9_-]/g, "-") : `HopKid-store-${filter.storeId}-bills`;
         if (filter.format === "pdf") filename = filename.replace(/^POS-/i, "HK-").replace(/^HopKid-/i, "HK-");

@@ -1,3 +1,4 @@
+import { cashierUserSelect, cashierEmployeeSelect, withCashierName } from "./cashierIdentity";
 import { recognizedSaleWhere, recognizedSaleSQL } from "./salesAccounting";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../utils/db";
@@ -255,17 +256,18 @@ export async function registerReport(actor: Actor, query: Record<string, any>) {
     OR: [{ openedAt: range }, { closedAt: range }],
   };
   return {
-    items: await prisma.pOSSession.findMany({
+    items: await Promise.all((await prisma.pOSSession.findMany({
       where,
       include: {
         register: { include: { store: { select: { name: true } } } },
         cashMovements: true,
-        user: { select: { id: true, email: true } },
+        user: { select: cashierUserSelect },
+        employee: { select: cashierEmployeeSelect },
       },
       skip: p.skip,
       take: p.take,
       orderBy: [{ openedAt: "desc" }, { id: "asc" }],
-    }),
+    })).map(withCashierName)),
     total: await prisma.pOSSession.count({ where }),
     page: p.page,
   };

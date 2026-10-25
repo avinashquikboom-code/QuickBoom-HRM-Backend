@@ -1,3 +1,4 @@
+import { resolveUserEmployee, cashierName as employeeDisplayName } from "./cashierIdentity";
 import { Request, Response, NextFunction } from "express";
 import { prisma } from "../utils/db";
 import { credentialVersion } from "./storeCredentials";
@@ -226,27 +227,7 @@ export async function authenticate(
     ensure(user.isActive, "Account inactive", 403);
     ensure(!/^pos-store-\d+@hopkid\.local$/i.test(user.email ?? ""), "Store terminal accounts must use the dedicated POS login.", 401);
 
-    let employee = user.employee;
-    if (!employee) {
-      employee = await prisma.employee.findFirst({
-        where: {
-          OR: [
-            ...(user.employeeID
-              ? [{ employeeID: user.employeeID }, { employeeCode: user.employeeID }]
-              : []),
-            ...(user.email ? [{ user: { email: user.email } }] : []),
-          ],
-        },
-      });
-      if (employee && !employee.userId) {
-        await prisma.employee
-          .update({
-            where: { id: employee.id },
-            data: { userId: user.id },
-          })
-          .catch(() => {});
-      }
-    }
+    const employee = user.employee ?? await resolveUserEmployee(user);
 
     ensure(
       !employee || employee.status.toLowerCase() === "active",
@@ -257,11 +238,7 @@ export async function authenticate(
       where: { role: user.role },
     });
     const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[user.role] ?? {};
-    const empFullName = employee
-      ? `${employee.firstName} ${employee.lastName || ""}`.trim()
-      : null;
-    const profileFullName = user.profile?.fullName?.trim() || null;
-    const cashierName = empFullName || profileFullName || "Unknown Cashier";
+    const cashierName = employeeDisplayName({ employee, profile: user.profile });
     (req as POSRequest).actor = {
       userId: user.id,
       role: user.role,
@@ -365,19 +342,7 @@ export async function resolveOptionalActor(req: Request): Promise<Actor | null> 
     });
     if (!user || !user.isActive) return null;
 
-    let employee = user.employee;
-    if (!employee) {
-      employee = await prisma.employee.findFirst({
-        where: {
-          OR: [
-            ...(user.employeeID
-              ? [{ employeeID: user.employeeID }, { employeeCode: user.employeeID }]
-              : []),
-            ...(user.email ? [{ user: { email: user.email } }] : []),
-          ],
-        },
-      });
-    }
+    const employee = user.employee ?? await resolveUserEmployee(user);
 
     if (employee && employee.status.toLowerCase() !== "active") return null;
 
@@ -385,11 +350,7 @@ export async function resolveOptionalActor(req: Request): Promise<Actor | null> 
       where: { role: user.role },
     });
     const defaultRolePerms = DEFAULT_ROLE_POS_PERMISSIONS[user.role] ?? {};
-    const empFullName = employee
-      ? `${employee.firstName} ${employee.lastName || ""}`.trim()
-      : null;
-    const profileFullName = user.profile?.fullName?.trim() || null;
-    const cashierName = empFullName || profileFullName || "Unknown Cashier";
+    const cashierName = employeeDisplayName({ employee, profile: user.profile });
 
     return {
       userId: user.id,

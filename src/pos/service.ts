@@ -1,4 +1,4 @@
-import { cashierUserSelect, cashierEmployeeSelect, cashierName, withCashierName } from "./cashierIdentity";
+import { cashierUserSelect, cashierEmployeeSelect, resolveCashierName, withCashierName, saleCashier } from "./cashierIdentity";
 import { recognizedSaleWhere, receivedSaleWhere } from "./salesAccounting";
 import { checkoutPOSWork } from "./workSessions";
 import { accrueCommission, reverseCommission } from "./commissions";
@@ -412,11 +412,14 @@ async function ensureOrOpenSession(
       if (!isOwner) {
         throw new POSError(403, "Register session belongs to another cashier.");
       }
+      ensure(!actor.isPosStoreSession || session.employeeId != null, "This legacy session has no cashier. Close it and open a new register with a selected cashier before billing", 409);
       await tx.$queryRaw`SELECT id FROM "POSSession" WHERE id = ${session.id}::uuid FOR UPDATE`;
       return session.id;
     }
     throw new POSError(404, "Register session not found.");
   }
+
+  ensure(!actor.isPosStoreSession, "Open a register and select its cashier before billing", 409);
 
   // 2. Check if the current cashier already has a valid open session in this store
   const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
@@ -525,10 +528,22 @@ async function ensureOrOpenSession(
   await audit(tx, actor, "REGISTER_OPENED", newSession.id);
   return newSession.id;
 }
+async function openingCashier(tx: Tx, actor: Actor, storeId: number, selected: unknown) {
+  const id = selected == null ? actor.employeeId : integer(selected, "cashierEmployeeId");
+  if (actor.isPosStoreSession) ensure(id != null, "Select an active cashier assigned to this store before opening the register", 400);
+  if (id == null) return null;
+  ensure(actor.isPosStoreSession || actor.admin || id === actor.employeeId, "Cannot open a register for another cashier", 403);
+  const employee = await tx.employee.findUnique({ where: { id } });
+  ensure(employee && employee.storeId === storeId && employee.status.toLowerCase() === "active",
+    "Selected cashier must be an active employee assigned to this store", 403);
+  ensure([employee.firstName, employee.lastName].some(name => name.trim()), "Selected cashier has no employee name. Ask an administrator to update their employee record", 400);
+  return employee.id;
+}
+
 export async function openRegister(actor: Actor, id: string, raw: unknown) {
   permission(actor, "sell");
   const b = object(raw);
-  keys(b, ["openingCash", "openingNotes"]);
+  keys(b, ["openingCash", "openingNotes", "cashierEmployeeId"]);
   const openingCash = money(b.openingCash, "openingCash");
   ensure(openingCash.gte(0), "Opening cash must be non-negative", 400);
   const openingNotes = b.openingNotes ? text(b.openingNotes, "openingNotes", 500) : null;
@@ -539,10 +554,7 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
     scope(actor, register.storeId);
     await activeStore(tx, register.storeId);
 
-    const effectiveEmployeeId =
-      actor.employeeId ??
-      (await tx.employee.findFirst({ where: { userId: actor.userId }, select: { id: true } }))?.id ??
-      null;
+    const effectiveEmployeeId = await openingCashier(tx, actor, register.storeId, b.cashierEmployeeId);
 
     // If this cashier already has an active open session on this register, resume it idempotently
     const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
@@ -551,7 +563,7 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
     }
     const myExisting = await tx.pOSSession.findFirst({
       where: {
-        OR: cashierConditions,
+        ...(actor.isPosStoreSession ? { userId: actor.userId, employeeId: effectiveEmployeeId } : { OR: cashierConditions }),
         registerId: id,
         closedAt: null,
       },
@@ -608,7 +620,7 @@ export async function openRegister(actor: Actor, id: string, raw: unknown) {
 export async function openRegisterSession(actor: Actor, raw: unknown) {
   permission(actor, "sell");
   const b = object(raw);
-  keys(b, ["storeId", "registerId", "openingCash", "openingNotes"]);
+  keys(b, ["storeId", "registerId", "openingCash", "openingNotes", "cashierEmployeeId"]);
   const storeId = integer(b.storeId, "storeId");
   scope(actor, storeId);
   const openingCash = money(b.openingCash, "openingCash");
@@ -621,10 +633,7 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
     await tx.$queryRaw`SELECT id FROM "Store" WHERE id = ${storeId} FOR UPDATE`;
 
     // 1. Check if the current cashier already has an active open session in this store
-    const effectiveEmployeeId =
-      actor.employeeId ??
-      (await tx.employee.findFirst({ where: { userId: actor.userId }, select: { id: true } }))?.id ??
-      null;
+    const effectiveEmployeeId = await openingCashier(tx, actor, storeId, b.cashierEmployeeId);
 
     const cashierConditions: Prisma.POSSessionWhereInput[] = [{ userId: actor.userId }];
     if (effectiveEmployeeId != null) {
@@ -633,9 +642,10 @@ export async function openRegisterSession(actor: Actor, raw: unknown) {
 
     const existing = await tx.pOSSession.findFirst({
       where: {
-        OR: cashierConditions,
+        ...(actor.isPosStoreSession ? { userId: actor.userId, employeeId: effectiveEmployeeId } : { OR: cashierConditions }),
         closedAt: null,
         register: { storeId, active: true },
+        ...(preferredRegisterId ? { registerId: preferredRegisterId } : {}),
       },
       include: {
         register: { include: { store: true } },
@@ -805,16 +815,7 @@ export async function computeSessionSummary(sessionId: string) {
   const actualCash = session.actualCash;
   const variance = session.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
 
-  let resolvedCashierName = cashierName(session);
-  if (resolvedCashierName === "Unknown Cashier" && session.userId) {
-    const emp = await prisma.employee.findFirst({
-      where: { userId: session.userId },
-      select: cashierEmployeeSelect,
-    });
-    if (emp) {
-      resolvedCashierName = cashierName({ employee: emp });
-    }
-  }
+  const resolvedCashierName = await resolveCashierName(session);
 
   return {
     session: {
@@ -993,9 +994,9 @@ export async function getCurrentCashierSession(actor: Actor, storeIdParam: unkno
   }
 
   return {
-    session: session ? withCashierName(session) : null,
+    session: session ? await withCashierName(session) : null,
     summary,
-    registers: registers.map(register => ({ ...register, sessions: register.sessions.map(withCashierName) })),
+    registers: await Promise.all(registers.map(async register => ({ ...register, sessions: await Promise.all(register.sessions.map(withCashierName)) }))),
   };
 }
 
@@ -1043,7 +1044,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
     },
   });
 
-  const items = rawSessions.map((sess) => {
+  const items = await Promise.all(rawSessions.map(async (sess) => {
     let totalSales = new D(0);
     let cashSales = new D(0);
     let cardSales = new D(0);
@@ -1084,7 +1085,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
     const actualCash = sess.actualCash;
     const variance = sess.variance ?? (actualCash != null ? actualCash.minus(expectedCash) : null);
 
-    const resolvedCashierName = cashierName(sess);
+    const resolvedCashierName = await resolveCashierName(sess);
 
     return {
       id: sess.id,
@@ -1117,7 +1118,7 @@ export async function getSessionHistory(actor: Actor, query: Record<string, any>
       cashIn: Number(cashIn.toString()),
       cashOut: Number(cashOut.toString()),
     };
-  });
+  }));
 
   return {
     items,
@@ -1158,13 +1159,14 @@ export async function getSessionSales(actor: Actor, sessionId: string, query: Re
       },
       payments: true,
       store: { select: { id: true, name: true, code: true } },
-      cashier: { select: { id: true, email: true, profile: { select: { fullName: true } } } },
+      cashier: { select: cashierUserSelect },
+      session: { select: { employee: { select: cashierEmployeeSelect } } },
       salesperson: { select: { id: true, employeeID: true, firstName: true, lastName: true, employeeCode: true } },
     },
   });
 
   return {
-    items,
+    items: await Promise.all(items.map(async sale => ({ ...sale, cashier: await saleCashier(sale.cashier, sale.session.employee) }))),
     total,
     page: p.page,
     pageSize: p.take,
