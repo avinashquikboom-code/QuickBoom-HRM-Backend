@@ -28,7 +28,8 @@
     "test:pos:cancelled-sales": "ts-node --transpile-only scripts/test_pos_cancelled_sales.ts",
     "test:pos:bill-exports": "ts-node --transpile-only scripts/test_pos_bill_exports.ts",
     "test:pos:discounts-reports": "ts-node --transpile-only scripts/test_pos_discounts_reports.ts",
-    "test:pos:subcategory-commission": "ts-node --transpile-only scripts/test_pos_subcategory_commission.ts"
+    "test:pos:subcategory-commission": "ts-node --transpile-only scripts/test_pos_subcategory_commission.ts",
+    "test:hrm:subcategory-commission": "ts-node --transpile-only scripts/test_hrm_external_subcategory_commission.ts"
   },
   "keywords": [],
   "author": "",

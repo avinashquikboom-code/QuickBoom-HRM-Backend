@@ -1,3 +1,5 @@
+import hrmSubcategoryCommissionRoutes from './hrmCommission/routes';
+import { initHrmCommissionProjection } from './hrmCommission/worker';
 import express from 'express';
 import posRoutes from './pos/routes';
 import cors from 'cors';
@@ -199,6 +201,7 @@ app.use('/api/employee', employeeRoutes);
 app.use('/api/Employee', employeeLegacyRoutes);
 app.use('/api/Sales', salesLegacyRoutes);
 app.use('/api/employee/commission', employeeCommissionRoutes);
+app.use('/api/hrm/subcategory-commissions', hrmSubcategoryCommissionRoutes);
 app.use('/api/commission', commissionRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/webhooks', webhookRoutes);
@@ -523,6 +526,7 @@ import { initAutoPunchOutCron } from './services/autoPunchOutService';
 import { initNotificationRuleCron } from './services/notificationRuleScheduler';
 
 // Initialize cron jobs
+initHrmCommissionProjection();
 initFeatureExpiryCron();
 initPayrollCron();
 initAutoPunchOutCron();

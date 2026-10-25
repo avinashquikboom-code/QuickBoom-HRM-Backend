@@ -26,8 +26,9 @@ export async function accrueRetailCommission(tx: Tx, _actor: Actor, saleId: stri
     const exclusionReason = !subcategory ? "NO_SUBCATEGORY" : subcategory.commissionRate == null || !subcategory.commissionType ? "NO_CONFIGURED_RATE" : null;
     const revenue = config.commissionBasis === "NET_INCL_TAX" ? item.lineTotal : item.lineTotal.minus(item.taxTotal);
     const amount = exclusionReason ? new D(0) : retailAmount(revenue, subcategory!.commissionRate!, subcategory!.commissionType!, item.quantity, config.fixedCommissionBasis!);
-    await tx.pOSRetailCommission.upsert({ where: { saleItemId: item.id }, update: {}, create: {
-      saleItemId: item.id, saleId, storeId: sale.storeId, invoiceNumber: sale.invoiceNo,
+    const employeeId = item.salespersonId ?? sale.salespersonId ?? null;
+    await tx.pOSRetailCommission.upsert({ where: { saleItemId: item.id }, update: { employeeId }, create: {
+      saleItemId: item.id, saleId, storeId: sale.storeId, employeeId, invoiceNumber: sale.invoiceNo,
       subcategoryId: subcategory?.id, subcategoryName: subcategory?.name,
       commissionType: subcategory?.commissionType, rate: subcategory?.commissionRate,
       basis: config.commissionBasis!, fixedBasis: config.fixedCommissionBasis!,
@@ -497,5 +498,412 @@ export async function reviewRetailAdjustment(actor: Actor, id: string, raw: unkn
     await tx.pOSAuditLog.create({ data: { userId: actor.userId, action: "RETAIL_COMMISSION_ADJUSTMENT_REVIEWED", entityId: id, metadata: { decision: b.decision, reason } } });
     return updated;
   });
+}
+
+/**
+ * Mobile: Subcategory-wise commission summary for a specific employee
+ */
+export async function getEmployeeRetailCommissionSummary(employeeId: number, query: Record<string, any> = {}) {
+  const employee = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { id: true, firstName: true, lastName: true, employeeCode: true, storeId: true, commissionPercentage: true }
+  });
+
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const istNow = new Date(now.getTime() + istOffset);
+  const year = istNow.getUTCFullYear();
+  const month = istNow.getUTCMonth();
+  const date = istNow.getUTCDate();
+
+  // Day range
+  const todayStart = new Date(Date.UTC(year, month, date, 0, 0, 0, 0) - istOffset);
+  const todayEnd = new Date(Date.UTC(year, month, date, 23, 59, 59, 999) - istOffset);
+
+  // Week range (Monday to Sunday)
+  const dayOfWeek = istNow.getUTCDay();
+  const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(Date.UTC(year, month, date - diffToMonday, 0, 0, 0, 0) - istOffset);
+  const sunday = new Date(Date.UTC(year, month, date - diffToMonday + 6, 23, 59, 59, 999) - istOffset);
+
+  // Month range
+  const monthStart = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0) - istOffset);
+  const nextMonthStart = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0, 0) - istOffset);
+  const monthEnd = new Date(nextMonthStart.getTime() - 1);
+
+  // Lifetime range
+  const epoch = new Date(0);
+  const farFuture = new Date(Date.UTC(2100, 0, 1));
+
+  // Determine active query range
+  const selectedPeriod = query.period || "current_month";
+  let activeStart = monthStart;
+  let activeEnd = monthEnd;
+
+  if (selectedPeriod === "today") {
+    activeStart = todayStart;
+    activeEnd = todayEnd;
+  } else if (selectedPeriod === "this_week" || selectedPeriod === "week") {
+    activeStart = monday;
+    activeEnd = sunday;
+  } else if (selectedPeriod === "all" || selectedPeriod === "all_time") {
+    activeStart = epoch;
+    activeEnd = farFuture;
+  } else if (query.from || query.to) {
+    const custom = parseFlexibleDateRange(query);
+    activeStart = custom.gte;
+    activeEnd = custom.lt;
+  }
+
+  // Check if employee has direct records
+  const directCount = await prisma.pOSRetailCommission.count({
+    where: { employeeId: employeeId, status: "ACTIVE" }
+  });
+  const useStoreFallback = directCount === 0 && Boolean(employee?.storeId);
+  const targetStoreId = useStoreFallback ? employee!.storeId! : null;
+
+  async function queryMetrics(start: Date, end: Date) {
+    const rows = await prisma.$queryRaw<Array<{ commission: number; sales: number; transactions: number; units: number }>>`
+      SELECT 
+        COALESCE(SUM(c.amount - c."reversedAmount"), 0)::float AS commission,
+        COALESCE(SUM(c."eligibleRevenue" - c."reversedRevenue"), 0)::float AS sales,
+        COUNT(DISTINCT c."saleId")::int AS transactions,
+        COALESCE(SUM(CASE WHEN c."exclusionReason" IS NULL THEN c.quantity - c."returnedQuantity" ELSE 0 END), 0)::int AS units
+      FROM "POSRetailCommission" c
+      WHERE c.status = 'ACTIVE'
+        AND c."createdAt" >= ${start} AND c."createdAt" <= ${end}
+        AND (
+          c."employeeId" = ${employeeId}
+          OR (${useStoreFallback} AND c."employeeId" IS NULL AND c."storeId" = ${targetStoreId})
+        )
+    `;
+    return rows[0] || { commission: 0, sales: 0, transactions: 0, units: 0 };
+  }
+
+  const [todayM, weekM, monthM, lifetimeM, subcategories, latest] = await Promise.all([
+    queryMetrics(todayStart, todayEnd),
+    queryMetrics(monday, sunday),
+    queryMetrics(monthStart, monthEnd),
+    queryMetrics(epoch, farFuture),
+    prisma.$queryRaw<Array<{
+      subcategoryId: string | null;
+      subcategoryName: string;
+      commissionType: string | null;
+      rate: number | null;
+      eligibleSales: number;
+      commissionEarned: number;
+      unitsSold: number;
+      billCount: number;
+    }>>`
+      SELECT 
+        c."subcategoryId",
+        COALESCE(c."subcategoryName", 'General Retail') AS "subcategoryName",
+        c."commissionType",
+        c.rate::float AS rate,
+        COALESCE(SUM(c."eligibleRevenue" - c."reversedRevenue"), 0)::float AS "eligibleSales",
+        COALESCE(SUM(c.amount - c."reversedAmount"), 0)::float AS "commissionEarned",
+        COALESCE(SUM(CASE WHEN c."exclusionReason" IS NULL THEN c.quantity - c."returnedQuantity" ELSE 0 END), 0)::int AS "unitsSold",
+        COUNT(DISTINCT c."saleId")::int AS "billCount"
+      FROM "POSRetailCommission" c
+      WHERE c.status = 'ACTIVE'
+        AND c."createdAt" >= ${activeStart} AND c."createdAt" <= ${activeEnd}
+        AND (
+          c."employeeId" = ${employeeId}
+          OR (${useStoreFallback} AND c."employeeId" IS NULL AND c."storeId" = ${targetStoreId})
+        )
+      GROUP BY c."subcategoryId", c."subcategoryName", c."commissionType", c.rate
+      ORDER BY "commissionEarned" DESC, "eligibleSales" DESC
+    `,
+    prisma.pOSRetailCommission.findFirst({
+      where: {
+        status: "ACTIVE",
+        OR: [
+          { employeeId },
+          ...(useStoreFallback ? [{ storeId: targetStoreId!, employeeId: null }] : []),
+        ]
+      },
+      orderBy: { createdAt: "desc" },
+    })
+  ]);
+
+  const monthName = istNow.toLocaleString("en-US", { month: "long" });
+
+  return {
+    today: {
+      date: `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`,
+      totalSales: todayM.sales,
+      netSales: todayM.sales,
+      totalCommission: todayM.commission,
+      commission: todayM.commission,
+      billCount: todayM.transactions,
+      unitsSold: todayM.units,
+      label: "Today's Performance",
+    },
+    thisWeek: {
+      from: monday.toISOString().slice(0, 10),
+      to: sunday.toISOString().slice(0, 10),
+      totalSales: weekM.sales,
+      netSales: weekM.sales,
+      totalCommission: weekM.commission,
+      commission: weekM.commission,
+      billCount: weekM.transactions,
+      unitsSold: weekM.units,
+      label: "This Week's Performance",
+    },
+    thisMonth: {
+      month: `${year}-${String(month + 1).padStart(2, '0')}`,
+      monthName,
+      year: String(year),
+      totalSales: monthM.sales,
+      netSales: monthM.sales,
+      totalCommission: monthM.commission,
+      commission: monthM.commission,
+      billCount: monthM.transactions,
+      unitsSold: monthM.units,
+      label: "This Month's Performance",
+    },
+    lifetime: {
+      totalSales: lifetimeM.sales,
+      totalCommission: lifetimeM.commission,
+      billCount: lifetimeM.transactions,
+      unitsSold: lifetimeM.units,
+      label: "All Time",
+    },
+    subcategories: subcategories.map(s => ({
+      subcategoryId: s.subcategoryId,
+      subcategoryName: s.subcategoryName,
+      commissionType: s.commissionType || "PERCENTAGE",
+      commissionRate: s.rate !== null ? Number(s.rate) : 0,
+      eligibleSales: Number(s.eligibleSales || 0),
+      commissionEarned: Number(s.commissionEarned || 0),
+      unitsSold: Number(s.unitsSold || 0),
+      billCount: Number(s.billCount || 0),
+    })),
+    latestSale: latest ? {
+      billId: latest.saleId,
+      invoiceNumber: latest.invoiceNumber,
+      date: latest.createdAt.toISOString().slice(0, 10),
+      displayDate: latest.createdAt.toLocaleDateString("en-IN"),
+      displayTime: latest.createdAt.toLocaleTimeString("en-IN"),
+      netAmount: Number(latest.eligibleRevenue),
+      commission: Number(latest.amount),
+      commissionRate: latest.rate !== null ? Number(latest.rate) : 0,
+      subcategoryName: latest.subcategoryName || "General Retail",
+    } : null,
+  };
+}
+
+/**
+ * Mobile: Subcategory-wise bills history for a specific employee
+ */
+export async function getEmployeeRetailCommissionBills(
+  employeeId: number,
+  query: { period?: string; billId?: string; from?: string; to?: string; limit?: number; offset?: number } = {}
+) {
+  const employee = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { id: true, storeId: true }
+  });
+
+  const range = parseFlexibleDateRange(query);
+  const limit = Math.max(1, Math.min(100, Number(query.limit) || 20));
+  const offset = Math.max(0, Number(query.offset) || 0);
+
+  const directCount = await prisma.pOSRetailCommission.count({
+    where: { employeeId: employeeId, status: "ACTIVE" }
+  });
+  const useStoreFallback = directCount === 0 && Boolean(employee?.storeId);
+  const targetStoreId = useStoreFallback ? employee!.storeId! : null;
+
+  const whereClause: Prisma.POSRetailCommissionWhereInput = {
+    status: { in: ["ACTIVE", "COMPLETED", "PAID"] },
+    createdAt: { gte: range.gte, lt: range.lt },
+    OR: [
+      { employeeId },
+      ...(useStoreFallback ? [{ storeId: targetStoreId!, employeeId: null }] : []),
+    ],
+    ...(query.billId ? {
+      OR: [
+        { invoiceNumber: { contains: query.billId, mode: "insensitive" } },
+        { saleId: query.billId },
+      ]
+    } : {}),
+  };
+
+  const lines = await prisma.pOSRetailCommission.findMany({
+    where: whereClause,
+    orderBy: { createdAt: "desc" },
+    take: 500,
+  });
+
+  const billsMap = new Map<string, {
+    id: string;
+    saleId: string;
+    invoiceNumber: string;
+    saleAmount: number;
+    commission: number;
+    date: Date;
+    status: string;
+    storeId: number;
+    subcategories: Array<{
+      subcategoryId: string | null;
+      subcategoryName: string;
+      rate: number;
+      quantity: number;
+      saleAmount: number;
+      commissionAmount: number;
+    }>;
+  }>();
+
+  for (const line of lines) {
+    const netSale = Number(line.eligibleRevenue) - Number(line.reversedRevenue);
+    const netComm = Number(line.amount) - Number(line.reversedAmount);
+    const lineRate = line.rate !== null ? Number(line.rate) : 0;
+
+    if (!billsMap.has(line.saleId)) {
+      billsMap.set(line.saleId, {
+        id: line.saleId,
+        saleId: line.saleId,
+        invoiceNumber: line.invoiceNumber,
+        saleAmount: netSale,
+        commission: netComm,
+        date: line.createdAt,
+        status: line.status,
+        storeId: line.storeId,
+        subcategories: [{
+          subcategoryId: line.subcategoryId,
+          subcategoryName: line.subcategoryName || "General Retail",
+          rate: lineRate,
+          quantity: line.quantity - line.returnedQuantity,
+          saleAmount: netSale,
+          commissionAmount: netComm,
+        }],
+      });
+    } else {
+      const b = billsMap.get(line.saleId)!;
+      b.saleAmount += netSale;
+      b.commission += netComm;
+      b.subcategories.push({
+        subcategoryId: line.subcategoryId,
+        subcategoryName: line.subcategoryName || "General Retail",
+        rate: lineRate,
+        quantity: line.quantity - line.returnedQuantity,
+        saleAmount: netSale,
+        commissionAmount: netComm,
+      });
+    }
+  }
+
+  const allBills = Array.from(billsMap.values());
+  const paginatedBills = allBills.slice(offset, offset + limit);
+
+  return {
+    bills: paginatedBills.map(b => {
+      const parsedNumber = parseInt(b.invoiceNumber.replace(/\D/g, ""), 10) || 1;
+      const effectiveRate = b.saleAmount > 0 ? (b.commission / b.saleAmount) * 100 : 0;
+      return {
+        id: b.saleId,
+        billId: parsedNumber,
+        invoiceNumber: b.invoiceNumber,
+        saleAmount: Math.round(b.saleAmount * 100) / 100,
+        commission: Math.round(b.commission * 100) / 100,
+        commissionRate: Math.round(effectiveRate * 100) / 100,
+        date: b.date.toISOString(),
+        status: b.status,
+        storeName: `Store #${b.storeId}`,
+        products: b.subcategories.map(s => ({
+          name: s.subcategoryName,
+          quantity: s.quantity,
+          price: s.saleAmount,
+          rate: s.rate,
+          commission: s.commissionAmount,
+          category: s.subcategoryName,
+        })),
+        subcategories: b.subcategories,
+      };
+    }),
+    pagination: {
+      limit,
+      offset,
+      total: allBills.length,
+      hasMore: offset + limit < allBills.length,
+    },
+  };
+}
+
+/**
+ * Mobile: Detailed subcategory-wise lines for a specific bill
+ */
+export async function getEmployeeRetailCommissionBillDetail(employeeId: number, billId: string) {
+  const lines = await prisma.pOSRetailCommission.findMany({
+    where: {
+      OR: [
+        { saleId: billId },
+        { invoiceNumber: billId },
+        { invoiceNumber: `HWM-${billId}` },
+        { invoiceNumber: `POS-${billId.padStart(10, '0')}` },
+      ],
+      status: { not: "DELETED" },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const first = lines[0];
+  const totalSale = lines.reduce((s, l) => s + (Number(l.eligibleRevenue) - Number(l.reversedRevenue)), 0);
+  const totalComm = lines.reduce((s, l) => s + (Number(l.amount) - Number(l.reversedAmount)), 0);
+  const effRate = totalSale > 0 ? (totalComm / totalSale) * 100 : 0;
+  const parsedBillId = parseInt(first.invoiceNumber.replace(/\D/g, ""), 10) || 1;
+
+  const store = await prisma.store.findUnique({ where: { id: first.storeId } });
+  const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+
+  return {
+    billId: parsedBillId,
+    invoiceNumber: first.invoiceNumber,
+    saleAmount: Math.round(totalSale * 100) / 100,
+    commissionRate: Math.round(effRate * 100) / 100,
+    commissionAmount: Math.round(totalComm * 100) / 100,
+    oldAmount: 0,
+    newAmount: Math.round(totalSale * 100) / 100,
+    oldCommission: 0,
+    newCommission: Math.round(totalComm * 100) / 100,
+    totalCommission: Math.round(totalComm * 100) / 100,
+    date: first.createdAt.toISOString(),
+    status: first.status,
+    description: `Subcategory Commission - ${lines.map(l => l.subcategoryName).filter(Boolean).join(", ")}`,
+    createdAt: first.createdAt.toISOString(),
+    employee: {
+      id: employee?.id || employeeId,
+      name: employee ? `${employee.firstName} ${employee.lastName}` : "Sales Staff",
+      code: employee?.employeeCode || `EMP-${employeeId}`,
+      designation: employee?.designation || "Sales Staff",
+    },
+    store: {
+      id: store?.id || first.storeId,
+      name: store?.name || `Store #${first.storeId}`,
+      code: store?.code || "",
+    },
+    products: lines.map(l => ({
+      productName: l.subcategoryName || "General Retail",
+      category: l.subcategoryName,
+      quantity: l.quantity - l.returnedQuantity,
+      saleAmount: Number(l.eligibleRevenue) - Number(l.reversedRevenue),
+      commissionRate: l.rate !== null ? Number(l.rate) : 0,
+      commissionAmount: Number(l.amount) - Number(l.reversedAmount),
+    })),
+    subcategories: lines.map(l => ({
+      subcategoryId: l.subcategoryId,
+      subcategoryName: l.subcategoryName || "General Retail",
+      commissionRate: l.rate !== null ? Number(l.rate) : 0,
+      commissionType: l.commissionType || "PERCENTAGE",
+      eligibleSales: Number(l.eligibleRevenue) - Number(l.reversedRevenue),
+      commissionEarned: Number(l.amount) - Number(l.reversedAmount),
+      quantity: l.quantity - l.returnedQuantity,
+    })),
+  };
 }
 

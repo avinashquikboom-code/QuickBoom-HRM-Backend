@@ -103,6 +103,7 @@ model Employee {
   posSales POSSale[]
   posSaleItems POSSaleItem[] @relation("EmployeeSaleItems")
   posSessions POSSession[]
+  posRetailCommissions POSRetailCommission[]
   id               Int               @id @default(autoincrement())
   employeeID       String?           @unique
   userId           Int?              @unique
@@ -1903,6 +1904,8 @@ model POSRetailCommission {
   saleItemId String @unique @db.Uuid
   saleId String @db.Uuid
   storeId Int
+  employeeId Int?
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
   invoiceNumber String
   subcategoryId String? @db.Uuid
   subcategoryName String?
@@ -1921,6 +1924,8 @@ model POSRetailCommission {
   createdAt DateTime
   @@index([storeId, createdAt])
   @@index([saleId])
+  @@index([employeeId, createdAt])
+  @@index([employeeId, status])
   @@index([status, createdAt])
   @@index([subcategoryId, status])
   @@index([storeId, subcategoryId, createdAt])
@@ -1942,4 +1947,125 @@ model POSRetailCommissionAdjustment {
   reviewedBy Int?
   reviewReason String?
   @@index([storeId, createdAt])
+}
+
+// HRM-owned projection of external Hopkid events; no POS tables or payroll relations.
+model HrmCommissionSettings {
+  id Int @id @default(1)
+  enabled Boolean @default(false)
+  ingestSince DateTime
+  netField String @default("productNetAmount")
+  netBasis String @default("UNVERIFIED")
+  discounted Boolean @default(false)
+  updatedBy Int
+  updatedAt DateTime @updatedAt
+}
+model HrmCommissionSubcategory {
+  id String @id @default(uuid()) @db.Uuid
+  externalId String @unique
+  name String
+  categoryExternalId String?
+  createdAt DateTime @default(now())
+}
+model HrmCommissionMapping {
+  id String @id @default(uuid()) @db.Uuid
+  productId String
+  variantId String @default("")
+  subcategoryId String @db.Uuid
+  effectiveFrom DateTime
+  createdBy Int
+  createdAt DateTime @default(now())
+  @@unique([productId, variantId, effectiveFrom])
+}
+model HrmCommissionRate {
+  id String @id @default(uuid()) @db.Uuid
+  subcategoryId String @db.Uuid
+  storeKey Int @default(0)
+  type String
+  rate Decimal @db.Decimal(15,4)
+  basis String
+  fixedBasis String @default("UNIT")
+  effectiveFrom DateTime
+  createdBy Int
+  createdAt DateTime @default(now())
+  @@unique([subcategoryId, storeKey, effectiveFrom])
+}
+model HrmCommissionInbox {
+  id String @id @default(uuid()) @db.Uuid
+  sourceLogId String @unique
+  status String @default("PENDING")
+  error String?
+  processedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([status, createdAt])
+}
+model HrmCommissionDocument {
+  invoiceNumber String?
+  id String @id @default(uuid()) @db.Uuid
+  key String @unique
+  externalId String
+  kind String
+  storeId Int
+  occurredAt DateTime
+  sourceUpdatedAt DateTime?
+  lastHash String
+  status String
+  createdAt DateTime @default(now())
+}
+model HrmCommissionLine {
+  id String @id @default(uuid()) @db.Uuid
+  documentId String @db.Uuid
+  externalLineId String
+  productId String
+  variantId String
+  subcategoryId String @db.Uuid
+  subcategoryName String
+  rateId String @db.Uuid
+  type String
+  rate Decimal @db.Decimal(15,4)
+  basis String
+  fixedBasis String
+  quantity Decimal @db.Decimal(15,4)
+  eligibleRevenue Decimal @db.Decimal(15,2)
+  commissionAmount Decimal @db.Decimal(15,2)
+  originalSaleLineId String? @db.Uuid
+  @@unique([documentId, externalLineId])
+  @@index([originalSaleLineId])
+}
+model HrmCommissionEvent {
+  id String @id @default(uuid()) @db.Uuid
+  fingerprint String @unique
+  sourceLogId String
+  documentId String @db.Uuid
+  occurredAt DateTime
+  receivedAt DateTime
+}
+model HrmCommissionLedger {
+  id String @id @default(uuid()) @db.Uuid
+  eventId String @db.Uuid
+  lineId String @db.Uuid
+  documentId String @db.Uuid
+  storeId Int
+  subcategoryId String @db.Uuid
+  subcategoryName String
+  type String
+  rate Decimal @db.Decimal(15,4)
+  basis String
+  fixedBasis String
+  quantity Decimal @db.Decimal(15,4)
+  eligibleRevenue Decimal @db.Decimal(15,2)
+  commissionAmount Decimal @db.Decimal(15,2)
+  saleDate DateTime
+  postedAt DateTime
+  snapshot Json
+  @@unique([eventId, lineId])
+  @@index([storeId, saleDate])
+  @@index([subcategoryId, postedAt])
+}
+model HrmCommissionAudit {
+  id String @id @default(uuid()) @db.Uuid
+  userId Int
+  action String
+  data Json
+  createdAt DateTime @default(now())
 }
