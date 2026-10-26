@@ -5,6 +5,8 @@ import { extractWebhookMeta } from '../src/utils/commissionHelper';
 import { extractProductLineMeta } from '../src/utils/productLineMeta';
 async function main() {
   const reference=process.argv[2]??'124';
+  const productId=process.argv[3];
+  if(productId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productId)) throw new Error('INVALID_PRODUCT_ID');
   const aliases=[reference,...(/^\d+$/.test(reference)?[`HWM-${reference}`]:[])];
   const result=await prisma.$transaction(async tx=>{
     await tx.$executeRaw`SET TRANSACTION READ ONLY`;
@@ -22,11 +24,21 @@ async function main() {
       const subIds=[...new Set([...mappings.map(m=>m.subcategoryId),...lines.map(l=>String(l.subcategoryId??'')).filter(id=>/^[0-9a-f-]{36}$/i.test(id))])];
       const externalIds=lines.map(l=>String(l.subcategoryExternalId??l.subcategoryId??'')).filter(Boolean);
       const subcategories=await tx.hrmCommissionSubcategory.findMany({where:{OR:[{id:{in:subIds}},{externalId:{in:externalIds}}]}});
-      const rates=await tx.hrmCommissionRate.findMany({where:{subcategoryId:{in:subcategories.map(sub=>sub.id)},storeKey:{in:[0,sale.storeId??0]}},orderBy:{effectiveFrom:'desc'}});
+      const rates=await tx.hrmCommissionRate.findMany({where:{subcategoryId:{in:subcategories.map(sub=>sub.id)},storeKey:{in:[0,sale.storeId??0]}},select:{id:true,subcategoryId:true,storeKey:true,type:true,rate:true,basis:true,fixedBasis:true,effectiveFrom:true,createdBy:true,createdAt:true},orderBy:{effectiveFrom:'desc'}});
       const {productBreakdown,...summary}=sale;
       output.push({invoice:summary,hasOriginalPayload:!!payload,sourceLineCount:rawItems?.length??0,savedLineCount:saved.length,lines,products,mappings,subcategories,rates});
     }
-    return {reference,found:sales.length>0,invoices:output};
+    let requestedProduct=null;
+    if(productId) {
+      const product=await tx.pOSProduct.findUnique({where:{id:productId},include:{category:true}});
+      const mappings=await tx.hrmCommissionMapping.findMany({where:{productId},orderBy:{effectiveFrom:'desc'}});
+      const externalIds=product?.category ? [product.category.id,...(product.category.externalCommissionCategoryId==null?[]:[String(product.category.externalCommissionCategoryId)])] : [];
+      const subcategories=await tx.hrmCommissionSubcategory.findMany({where:{OR:[{id:{in:mappings.map(m=>m.subcategoryId)}},{externalId:{in:externalIds}}]}});
+      const columns=await tx.$queryRaw<Array<{present:boolean}>>`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='HrmCommissionRate' AND column_name='isActive') AS present`;
+      const rates=await tx.hrmCommissionRate.findMany({where:{subcategoryId:{in:subcategories.map(s=>s.id)}},select:{id:true,subcategoryId:true,storeKey:true,type:true,rate:true,basis:true,fixedBasis:true,effectiveFrom:true,createdBy:true,createdAt:true,isActive:columns[0]?.present===true}});
+      requestedProduct={productId,product,mappings,subcategories,rates,rateActivationMigrationApplied:columns[0]?.present===true};
+    }
+    return {reference,found:sales.length>0,invoices:output,requestedProduct};
   },{timeout:30000});
   console.log(JSON.stringify(result,null,2));
 }

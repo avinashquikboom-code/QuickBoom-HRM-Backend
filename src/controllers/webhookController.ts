@@ -212,43 +212,15 @@ export async function groupAndCalculateCommissionBySalesman(
           missingReason: null,
         };
       } else {
-        // Fallback: Resolve applicable rate using rate precedence rules:
-        // 1. Direct line item override
-        // 2. Matching CommissionPolicy (Product > Category > Employee > Store > Global)
-        // 3. Salesperson default commissionPercentage (supports 0%, 1%, 2%, etc.)
-        const eff = calculateEffectiveCommissionForLineItem({
-          saleAmount: productNetAmount,
-          productId: lineItem.productID ?? lineItem.productId ?? lineMeta.productId,
-          productName: lineMeta.productName ?? lineItem.name,
-          categoryId: lineMeta.categoryId,
-          categoryName: lineMeta.category,
-          policies: salesman.commissionPolicies || [],
-          salesman,
-          storeId: targetStoreId,
-          directCommissionRate: lineMeta.directCommissionRate ?? lineItem.commissionPercentage,
-          directCommissionAmount: lineItem.directCommissionAmount,
-        });
-
-        if (eff.appliedLevel !== 'FALLBACK') {
-          commResult = {
-            commissionAmount: eff.commissionAmount,
-            commissionRate: eff.commissionRate,
-            policyId: eff.policyId ?? null,
-            appliedLevel: eff.appliedLevel,
-            commissionState: 'CONFIGURED',
-            missingReason: null,
-          };
-        } else {
-          // Truly missing configuration: do NOT silently treat as 0% rate!
-          commResult = {
-            commissionAmount: null,
-            commissionRate: null,
-            policyId: null,
-            appliedLevel: 'MISSING_CONFIGURATION',
-            commissionState: 'MISSING_CONFIGURATION',
-            missingReason: resolvedLine?.missingReason || 'SUBCATEGORY_MAPPING_REQUIRED',
-          };
-        }
+        // External invoices must use the same verified subcategory result as mobile reads.
+        commResult = {
+          commissionAmount: null,
+          commissionRate: null,
+          policyId: null,
+          appliedLevel: 'SUBCATEGORY',
+          commissionState: resolvedLine?.commissionState ?? 'MISSING_CONFIGURATION',
+          missingReason: resolvedLine?.missingReason ?? 'SUBCATEGORY_MAPPING_REQUIRED',
+        };
       }
 
       const productCommission = commResult.commissionAmount ?? 0;
@@ -284,9 +256,9 @@ export async function groupAndCalculateCommissionBySalesman(
         productCommission: effectiveProdComm,
         commissionState: commResult.commissionState,
         missingReason: commResult.missingReason,
-        configurationMessage: commResult.missingReason === 'SUBCATEGORY_MAPPING_REQUIRED'
+        configurationMessage: resolvedLine?.configurationMessage ?? (commResult.missingReason === 'SUBCATEGORY_MAPPING_REQUIRED'
           ? 'Product subcategory is missing or has no verified mapping.'
-          : commResult.missingReason ? 'Commission configuration requires review.' : null,
+          : commResult.missingReason ? 'Commission configuration requires review.' : null),
         policyId: appliedPolicyId,
         storeId: targetStoreId,
         appliedLevel: commResult.appliedLevel,

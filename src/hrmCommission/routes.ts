@@ -68,12 +68,13 @@ router.post('/mappings', route(async req => {
 }));
 router.post('/rates', route(async req => {
   const actor = access(req, true), b = req.body;
+  requireValue(b.isActive === undefined || typeof b.isActive === 'boolean', 'INVALID_RATE_ACTIVE_FLAG');
   requireValue(['PERCENTAGE', 'FIXED'].includes(b.type) && ['NET_EX_TAX', 'NET_INCL_TAX'].includes(b.basis) && ['UNIT', 'LINE'].includes(b.fixedBasis), 'INVALID_RATE_TYPE_OR_BASIS');
   const rate = decimal(b.rate, 'RATE'); requireValue(rate.decimalPlaces() <= 4 && rate.lt('100000000000') && (b.type !== 'PERCENTAGE' || rate.lte(100)), 'INVALID_RATE');
   const storeKey = Number(b.storeId ?? 0); requireValue(Number.isSafeInteger(storeKey) && storeKey >= 0, 'INVALID_STORE');
   if (storeKey) requireValue(await prisma.store.findUnique({ where: { id: storeKey } }), 'STORE_NOT_FOUND');
   const sub = await prisma.hrmCommissionSubcategory.findUnique({ where: { id: String(b.subcategoryId) } }); requireValue(sub, 'SUBCATEGORY_NOT_FOUND');
-  const data = { subcategoryId: sub.id, storeKey, type: b.type, rate, basis: b.basis, fixedBasis: b.fixedBasis, effectiveFrom: date(b.effectiveFrom, 'EFFECTIVE_FROM'), createdBy: actor.id };
+  const data = { subcategoryId: sub.id, isActive: b.isActive ?? true, storeKey, type: b.type, rate, basis: b.basis, fixedBasis: b.fixedBasis, effectiveFrom: date(b.effectiveFrom, 'EFFECTIVE_FROM'), createdBy: actor.id };
   return prisma.$transaction(async tx => { const row = await tx.hrmCommissionRate.create({ data }); await audit(tx, actor.id, 'COMMISSION_RATE_VERSION_CREATED', data); return row; });
 }));
 router.get('/exceptions', route(async req => {

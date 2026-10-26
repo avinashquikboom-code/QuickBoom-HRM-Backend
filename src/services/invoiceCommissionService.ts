@@ -13,7 +13,8 @@ const list = (value: unknown): any[] => Array.isArray(value) ? value.filter(x =>
 const finite = (n: unknown) => (typeof n === 'number' || typeof n === 'string') && n !== '' && Number.isFinite(Number(n));
 function amount(n: unknown): number | null { return finite(n) ? Number(n) : null; }
 const messages: Record<string,string> = {
-  SUBCATEGORY_MAPPING_REQUIRED: 'Product subcategory is missing or has no verified mapping.',
+  SUBCATEGORY_MAPPING_REQUIRED: 'No verified subcategory mapping is effective for this product and invoice date. Ask an administrator to verify the product ID and create an effective-dated HRM product mapping.',
+  SUBCATEGORY_RATE_INACTIVE: 'The applicable subcategory commission rule is inactive. Ask an administrator to create an active rule effective for this invoice date.',
   HISTORICAL_OR_CURRENT_RATE_MISSING: 'No subcategory commission configuration is effective on the invoice date.',
   DISCOUNTED_NET_AMOUNT_BASIS_UNVERIFIED: 'Discounted eligible sales and GST basis need verification.',
   HISTORICAL_SNAPSHOT_MISSING: 'Saved approved item commissions are unavailable. The approved amount has not been recalculated.',
@@ -25,7 +26,7 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
   const rates = new Set(lines.filter(l => l.commissionRate !== null).map(l => `${l.commissionType}:${l.commissionRate}:${l.fixedBasis}`));
   const uniform = lines.length > 0 && lines.every(l=>l.commissionRate!==null) && rates.size === 1;
   const rate = uniform ? lines[0].commissionRate : null;
-  const missingConfiguration = lines.some(l=>['SUBCATEGORY_MAPPING_REQUIRED','HISTORICAL_OR_CURRENT_RATE_MISSING'].includes(l.missingReason));
+  const missingConfiguration = lines.some(l=>['SUBCATEGORY_MAPPING_REQUIRED','HISTORICAL_OR_CURRENT_RATE_MISSING','SUBCATEGORY_RATE_INACTIVE'].includes(l.missingReason));
   const missingData = !complete && !missingConfiguration;
   return { commissionSource:'SUBCATEGORY', commissionState:complete?state:missingData?'INVOICE_DATA_MISSING':'MISSING_CONFIGURATION',
     commissionAmount:total,commissionEarned:total,totalCommission:total,newCommission:total,calculatedCommissionAmount:total,

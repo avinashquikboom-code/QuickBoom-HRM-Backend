@@ -1978,6 +1978,7 @@ model HrmCommissionMapping {
   @@unique([productId, variantId, effectiveFrom])
 }
 model HrmCommissionRate {
+  isActive Boolean @default(true)
   id String @id @default(uuid()) @db.Uuid
   subcategoryId String @db.Uuid
   storeKey Int @default(0)
