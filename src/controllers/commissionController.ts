@@ -1,4 +1,5 @@
 import { prepareInvoiceApproval, isExternalInvoice } from '../services/invoiceCommissionService';
+import { hasUnresolvedInvoiceItems } from '../services/invoiceCommissionCompleteness';
 import { ordinaryCommissionFilter } from '../services/rkdPayrollService';
 import { enrichProductBreakdown } from '../utils/productLineMeta';
 import { Response } from 'express';
@@ -894,11 +895,14 @@ export const getCommissionTransactions = async (
         }
       }
 
-      const rate = t.commissionPercent !== null && t.commissionPercent !== undefined
-        ? Number(t.commissionPercent)
-        : (t.saleAmount > 0 && t.commissionAmount > 0
-            ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
-            : (t.employee?.commissionPercentage !== null && t.employee?.commissionPercentage !== undefined ? Number(t.employee?.commissionPercentage) : 0));
+      const unresolved = hasUnresolvedInvoiceItems(t) || (t.status === 'PENDING' && t.commissionPercent == null);
+      const rate = unresolved
+        ? null
+        : (t.commissionPercent !== null && t.commissionPercent !== undefined
+            ? Number(t.commissionPercent)
+            : (t.saleAmount > 0 && t.commissionAmount > 0
+                ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+                : (t.employee?.commissionPercentage !== null && t.employee?.commissionPercentage !== undefined ? Number(t.employee?.commissionPercentage) : null)));
 
       let recon: any = {
         oldBillAmount: t.oldAmount || null,
@@ -967,6 +971,8 @@ export const getCommissionTransactions = async (
                          (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.subcategory) ||
                          (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.category) || 'General',
         rate: rate,
+        hasUnresolvedInvoiceItems: unresolved,
+        rateDisplay: unresolved ? 'Configuration required' : (rate !== null ? `${rate}%` : 'Rate unavailable'),
         eligibleRevenue: Number(recon.newBillAmount ?? t.saleAmount ?? 0),
         netSales: Number(recon.newBillAmount ?? t.saleAmount ?? 0),
         amount: Number(recon.newBillCommission ?? t.commissionAmount ?? 0),

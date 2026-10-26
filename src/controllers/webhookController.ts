@@ -193,34 +193,119 @@ export async function groupAndCalculateCommissionBySalesman(
       const targetStoreId = invoiceData.metaStoreId || salesman.storeId;
 
       const resolvedLine = resolvedInvoice.productCommissionBreakdown[i];
-      const commResult = {commissionAmount:Number(resolvedLine?.commissionAmount??0),commissionRate:Number(resolvedLine?.commissionRate??0),policyId:null,appliedLevel:'SUBCATEGORY'};
+      let commResult: {
+        commissionAmount: number | null;
+        commissionRate: number | null;
+        policyId: number | null;
+        appliedLevel: string;
+        commissionState: string;
+        missingReason: string | null;
+      };
 
-      const productCommission = commResult.commissionAmount;
+      if (resolvedLine?.commissionState === 'CONFIGURED' && resolvedLine?.commissionRate !== null && resolvedLine?.commissionRate !== undefined) {
+        commResult = {
+          commissionAmount: Number(resolvedLine.commissionAmount ?? 0),
+          commissionRate: Number(resolvedLine.commissionRate),
+          policyId: null,
+          appliedLevel: 'SUBCATEGORY',
+          commissionState: 'CONFIGURED',
+          missingReason: null,
+        };
+      } else {
+        // Fallback: Resolve applicable rate using rate precedence rules:
+        // 1. Direct line item override
+        // 2. Matching CommissionPolicy (Product > Category > Employee > Store > Global)
+        // 3. Salesperson default commissionPercentage (supports 0%, 1%, 2%, etc.)
+        const eff = calculateEffectiveCommissionForLineItem({
+          saleAmount: productNetAmount,
+          productId: lineItem.productID ?? lineItem.productId ?? lineMeta.productId,
+          productName: lineMeta.productName ?? lineItem.name,
+          categoryId: lineMeta.categoryId,
+          categoryName: lineMeta.category,
+          policies: salesman.commissionPolicies || [],
+          salesman,
+          storeId: targetStoreId,
+          directCommissionRate: lineMeta.directCommissionRate ?? lineItem.commissionPercentage,
+          directCommissionAmount: lineItem.directCommissionAmount,
+        });
+
+        if (eff.appliedLevel !== 'FALLBACK') {
+          commResult = {
+            commissionAmount: eff.commissionAmount,
+            commissionRate: eff.commissionRate,
+            policyId: eff.policyId ?? null,
+            appliedLevel: eff.appliedLevel,
+            commissionState: 'CONFIGURED',
+            missingReason: null,
+          };
+        } else {
+          // Truly missing configuration: do NOT silently treat as 0% rate!
+          commResult = {
+            commissionAmount: null,
+            commissionRate: null,
+            policyId: null,
+            appliedLevel: 'MISSING_CONFIGURATION',
+            commissionState: 'MISSING_CONFIGURATION',
+            missingReason: resolvedLine?.missingReason || 'SUBCATEGORY_MAPPING_REQUIRED',
+          };
+        }
+      }
+
+      const productCommission = commResult.commissionAmount ?? 0;
       const commissionRate = commResult.commissionRate;
       const appliedPolicyId = commResult.policyId;
 
-      console.log(`[WEBHOOK_LINE_ITEM] Product: ${productName} (Cat: ${lineMeta.category || lineMeta.categoryId || 'None'}) | Level: ${commResult.appliedLevel} | Employee: ${salesman.employeeCode} (${salesman.firstName} ${salesman.lastName}) | Amount: ₹${productNetAmount} | Commission: ${commissionRate}% | CommAmount: ₹${productCommission}`);
+      console.log(`[WEBHOOK_LINE_ITEM] Product: ${productName} (Cat: ${lineMeta.category || lineMeta.categoryId || 'None'}) | Level: ${commResult.appliedLevel} | Employee: ${salesman.employeeCode} (${salesman.firstName} ${salesman.lastName}) | Amount: ₹${productNetAmount} | Commission: ${commissionRate !== null ? `${commissionRate}%` : 'Unconfigured'} | CommAmount: ${commResult.commissionAmount !== null ? `₹${productCommission}` : 'None'}`);
 
       const isOld = parseIsOld(lineItem);
       const effectiveProdAmount = isOld ? -Math.abs(productNetAmount) : Math.abs(productNetAmount);
-      const effectiveProdComm = isOld ? -Math.abs(productCommission) : Math.abs(productCommission);
+      const effectiveProdComm = commResult.commissionAmount !== null
+        ? (isOld ? -Math.abs(productCommission) : Math.abs(productCommission))
+        : null;
 
       const categoryDisplay = lineMeta.category || (lineMeta.categoryId ? `Category ${lineMeta.categoryId}` : null);
 
       const productSnapshot = {
-        ...resolvedLine, commissionSource:'SUBCATEGORY', productID:productId, productName:resolvedLine?.productName ?? productName,
-        sku:lineMeta.sku,category:categoryDisplay,categoryId:lineMeta.categoryId,variant:lineMeta.variant,
+        ...resolvedLine,
+        commissionSource: commResult.appliedLevel,
+        productID: productId,
+        productName: resolvedLine?.productName ?? productName,
+        sku: lineMeta.sku,
+        category: categoryDisplay,
+        categoryId: lineMeta.categoryId,
+        variant: lineMeta.variant,
         subcategoryId: resolvedLine?.subcategoryId ?? lineMeta.subcategoryId ?? lineItem.subcategoryId ?? null,
         subcategoryName: resolvedLine?.subcategoryName ?? lineMeta.subcategoryName ?? lineItem.subcategoryName ?? null,
-        quantity:Number(lineItem.quantity??lineItem.qty??1),saleAmount:effectiveProdAmount,productNetAmount:effectiveProdAmount,
-        commissionRate:resolvedLine?.commissionRate??null,
-        commissionAmount:resolvedLine?.commissionAmount==null?null:effectiveProdComm,
-        productCommission:resolvedLine?.commissionAmount==null?null:effectiveProdComm,
-        policyId:appliedPolicyId,storeId:targetStoreId,appliedLevel:'SUBCATEGORY',isOld,
+        quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1),
+        saleAmount: effectiveProdAmount,
+        productNetAmount: effectiveProdAmount,
+        commissionRate: commResult.commissionRate,
+        commissionAmount: effectiveProdComm,
+        productCommission: effectiveProdComm,
+        commissionState: commResult.commissionState,
+        missingReason: commResult.missingReason,
+        configurationMessage: commResult.missingReason === 'SUBCATEGORY_MAPPING_REQUIRED'
+          ? 'Product subcategory is missing or has no verified mapping.'
+          : commResult.missingReason ? 'Commission configuration requires review.' : null,
+        policyId: appliedPolicyId,
+        storeId: targetStoreId,
+        appliedLevel: commResult.appliedLevel,
+        isOld,
       };
-      const existing=commissionMap.get(salesman.id);
-      if(existing) { existing.totalAmount+=effectiveProdAmount;existing.totalCommission+=effectiveProdComm;existing.products.push(productSnapshot); }
-      else commissionMap.set(salesman.id,{salesman,totalAmount:effectiveProdAmount,totalCommission:effectiveProdComm,effectiveRate:0,products:[productSnapshot]});
+      const existing = commissionMap.get(salesman.id);
+      if (existing) {
+        existing.totalAmount += effectiveProdAmount;
+        if (effectiveProdComm !== null) existing.totalCommission += effectiveProdComm;
+        existing.products.push(productSnapshot);
+      } else {
+        commissionMap.set(salesman.id, {
+          salesman,
+          totalAmount: effectiveProdAmount,
+          totalCommission: effectiveProdComm !== null ? effectiveProdComm : 0,
+          effectiveRate: null as any,
+          products: [productSnapshot],
+        });
+      }
     } catch (productError: any) {
       console.error(`[Product ${i + 1}] ❌ Error processing product:`, productError.message);
       continue;
@@ -228,10 +313,20 @@ export async function groupAndCalculateCommissionBySalesman(
   }
 
   for (const entry of commissionMap.values()) {
-    entry.effectiveRate =
-      entry.totalAmount > 0 && entry.totalCommission > 0
-        ? Math.round(((entry.totalCommission / entry.totalAmount) * 100) * 100) / 100
-        : 0;
+    const hasUnresolved = entry.products.some(p => p.commissionState !== 'CONFIGURED' || p.commissionRate === null || p.commissionRate === undefined);
+    if (hasUnresolved) {
+      entry.effectiveRate = null as any;
+    } else {
+      const distinctRates = new Set(entry.products.map(p => Number(p.commissionRate)));
+      if (distinctRates.size === 1) {
+        entry.effectiveRate = entry.products[0].commissionRate;
+      } else {
+        entry.effectiveRate =
+          entry.totalAmount > 0
+            ? Math.round(((entry.totalCommission / entry.totalAmount) * 100) * 100) / 100
+            : 0;
+      }
+    }
   }
 
   return commissionMap;
@@ -479,9 +574,9 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       const salesman = commissionData.salesman;
 
       const saleAmount = Math.round(commissionData.totalAmount * 100) / 100;
-      const incompleteCommission=commissionData.products.some(p=>p.commissionState!=='CONFIGURED');
-      const commAmt = incompleteCommission?0:Math.round(commissionData.totalCommission * 100) / 100;
-      const invoiceCommissionStatus = isCancelledOrReturned?'REJECTED':incompleteCommission?'PENDING':'APPROVED';
+      const incompleteCommission = commissionData.products.some(p => p.commissionState !== 'CONFIGURED' || p.commissionRate === null || p.commissionRate === undefined);
+      const commAmt = incompleteCommission ? 0 : Math.round(commissionData.totalCommission * 100) / 100;
+      const invoiceCommissionStatus = isCancelledOrReturned ? 'REJECTED' : incompleteCommission ? 'PENDING' : 'APPROVED';
       const targetStoreId = commissionData.products[0]?.storeId || meta.storeId || salesman.storeId;
       const targetPolicyId = commissionData.products[0]?.policyId ?? null;
       const productNamesSummary = commissionData.products.map(p => p.productName).filter(Boolean).join(', ');
@@ -525,9 +620,11 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         // Preserves Old Commission + New Commission = Total Commission Earned
         // Wallet gets incremental delta (newCommission - oldCommission)
         // ═══════════════════════════════════════════════════════════════
-        const effectiveRate = newSaleAmount > 0 && commAmt > 0
-          ? Math.round(((commAmt / newSaleAmount) * 100) * 100) / 100
-          : 0;
+        const effectiveRate = incompleteCommission
+          ? null
+          : (commissionData.effectiveRate !== null && commissionData.effectiveRate !== undefined
+              ? commissionData.effectiveRate
+              : (newSaleAmount > 0 && commAmt > 0 ? Math.round(((commAmt / newSaleAmount) * 100) * 100) / 100 : 0));
         const oldComm = existingTx.commissionAmount;
         const newComm = commAmt;
         const totalCommissionEarned = isCancelledOrReturned ? 0 : newComm;
@@ -618,9 +715,11 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
         // INVOICE CREATED / NEW RECORD PATH
         // ═══════════════════════════════════════════════════════════════
         const finalSaleAmount = isCancelledOrReturned ? 0 : saleAmount;
-        const effectiveRate = finalSaleAmount > 0 && commAmt > 0
-          ? Math.round(((commAmt / finalSaleAmount) * 100) * 100) / 100
-          : 0;
+        const effectiveRate = incompleteCommission
+          ? null
+          : (commissionData.effectiveRate !== null && commissionData.effectiveRate !== undefined
+              ? commissionData.effectiveRate
+              : (finalSaleAmount > 0 && commAmt > 0 ? Math.round(((commAmt / finalSaleAmount) * 100) * 100) / 100 : 0));
         const finalCommAmount = isCancelledOrReturned ? 0 : commAmt;
 
         const existingTxInDb = await tx.commissionTransaction.findFirst({

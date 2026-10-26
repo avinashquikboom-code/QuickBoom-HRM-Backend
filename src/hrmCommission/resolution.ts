@@ -5,9 +5,34 @@ import { NormalizedLine, requireValue } from './normalize';
  * Reads must never invent catalog identities, rates, or historical effective dates.
  */
 export async function resolveSubcategory(tx: Prisma.TransactionClient, line: NormalizedLine, at: Date) {
+  const isUuid = (val: unknown): val is string =>
+    typeof val === 'string' && /^[0-9a-f-]{36}$/i.test(val);
+
   if (line.subcategoryExternalId) {
-    return tx.hrmCommissionSubcategory.findUnique({ where: { externalId: line.subcategoryExternalId } });
+    const sub = await tx.hrmCommissionSubcategory.findFirst({
+      where: {
+        OR: [
+          { externalId: line.subcategoryExternalId },
+          ...(isUuid(line.subcategoryExternalId) ? [{ id: line.subcategoryExternalId }] : []),
+          { name: { equals: line.subcategoryExternalId, mode: 'insensitive' } }
+        ]
+      }
+    }).catch(() => null);
+    if (sub) return sub;
   }
+
+  if (line.subcategoryName) {
+    const sub = await tx.hrmCommissionSubcategory.findFirst({
+      where: {
+        OR: [
+          { name: { equals: line.subcategoryName, mode: 'insensitive' } },
+          { externalId: line.subcategoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-') }
+        ]
+      }
+    }).catch(() => null);
+    if (sub) return sub;
+  }
+
   // An explicit variant mapping takes precedence over a product-wide mapping.
   const variants = line.variantId ? [line.variantId, ''] : [''];
   for (const variantId of variants) {
@@ -18,10 +43,16 @@ export async function resolveSubcategory(tx: Prisma.TransactionClient, line: Nor
     if (mapping) return tx.hrmCommissionSubcategory.findUnique({ where: { id: mapping.subcategoryId } });
   }
 
-  // Fallback: Check POSProduct catalog category if line.productId is a valid UUID
+  // Fallback: Check POSProduct catalog category by UUID id or code
   if (line.productId) {
-    const product = await tx.pOSProduct.findUnique({
-      where: { id: line.productId },
+    const product = await tx.pOSProduct.findFirst({
+      where: {
+        OR: [
+          ...(isUuid(line.productId) ? [{ id: line.productId }] : []),
+          { code: line.productId },
+          { name: { equals: line.productId, mode: 'insensitive' } }
+        ]
+      },
       include: { category: true }
     }).catch(() => null);
 

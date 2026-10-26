@@ -116,7 +116,16 @@ export const fetchCommissionWallet = async (
     const recentTransactions = allTransactions.slice(0, 50).map(t => {
       const numInv = getNumericInvoiceNumber(t);
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
-      const unresolved = hasUnresolvedInvoiceItems(t);
+      const unresolved = hasUnresolvedInvoiceItems(t) || (t.status === 'PENDING' && t.commissionPercent == null);
+      const resolvedRate = unresolved
+        ? null
+        : (t.commissionPercent !== null && t.commissionPercent !== undefined
+            ? Number(t.commissionPercent)
+            : (t.saleAmount > 0 && t.commissionAmount > 0
+                ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
+                : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined
+                    ? Number(employee.commissionPercentage)
+                    : null)));
       const external = ['INVOICE_CREATED', 'INVOICE_UPDATED'].includes(t.eventType ?? '');
       console.log({
         invoiceId: t.billId || t.id,
@@ -133,23 +142,12 @@ export const fetchCommissionWallet = async (
         hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
         customerName: noteClean,
         billAmount: t.saleAmount,
-        commissionPercentage: unresolved ? null : external ? t.commissionPercent : t.commissionPercent !== null && t.commissionPercent !== undefined
-          ? Number(t.commissionPercent)
-          : (t.saleAmount > 0 && t.commissionAmount > 0
-              ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
-              : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
-        commissionPercent: unresolved ? null : external ? t.commissionPercent : t.commissionPercent !== null && t.commissionPercent !== undefined
-          ? Number(t.commissionPercent)
-          : (t.saleAmount > 0 && t.commissionAmount > 0
-              ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
-              : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
-        commissionRate: unresolved ? null : external ? t.commissionPercent : t.commissionPercent !== null && t.commissionPercent !== undefined
-          ? Number(t.commissionPercent)
-          : (t.saleAmount > 0 && t.commissionAmount > 0
-              ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
-              : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
+        commissionPercentage: resolvedRate,
+        commissionPercent: resolvedRate,
+        commissionRate: resolvedRate,
         commissionEarned: unresolved ? null : t.commissionAmount,
         hasUnresolvedInvoiceItems: unresolved,
+        rateDisplay: unresolved ? 'Configuration required' : (resolvedRate !== null ? `${resolvedRate}%` : 'Rate unavailable'),
         generatedDate: t.createdAt.toISOString(),
         paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
         status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),

@@ -1,4 +1,5 @@
 import { mobileInvoiceDetail } from '../../services/invoiceCommissionService';
+import { hasUnresolvedInvoiceItems } from '../../services/invoiceCommissionCompleteness';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
@@ -57,7 +58,7 @@ export const getMobileCommissionDashboard = async (
           totalSalesAmount: stats.month.sales,
           commissionAmount: stats.month.commission,
           approvedCommission: stats.month.commission,
-          commissionRate: employee.commissionPercentage || 0,
+          commissionRate: employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : null,
           transactionCount: stats.month.transactions,
         },
         employee: {
@@ -165,12 +166,15 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
       const numInv = getNumericInvoiceNumber(t);
       const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
       let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
-      const rate = t.commissionPercent !== null && t.commissionPercent !== undefined
-        ? Number(t.commissionPercent)
-        : (effectiveSale > 0 && comm > 0
-            ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
-            : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0));
-      if ((!comm || comm === 0) && rate > 0) {
+      const unresolved = hasUnresolvedInvoiceItems(t) || (t.status === 'PENDING' && t.commissionPercent == null);
+      const rate = unresolved
+        ? null
+        : (t.commissionPercent !== null && t.commissionPercent !== undefined
+            ? Number(t.commissionPercent)
+            : (effectiveSale > 0 && comm > 0
+                ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
+                : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : null)));
+      if (!unresolved && (!comm || comm === 0) && rate !== null && rate > 0) {
         comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
       }
 
@@ -188,18 +192,20 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
         amount: effectiveSale,
         saleAmount: effectiveSale,
         billAmount: effectiveSale,
-        commission: comm,
+        commission: unresolved ? null : comm,
         commissionType: t.commissionType,
         commissionPercent: rate,
         commissionPercentage: rate,
         commissionRate: rate,
-        commissionAmount: comm,
-        commissionEarned: comm,
-        totalCommission: comm,
+        commissionAmount: unresolved ? null : comm,
+        commissionEarned: unresolved ? null : comm,
+        totalCommission: unresolved ? null : comm,
+        hasUnresolvedInvoiceItems: unresolved,
+        rateDisplay: unresolved ? 'Configuration required' : (rate !== null ? `${rate}%` : 'Rate unavailable'),
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),
-        newCommission: comm,
+        newCommission: unresolved ? null : comm,
         status: t.status,
         date: t.createdAt,
         createdAt: t.createdAt,
@@ -618,7 +624,7 @@ export const getMobileCommissionSummary = async (
     const lifetimeCommission = allTransactions
       .reduce((sum, t) => sum + t.commissionAmount, 0);
 
-    const commissionRate = employee.commissionPercentage || 0;
+    const commissionRate = employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : null;
 
     res.json({
       success: true,
@@ -819,12 +825,15 @@ export const getMobileCommissionBills = async (
       const numInv = getNumericInvoiceNumber(t);
       const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
       let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
-      let rate = t.commissionPercent !== null && t.commissionPercent !== undefined
-        ? Number(t.commissionPercent)
-        : (effectiveSale > 0 && comm > 0
-            ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
-            : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0));
-      if ((!comm || comm === 0) && rate > 0) {
+      const unresolved = hasUnresolvedInvoiceItems(t) || (t.status === 'PENDING' && t.commissionPercent == null);
+      let rate = unresolved
+        ? null
+        : (t.commissionPercent !== null && t.commissionPercent !== undefined
+            ? Number(t.commissionPercent)
+            : (effectiveSale > 0 && comm > 0
+                ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
+                : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : null)));
+      if (!unresolved && (!comm || comm === 0) && rate !== null && rate > 0) {
         comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
       }
       return {
@@ -835,17 +844,19 @@ export const getMobileCommissionBills = async (
         invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
         saleAmount: effectiveSale,
         billAmount: effectiveSale,
-        commission: comm,
-        commissionAmount: comm,
-        commissionEarned: comm,
+        commission: unresolved ? null : comm,
+        commissionAmount: unresolved ? null : comm,
+        commissionEarned: unresolved ? null : comm,
         commissionRate: rate,
         commissionPercentage: rate,
         commissionPercent: rate,
+        hasUnresolvedInvoiceItems: unresolved,
+        rateDisplay: unresolved ? 'Configuration required' : (rate !== null ? `${rate}%` : 'Rate unavailable'),
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),
-        newCommission: comm,
-        totalCommission: comm,
+        newCommission: unresolved ? null : comm,
+        totalCommission: unresolved ? null : comm,
         date: t.createdAt,
         status: t.status,
         description: t.notes,
