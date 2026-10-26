@@ -8,6 +8,8 @@ export interface ProductLineMeta {
   category: string | null;
   categoryId: number | null;
   rawCategoryId: string | null;
+  subcategoryId: string | null;
+  subcategoryName: string | null;
   variant: string | null;
   directCommissionRate: number | null;
   directCommissionAmount: number | null;
@@ -57,6 +59,13 @@ const CATEGORY_KEYS = [
   'subCategory', 'SubCategory', 'subcategory', 'department', 'productType', 'group', 'groupName',
   'CategoryID', 'categoryId', 'category_id', 'CategoryId'
 ];
+const SUBCATEGORY_ID_KEYS = [
+  'subcategoryId', 'subCategoryId', 'SubCategoryID', 'SubCategoryId', 'subcategory_id',
+  'subCategoryExternalId', 'subcategoryExternalId', 'SubCategoryExternalId', 'subcategoryCode'
+];
+const SUBCATEGORY_NAME_KEYS = [
+  'subcategoryName', 'subCategoryName', 'SubCategoryName', 'subcategory', 'Subcategory', 'subCategory', 'SubCategory'
+];
 const COMMISSION_RATE_KEYS = [
   'directCommissionRate', 'directCommissionPercent',
   'commissionRate', 'CommissionRate', 'commission_rate',
@@ -89,6 +98,8 @@ export const extractProductLineMeta = (item: RawLine): ProductLineMeta => {
     category: pick(item, CATEGORY_KEYS),
     categoryId: numCatId,
     rawCategoryId: rawCatId,
+    subcategoryId: pick(item, SUBCATEGORY_ID_KEYS),
+    subcategoryName: pick(item, SUBCATEGORY_NAME_KEYS),
     variant: pick(item, VARIANT_KEYS),
     directCommissionRate: directCommRate,
     directCommissionAmount: directCommAmt,

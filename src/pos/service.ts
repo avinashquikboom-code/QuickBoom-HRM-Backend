@@ -211,6 +211,40 @@ export async function createProduct(
       await activeStore(tx, opening.storeId);
       await movement(tx, actor, opening.storeId, p.variants[0]!.id, opening.quantity, 0, "OPENING", p.id, opening.reason);
     }
+    if (p.categoryId) {
+      try {
+        const cat = await tx.pOSCategory.findUnique({ where: { id: p.categoryId } });
+        if (cat && cat.parentId) {
+          const extId = cat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+          const sub = await tx.hrmCommissionSubcategory.upsert({
+            where: { externalId: extId },
+            create: { id: cat.id, externalId: extId, name: cat.name, categoryExternalId: cat.parentId },
+            update: { name: cat.name, categoryExternalId: cat.parentId }
+          });
+          await tx.hrmCommissionMapping.upsert({
+            where: {
+              productId_variantId_effectiveFrom: {
+                productId: p.id,
+                variantId: '',
+                effectiveFrom: new Date('2020-01-01T00:00:00+05:30')
+              }
+            },
+            create: {
+              productId: p.id,
+              variantId: '',
+              subcategoryId: sub.id,
+              effectiveFrom: new Date('2020-01-01T00:00:00+05:30'),
+              createdBy: actor.userId
+            },
+            update: {
+              subcategoryId: sub.id
+            }
+          });
+        }
+      } catch (mapErr) {
+        // Non-blocking for offline or restricted catalog environments
+      }
+    }
     await audit(tx, actor, "PRODUCT_CREATED", p.id);
     return p;
   });

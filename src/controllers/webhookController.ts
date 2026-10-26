@@ -210,6 +210,8 @@ export async function groupAndCalculateCommissionBySalesman(
       const productSnapshot = {
         ...resolvedLine, commissionSource:'SUBCATEGORY', productID:productId, productName,
         sku:lineMeta.sku,category:categoryDisplay,categoryId:lineMeta.categoryId,variant:lineMeta.variant,
+        subcategoryId: resolvedLine?.subcategoryId ?? lineMeta.subcategoryId ?? lineItem.subcategoryId ?? null,
+        subcategoryName: resolvedLine?.subcategoryName ?? lineMeta.subcategoryName ?? lineItem.subcategoryName ?? null,
         quantity:Number(lineItem.quantity??lineItem.qty??1),saleAmount:effectiveProdAmount,productNetAmount:effectiveProdAmount,
         commissionRate:resolvedLine?.commissionRate??null,
         commissionAmount:resolvedLine?.commissionAmount==null?null:effectiveProdComm,

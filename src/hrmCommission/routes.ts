@@ -23,9 +23,9 @@ function storeScope(req: AuthenticatedRequest) {
   if (!requested || requested === 'all') return undefined;
   const id = Number(requested); requireValue(Number.isSafeInteger(id) && id > 0, 'INVALID_STORE'); return id;
 }
-function range(req: AuthenticatedRequest) {
+export function range(req: AuthenticatedRequest) {
   const today = new Date(Date.now() + 19800000).toISOString().slice(0, 10);
-  const from = String(req.query.from ?? `${today.slice(0, 7)}-01`), to = String(req.query.to ?? today);
+  const from = String(req.query.from ?? req.query.startDate ?? `${today.slice(0, 7)}-01`), to = String(req.query.to ?? req.query.endDate ?? today);
   requireValue(/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to), 'INVALID_DATE_RANGE');
   const gte = date(from, 'FROM'), lt = new Date(date(to, 'TO').getTime() + 86400000);
   requireValue(lt > gte && lt.getTime() - gte.getTime() <= 366 * 86400000, 'DATE_RANGE_MAXIMUM_366_DAYS');
@@ -80,13 +80,28 @@ router.get('/exceptions', route(async req => {
   const actor = access(req, true);
   return prisma.hrmCommissionInbox.findMany({ where: { status: 'EXCEPTION' }, orderBy: { createdAt: 'desc' }, take: 100 });
 }));
-router.post('/process', route(async req => { access(req, true); return projectStoredHopkidLogs(); }));
+router.post('/process', route(async req => { access(req, true); requireValue((await prisma.hrmCommissionSettings.findUnique({where:{id:1}}))?.enabled, 'HRM_COMMISSION_IMPORT_DISABLED'); return projectStoredHopkidLogs(); }));
 router.post('/exceptions/:id/retry', route(async req => {
   const actor = access(req, true);
   const inbox = await prisma.hrmCommissionInbox.findUniqueOrThrow({ where: { id: String(req.params.id) } });
   requireValue(inbox.status === 'EXCEPTION', 'ONLY_EXCEPTIONS_CAN_BE_RETRIED');
   await prisma.hrmCommissionAudit.create({ data: { userId: actor.id, action: 'EXCEPTION_RETRIED', data: { inboxId: inbox.id } } });
   return processStoredLog(inbox.sourceLogId);
+}));
+router.get('/diagnostics', route(async req => {
+  const storeId = storeScope(req);
+  const where = storeId ? { storeId } : {};
+  const settings = await prisma.hrmCommissionSettings.findUnique({ where: { id: 1 } });
+  const [sourceLogs, documents, ledgerEntries, exceptions, pending] = await Promise.all([
+    prisma.hopkidWebhookLog.count({ where }),
+    prisma.hrmCommissionDocument.count({ where }),
+    prisma.hrmCommissionLedger.count({ where }),
+    prisma.$queryRaw<{ count: bigint }[]>`SELECT COUNT(*) AS count FROM "HrmCommissionInbox" i JOIN "HopkidWebhookLog" l ON l.id=i."sourceLogId" WHERE i.status='EXCEPTION' AND (${storeId ?? null}::int IS NULL OR l."storeId"=${storeId ?? null})`,
+    prisma.$queryRaw<{ count: bigint }[]>`SELECT COUNT(*) AS count FROM "HopkidWebhookLog" l WHERE (${storeId ?? null}::int IS NULL OR l."storeId"=${storeId ?? null}) AND NOT EXISTS (SELECT 1 FROM "HrmCommissionInbox" i WHERE i."sourceLogId"=l.id)`,
+  ]);
+  const result = { sourceLogs, documents, ledgerEntries, exceptions: Number(exceptions[0].count), unprocessedLogs: Number(pending[0].count), importEnabled: settings?.enabled ?? false, ingestSince: settings?.ingestSince ?? null };
+  console.info('[HRM commission pipeline counts]', { storeId: storeId ?? 'permitted', ...result });
+  return result;
 }));
 router.get('/report', route(async req => {
   const storeId = storeScope(req), dates = range(req), axis = req.query.dateBasis === 'posting' ? Prisma.sql`l."postedAt"` : Prisma.sql`l."saleDate"`;
@@ -105,22 +120,40 @@ router.get('/report', route(async req => {
       WHERE ${axis}>=${dates.gte} AND ${axis}<${dates.lt}
       AND (${storeId ?? null}::int IS NULL OR l."storeId"=${storeId ?? null}::int)
       AND (${subcategoryId}::uuid IS NULL OR l."subcategoryId"=${subcategoryId}::uuid)
+      AND (${String(req.query.search ?? '').trim()} = '' OR l."subcategoryName" ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR s.name ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR l.basis ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'})
       GROUP BY l."storeId",s.name,l."subcategoryId",l."subcategoryName",l.type,l.rate,l.basis,l."fixedBasis",origin."documentId",origin.id
     )
     SELECT "storeId",store,"subcategoryId","subcategoryName",type,rate,basis,"fixedBasis",
       SUM(revenue) AS "eligibleNetSales",SUM(commission) AS "commissionAmount",SUM(units) AS "netUnits",
       COUNT(DISTINCT CASE WHEN units>0 AND revenue>0 THEN "saleDocumentId" END)::int AS "earningTransactions",
+      ARRAY_AGG(DISTINCT "saleDocumentId") FILTER (WHERE units>0 AND revenue>0) AS "earningDocumentIds",
       SUM(reversals) AS reversals
     FROM line_net GROUP BY "storeId",store,"subcategoryId","subcategoryName",type,rate,basis,"fixedBasis"
     ORDER BY store,"subcategoryName",rate`);
   const sum = (list: any[]) => list.reduce((a,r) => ({ eligibleNetSales: a.eligibleNetSales.plus(r.eligibleNetSales), commissionAmount: a.commissionAmount.plus(r.commissionAmount), netUnits: a.netUnits.plus(r.netUnits), reversals: a.reversals.plus(r.reversals) }), { eligibleNetSales: new Prisma.Decimal(0), commissionAmount: new Prisma.Decimal(0), netUnits: new Prisma.Decimal(0), reversals: new Prisma.Decimal(0) });
   const storeTotals = [...new Set(rows.map(r => r.storeId))].map(id => ({ storeId: id, store: rows.find(r => r.storeId === id).store, ...sum(rows.filter(r => r.storeId === id)) }));
-  return { rows, totals: sum(rows), storeTotals, range: dates, dateBasis: req.query.dateBasis ?? 'sale' };
+  console.info('[HRM commission report]', { storeId: storeId ?? 'permitted', dateBasis: req.query.dateBasis ?? 'sale', from: dates.gte.toISOString(), toExclusive: dates.lt.toISOString(), groupsAfterFilters: rows.length });
+  const completedBillsCount = new Set(rows.flatMap(r => r.earningDocumentIds ?? [])).size;
+  return { rows: rows.map(({earningDocumentIds, ...row}) => row), totals: { ...sum(rows), completedBillsCount }, storeTotals, range: dates, dateBasis: req.query.dateBasis ?? 'sale' };
 }));
 router.get('/ledger', route(async req => {
   const storeId = storeScope(req), dates = range(req);
-  const page = Number(req.query.page ?? 1); requireValue(Number.isSafeInteger(page) && page > 0 && page < 100000, 'INVALID_PAGE');
-  const where = { storeId, saleDate: { gte: dates.gte, lt: dates.lt } };
-  return { rows: await prisma.hrmCommissionLedger.findMany({ where, orderBy: [{ postedAt: 'desc' }, { id: 'desc' }], skip: (page-1)*50, take: 50 }), total: await prisma.hrmCommissionLedger.count({ where }), page };
+  const page = Number(req.query.page ?? 1), pageSize = Number(req.query.pageSize ?? 50);
+  requireValue(Number.isSafeInteger(page) && page > 0 && page < 100000 && Number.isSafeInteger(pageSize) && pageSize > 0 && pageSize <= 100, 'INVALID_PAGE');
+  const subcategoryId = req.query.subcategoryId ? String(req.query.subcategoryId) : null;
+  if (subcategoryId) requireValue(/^[0-9a-f-]{36}$/i.test(subcategoryId), 'INVALID_SUBCATEGORY');
+  const search = '%' + String(req.query.search ?? '').trim() + '%';
+  const filter = Prisma.sql`FROM "HrmCommissionLedger" l JOIN "HrmCommissionDocument" d ON d.id=l."documentId" JOIN "Store" s ON s.id=l."storeId"
+    WHERE (${storeId ?? null}::int IS NULL OR l."storeId"=${storeId ?? null})
+    AND (CASE WHEN ${req.query.dateBasis === 'posting'} THEN l."postedAt" ELSE l."saleDate" END)>=${dates.gte}
+    AND (CASE WHEN ${req.query.dateBasis === 'posting'} THEN l."postedAt" ELSE l."saleDate" END)<${dates.lt}
+    AND (${subcategoryId}::uuid IS NULL OR l."subcategoryId"=${subcategoryId}::uuid)
+    AND (l."subcategoryName" ILIKE ${search} OR s.name ILIKE ${search} OR d."externalId" ILIKE ${search} OR d."invoiceNumber" ILIKE ${search})`;
+  const [rows, counts] = await Promise.all([
+    prisma.$queryRaw<any[]>(Prisma.sql`SELECT l.*,d."externalId" AS "billId",d."invoiceNumber",s.name AS "storeName" ${filter} ORDER BY l."postedAt" DESC,l.id DESC LIMIT ${pageSize} OFFSET ${(page-1)*pageSize}`),
+    prisma.$queryRaw<{ total: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS total ${filter}`),
+  ]);
+  return { rows, total: Number(counts[0].total), page, pageSize };
 }));
+
 export default router;
