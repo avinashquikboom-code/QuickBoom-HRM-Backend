@@ -4,7 +4,7 @@ const options = {
   host: '127.0.0.1',
   port: process.env.PORT || 5004,
   path: '/api/health',
-  timeout: 2000
+  timeout: 5000
 };
 
 const request = http.request(options, (res) => {

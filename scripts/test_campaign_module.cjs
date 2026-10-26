@@ -37,8 +37,8 @@ async function test(name, fn) { await fn(); checks++; console.log('PASS ' + name
   const inactive = await actor('inactive-user',office.id,'EMPLOYEE',false);
   await prisma.employee.create({data:{employeeCode:`no-user-${key}`,firstName:'No user',lastName:'Fixture',officeId:office.id,status:'active',source:'HOPKID'}});
   await prisma.employee.create({data:{employeeCode:`inactive-${key}`,firstName:'Inactive',lastName:'Fixture',officeId:office.id,status:'inactive',source:'HOPKID'}});
-  await prisma.fCMToken.createMany({data:[{userId:employee.user.id,token:'fixture-token-one'},{userId:employee.user.id,token:'fixture-token-two'},{userId:noToken.user.id,token:'inactive-token',isActive:false},{userId:inactive.user.id,token:'excluded-token'}]});
-  await prisma.device.create({data:{userId:employee.user.id,fcmToken:'fixture-token-one',platform:'android'}});
+  await prisma.fCMToken.createMany({data:[{userId:employee.user.id,token:`fixture-token-one-${key}`},{userId:employee.user.id,token:`fixture-token-two-${key}`},{userId:noToken.user.id,token:`inactive-token-${key}`,isActive:false},{userId:inactive.user.id,token:`excluded-token-${key}`}]});
+  await prisma.device.create({data:{userId:employee.user.id,fcmToken:`fixture-token-one-${key}`,platform:'android'}});
   directory = await fs.mkdtemp(path.join(os.tmpdir(),'campaign-module-')); process.chdir(directory);
   const app=express();app.use(express.json({limit:'10mb'}));
   app.use('/api/uploads',express.static(path.join(directory,'uploads')),uploads);
@@ -78,6 +78,11 @@ async function test(name, fn) { await fn(); checks++; console.log('PASS ' + name
     const updated=await request('/'+id,{...campaign,title:'Updated',imageUrl:null},admin.token,'PATCH');assert.equal(updated.response.status,200,JSON.stringify(updated.body));assert.equal(updated.body.data.imageUrl,null);
     assert.equal((await request('/'+id)).body.data.title,'Updated');
     assert.equal((await request('',{...campaign,imageUrl:null})).response.status,201);
+  });
+  await test('legacy missing image records render safely without fabricated image URLs',async()=>{
+    await prisma.campaign.update({where:{id},data:{imageUrl:'api/uploads/campaigns/campaign_missing.png'}});
+    const legacy=await request('/'+id);assert.equal(legacy.response.status,200);assert.equal(legacy.body.data.imageUrl,null);assert.equal(legacy.body.data.imageMissing,true);
+    assert.equal((await request('/'+id,{...campaign,imageUrl:null},admin.token,'PATCH')).response.status,200);
   });
   await test('ALL_EMPLOYEES counts match the database, count employees once and retain in-app-only employees',async()=>{
     const result=await request('/recipients/preview?audienceType=ALL_EMPLOYEES');assert.equal(result.response.status,200,JSON.stringify(result.body));

@@ -745,8 +745,9 @@ export interface ExtractedWebhookMeta {
   branchName: string | null;
   storeName: string | null;
   storeId: number | null;
-  branchId?: number | string | null;
+  branchId?: number | null;
   storeCode?: string | null;
+  companyId?: number | null;
   invoice: any;
   lineItems: any[];
   firstItem: any;
@@ -775,6 +776,9 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
       branchName: null,
       storeName: null,
       storeId: null,
+      branchId: null,
+      storeCode: null,
+      companyId: null,
       invoice: {},
       lineItems: [],
       firstItem: {},
@@ -806,6 +810,9 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
         branchName: null,
         storeName: null,
         storeId: null,
+        branchId: null,
+        storeCode: null,
+        companyId: null,
         invoice: {},
         lineItems: [],
         firstItem: {},
@@ -1310,6 +1317,17 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     payload?.StoreCode ??
     null;
 
+  const rawCompanyId =
+    payload?.companyId ??
+    payload?.CompanyId ??
+    payload?.data?.companyId ??
+    payload?.data?.CompanyId ??
+    invoice?.companyId ??
+    invoice?.CompanyId ??
+    null;
+  const companyIdParsed = rawCompanyId !== null && rawCompanyId !== undefined ? parseInt(String(rawCompanyId), 10) : null;
+  const companyId = companyIdParsed !== null && !isNaN(companyIdParsed) && companyIdParsed > 0 ? companyIdParsed : null;
+
   const firstSalesman = (Array.isArray(salesmen) && salesmen[0]) || {};
 
   const employeeIdentifier =
@@ -1481,6 +1499,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     storeId,
     branchId,
     storeCode: storeCode ? String(storeCode) : null,
+    companyId,
     invoice,
     lineItems,
     firstItem,
