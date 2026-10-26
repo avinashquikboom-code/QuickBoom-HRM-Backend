@@ -117,10 +117,11 @@ router.get('/report', route(async req => {
       FROM "HrmCommissionLedger" l JOIN "Store" s ON s.id=l."storeId"
       JOIN "HrmCommissionLine" source ON source.id=l."lineId"
       JOIN "HrmCommissionLine" origin ON origin.id=COALESCE(source."originalSaleLineId",source.id)
+      JOIN "HrmCommissionDocument" sale ON sale.id=origin."documentId"
       WHERE ${axis}>=${dates.gte} AND ${axis}<${dates.lt}
       AND (${storeId ?? null}::int IS NULL OR l."storeId"=${storeId ?? null}::int)
       AND (${subcategoryId}::uuid IS NULL OR l."subcategoryId"=${subcategoryId}::uuid)
-      AND (${String(req.query.search ?? '').trim()} = '' OR l."subcategoryName" ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR s.name ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR l.basis ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'})
+      AND (${String(req.query.search ?? '').trim()} = '' OR l."subcategoryName" ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR s.name ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR l.basis ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR sale."externalId" ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'} OR sale."invoiceNumber" ILIKE ${'%' + String(req.query.search ?? '').trim() + '%'})
       GROUP BY l."storeId",s.name,l."subcategoryId",l."subcategoryName",l.type,l.rate,l.basis,l."fixedBasis",origin."documentId",origin.id
     )
     SELECT "storeId",store,"subcategoryId","subcategoryName",type,rate,basis,"fixedBasis",
@@ -144,11 +145,14 @@ router.get('/ledger', route(async req => {
   if (subcategoryId) requireValue(/^[0-9a-f-]{36}$/i.test(subcategoryId), 'INVALID_SUBCATEGORY');
   const search = '%' + String(req.query.search ?? '').trim() + '%';
   const filter = Prisma.sql`FROM "HrmCommissionLedger" l JOIN "HrmCommissionDocument" d ON d.id=l."documentId" JOIN "Store" s ON s.id=l."storeId"
+    JOIN "HrmCommissionLine" source ON source.id=l."lineId"
+    JOIN "HrmCommissionLine" origin ON origin.id=COALESCE(source."originalSaleLineId",source.id)
+    JOIN "HrmCommissionDocument" sale ON sale.id=origin."documentId"
     WHERE (${storeId ?? null}::int IS NULL OR l."storeId"=${storeId ?? null})
     AND (CASE WHEN ${req.query.dateBasis === 'posting'} THEN l."postedAt" ELSE l."saleDate" END)>=${dates.gte}
     AND (CASE WHEN ${req.query.dateBasis === 'posting'} THEN l."postedAt" ELSE l."saleDate" END)<${dates.lt}
     AND (${subcategoryId}::uuid IS NULL OR l."subcategoryId"=${subcategoryId}::uuid)
-    AND (l."subcategoryName" ILIKE ${search} OR s.name ILIKE ${search} OR d."externalId" ILIKE ${search} OR d."invoiceNumber" ILIKE ${search})`;
+    AND (l."subcategoryName" ILIKE ${search} OR s.name ILIKE ${search} OR l.basis ILIKE ${search} OR sale."externalId" ILIKE ${search} OR sale."invoiceNumber" ILIKE ${search})`;
   const [rows, counts] = await Promise.all([
     prisma.$queryRaw<any[]>(Prisma.sql`SELECT l.*,d."externalId" AS "billId",d."invoiceNumber",s.name AS "storeName" ${filter} ORDER BY l."postedAt" DESC,l.id DESC LIMIT ${pageSize} OFFSET ${(page-1)*pageSize}`),
     prisma.$queryRaw<{ total: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS total ${filter}`),

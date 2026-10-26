@@ -46,8 +46,10 @@ export const authMiddleware = async (
 
   const fullPath = req.originalUrl ? req.originalUrl.split('?')[0] : req.path;
   const requestPath = req.path;
+  // Delivery endpoints are public; audit reads and management still require an HRM session.
+  const isWebhookAudit = /^\/api\/(?:webhook|webhooks|hopkid)\/(?:logs(?:\/|$)|stats(?:\/|$))/.test(fullPath);
   if (
-    publicPaths.some(
+    !isWebhookAudit && publicPaths.some(
       p =>
         fullPath === p ||
         fullPath.startsWith(p) ||
