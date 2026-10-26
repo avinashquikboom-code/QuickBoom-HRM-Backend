@@ -39,7 +39,7 @@ export async function canonicalCampaignImage(url?: string | null): Promise<strin
   const s3 = await campaignS3();
   if (s3 && /^https:\/\//.test(url)) {
     const parsed = new URL(url);
-    if (parsed.hostname.startsWith(`${s3.bucket}.s3.`) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
+    if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
       const name = parsed.pathname.replace(/^\/campaigns\//, '');
       if (pattern.test(name)) return `s3://${s3.bucket}/campaigns/${name}`;
     }
