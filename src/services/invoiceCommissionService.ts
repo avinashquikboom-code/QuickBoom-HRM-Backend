@@ -70,16 +70,25 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
   const raws = list(meta?.lineItems);
   const saved = list(sale?.productBreakdown);
   const display = (raws.length ? raws : saved).map(displayLine);
-  if (frozen(sale)) {
-    const total = new D(String(sale!.commissionAmount));
-    const valid = saved.length > 0 && saved.every(l => amount(l.commissionAmount ?? l.productCommission) !== null);
-    const sum = valid ? saved.reduce((n,l)=>n.plus(String(l.commissionAmount??l.productCommission)),new D(0)) : null;
-    if (!valid || !sum!.equals(total)) {
+  const recordedTotal = amount(sale?.commissionAmount);
+  const valid = saved.length > 0 && saved.every(l => amount(l.commissionAmount ?? l.productCommission) !== null);
+  const sum = valid ? saved.reduce((n,l)=>n.plus(String(l.commissionAmount??l.productCommission)),new D(0)) : null;
+  const reconciled = recordedTotal !== null && sum !== null && sum.equals(new D(String(recordedTotal)));
+  const recordedPending = sale?.status === 'PENDING' && reconciled && saved.every(l => l.commissionState === 'CONFIGURED' && !l.missingReason);
+  if (frozen(sale) || recordedPending) {
+    if (!reconciled) {
       const reason=valid?'HISTORICAL_TOTAL_MISMATCH':'HISTORICAL_SNAPSHOT_MISSING';
       const lines=display.map(l=>({...l,commissionState:reason,missingReason:reason,configurationMessage:messages[reason]}));
       const recordedRate=amount(sale!.commissionPercent);
       const recordedRateDisplay=recordedRate===null?'Approved item breakdown unavailable':sale!.commissionType==='FIXED'?`Recorded fixed rate ₹${recordedRate}`:`Recorded ${recordedRate}%`;
-      return {...summarizeInvoiceLines(lines),commissionSource:'APPROVED_HISTORY',commissionState:'HISTORICAL_RECONCILIATION_REQUIRED',rateDisplay:recordedRateDisplay,recordedCommissionAmount:total.toNumber(),recordedCommissionRate:recordedRate,reconciliationMessage:messages[reason],approvalStatus:sale!.status};
+      return {...summarizeInvoiceLines(lines),commissionSource:'APPROVED_HISTORY',
+        commissionState:recordedTotal === null ? 'COMMISSION_RECORD_MISSING' : 'HISTORICAL_RECONCILIATION_REQUIRED',
+        // Item completeness and the persisted employee total are independent. Never
+        // discard an approved total or invent allocations for incomplete item history.
+        commissionAmount:recordedTotal,commissionEarned:recordedTotal,commission:recordedTotal,totalCommission:recordedTotal,newCommission:recordedTotal,
+        commissionTotalState:recordedTotal === null ? 'UNRESOLVED' : 'RECORDED',itemCommissionState:'UNRESOLVED',
+        rateDisplay:recordedRateDisplay,recordedCommissionAmount:recordedTotal,recordedCommissionRate:recordedRate,
+        reconciliationMessage:recordedTotal === null ? 'The approved commission record has no valid persisted amount. Accounting review is required.' : messages[reason],approvalStatus:sale!.status};
     }
     const lines=saved.map((snapshot,i)=>{
       const raw=raws.find(r=>String(r.lineItemId??r.saleItemId??'')===String(snapshot.saleItemId??snapshot.lineItemId??'__missing'))??raws.find(r=>String(r.productID??r.productId)===String(snapshot.productID??snapshot.productId))??snapshot;
@@ -90,7 +99,7 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
         commissionType:snapshot.commissionType??sale!.commissionType,fixedBasis:snapshot.fixedBasis??null,rateId:snapshot.rateId??null,commissionState:'CONFIGURED',missingReason:null,configurationMessage:null};
     });
     const result=summarizeInvoiceLines(lines,'HISTORICAL_SNAPSHOT');
-    return {...result,commissionSource:saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,recordedCommissionAmount:total.toNumber(),approvalStatus:sale!.status};
+    return {...result,commissionSource:saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,commission:recordedTotal,commissionTotalState:'RECORDED',itemCommissionState:'COMPLETE',recordedCommissionAmount:recordedTotal,approvalStatus:sale!.status};
   }
 
   const documents = await tx.hrmCommissionDocument.findMany({ where: { storeId: context.storeId, kind: 'SALE', OR: [
@@ -170,9 +179,14 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
   return prisma.$transaction(async tx=>{
     const employee=await tx.employee.findFirst({where:{userId},include:{store:true}});
     if(!employee) throw Object.assign(new Error('Employee profile not found'),{status:404});
-    const aliases=[billId,...(/^\d+$/.test(billId)?[`HWM-${billId}`]:[])];
+    const aliases=[billId,...(/^\d+$/.test(billId)?[`HWM-${billId}`, `INV-${billId}`]:[])];
     let sale=await tx.commissionTransaction.findFirst({where:{employeeId:employee.id,OR:[{billId:{in:aliases}},{invoiceNumber:{in:aliases}}]},orderBy:{id:'desc'}});
-    if(!sale&&/^\d+$/.test(billId)&&Number(billId)<=2147483647) sale=await tx.commissionTransaction.findFirst({where:{employeeId:employee.id,id:Number(billId)}});
+    if(!sale&&/^\d+$/.test(billId)&&Number(billId)<=2147483647) {
+      const candidate=await tx.commissionTransaction.findFirst({where:{employeeId:employee.id,id:Number(billId)}});
+      // Legacy transaction-ID links are allowed only if they resolve to the same
+      // displayed bill. A coincidentally equal row ID must not borrow another invoice.
+      if(candidate && getNumericInvoiceNumber(candidate) === Number(billId)) sale=candidate;
+    }
     const payload=await findInvoicePayload(tx,[...aliases,sale?.billId??'',sale?.invoiceNumber??''],sale?.storeId);
     const meta=payload?extractWebhookMeta(payload.raw):null;
     if(!sale) {

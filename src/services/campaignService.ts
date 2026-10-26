@@ -11,6 +11,29 @@ import {
 import { safeFcmError } from '../utils/fcmErrors';
 import { campaignImages, withCampaignImageLock, validateManagedImage, canonicalCampaignImage } from './campaignImageService';
 
+export type CompanyAdminRole = 'ADMIN' | 'PLATFORM_ADMIN' | 'HR';
+
+export const COMPANY_ADMIN_ROLES: readonly Role[] = [
+  Role.ADMIN,
+  Role.PLATFORM_ADMIN,
+  Role.HR,
+];
+
+/**
+ * Checks whether an application role is a company-level administrator.
+ * Safely accepts any application Role (handling all application roles without unsafe casting).
+ */
+export function isCompanyAdminRole(role: Role): role is CompanyAdminRole {
+  return role === Role.ADMIN || role === Role.PLATFORM_ADMIN || role === Role.HR;
+}
+
+/**
+ * Checks whether an application role is a global or company-level administrator.
+ */
+export function isGlobalOrCompanyAdmin(role: Role): boolean {
+  return role === Role.SUPER_ADMIN || isCompanyAdminRole(role);
+}
+
 export class CampaignService {
   /**
    * Determine actor scope for role-based scoping (Global, Company, Branch, and Store levels)
@@ -43,7 +66,7 @@ export class CampaignService {
     // 2. Company administrators (ADMIN, PLATFORM_ADMIN, HR):
     // Authorized to manage campaigns across their company without requiring a store or branch.
     // If the administrator has an assigned office/company, scope to that office to prevent cross-company access.
-    if (user.role === Role.ADMIN || user.role === Role.PLATFORM_ADMIN || user.role === Role.HR) {
+    if (isCompanyAdminRole(user.role)) {
       if (user.employee?.officeId) {
         return { officeId: user.employee.officeId };
       }

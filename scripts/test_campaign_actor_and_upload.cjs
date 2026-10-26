@@ -14,6 +14,7 @@ const users = new Map([
   [8, { id: 8, role: 'EMPLOYEE', isActive: true, employee: { id: 80, storeId: 7 } }],
   [9, { id: 9, role: 'SALESMAN', isActive: true, employee: { id: 90, storeId: 7 } }],
   [10, { id: 10, role: 'SUPER_ADMIN', isActive: false, employee: null }],
+  [11, { id: 11, role: 'HELPER', isActive: true, employee: { id: 110, storeId: 7 } }],
 ]);
 
 let s3Storage = null;
@@ -79,7 +80,7 @@ require.cache[require.resolve('../src/services/campaignS3Service')] = { exports:
   );
   console.log('PASS: Unassigned store manager throws 403 with meaningful message');
 
-  // G. Unauthorized Roles (EMPLOYEE, SALESMAN) -> throws 403
+  // G. Unauthorized Roles (EMPLOYEE, SALESMAN, HELPER) -> throws 403
   await assert.rejects(
     () => campaignService.actorScope(8),
     (err) => err.status === 403 && /Unauthorized/.test(err.message),
@@ -90,7 +91,12 @@ require.cache[require.resolve('../src/services/campaignS3Service')] = { exports:
     (err) => err.status === 403 && /Unauthorized/.test(err.message),
     'Salesman must be rejected with 403'
   );
-  console.log('PASS: Unauthorized users (EMPLOYEE, SALESMAN) are rejected with 403');
+  await assert.rejects(
+    () => campaignService.actorScope(11),
+    (err) => err.status === 403 && /Unauthorized/.test(err.message),
+    'Helper must be rejected with 403'
+  );
+  console.log('PASS: Unauthorized users (EMPLOYEE, SALESMAN, HELPER) are rejected with 403');
 
   // H. Inactive User -> throws 403
   await assert.rejects(
@@ -99,6 +105,30 @@ require.cache[require.resolve('../src/services/campaignS3Service')] = { exports:
     'Inactive user must be rejected'
   );
   console.log('PASS: Inactive users are rejected with 403');
+
+  // I. Role Helper Functions (isCompanyAdminRole and isGlobalOrCompanyAdmin)
+  const { isCompanyAdminRole, isGlobalOrCompanyAdmin, COMPANY_ADMIN_ROLES } = require('../src/services/campaignService');
+  assert.equal(isCompanyAdminRole('ADMIN'), true);
+  assert.equal(isCompanyAdminRole('PLATFORM_ADMIN'), true);
+  assert.equal(isCompanyAdminRole('HR'), true);
+  assert.equal(isCompanyAdminRole('SUPER_ADMIN'), false);
+  assert.equal(isCompanyAdminRole('STORE_MANAGER'), false);
+  assert.equal(isCompanyAdminRole('EMPLOYEE'), false);
+  assert.equal(isCompanyAdminRole('SALESMAN'), false);
+  assert.equal(isCompanyAdminRole('HELPER'), false);
+
+  assert.equal(isGlobalOrCompanyAdmin('SUPER_ADMIN'), true);
+  assert.equal(isGlobalOrCompanyAdmin('ADMIN'), true);
+  assert.equal(isGlobalOrCompanyAdmin('PLATFORM_ADMIN'), true);
+  assert.equal(isGlobalOrCompanyAdmin('HR'), true);
+  assert.equal(isGlobalOrCompanyAdmin('STORE_MANAGER'), false);
+  assert.equal(isGlobalOrCompanyAdmin('EMPLOYEE'), false);
+  assert.equal(isGlobalOrCompanyAdmin('SALESMAN'), false);
+  assert.equal(isGlobalOrCompanyAdmin('HELPER'), false);
+
+  assert.equal(COMPANY_ADMIN_ROLES.includes('ADMIN'), true);
+  assert.equal(COMPANY_ADMIN_ROLES.includes('EMPLOYEE'), false);
+  console.log('PASS: isCompanyAdminRole and isGlobalOrCompanyAdmin type guards validate all application roles correctly');
 
   console.log('\n--- Testing Campaign Image URL Resolution & S3 Signing ---');
 
