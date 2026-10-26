@@ -84,7 +84,7 @@ export async function groupAndCalculateCommissionBySalesman(
     try {
       const lineMeta = extractProductLineMeta(lineItem);
       const productName = lineMeta.productName || lineItem.name || 'Unknown Product';
-      const productId = lineItem.productID || lineItem.productId || lineItem.id || `prod-${i + 1}`;
+      const productId = lineItem.productID ?? lineItem.productId ?? lineItem.ProductID ?? null;
 
       const rawProdAmount =
         lineItem.productNetAmount ??
@@ -208,7 +208,7 @@ export async function groupAndCalculateCommissionBySalesman(
       const categoryDisplay = lineMeta.category || (lineMeta.categoryId ? `Category ${lineMeta.categoryId}` : null);
 
       const productSnapshot = {
-        ...resolvedLine, commissionSource:'SUBCATEGORY', productID:productId, productName,
+        ...resolvedLine, commissionSource:'SUBCATEGORY', productID:productId, productName:resolvedLine?.productName ?? productName,
         sku:lineMeta.sku,category:categoryDisplay,categoryId:lineMeta.categoryId,variant:lineMeta.variant,
         subcategoryId: resolvedLine?.subcategoryId ?? lineMeta.subcategoryId ?? lineItem.subcategoryId ?? null,
         subcategoryName: resolvedLine?.subcategoryName ?? lineMeta.subcategoryName ?? lineItem.subcategoryName ?? null,
@@ -414,8 +414,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
     itemsToProcess = meta.lineItems;
   } else if (meta.salesmen && meta.salesmen.length > 0) {
     itemsToProcess = meta.salesmen.map((s, idx) => ({
-      productID: s.productId || s.productID || `SALESMAN-${idx + 1}`,
-      productName: s.productName || s.name || `Salesman Allocation`,
+      productID: s.productId ?? s.productID ?? null,
+      productName: s.productName ?? 'Product details unavailable',
       productNetAmount: safeParseAmount(s.amount ?? s.saleAmount ?? s.applicableAmount ?? (primaryAmount * (s.percentage || s.sharePercent || 0) / 100)),
       employeeCode: s.employeeCode || s.code || s.empCode || s.employeeId || s.salesmanCode || s.id,
       employeeName: s.employeeName || s.name || s.salesmanName,

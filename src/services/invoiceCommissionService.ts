@@ -1,4 +1,4 @@
-import { recoverSavedInvoiceItems } from './invoiceItemRecovery';
+import { recoverSavedInvoiceItems, recoverInvoiceItemIdentities } from './invoiceItemRecovery';
 import { CommissionTransaction, Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
 import { extractWebhookMeta, fetchHopkidInvoiceDetails, getNumericInvoiceNumber } from '../utils/commissionHelper';
@@ -104,7 +104,9 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
     }
     return {...summarizeInvoiceLines(lines),itemDataSource:'HRM_LEDGER_SNAPSHOT',approvalStatus:sale?.status??'PENDING'};
   }
-  const calculationItems = raws.length ? raws : await recoverSavedInvoiceItems(tx,saved);
+  const calculationItems = raws.length ? await recoverInvoiceItemIdentities(tx,raws) : await recoverSavedInvoiceItems(tx,saved);
+  // Render the recovered identities used for calculation, rather than stale placeholder snapshots.
+  display.splice(0, display.length, ...calculationItems.map(displayLine));
   const itemDataSource = raws.length ? 'INVOICE_PAYLOAD' : saved.length ? 'SAVED_PRODUCT_BREAKDOWN' : 'UNAVAILABLE';
   const settings = await tx.hrmCommissionSettings.findUnique({ where: { id: 1 } });
   let doc;
@@ -190,7 +192,7 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
       customerName:meta?.customerName??null,customerPhone:meta?.customerPhone??null,paymentMode:meta?.paymentMode??null,
       storeName:meta?.storeName??employee.store?.name??null,externalEventId:payload?.id??null,
       products:list(meta?.lineItems).length > 0
-        ? list(meta?.lineItems).map((l:any)=>({name:extractProductLineMeta(l).productName??l.name??'Product',quantity:amount(l.quantity??l.qty)??1,price:Number(l.unitPrice??l.productPrice??l.price??0)}))
+        ? list(meta?.lineItems).map((l:any,index:number)=>({name:result.productCommissionBreakdown[index]?.productName??extractProductLineMeta(l).productName??l.name??'Product',quantity:amount(l.quantity??l.qty)??1,price:Number(l.unitPrice??l.productPrice??l.price??0)}))
         : result.productCommissionBreakdown.map((l:any)=>({name:l.productName??'Product',quantity:l.quantity??1,price:l.saleAmount??0})),
       employee:{name:`${employee.firstName} ${employee.lastName}`.trim(),code:employee.employeeCode} };
   },{timeout:30000});
