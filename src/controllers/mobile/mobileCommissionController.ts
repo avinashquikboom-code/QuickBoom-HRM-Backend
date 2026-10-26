@@ -172,6 +172,18 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
       const rate = recorded.commissionRate;
 
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
+      const {
+        commission: _recordedCommission,
+        commissionType: _recordedCommissionType,
+        commissionPercent: _recordedPercent,
+        commissionPercentage: _recordedPercentage,
+        commissionRate: _recordedRate,
+        commissionAmount: _recordedAmount,
+        commissionEarned: _recordedEarned,
+        totalCommission: _recordedTotal,
+        hasUnresolvedInvoiceItems: _recordedUnresolved,
+        ...recordedMetadata
+      } = recorded;
 
       return {
         id: t.id,
@@ -182,6 +194,7 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
         invoiceId: t.billId || String(t.id),
         hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
         customerName: noteClean,
+        ...recordedMetadata,
         amount: effectiveSale,
         saleAmount: effectiveSale,
         billAmount: effectiveSale,
@@ -194,7 +207,6 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
         commissionEarned: unresolved ? null : comm,
         totalCommission: unresolved ? null : comm,
         hasUnresolvedInvoiceItems: unresolved,
-        ...recorded,
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),
@@ -939,6 +951,17 @@ export const getMobileCommissionBills = async (
       const comm = recorded.commissionEarned;
       const unresolved = recorded.hasUnresolvedInvoiceItems;
       const rate = recorded.commissionRate;
+      const {
+        commission: _recordedCommission,
+        commissionAmount: _recordedAmount,
+        commissionEarned: _recordedEarned,
+        commissionRate: _recordedRate,
+        commissionPercentage: _recordedPercentage,
+        commissionPercent: _recordedPercent,
+        hasUnresolvedInvoiceItems: _recordedUnresolved,
+        totalCommission: _recordedTotal,
+        ...recordedMetadata
+      } = recorded;
 
       return {
         id: String(t.id),
@@ -946,6 +969,7 @@ export const getMobileCommissionBills = async (
         billNumber: numInv,
         invoiceNumber: t.invoiceNumber || `HWM-${numInv}`,
         invoiceNo: t.invoiceNumber || `HWM-${numInv}`,
+        ...recordedMetadata,
         saleAmount: effectiveSale,
         billAmount: effectiveSale,
         commission: unresolved ? null : comm,
@@ -955,7 +979,6 @@ export const getMobileCommissionBills = async (
         commissionPercentage: rate,
         commissionPercent: rate,
         hasUnresolvedInvoiceItems: unresolved,
-        ...recorded,
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),

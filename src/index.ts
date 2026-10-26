@@ -192,6 +192,9 @@ app.use('/api/admin/activity-logs', activityLogsRoutes);
 app.use('/api/admin/commission', commissionReportController);
 app.use('/api/admin/dashboard', dashboardController);
 app.use('/api/admin/notification-management', notificationManagementRoutes);
+import campaignRoutes from './routes/campaignRoutes';
+app.use('/api/v1/admin/campaigns', campaignRoutes);
+app.use('/api/admin/campaigns', campaignRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
@@ -524,6 +527,7 @@ import { initFeatureExpiryCron } from './scripts/featureExpiryCron';
 import { initPayrollCron } from './services/payrollCronService';
 import { initAutoPunchOutCron } from './services/autoPunchOutService';
 import { initNotificationRuleCron } from './services/notificationRuleScheduler';
+import { initCampaignCron } from './services/campaignScheduler';
 
 // Initialize cron jobs
 initHrmCommissionProjection();
@@ -531,6 +535,7 @@ initFeatureExpiryCron();
 initPayrollCron();
 initAutoPunchOutCron();
 initNotificationRuleCron();
+initCampaignCron();
 
 server.listen(port, host, () => {
   console.log('Server is running at http://' + host + ':' + port);

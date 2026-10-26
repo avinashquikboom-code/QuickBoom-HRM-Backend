@@ -21,6 +21,7 @@ export const fetchMyNotifications = async (
 
     const formattedNotifications = notifications.map(n => ({
       id: n.id.toString(),
+      campaignId: n.campaignId || null,
       title: n.title,
       body: n.body,
       category: n.category,
@@ -80,6 +81,7 @@ export const getNotificationById = async (
       success: true,
       data: {
         id: notification.id.toString(),
+        campaignId: notification.campaignId || null,
         title: notification.title,
         body: notification.body,
         category: notification.category,

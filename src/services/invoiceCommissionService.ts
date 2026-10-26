@@ -77,7 +77,9 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
     if (!valid || !sum!.equals(total)) {
       const reason=valid?'HISTORICAL_TOTAL_MISMATCH':'HISTORICAL_SNAPSHOT_MISSING';
       const lines=display.map(l=>({...l,commissionState:reason,missingReason:reason,configurationMessage:messages[reason]}));
-      return {...summarizeInvoiceLines(lines),commissionSource:'APPROVED_HISTORY',commissionState:'HISTORICAL_RECONCILIATION_REQUIRED',rateDisplay:'Approved item breakdown unavailable',recordedCommissionAmount:total.toNumber(),reconciliationMessage:messages[reason],approvalStatus:sale!.status};
+      const recordedRate=amount(sale!.commissionPercent);
+      const recordedRateDisplay=recordedRate===null?'Approved item breakdown unavailable':sale!.commissionType==='FIXED'?`Recorded fixed rate ₹${recordedRate}`:`Recorded ${recordedRate}%`;
+      return {...summarizeInvoiceLines(lines),commissionSource:'APPROVED_HISTORY',commissionState:'HISTORICAL_RECONCILIATION_REQUIRED',rateDisplay:recordedRateDisplay,recordedCommissionAmount:total.toNumber(),recordedCommissionRate:recordedRate,reconciliationMessage:messages[reason],approvalStatus:sale!.status};
     }
     const lines=saved.map((snapshot,i)=>{
       const raw=raws.find(r=>String(r.lineItemId??r.saleItemId??'')===String(snapshot.saleItemId??snapshot.lineItemId??'__missing'))??raws.find(r=>String(r.productID??r.productId)===String(snapshot.productID??snapshot.productId))??snapshot;

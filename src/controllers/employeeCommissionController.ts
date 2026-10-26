@@ -119,9 +119,18 @@ export const fetchCommissionWallet = async (
     const recentTransactions = allTransactions.slice(0, 50).map(t => {
       const numInv = getNumericInvoiceNumber(t);
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
-      const recorded=recordedInvoiceCommission(t);
-      const unresolved=recorded.hasUnresolvedInvoiceItems;
-      const resolvedRate=recorded.commissionRate;
+      const recorded = recordedInvoiceCommission(t);
+      const unresolved = recorded.hasUnresolvedInvoiceItems;
+      const resolvedRate = recorded.commissionRate;
+      const {
+        commissionRate: _recordedRate,
+        commissionPercent: _recordedPercent,
+        commissionPercentage: _recordedPercentage,
+        commissionEarned: _recordedEarned,
+        hasUnresolvedInvoiceItems: _recordedUnresolved,
+        ...recordedMetadata
+      } = recorded;
+
       console.log({
         invoiceId: t.billId || t.id,
         billNumber: numInv,
@@ -136,13 +145,13 @@ export const fetchCommissionWallet = async (
         invoiceId: t.billId || t.id.toString(),
         hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
         customerName: noteClean,
+        ...recordedMetadata,
         billAmount: t.saleAmount,
         commissionPercentage: resolvedRate,
         commissionPercent: resolvedRate,
         commissionRate: resolvedRate,
         commissionEarned: unresolved ? null : t.commissionAmount,
         hasUnresolvedInvoiceItems: unresolved,
-        ...recorded,
         generatedDate: t.createdAt.toISOString(),
         paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
         status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
