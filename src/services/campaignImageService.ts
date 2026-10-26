@@ -37,15 +37,29 @@ export async function canonicalCampaignImage(url?: string | null): Promise<strin
   if (!url) return url;
   // A signed URL returned by this API is normalized back to its stored canonical key.
   const s3 = await campaignS3();
-  if (s3 && /^https:\/\//.test(url)) {
-    try {
-      const parsed = new URL(url);
-      if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
-        const key = parsed.pathname.replace(/^\/+/, '');
-        return `s3://${s3.bucket}/${key}`;
+  if (s3) {
+    if (/^https:\/\//.test(url)) {
+      try {
+        const parsed = new URL(url);
+        if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
+          const key = parsed.pathname.replace(/^\/+/, '');
+          return `s3://${s3.bucket}/${key}`;
+        }
+      } catch {
+        // Keep url if URL parsing fails
       }
-    } catch {
-      // Keep url if URL parsing fails
+    }
+    // If it's a stale local URL or bare filename for an image stored in S3, canonicalize to S3
+    const clean = url.replace(/^\/+/, '').replace(/^(api\/)?uploads\/campaigns\//, '');
+    if (url.includes('uploads/campaigns') || (!url.includes('/') && url.includes('.'))) {
+      const s3Key = `campaigns/${clean}`;
+      try {
+        if (await s3.exists(s3Key)) {
+          return `s3://${s3.bucket}/${s3Key}`;
+        }
+      } catch {
+        // keep url
+      }
     }
   }
   return url;
@@ -184,25 +198,50 @@ export const campaignImages = {
       return url;
     }
 
-    // 3. If it's already an absolute HTTP/HTTPS URL
+    // 3. If it's already an absolute external HTTP/HTTPS URL
     if (/^https?:\/\//.test(url)) {
       return url;
     }
 
     // 4. If it's a relative path or bare filename
-    const base = process.env.PUBLIC_API_URL?.replace(/\/$/, '') || '';
     const clean = url.replace(/^\/+/, '');
+    const filename = clean.replace(/^(api\/)?uploads\/campaigns\//, '');
 
-    // Check if it's already an api uploads or uploads path
-    if (clean.startsWith('api/uploads/')) {
-      return base ? `${base}/${clean}` : `/${clean}`;
-    }
-    if (clean.startsWith('uploads/')) {
-      return base ? `${base}/api/${clean}` : `/api/${clean}`;
+    // Check if S3 is active
+    const s3 = await campaignS3();
+    if (s3) {
+      const s3Key = `campaigns/${filename}`;
+      try {
+        if (await s3.exists(s3Key)) {
+          return await s3.sign(s3Key);
+        }
+        if (await s3.exists(filename)) {
+          return await s3.sign(filename);
+        }
+      } catch (err) {
+        console.warn(`[CampaignImage] S3 check error for ${filename}:`, err);
+      }
+
+      // Check if file is present on local disk candidates
+      const candidatePaths = [
+        path.join(process.cwd(), 'uploads', 'campaigns', filename),
+        path.resolve(__dirname, '..', '..', 'uploads', 'campaigns', filename),
+        path.resolve(__dirname, '..', 'uploads', 'campaigns', filename),
+        path.join(process.cwd(), 'dist', 'uploads', 'campaigns', filename),
+      ];
+      const existsOnDisk = candidatePaths.some(p => {
+        try { return require('fs').existsSync(p); } catch { return false; }
+      });
+
+      if (!existsOnDisk) {
+        // Stop generating local /api/uploads/campaigns/... URLs for S3-backed images
+        return await s3.sign(s3Key);
+      }
     }
 
-    // Bare filename e.g. campaign_1793030810851_22178914.png or v1-xxx-detail.jpg
-    const fullPath = `api/uploads/campaigns/${clean}`;
+    // 5. Local delivery: normalize to /api/uploads/campaigns/...
+    const base = process.env.PUBLIC_API_URL?.replace(/\/$/, '') || '';
+    const fullPath = `api/uploads/campaigns/${filename}`;
     return base ? `${base}/${fullPath}` : `/${fullPath}`;
   },
 

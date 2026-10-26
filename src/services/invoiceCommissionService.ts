@@ -99,7 +99,7 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
         commissionType:snapshot.commissionType??sale!.commissionType,fixedBasis:snapshot.fixedBasis??null,rateId:snapshot.rateId??null,commissionState:'CONFIGURED',missingReason:null,configurationMessage:null};
     });
     const result=summarizeInvoiceLines(lines,'HISTORICAL_SNAPSHOT');
-    return {...result,commissionSource:saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,commission:recordedTotal,commissionTotalState:'RECORDED',itemCommissionState:'COMPLETE',recordedCommissionAmount:recordedTotal,approvalStatus:sale!.status};
+    return {...result,commissionSource:recordedPending?'RECORDED_SNAPSHOT':saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,commission:recordedTotal,commissionTotalState:'RECORDED',itemCommissionState:'COMPLETE',recordedCommissionAmount:recordedTotal,approvalStatus:sale!.status};
   }
 
   const documents = await tx.hrmCommissionDocument.findMany({ where: { storeId: context.storeId, kind: 'SALE', OR: [
@@ -179,8 +179,11 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
   return prisma.$transaction(async tx=>{
     const employee=await tx.employee.findFirst({where:{userId},include:{store:true}});
     if(!employee) throw Object.assign(new Error('Employee profile not found'),{status:404});
-    const aliases=[billId,...(/^\d+$/.test(billId)?[`HWM-${billId}`, `INV-${billId}`]:[])];
-    let sale=await tx.commissionTransaction.findFirst({where:{employeeId:employee.id,OR:[{billId:{in:aliases}},{invoiceNumber:{in:aliases}}]},orderBy:{id:'desc'}});
+    const numbered=/^(?:HWM-|INV-)?(\d+)$/i.exec(billId.trim());
+    const aliases=[...new Set([billId,...(numbered?[numbered[1],`HWM-${numbered[1]}`,`INV-${numbered[1]}`]:[])])];
+    const matches=await tx.commissionTransaction.findMany({where:{employeeId:employee.id,OR:[{billId:{in:aliases}},{invoiceNumber:{in:aliases}}]},orderBy:{id:'desc'},take:2});
+    if(matches.length>1) throw Object.assign(new Error('Invoice commission records are ambiguous. Accounting review is required.'),{status:409});
+    let sale=matches[0]??null;
     if(!sale&&/^\d+$/.test(billId)&&Number(billId)<=2147483647) {
       const candidate=await tx.commissionTransaction.findFirst({where:{employeeId:employee.id,id:Number(billId)}});
       // Legacy transaction-ID links are allowed only if they resolve to the same

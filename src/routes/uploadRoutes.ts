@@ -16,6 +16,15 @@ function getCandidateFilePaths(filename: string): string[] {
   ];
 }
 
+function getCandidateCampaignPaths(filename: string): string[] {
+  return [
+    path.join(process.cwd(), 'uploads', 'campaigns', filename),
+    path.resolve(__dirname, '..', '..', 'uploads', 'campaigns', filename),
+    path.resolve(__dirname, '..', 'uploads', 'campaigns', filename),
+    path.join(process.cwd(), 'dist', 'uploads', 'campaigns', filename),
+  ];
+}
+
 // Public route to download/view expense receipt PDFs (no auth required)
 router.get('/receipts/:filename', async (req, res) => {
   const filename = req.params.filename as string;
@@ -141,6 +150,71 @@ router.get('/receipts/:filename', async (req, res) => {
   res.status(404).json({
     success: false,
     message: 'Receipt not found',
+  });
+});
+
+// Public route to view/download campaign banner images (no auth required)
+router.get('/campaigns/:filename', async (req, res) => {
+  const filename = req.params.filename as string;
+
+  // Validate filename to prevent path traversal
+  if (!filename || filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    res.status(403).json({ success: false, message: 'Invalid file name' });
+    return;
+  }
+
+  // 1. Check local disk candidate paths
+  const candidates = getCandidateCampaignPaths(filename);
+  let existingFilePath: string | null = null;
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      existingFilePath = candidate;
+      break;
+    }
+  }
+
+  if (existingFilePath) {
+    const lower = filename.toLowerCase();
+    let contentType = 'image/jpeg';
+    if (lower.endsWith('.png')) contentType = 'image/png';
+    else if (lower.endsWith('.webp')) contentType = 'image/webp';
+    else if (lower.endsWith('.gif')) contentType = 'image/gif';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    const stream = fs.createReadStream(existingFilePath);
+    stream.pipe(res);
+    return;
+  }
+
+  // 2. If not on disk, check if S3 is configured and contains the object
+  try {
+    const { campaignS3 } = await import('../services/campaignS3Service');
+    const s3 = await campaignS3();
+    if (s3) {
+      const s3Key = `campaigns/${filename}`;
+      if (await s3.exists(s3Key)) {
+        const signedUrl = await s3.sign(s3Key);
+        res.redirect(302, signedUrl);
+        return;
+      }
+      if (await s3.exists(filename)) {
+        const signedUrl = await s3.sign(filename);
+        res.redirect(302, signedUrl);
+        return;
+      }
+    }
+  } catch (s3Err) {
+    console.warn(`[Campaign Image Delivery] S3 lookup failed for "${filename}":`, s3Err);
+  }
+
+  // 3. File not found on disk and not found in S3
+  res.status(404).json({
+    success: false,
+    message: 'Campaign image not found',
   });
 });
 

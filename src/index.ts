@@ -119,9 +119,11 @@ app.use('/api/v1/pos', posRoutes);
 
 // Ensure uploads directory structure exists on startup
 import fs from 'fs';
-const uploadsBase = path.join(process.cwd(), 'uploads', 'receipts');
-if (!fs.existsSync(uploadsBase)) {
-  fs.mkdirSync(uploadsBase, { recursive: true });
+for (const sub of ['receipts', 'campaigns']) {
+  const dir = path.join(process.cwd(), 'uploads', sub);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 }
 
 // Serve static upload files (public access, no auth)

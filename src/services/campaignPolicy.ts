@@ -121,7 +121,7 @@ export function safeUrl(value: unknown, image = false): string | null {
     throw new CampaignError(400, 'Invalid URL format');
   }
   const trimmed = value.trim();
-  if (image && /^s3:\/\/[^/]+\/campaigns\/v1-[a-f0-9]{64}-(detail|notification|thumbnail)\.jpg$/.test(trimmed)) return trimmed;
+  if (image && /^s3:\/\/[^/]+\/campaigns\/.+$/.test(trimmed)) return trimmed;
   if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
     return trimmed;
   }

@@ -1,5 +1,6 @@
 import { campaignImageResponse } from '../services/campaignImageService';
 import { Router, Response } from 'express';
+import path from 'path';
 import multer from 'multer';
 import { authenticateToken, requireRole, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { campaignService } from '../services/campaignService';
@@ -300,10 +301,20 @@ const handleUploadImage = handle(async (req, res) => {
     size: buffer.length,
   });
 
+  const canonicalUrl = imageUrl;
+  const objectKey = canonicalUrl.startsWith('s3://')
+    ? canonicalUrl.replace(/^s3:\/\/[^/]+\//, '')
+    : `campaigns/${path.basename(canonicalUrl)}`;
+
   res.status(201).json(await campaignImageResponse({
     success: true,
     message: 'Campaign image uploaded successfully.',
-    data: { imageUrl },
+    data: {
+      imageUrl,
+      canonicalUrl,
+      objectKey,
+      key: objectKey,
+    },
   }));
 });
 

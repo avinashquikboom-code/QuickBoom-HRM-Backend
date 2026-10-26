@@ -158,6 +158,12 @@ require.cache[require.resolve('../src/services/campaignS3Service')] = { exports:
   assert(signedLegacy.includes(legacyFilename), 'Signed URL must contain original object key');
   console.log('PASS: Legacy S3 keys sign successfully without failing pattern check');
 
+  // C2. When S3 is configured, S3-backed bare filenames return signed URL instead of generating local /api/uploads/...
+  const signedBareWhenS3 = await campaignImages.displayUrl(legacyFilename);
+  assert(signedBareWhenS3.includes('X-Amz-Signature=signed_token'), 'S3-backed image must return signed URL when S3 is active');
+  assert(signedBareWhenS3.includes(legacyFilename), 'Signed URL must target the correct object key');
+  console.log('PASS: S3-backed images return signed URLs instead of generating local /api/uploads/ URLs');
+
   // D. S3 upload error cleanup: ledger entry must not persist if storage fails
   const buffer = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#ffffff' } }).png().toBuffer();
   s3Storage.exists = async () => false;
