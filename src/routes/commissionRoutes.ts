@@ -2,6 +2,8 @@ import { protectLegacyPOSReview } from '../pos/commissions';
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middlewares/authMiddleware';
 import {
+  getCommissionDashboard,
+  getCommissionTransactions,
   createCommissionTransaction,
   approveCommissionTransaction,
   rejectCommissionTransaction,
@@ -24,22 +26,8 @@ const router = Router();
 // Apply authorization middleware
 router.use(authMiddleware);
 
-// GET /api/commission/transactions (Subcategory-wise with database pagination)
-router.get('/transactions', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const actor = await resolveActorFromRequest(req);
-    const result = await retailCommissionTransactions(actor, req.query);
-    res.json(result);
-  } catch (error: any) {
-    res.status(error.status || 500).json({
-      success: false,
-      message: error.message || 'Failed to fetch transactions',
-      transactions: [],
-      pagination: { page: 1, pageSize: 20, total: 0, totalPages: 1 },
-      totals: { netSales: 0, commissionAmount: 0, totalTransactions: 0 },
-    });
-  }
-});
+// GET /api/commission/transactions (CommissionTransaction with database pagination & filters)
+router.get('/transactions', getCommissionTransactions);
 
 // POST /api/commission/transactions
 router.post('/transactions', createCommissionTransaction);
@@ -50,26 +38,8 @@ router.put('/transactions/:id/approve', protectLegacyPOSReview('APPROVED'), appr
 // PUT /api/commission/transactions/:id/reject
 router.put('/transactions/:id/reject', protectLegacyPOSReview('REJECTED'), rejectCommissionTransaction);
 
-// GET /api/commission/dashboard (Subcategory-wise metrics)
-router.get('/dashboard', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const actor = await resolveActorFromRequest(req);
-    const dashboard = await retailCommissionDashboard(actor, req.query);
-    res.json(dashboard);
-  } catch (error: any) {
-    res.status(error.status || 500).json({
-      success: false,
-      message: error.message || 'Failed to fetch commission dashboard stats',
-      stats: {
-        today: { commission: 0, sales: 0, transactions: 0 },
-        month: { commission: 0, sales: 0, transactions: 0 },
-        period: { commission: 0, sales: 0, transactions: 0 },
-        topSubcategories: [],
-        recentTransactions: [],
-      },
-    });
-  }
-});
+// GET /api/commission/dashboard (CommissionTransaction aggregated metrics)
+router.get('/dashboard', getCommissionDashboard);
 
 // GET /api/commission/subcategories
 router.get('/subcategories', async (req: Request, res: Response): Promise<void> => {

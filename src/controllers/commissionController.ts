@@ -32,9 +32,238 @@ export const getCommissionDashboard = async (
   res: Response
 ): Promise<void> => {
   try {
-    const actor = await resolveActorFromRequest(req);
-    const dashboard = await retailCommissionDashboard(actor, req.query);
-    res.json(dashboard);
+    const { storeId, employeeId, subcategoryId, search, dateRange, period, startDate, endDate } = req.query;
+
+    const conditions: any[] = [];
+    if (employeeId) {
+      const resolvedId = await resolveEmployeeId(employeeId as string);
+      conditions.push({ employeeId: resolvedId !== null ? resolvedId : -1 });
+    } else if (req.user?.role === 'EMPLOYEE' && req.user?.id) {
+      const numericUserId = Number(req.user.id);
+      if (!isNaN(numericUserId)) {
+        const currentEmp = await prisma.employee.findFirst({ where: { userId: numericUserId } }).catch(() => null);
+        if (currentEmp) conditions.push({ employeeId: currentEmp.id });
+      }
+    } else if (req.user?.role === 'STORE_MANAGER' && (!storeId || storeId === 'all')) {
+      const numericUserId = Number(req.user.id);
+      if (!isNaN(numericUserId)) {
+        const mgrEmp = await prisma.employee.findFirst({ where: { userId: numericUserId }, select: { storeId: true } }).catch(() => null);
+        if (mgrEmp?.storeId) {
+          conditions.push({
+            OR: [{ storeId: mgrEmp.storeId }, { employee: { storeId: mgrEmp.storeId } }]
+          });
+        }
+      }
+    }
+
+    if (storeId && storeId !== 'all' && storeId !== '' && !isNaN(parseInt(storeId as string, 10))) {
+      const sId = parseInt(storeId as string, 10);
+      conditions.push({
+        OR: [{ storeId: sId }, { employee: { storeId: sId } }]
+      });
+    }
+
+    if (search) {
+      const term = String(search).trim();
+      conditions.push({
+        OR: [
+          { billId: { contains: term, mode: 'insensitive' } },
+          { invoiceNumber: { contains: term, mode: 'insensitive' } },
+          { employee: { firstName: { contains: term, mode: 'insensitive' } } },
+          { employee: { lastName: { contains: term, mode: 'insensitive' } } },
+          { employee: { employeeCode: { contains: term, mode: 'insensitive' } } },
+          { store: { name: { contains: term, mode: 'insensitive' } } },
+        ]
+      });
+    }
+
+    // Only count non-rejected, non-cancelled transactions for dashboard stats
+    conditions.push({
+      status: { notIn: ['REJECTED', 'CANCELLED'] }
+    });
+
+    const whereClause: any = conditions.length > 0 ? { AND: conditions } : {};
+
+    const allTx = await prisma.commissionTransaction.findMany({
+      where: whereClause,
+      include: {
+        employee: { include: { store: true } },
+        store: true,
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const eligible = allTx.filter(t => isEligibleCommissionEmployee(t?.employee));
+    const deduped = deduplicateCommissionTransactions(eligible);
+
+    // Filter by subcategory if specified
+    const filteredTx = (subcategoryId && subcategoryId !== 'all')
+      ? deduped.filter(t => {
+          if (!Array.isArray(t.productBreakdown)) return false;
+          return (t.productBreakdown as any[]).some((p: any) =>
+            p.subcategoryId === subcategoryId ||
+            p.subcategoryName === subcategoryId ||
+            p.subcategory === subcategoryId
+          );
+        })
+      : deduped;
+
+    // Time calculations in IST
+    const now = new Date(Date.now() + 19800000);
+    const todayStr = now.toISOString().slice(0, 10);
+    const todayStart = new Date(`${todayStr}T00:00:00+05:30`);
+    const todayEnd = new Date(`${todayStr}T23:59:59.999+05:30`);
+    const monthStartStr = `${todayStr.slice(0, 7)}-01`;
+    const monthStart = new Date(`${monthStartStr}T00:00:00+05:30`);
+
+    let periodStart = new Date('2020-01-01T00:00:00+05:30');
+    let periodEnd = todayEnd;
+
+    const periodVal = (dateRange || period) as string | undefined;
+    if (startDate) {
+      periodStart = parseIstStartOfDay(startDate as string);
+    } else if (periodVal === 'today') {
+      periodStart = todayStart;
+      periodEnd = todayEnd;
+    } else if (periodVal === 'yesterday') {
+      const y = new Date(todayStart.getTime() - 86400000);
+      const yStr = y.toISOString().slice(0, 10);
+      periodStart = new Date(`${yStr}T00:00:00+05:30`);
+      periodEnd = new Date(`${yStr}T23:59:59.999+05:30`);
+    } else if (periodVal === 'week') {
+      periodStart = new Date(todayStart.getTime() - 6 * 86400000);
+      periodEnd = todayEnd;
+    } else if (periodVal === 'month' || periodVal === 'current_month') {
+      periodStart = monthStart;
+      periodEnd = todayEnd;
+    }
+
+    if (endDate) {
+      periodEnd = parseIstEndOfDay(endDate as string);
+    }
+
+    const calcMetric = (items: typeof filteredTx) => {
+      const commission = Math.round(items.reduce((sum, t) => sum + (Number(t.newCommission ?? t.commissionAmount) || 0), 0) * 100) / 100;
+      const sales = Math.round(items.reduce((sum, t) => sum + (Number(t.newAmount ?? t.saleAmount) || 0), 0) * 100) / 100;
+      const transactions = new Set(items.map(t => t.billId || t.invoiceNumber || t.id)).size;
+      return { commission, sales, transactions };
+    };
+
+    const todayItems = filteredTx.filter(t => {
+      const d = new Date(t.createdAt);
+      return d >= todayStart && d <= todayEnd;
+    });
+
+    const monthItems = filteredTx.filter(t => {
+      const d = new Date(t.createdAt);
+      return d >= monthStart && d <= todayEnd;
+    });
+
+    const periodItems = filteredTx.filter(t => {
+      const d = new Date(t.createdAt);
+      return d >= periodStart && d <= periodEnd;
+    });
+
+    // Top Subcategories
+    const subcatMap = new Map<string, {
+      subcategoryId: string | null;
+      subcategoryName: string;
+      commissionType: string;
+      rate: number | null;
+      sales: number;
+      commission: number;
+      billSet: Set<string>;
+      eligibleItems: number;
+    }>();
+
+    for (const t of periodItems) {
+      const billKey = String(t.billId || t.invoiceNumber || t.id);
+      if (Array.isArray(t.productBreakdown) && t.productBreakdown.length > 0) {
+        for (const p of t.productBreakdown as any[]) {
+          const name = p.subcategoryName || p.subcategory || p.category || 'General';
+          const subId = p.subcategoryId || null;
+          const key = subId || name;
+          const existing = subcatMap.get(key) || {
+            subcategoryId: subId,
+            subcategoryName: name,
+            commissionType: p.commissionType || t.commissionType || 'PERCENTAGE',
+            rate: p.commissionRate !== null && p.commissionRate !== undefined ? Number(p.commissionRate) : Number(t.commissionPercent) || null,
+            sales: 0,
+            commission: 0,
+            billSet: new Set<string>(),
+            eligibleItems: 0,
+          };
+          existing.sales += Number(p.eligibleSaleAmount ?? p.saleAmount ?? 0);
+          existing.commission += Number(p.commissionAmount ?? 0);
+          existing.eligibleItems += Number(p.quantity ?? 1);
+          existing.billSet.add(billKey);
+          subcatMap.set(key, existing);
+        }
+      } else {
+        const name = 'General';
+        const existing = subcatMap.get(name) || {
+          subcategoryId: null,
+          subcategoryName: name,
+          commissionType: t.commissionType || 'PERCENTAGE',
+          rate: t.commissionPercent !== null && t.commissionPercent !== undefined ? Number(t.commissionPercent) : null,
+          sales: 0,
+          commission: 0,
+          billSet: new Set<string>(),
+          eligibleItems: 0,
+        };
+        existing.sales += Number(t.newAmount ?? t.saleAmount ?? 0);
+        existing.commission += Number(t.newCommission ?? t.commissionAmount ?? 0);
+        existing.eligibleItems += 1;
+        existing.billSet.add(billKey);
+        subcatMap.set(name, existing);
+      }
+    }
+
+    const topSubcategories = Array.from(subcatMap.values())
+      .map(s => ({
+        subcategoryId: s.subcategoryId,
+        subcategoryName: s.subcategoryName,
+        commissionType: s.commissionType,
+        rate: s.rate,
+        sales: Math.round(s.sales * 100) / 100,
+        commission: Math.round(s.commission * 100) / 100,
+        transactions: s.billSet.size,
+        eligibleItems: s.eligibleItems,
+      }))
+      .sort((a, b) => b.commission - a.commission || b.sales - a.sales)
+      .slice(0, 6);
+
+    const recentTransactions = periodItems.slice(0, 10).map(t => ({
+      id: t.id,
+      billId: t.billId || t.invoiceNumber,
+      invoiceNumber: t.invoiceNumber || t.billId,
+      storeId: t.storeId,
+      storeName: t.store?.name || t.employee?.store?.name || 'Hopkid Branch',
+      employeeId: t.employeeId,
+      employeeName: `${t.employee?.firstName || ''} ${t.employee?.lastName || ''}`.trim(),
+      subcategoryName: (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.subcategoryName) ||
+                       (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.subcategory) ||
+                       (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.category) || 'General',
+      commissionType: t.commissionType || 'PERCENTAGE',
+      rate: t.commissionPercent !== null && t.commissionPercent !== undefined ? Number(t.commissionPercent) : null,
+      netSales: Number(t.newAmount ?? t.saleAmount ?? 0),
+      eligibleRevenue: Number(t.newAmount ?? t.saleAmount ?? 0),
+      commissionAmount: Number(t.newCommission ?? t.commissionAmount ?? 0),
+      amount: Number(t.newCommission ?? t.commissionAmount ?? 0),
+      status: t.status,
+      createdAt: t.createdAt,
+    }));
+
+    res.json({
+      success: true,
+      stats: {
+        today: calcMetric(todayItems),
+        month: calcMetric(monthItems),
+        period: calcMetric(periodItems),
+        topSubcategories,
+        recentTransactions,
+      },
+    });
   } catch (error: any) {
     console.error('Get commission dashboard error:', error);
     res.json({
@@ -379,14 +608,7 @@ export const getCommissionTransactions = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { employeeId, storeId, status, startDate, endDate, search, billId } = req.query;
-
-    if (!employeeId && req.user?.role !== 'EMPLOYEE') {
-      const actor = await resolveActorFromRequest(req);
-      const result = await retailCommissionTransactions(actor, req.query);
-      res.json(result);
-      return;
-    }
+    const { employeeId, storeId, status, startDate, endDate, dateRange, period, search, billId, subcategoryId, page: qPage, pageSize: qPageSize } = req.query;
 
     const conditions: any[] = [];
     if (employeeId) {
@@ -458,13 +680,38 @@ export const getCommissionTransactions = async (
       });
     }
 
-    if (startDate || endDate) {
-      const dateCond: any = {};
-      if (startDate) {
-        dateCond.gte = parseIstStartOfDay(startDate as string);
+    let effectiveStartDate = startDate as string | undefined;
+    let effectiveEndDate = endDate as string | undefined;
+
+    const periodVal = (dateRange || period) as string | undefined;
+    if (periodVal && periodVal !== 'all' && !startDate && !endDate) {
+      const now = new Date(Date.now() + 19800000);
+      const todayStr = now.toISOString().slice(0, 10);
+      if (periodVal === 'today') {
+        effectiveStartDate = todayStr;
+        effectiveEndDate = todayStr;
+      } else if (periodVal === 'yesterday') {
+        const y = new Date(new Date(`${todayStr}T00:00:00+05:30`).getTime() - 86400000 + 19800000);
+        const yStr = y.toISOString().slice(0, 10);
+        effectiveStartDate = yStr;
+        effectiveEndDate = yStr;
+      } else if (periodVal === 'week') {
+        const w = new Date(new Date(`${todayStr}T00:00:00+05:30`).getTime() - 6 * 86400000 + 19800000);
+        effectiveStartDate = w.toISOString().slice(0, 10);
+        effectiveEndDate = todayStr;
+      } else if (periodVal === 'month' || periodVal === 'current_month') {
+        effectiveStartDate = `${todayStr.slice(0, 7)}-01`;
+        effectiveEndDate = todayStr;
       }
-      if (endDate) {
-        dateCond.lte = parseIstEndOfDay(endDate as string);
+    }
+
+    if (effectiveStartDate || effectiveEndDate) {
+      const dateCond: any = {};
+      if (effectiveStartDate) {
+        dateCond.gte = parseIstStartOfDay(effectiveStartDate);
+      }
+      if (effectiveEndDate) {
+        dateCond.lte = parseIstEndOfDay(effectiveEndDate);
       }
       conditions.push({ createdAt: dateCond });
     }
@@ -630,7 +877,7 @@ export const getCommissionTransactions = async (
       }
     }
 
-    const transactions = dedupedTransactions.map((t) => {
+    let transactions = dedupedTransactions.map((t) => {
       let activeVal: boolean | null = null;
       const bIdStr = String(t.billId || '');
       const invStr = String(t.invoiceNumber || '');
@@ -714,14 +961,66 @@ export const getCommissionTransactions = async (
         commissionDifference: recon.commissionDifference,
         newCommission: recon.newBillCommission,
         newBillCommission: recon.newBillCommission,
+        // Enriched fields for CommissionDashboard & UI tables
+        storeName: t.store?.name || t.employee?.store?.name || 'Hopkid Branch',
+        subcategoryName: (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.subcategoryName) ||
+                         (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.subcategory) ||
+                         (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.category) || 'General',
+        rate: rate,
+        eligibleRevenue: Number(recon.newBillAmount ?? t.saleAmount ?? 0),
+        netSales: Number(recon.newBillAmount ?? t.saleAmount ?? 0),
+        amount: Number(recon.newBillCommission ?? t.commissionAmount ?? 0),
+        type: t.commissionType || 'PERCENTAGE',
+        fixedBasis: (Array.isArray(t.productBreakdown) && (t.productBreakdown as any[])[0]?.fixedBasis) || 'UNIT',
+        quantity: Array.isArray(t.productBreakdown) ? (t.productBreakdown as any[]).reduce((sum: number, p: any) => sum + (Number(p.quantity) || 1), 0) : 1,
       };
     });
+
+    if (subcategoryId && subcategoryId !== 'all') {
+      transactions = transactions.filter(t => {
+        if (!Array.isArray(t.productBreakdown)) return false;
+        return (t.productBreakdown as any[]).some((p: any) =>
+          p.subcategoryId === subcategoryId ||
+          p.subcategoryName === subcategoryId ||
+          p.subcategory === subcategoryId
+        );
+      });
+    }
+
+    const total = transactions.length;
+    const rawPage = parseInt(String(qPage || '1'), 10);
+    const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+    const rawPageSize = parseInt(String(qPageSize || '20'), 10);
+    const pageSize = Number.isSafeInteger(rawPageSize) && rawPageSize > 0 ? Math.min(100, rawPageSize) : 20;
+    const totalPages = Math.ceil(total / pageSize) || 1;
+    const offset = (page - 1) * pageSize;
+
+    const paginatedTransactions = (qPage !== undefined || qPageSize !== undefined)
+      ? transactions.slice(offset, offset + pageSize)
+      : transactions;
+
+    const totalNetSales = Math.round(transactions.reduce((sum, t) => sum + (Number(t.newAmount || t.saleAmount) || 0), 0) * 100) / 100;
+    const totalCommission = Math.round(transactions.reduce((sum, t) => sum + (Number(t.newCommission !== undefined && t.newCommission !== null ? t.newCommission : t.commissionAmount) || 0), 0) * 100) / 100;
 
     console.log(`[Commission API]\nFilter:\nmonth: ${startDate ? String(startDate).slice(0, 7) : 'all'}\nstoreId: ${whereClause.storeId || 'all'}\nemployeeId: ${whereClause.employeeId || 'all'}\nstartDate: ${startDate || 'none'}\nendDate: ${endDate || 'none'}`);
     console.log(`[Commission API]\nTransactions found: ${transactions.length}`);
     console.log(`[Commission API]\nEmployees mapped: ${new Set(transactions.map(t => t.employeeId)).size}`);
 
-    res.json({ success: true, transactions });
+    res.json({
+      success: true,
+      transactions: paginatedTransactions,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages,
+      },
+      totals: {
+        netSales: totalNetSales,
+        commissionAmount: totalCommission,
+        totalTransactions: total,
+      },
+    });
   } catch (error) {
     console.error('Get commission transactions error:', error);
     res.json({ success: true, transactions: [] });

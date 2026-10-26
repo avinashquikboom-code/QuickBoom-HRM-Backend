@@ -1551,6 +1551,17 @@ async function executeWebhookPipeline(
     }
 
     // STEP 2: CREATE SINGLE PROCESSING LOG ENTRY
+    let resolvedLogEmpId: number | null = null;
+    if (meta.employeeIdentifier) {
+      resolvedLogEmpId = await resolveEmployeeId(meta.employeeIdentifier).catch(() => null);
+    }
+    if (!resolvedLogEmpId && meta.firstItem?.employeeCode) {
+      resolvedLogEmpId = await resolveEmployeeId(meta.firstItem.employeeCode).catch(() => null);
+    }
+    if (!resolvedLogEmpId && meta.firstItem?.employeePhoneNo) {
+      resolvedLogEmpId = await resolveEmployeeId(meta.firstItem.employeePhoneNo).catch(() => null);
+    }
+
     try {
       logEntry = await prisma.webhookLog.create({
         data: {
@@ -1560,6 +1571,7 @@ async function executeWebhookPipeline(
           payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
           billId: billId ? String(billId) : null,
           amount: amount !== null ? Number(amount) : null,
+          employeeId: resolvedLogEmpId,
         },
       });
     } catch (logErr) {
@@ -1578,11 +1590,22 @@ async function executeWebhookPipeline(
 
     // STEP 4: UPDATE WEBHOOK LOG TO SUCCESS
     if (logEntry) {
+      if (!resolvedLogEmpId && billId) {
+        const createdTx = await prisma.commissionTransaction.findFirst({
+          where: { OR: [{ billId: String(billId) }, { invoiceNumber: String(billId) }] },
+          select: { employeeId: true },
+        }).catch(() => null);
+        if (createdTx?.employeeId) {
+          resolvedLogEmpId = createdTx.employeeId;
+        }
+      }
+
       await prisma.webhookLog.update({
         where: { id: logEntry.id },
         data: {
           status: 'SUCCESS',
           processedAt: new Date(),
+          ...(resolvedLogEmpId ? { employeeId: resolvedLogEmpId } : {}),
         },
       }).catch(() => {});
     }

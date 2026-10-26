@@ -34,13 +34,27 @@ function events(req: Request) {
   const search = String(req.query.search ?? '').trim();
   return Prisma.sql`WITH deliveries AS (
     SELECT w.id,w."eventType",w.status,w.payload,w."billId",w.amount,w."errorMessage",w."createdAt",w."processedAt",
-      e.id AS "employeeId",concat_ws(' ',e."firstName",e."lastName") AS "employeeName",s.id AS "storeId",s.name AS "storeName",'WEBHOOK' AS source
-    FROM "WebhookLog" w LEFT JOIN "Employee" e ON e.id=w."employeeId" LEFT JOIN "Store" s ON s.id=COALESCE((SELECT h."storeId" FROM "HopkidWebhookLog" h WHERE h."rawPayload"=w.payload AND h."storeId" IS NOT NULL ORDER BY h."createdAt" LIMIT 1),e."storeId")
+      COALESCE(w."employeeId", (SELECT c."employeeId" FROM "CommissionTransaction" c WHERE c."billId" = w."billId" OR c."invoiceNumber" = w."billId" LIMIT 1), e.id) AS "employeeId",
+      COALESCE(NULLIF(concat_ws(' ',e."firstName",e."lastName"), ''), (SELECT concat_ws(' ', ce."firstName", ce."lastName") FROM "CommissionTransaction" c JOIN "Employee" ce ON ce.id=c."employeeId" WHERE c."billId" = w."billId" OR c."invoiceNumber" = w."billId" LIMIT 1)) AS "employeeName",
+      COALESCE(s.id, (SELECT c."storeId" FROM "CommissionTransaction" c WHERE c."billId" = w."billId" OR c."invoiceNumber" = w."billId" LIMIT 1), e."storeId") AS "storeId",
+      COALESCE(s.name, (SELECT cs.name FROM "CommissionTransaction" c JOIN "Store" cs ON cs.id=c."storeId" WHERE c."billId" = w."billId" OR c."invoiceNumber" = w."billId" LIMIT 1), (SELECT st.name FROM "Store" st WHERE st.id=e."storeId")) AS "storeName",
+      'WEBHOOK' AS source
+    FROM "WebhookLog" w 
+    LEFT JOIN "Employee" e ON e.id=w."employeeId" 
+    LEFT JOIN "Store" s ON s.id=COALESCE((SELECT h."storeId" FROM "HopkidWebhookLog" h WHERE h."rawPayload"=w.payload AND h."storeId" IS NOT NULL ORDER BY h."createdAt" LIMIT 1),e."storeId")
     UNION ALL
     SELECT 'hopkid-'||h.id,NULL,
       CASE i.status WHEN 'PROCESSED' THEN 'SUCCESS' WHEN 'EXCEPTION' THEN 'FAILED' WHEN 'IGNORED' THEN 'IGNORED' ELSE 'RECEIVED' END,
-      h."rawPayload",h."billId",h.amount,i.error,h."createdAt",i."processedAt",NULL,NULL,s.id,s.name,'RAW_INGRESS'
-    FROM "HopkidWebhookLog" h LEFT JOIN "HrmCommissionInbox" i ON i."sourceLogId"=h.id LEFT JOIN "Store" s ON s.id=h."storeId"
+      h."rawPayload",h."billId",h.amount,i.error,h."createdAt",i."processedAt",
+      COALESCE(eh.id, (SELECT c."employeeId" FROM "CommissionTransaction" c WHERE c."billId" = h."billId" OR c."invoiceNumber" = h."billId" LIMIT 1)) AS "employeeId",
+      COALESCE(NULLIF(concat_ws(' ',eh."firstName",eh."lastName"), ''), (SELECT concat_ws(' ', ce."firstName", ce."lastName") FROM "CommissionTransaction" c JOIN "Employee" ce ON ce.id=c."employeeId" WHERE c."billId" = h."billId" OR c."invoiceNumber" = h."billId" LIMIT 1)) AS "employeeName",
+      COALESCE(s.id, (SELECT c."storeId" FROM "CommissionTransaction" c WHERE c."billId" = h."billId" OR c."invoiceNumber" = h."billId" LIMIT 1), eh."storeId") AS "storeId",
+      COALESCE(s.name, (SELECT cs.name FROM "CommissionTransaction" c JOIN "Store" cs ON cs.id=c."storeId" WHERE c."billId" = h."billId" OR c."invoiceNumber" = h."billId" LIMIT 1), (SELECT st.name FROM "Store" st WHERE st.id=eh."storeId")) AS "storeName",
+      'RAW_INGRESS'
+    FROM "HopkidWebhookLog" h 
+    LEFT JOIN "HrmCommissionInbox" i ON i."sourceLogId"=h.id 
+    LEFT JOIN "Employee" eh ON (h."employeeCode" IS NOT NULL AND eh."employeeCode"=h."employeeCode") OR (h."mobileNo" IS NOT NULL AND eh."mobileNumber"=h."mobileNo")
+    LEFT JOIN "Store" s ON s.id=h."storeId"
     WHERE NOT EXISTS (SELECT 1 FROM "WebhookLog" w WHERE w.payload=h."rawPayload")
   ), filtered AS (
     SELECT * FROM deliveries WHERE (${f.start}::timestamp IS NULL OR "createdAt">=${f.start})

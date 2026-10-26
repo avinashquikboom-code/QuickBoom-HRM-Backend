@@ -17,6 +17,28 @@ export async function resolveSubcategory(tx: Prisma.TransactionClient, line: Nor
     });
     if (mapping) return tx.hrmCommissionSubcategory.findUnique({ where: { id: mapping.subcategoryId } });
   }
+
+  // Fallback: Check POSProduct catalog category if line.productId is a valid UUID
+  if (line.productId) {
+    const product = await tx.pOSProduct.findUnique({
+      where: { id: line.productId },
+      include: { category: true }
+    }).catch(() => null);
+
+    if (product?.categoryId) {
+      const subcat = await tx.hrmCommissionSubcategory.findFirst({
+        where: {
+          OR: [
+            { id: product.categoryId },
+            { externalId: String(product.category?.externalCommissionCategoryId ?? product.categoryId) },
+            { name: product.category?.name }
+          ]
+        }
+      }).catch(() => null);
+      if (subcat) return subcat;
+    }
+  }
+
   return null;
 }
 export async function resolveSubcategoryRate(tx: Prisma.TransactionClient, subcategoryId: string, storeId: number, at: Date) {
