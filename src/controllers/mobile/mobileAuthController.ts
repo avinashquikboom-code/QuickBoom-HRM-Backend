@@ -1,3 +1,4 @@
+import { registerDeviceToken } from '../../services/deviceTokenService';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../utils/db';
@@ -307,29 +308,7 @@ export const mobileLogin = async (req: Request, res: Response): Promise<void> =>
 
     // 6. Store FCM token if provided (optional, non-blocking)
     if (req.body.fcmToken) {
-      prisma.fCMToken.findFirst({
-        where: { userId: user.id, token: req.body.fcmToken }
-      }).then(existingToken => {
-        if (!existingToken) {
-          return prisma.fCMToken.create({
-            data: {
-              userId: user.id,
-              token: req.body.fcmToken,
-              platform: 'mobile',
-              isActive: true,
-              lastUsedAt: new Date(),
-            }
-          });
-        } else {
-          return prisma.fCMToken.update({
-            where: { id: existingToken.id },
-            data: {
-              isActive: true,
-              lastUsedAt: new Date(),
-            }
-          });
-        }
-      }).catch(err => console.error('Failed to update FCM token:', err));
+      registerDeviceToken(user.id, req.body.fcmToken, 'mobile').catch(error => console.error('[MOBILE_LOGIN] Token registration failed', { code: error?.code }));
     }
 
     console.log('[MOBILE_LOGIN] Phase 6: Structuring response...');

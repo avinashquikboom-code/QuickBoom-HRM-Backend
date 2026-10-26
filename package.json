@@ -30,13 +30,16 @@
     "test:pos:discounts-reports": "ts-node --transpile-only scripts/test_pos_discounts_reports.ts",
     "test:pos:subcategory-commission": "ts-node --transpile-only scripts/test_pos_subcategory_commission.ts",
     "test:hrm:subcategory-commission": "ts-node --transpile-only scripts/test_hrm_external_subcategory_commission.ts",
-    "test:mobile:invoice-subcategory": "ts-node --transpile-only scripts/test_mobile_invoice_subcategory_commission.ts"
+    "test:mobile:invoice-subcategory": "ts-node --transpile-only scripts/test_mobile_invoice_subcategory_commission.ts",
+    "test:campaigns": "node scripts/test_campaign_reliability.cjs && node scripts/test_campaign_s3.cjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1156.0",
+    "@aws-sdk/s3-request-presigner": "^3.1156.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@scalar/api-reference": "^1.58.0",
@@ -58,6 +61,7 @@
     "node-cron": "^4.6.0",
     "pdfmake": "^0.2.12",
     "pg": "^8.21.0",
+    "sharp": "^0.35.5",
     "socket.io": "^4.8.3",
     "swagger-jsdoc": "^6.3.0",
     "uuid": "^14.0.0"

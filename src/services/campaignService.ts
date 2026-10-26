@@ -8,9 +8,8 @@ import {
   localDate,
   normalizeAudienceMode,
 } from './campaignPolicy';
-import path from 'path';
-import fs from 'fs';
-import { randomUUID } from 'crypto';
+import { safeFcmError } from '../utils/fcmErrors';
+import { campaignImages, withCampaignImageLock, validateManagedImage, canonicalCampaignImage } from './campaignImageService';
 
 export class CampaignService {
   /**
@@ -22,7 +21,7 @@ export class CampaignService {
       where: { id: actorId },
       include: { employee: true },
     });
-    if (!user) return {};
+    if (!user || !user.isActive) throw new CampaignError(403, 'Active campaign actor required');
 
     // Platform / Super Admins / Admins have company-wide access
     if (['SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN'].includes(user.role)) {
@@ -37,7 +36,7 @@ export class CampaignService {
       return { branchId: user.employee.branchId };
     }
 
-    return {};
+    throw new CampaignError(403, 'Campaign actor has no assigned store or branch');
   }
 
   /**
@@ -54,6 +53,7 @@ export class CampaignService {
 
     const conditions: Prisma.EmployeeWhereInput[] = [
       { status: { in: ['active', 'ACTIVE'] } },
+      { user: { isActive: true } },
     ];
 
     if (Object.keys(scope).length > 0) {
@@ -62,6 +62,7 @@ export class CampaignService {
 
     switch (mode) {
       case 'STORES':
+        if (!criteria.storeIds?.length && !criteria.storeId) return [];
         if (criteria.storeIds?.length > 0) {
           conditions.push({ storeId: { in: criteria.storeIds } });
         } else if (criteria.storeId) {
@@ -70,6 +71,7 @@ export class CampaignService {
         break;
 
       case 'BRANCHES':
+        if (!criteria.branchIds?.length && !criteria.branchId) return [];
         if (criteria.branchIds?.length > 0) {
           conditions.push({ branchId: { in: criteria.branchIds } });
         } else if (criteria.branchId) {
@@ -78,6 +80,7 @@ export class CampaignService {
         break;
 
       case 'DEPARTMENTS':
+        if (!criteria.departmentIds?.length && !criteria.departmentId) return [];
         if (criteria.departmentIds?.length > 0) {
           conditions.push({ departmentId: { in: criteria.departmentIds } });
         } else if (criteria.departmentId) {
@@ -86,6 +89,7 @@ export class CampaignService {
         break;
 
       case 'ROLES':
+        if (!criteria.roles?.length && !criteria.designationId) return [];
         if (criteria.roles?.length > 0) {
           conditions.push({ user: { role: { in: criteria.roles } } });
         }
@@ -109,16 +113,15 @@ export class CampaignService {
         if (criteria.departmentIds?.length) orClauses.push({ departmentId: { in: criteria.departmentIds } });
         if (criteria.roles?.length) orClauses.push({ user: { role: { in: criteria.roles } } });
         if (criteria.employeeIds?.length) orClauses.push({ id: { in: criteria.employeeIds } });
-        if (orClauses.length > 0) {
-          conditions.push({ OR: orClauses });
-        }
+        if (orClauses.length === 0) return [];
+        conditions.push({ OR: orClauses });
         break;
       }
 
       case 'ALL_EMPLOYEES':
-      default:
-        // No additional filters
         break;
+      default:
+        throw new CampaignError(400, 'Invalid campaign audience');
     }
 
     const employees = await prisma.employee.findMany({
@@ -199,7 +202,10 @@ export class CampaignService {
   async createCampaign(data: any, actorId?: number) {
     let status = data.status || (data.scheduledAt ? 'SCHEDULED' : 'DRAFT');
 
-    const campaign = await prisma.campaign.create({
+    data = { ...data, imageUrl: await canonicalCampaignImage(data.imageUrl) };
+    const campaign = await withCampaignImageLock(async tx => {
+      await validateManagedImage(data.imageUrl);
+      return tx.campaign.create({
       data: {
         title: data.title,
         message: data.message,
@@ -215,6 +221,7 @@ export class CampaignService {
         totalRecipients: data.totalRecipients || 0,
       },
     });
+    });
 
     return campaign;
   }
@@ -227,10 +234,11 @@ export class CampaignService {
     if (!existing) {
       throw new CampaignError(404, 'Campaign not found');
     }
-    if (['SENDING', 'SENT', 'COMPLETED'].includes(existing.status)) {
+    if (['SENDING', 'SENT', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'DELIVERY_UNKNOWN'].includes(existing.status)) {
       throw new CampaignError(409, 'Cannot modify campaign that has already been dispatched');
     }
 
+    data = { ...data, imageUrl: await canonicalCampaignImage(data.imageUrl) };
     const updateData: Prisma.CampaignUpdateInput = {};
     if (data.title !== undefined) updateData.title = data.title;
     if (data.message !== undefined) updateData.message = data.message;
@@ -251,12 +259,18 @@ export class CampaignService {
       }
     }
     if (data.status !== undefined) {
+      if (!['DRAFT', 'SCHEDULED', 'AUTOMATIC'].includes(data.status)) throw new CampaignError(400, 'Invalid campaign status');
       updateData.status = data.status;
     }
 
-    return await prisma.campaign.update({
-      where: { id },
-      data: updateData,
+    return withCampaignImageLock(async tx => {
+      await validateManagedImage(data.imageUrl);
+      const result = await tx.campaign.updateMany({
+        where: { id, status: { in: ['DRAFT', 'SCHEDULED', 'CANCELLED', 'FAILED', 'AUTOMATIC'] } },
+        data: updateData as Prisma.CampaignUpdateManyMutationInput,
+      });
+      if (result.count !== 1) throw new CampaignError(409, 'Campaign can no longer be modified');
+      return tx.campaign.findUniqueOrThrow({ where: { id } });
     });
   }
 
@@ -264,7 +278,7 @@ export class CampaignService {
    * Deliver Campaign Notifications immediately (FCM Multicast + In-App DB records)
    */
   async sendCampaign(id: string, actorId?: number) {
-    const campaign = await prisma.campaign.findUnique({ where: { id } });
+    let campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) {
       throw new CampaignError(404, 'Campaign not found');
     }
@@ -273,22 +287,24 @@ export class CampaignService {
     if (campaign.status === 'SENDING') {
       throw new CampaignError(409, 'Campaign is currently being dispatched');
     }
-    if (['SENT', 'COMPLETED'].includes(campaign.status)) {
+    if (['SENT', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'DELIVERY_UNKNOWN'].includes(campaign.status)) {
       throw new CampaignError(409, 'Campaign has already been dispatched');
     }
 
     // Set status to SENDING with a lock timestamp
-    await prisma.campaign.update({
-      where: { id },
+    const claim = await prisma.campaign.updateMany({
+      where: { id, status: { in: ['DRAFT', 'SCHEDULED', 'FAILED'] } },
       data: { status: 'SENDING', lockedAt: new Date() },
     });
+    if (claim.count !== 1) throw new CampaignError(409, 'Campaign cannot be dispatched in its current state');
 
     try {
+      campaign = (await prisma.campaign.findUnique({ where: { id } }))!;
       const audienceCriteria = (campaign.audienceCriteria as any) || {};
       const employees = await this.resolveAudience(
         campaign.audienceType,
         audienceCriteria,
-        actorId || campaign.createdById || undefined
+        campaign.createdById || actorId || undefined
       );
 
       if (employees.length === 0) {
@@ -398,7 +414,8 @@ export class CampaignService {
           }
           employeeNotificationMap.set(emp.id, notifId);
         } catch (dbErr) {
-          console.error(`[CampaignDispatch] Failed to record in-app notification for employee ${emp.id}:`, dbErr);
+          console.error('[CampaignDispatch] In-app record failed', { campaignId: id, employeeId: emp.id });
+          throw dbErr;
         }
       }
 
@@ -428,6 +445,7 @@ export class CampaignService {
         }
       }
 
+      const pushImageUrl = await campaignImages.notificationUrl(campaign.imageUrl);
       // Push payload specification as requested by mobile client
       const payloadData: Record<string, string> = {
         campaignId: String(campaign.id),
@@ -436,18 +454,13 @@ export class CampaignService {
         notificationType: 'CAMPAIGN',
         actionType: 'CAMPAIGN',
         actionId: String(campaign.id),
-        title: campaign.title,
-        body: campaign.message,
-        message: campaign.message,
         actionUrl: campaign.actionUrl || '',
-        web_url: campaign.actionUrl || '',
-        imageUrl: campaign.imageUrl || '',
-        image: campaign.imageUrl || '',
+        imageUrl: pushImageUrl || '',
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
       };
 
       const notificationOptions = {
-        imageUrl: campaign.imageUrl || undefined,
+        imageUrl: pushImageUrl,
         priority: { high: true },
       };
 
@@ -459,7 +472,7 @@ export class CampaignService {
           const batchResult = await firebaseNotificationService.sendNotificationToTokens(
             batch,
             campaign.title,
-            campaign.message,
+            Array.from(campaign.message).slice(0, 180).join(''),
             payloadData,
             notificationOptions
           );
@@ -480,20 +493,21 @@ export class CampaignService {
               } else if (!current || !current.success) {
                 recipientStatusMap.set(empId, {
                   success: false,
-                  error: resp?.error?.message || 'Push delivery failed',
+                  error: safeFcmError(resp?.error, batch).message,
                 });
               }
             }
           });
         } catch (fcmBatchErr) {
-          console.error('[CampaignDispatch] FCM Batch Send Error:', fcmBatchErr);
+          console.error('[CampaignDispatch] FCM batch failure', { campaignId: id, ...safeFcmError(fcmBatchErr, batch) });
           failedTokenCount += batch.length;
           batch.forEach(tok => {
             const empIds = tokenToRecipientsMap.get(tok) || [];
             for (const empId of empIds) {
+              if (recipientStatusMap.get(empId)?.success) continue;
               recipientStatusMap.set(empId, {
                 success: false,
-                error: fcmBatchErr instanceof Error ? fcmBatchErr.message : 'FCM batch failure',
+                error: safeFcmError(fcmBatchErr, batch).message,
               });
             }
           });
@@ -585,10 +599,10 @@ export class CampaignService {
         },
       };
     } catch (err: any) {
-      console.error(`❌ [CampaignService] Delivery error for campaign ${id}:`, err);
+      console.error('[CampaignService] Delivery error', { campaignId: id, ...safeFcmError(err) });
       await prisma.campaign.update({
         where: { id },
-        data: { status: 'FAILED', lockedAt: null },
+        data: { status: 'DELIVERY_UNKNOWN', lockedAt: null },
       });
       throw err;
     }
@@ -601,18 +615,18 @@ export class CampaignService {
     const campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) throw new CampaignError(404, 'Campaign not found');
 
+    if (!['DRAFT', 'SCHEDULED'].includes(campaign.status)) throw new CampaignError(409, 'Only unsent campaigns can be scheduled');
     const date = new Date(scheduledAt);
     if (!Number.isFinite(date.getTime()) || date <= new Date()) {
       throw new CampaignError(400, 'Scheduled date must be in the future');
     }
 
-    return await prisma.campaign.update({
-      where: { id },
-      data: {
-        scheduledAt: date,
-        status: 'SCHEDULED',
-      },
+    const updated = await prisma.campaign.updateMany({
+      where: { id, status: { in: ['DRAFT', 'SCHEDULED'] } },
+      data: { scheduledAt: date, status: 'SCHEDULED' },
     });
+    if (updated.count !== 1) throw new CampaignError(409, 'Campaign can no longer be scheduled');
+    return prisma.campaign.findUniqueOrThrow({ where: { id } });
   }
 
   /**
@@ -621,13 +635,28 @@ export class CampaignService {
   async cancelCampaign(id: string) {
     const campaign = await prisma.campaign.findUnique({ where: { id } });
     if (!campaign) throw new CampaignError(404, 'Campaign not found');
-    if (['SENT', 'COMPLETED'].includes(campaign.status)) {
+    if (['SENDING', 'SENT', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'DELIVERY_UNKNOWN'].includes(campaign.status)) {
       throw new CampaignError(409, 'Cannot cancel a campaign that has already been dispatched');
     }
 
-    return await prisma.campaign.update({
-      where: { id },
+    const updated = await prisma.campaign.updateMany({
+      where: { id, status: { in: ['DRAFT', 'SCHEDULED', 'FAILED', 'AUTOMATIC'] } },
       data: { status: 'CANCELLED' },
+    });
+    if (updated.count !== 1) throw new CampaignError(409, 'Campaign can no longer be cancelled');
+    return prisma.campaign.findUniqueOrThrow({ where: { id } });
+  }
+
+  /** Permanent deletion preserves notification history and its image references. */
+  async deleteCampaign(id: string) {
+    return withCampaignImageLock(async tx => {
+      const campaign = await tx.campaign.findUnique({ where: { id } });
+      if (!campaign) throw new CampaignError(404, 'Campaign not found');
+      if (campaign.status === 'SENDING') throw new CampaignError(409, 'Cannot delete a campaign being dispatched');
+      const deleted = await tx.campaign.deleteMany({ where: { id, status: { not: 'SENDING' } } });
+      if (!deleted.count) throw new CampaignError(409, 'Campaign is being dispatched');
+      console.info('[Campaign] Permanently deleted', { campaignId: id });
+      return { id };
     });
   }
 
@@ -949,26 +978,7 @@ export class CampaignService {
     mimetype: string;
     size: number;
   }): Promise<string> {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    if (!allowed.includes(file.mimetype)) {
-      throw new CampaignError(400, 'Only JPEG, PNG, WEBP, and GIF images are allowed');
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      throw new CampaignError(400, 'Image file exceeds maximum allowable size of 5MB');
-    }
-
-    const ext = path.extname(file.originalname) || '.jpg';
-    const filename = `campaign_${Date.now()}_${randomUUID().slice(0, 8)}${ext}`;
-    const folder = path.join(process.cwd(), 'uploads', 'campaigns');
-
-    if (!fs.existsSync(folder)) {
-      fs.mkdirSync(folder, { recursive: true });
-    }
-
-    await fs.promises.writeFile(path.join(folder, filename), file.buffer);
-
-    const baseUrl = process.env.PUBLIC_API_URL?.replace(/\/$/, '') || '';
-    return baseUrl ? `${baseUrl}/uploads/campaigns/${filename}` : `/uploads/campaigns/${filename}`;
+    return campaignImages.upload(file);
   }
 }
 

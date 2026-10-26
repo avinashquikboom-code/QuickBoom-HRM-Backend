@@ -121,7 +121,8 @@ export function safeUrl(value: unknown, image = false): string | null {
     throw new CampaignError(400, 'Invalid URL format');
   }
   const trimmed = value.trim();
-  if (trimmed.startsWith('/') || trimmed.startsWith('data:image/')) {
+  if (image && /^s3:\/\/[^/]+\/campaigns\/v1-[a-f0-9]{64}-(detail|notification|thumbnail)\.jpg$/.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
     return trimmed;
   }
   try {
@@ -155,7 +156,8 @@ export function validateCampaign(body: any, defaultTimezone = 'Asia/Kolkata') {
     : 'GENERAL_ANNOUNCEMENT';
 
   const rawAudienceType = String(body.audienceType || 'ALL_EMPLOYEES').toUpperCase();
-  const audienceType = validModes.includes(rawAudienceType) ? rawAudienceType : 'ALL_EMPLOYEES';
+  if (!validModes.includes(rawAudienceType)) throw new CampaignError(400, 'Invalid campaign audience');
+  const audienceType = rawAudienceType;
 
   const a = body.audienceCriteria || {};
   const storeIds = ids(a.storeIds || a.storeId);
@@ -207,6 +209,7 @@ export function validateCampaign(body: any, defaultTimezone = 'Asia/Kolkata') {
     imageUrl: safeUrl(body.imageUrl, true),
     actionUrl: safeUrl(body.actionUrl),
     scheduledAt,
+    ...(body.status === undefined ? {} : { status: validateCampaignStatus(body.status, scheduledAt) }),
   };
 }
 
@@ -224,4 +227,10 @@ export function pushSummary(states: TokenState[]): string {
   if (states.some(s => s.state === 'RETRY')) return 'RETRY';
   if (states.every(s => s.state === 'SENT')) return 'SENT';
   return states.some(s => s.state === 'SENT') ? 'PARTIAL' : 'FAILED';
+}
+
+function validateCampaignStatus(status: unknown, scheduledAt: Date | null): string {
+  if (!['DRAFT', 'SCHEDULED', 'AUTOMATIC'].includes(String(status))) throw new CampaignError(400, 'Invalid campaign status');
+  if (status === 'SCHEDULED' && (!scheduledAt || scheduledAt <= new Date())) throw new CampaignError(400, 'Scheduled campaign requires a future date');
+  return String(status);
 }

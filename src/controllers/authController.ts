@@ -1,3 +1,4 @@
+import { registerDeviceToken } from '../services/deviceTokenService';
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../utils/db';
@@ -435,7 +436,7 @@ export const registerFcmToken = async (req: AuthenticatedRequest, res: Response)
     const userId = req.user?.id;
     const { token } = req.body;
 
-    if (!userId || !token) {
+    if (!userId || typeof token !== 'string' || !token.trim() || token.length > 4096) {
       return res.status(400).json({ error: 'User ID and FCM token are required' });
     }
 
@@ -444,36 +445,11 @@ export const registerFcmToken = async (req: AuthenticatedRequest, res: Response)
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Add token if it doesn't already exist
-    const existingToken = await prisma.fCMToken.findFirst({
-      where: { userId, token }
-    });
-    
-    if (!existingToken) {
-      await prisma.fCMToken.create({
-        data: {
-          userId,
-          token,
-          platform: req.body.platform || 'unknown',
-          isActive: true,
-          lastUsedAt: new Date(),
-        }
-      });
-    } else {
-      // Update existing token
-      await prisma.fCMToken.update({
-        where: { id: existingToken.id },
-        data: {
-          isActive: true,
-          lastUsedAt: new Date(),
-          platform: req.body.platform || existingToken.platform,
-        }
-      });
-    }
+    await registerDeviceToken(userId, token, typeof req.body.platform === 'string' ? req.body.platform : 'unknown', req.body.previousToken);
 
     res.json({ success: true, message: 'FCM Token registered successfully' });
   } catch (error) {
-    console.error('Error registering FCM token:', error);
+    console.error('Error registering FCM token', { code: (error as any)?.code });
     res.status(500).json({ error: 'Server error registering FCM token' });
   }
 };
@@ -488,17 +464,10 @@ export const unregisterFcmToken = async (req: AuthenticatedRequest, res: Respons
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    if (token) {
-      await prisma.fCMToken.updateMany({
-        where: { userId, token },
-        data: { isActive: false },
-      });
-    } else {
-      await prisma.fCMToken.updateMany({
-        where: { userId },
-        data: { isActive: false },
-      });
-    }
+    await prisma.$transaction([
+      prisma.fCMToken.updateMany({ where: { userId, ...(token ? { token } : {}) }, data: { isActive: false } }),
+      prisma.device.deleteMany({ where: { userId, ...(token ? { fcmToken: token } : {}) } }),
+    ]);
 
     res.json({ success: true, message: 'FCM Token unregistered successfully' });
   } catch (error) {

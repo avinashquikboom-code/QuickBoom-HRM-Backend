@@ -1,4 +1,7 @@
+import { campaignImageResponse } from '../../services/campaignImageService';
 import { Router } from 'express';
+import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
+import { prisma } from '../../utils/db';
 import {
   saveFCMToken,
   removeFCMToken,
@@ -67,6 +70,19 @@ router.post('/ack', acknowledgeDelivery);
  *         description: Server error
  */
 router.get('/', fetchMyNotifications);
+router.get('/campaigns/:campaignId', async (req: AuthenticatedRequest, res) => {
+  try {
+    const notification = await prisma.notification.findFirst({
+      where: { campaignId: String(req.params.campaignId), userId: req.user!.id },
+      orderBy: { id: 'desc' },
+    });
+    if (!notification) { res.status(404).json({ success: false, message: 'Campaign notification not found' }); return; }
+    res.json(await campaignImageResponse({ success: true, data: notification }));
+  } catch (error) {
+    console.error('[CampaignDetail] Read failed', { code: (error as any)?.code });
+    res.status(500).json({ success: false, message: 'Unable to load campaign' });
+  }
+});
 router.get('/:notificationId', getNotificationById);
 
 /**

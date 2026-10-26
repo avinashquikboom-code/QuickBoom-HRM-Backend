@@ -1,3 +1,4 @@
+import { campaignImageResponse } from '../services/campaignImageService';
 import { Router, Response } from 'express';
 import { authenticateToken, requireRole, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { campaignService } from '../services/campaignService';
@@ -35,10 +36,10 @@ const handle = (fn: (req: AuthenticatedRequest, res: Response) => Promise<any>) 
  */
 router.get('/target-options', handle(async (req, res) => {
   const options = await campaignService.getTargetOptions();
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: options,
-  });
+  }));
 }));
 
 router.get('/options', handle(async (req, res) => {
@@ -59,7 +60,7 @@ router.get('/options', handle(async (req, res) => {
     'SALESMAN',
     'HELPER',
   ];
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: {
       stores,
@@ -69,7 +70,7 @@ router.get('/options', handle(async (req, res) => {
       canTargetAll: !restricted,
       timezone: 'Asia/Kolkata',
     },
-  });
+  }));
 }));
 
 router.get('/employees', handle(async (req, res) => {
@@ -108,14 +109,14 @@ router.get('/employees', handle(async (req, res) => {
     prisma.employee.count({ where }),
   ]);
 
-  res.json({ success: true, data, total, page, limit });
+  res.json(await campaignImageResponse({ success: true, data, total, page, limit }));
 }));
 
 /**
  * 2. Preview target audience before saving/sending
  */
 router.get('/recipients/preview', handle(async (req, res) => {
-  const { audienceType, storeId, storeIds, branchId, branchIds, departmentId, departmentIds, employeeIds, roles, designationId, birthdayOnly, timezone } = req.query;
+  const { audienceType, storeId, storeIds, branchId, branchIds, departmentId, departmentIds, employeeIds, roles, role, designationId, birthdayOnly, timezone } = req.query;
 
   const toNums = (v: any) =>
     v ? (Array.isArray(v) ? v : String(v).split(',')).map(x => parseInt(String(x), 10)).filter(Number.isSafeInteger) : [];
@@ -124,8 +125,9 @@ router.get('/recipients/preview', handle(async (req, res) => {
   const parsedBranchIds = toNums(branchIds || branchId);
   const parsedDepartmentIds = toNums(departmentIds || departmentId);
   const parsedEmployeeIds = toNums(employeeIds);
-  const parsedRoles = roles
-    ? (Array.isArray(roles) ? roles : String(roles).split(','))
+  const roleInput = roles || role;
+  const parsedRoles = roleInput
+    ? (Array.isArray(roleInput) ? roleInput : String(roleInput).split(','))
         .map(r => String(r).toUpperCase().trim())
         .filter(Boolean) as any
     : [];
@@ -152,10 +154,10 @@ router.get('/recipients/preview', handle(async (req, res) => {
     req.user?.id
   );
 
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: preview,
-  });
+  }));
 }));
 
 /**
@@ -183,13 +185,13 @@ router.get('/birthdays/today', handle(async (req, res) => {
     alreadyWished: Boolean(b.alreadyWished),
   }));
 
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: {
       count: formatted.length,
       birthdays: formatted,
     },
-  });
+  }));
 }));
 
 /**
@@ -208,10 +210,10 @@ router.post('/birthdays/send-wishes', handle(async (req, res) => {
     actorId: req.user?.id,
   });
 
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: result,
-  });
+  }));
 }));
 
 /**
@@ -237,11 +239,11 @@ const handleUploadImage = handle(async (req, res) => {
     size: buffer.length,
   });
 
-  res.status(201).json({
+  res.status(201).json(await campaignImageResponse({
     success: true,
     message: 'Campaign image uploaded successfully.',
     data: { imageUrl },
-  });
+  }));
 });
 
 router.post('/upload-image', handleUploadImage);
@@ -262,7 +264,7 @@ router.get('/', handle(async (req, res) => {
   });
 
   // Provide both formats so both frontend consumers work seamlessly
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: result,
     campaigns: result.campaigns,
@@ -270,7 +272,7 @@ router.get('/', handle(async (req, res) => {
     page: result.page,
     limit: result.limit,
     totalPages: result.totalPages,
-  });
+  }));
 }));
 
 /**
@@ -279,11 +281,11 @@ router.get('/', handle(async (req, res) => {
 router.post('/', handle(async (req, res) => {
   const validated = validateCampaign(req.body);
   const campaign = await campaignService.createCampaign(validated, req.user?.id);
-  res.status(201).json({
+  res.status(201).json(await campaignImageResponse({
     success: true,
     message: 'Campaign created successfully.',
     data: campaign,
-  });
+  }));
 }));
 
 /**
@@ -292,10 +294,10 @@ router.post('/', handle(async (req, res) => {
 router.get('/:id/analytics', handle(async (req, res) => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const analytics = await campaignService.getCampaignAnalytics(id);
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: analytics,
-  });
+  }));
 }));
 
 /**
@@ -304,10 +306,10 @@ router.get('/:id/analytics', handle(async (req, res) => {
 router.get('/:id', handle(async (req, res) => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const campaign = await campaignService.getCampaignById(id);
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     data: campaign,
-  });
+  }));
 }));
 
 /**
@@ -317,11 +319,11 @@ const handleUpdate = handle(async (req, res) => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const validated = validateCampaign(req.body);
   const updated = await campaignService.updateCampaign(id, validated, req.user?.id);
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     message: 'Campaign updated successfully.',
     data: updated,
-  });
+  }));
 });
 
 router.put('/:id', handleUpdate);
@@ -333,11 +335,11 @@ router.patch('/:id', handleUpdate);
 router.post('/:id/send', handle(async (req, res) => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const result = await campaignService.sendCampaign(id, req.user?.id);
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     message: result.message,
     data: result,
-  });
+  }));
 }));
 
 /**
@@ -351,11 +353,11 @@ router.post('/:id/schedule', handle(async (req, res) => {
   }
 
   const updated = await campaignService.scheduleCampaign(id, scheduledAt);
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     message: 'Campaign scheduled successfully.',
     data: updated,
-  });
+  }));
 }));
 
 /**
@@ -364,11 +366,16 @@ router.post('/:id/schedule', handle(async (req, res) => {
 router.post('/:id/cancel', handle(async (req, res) => {
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const updated = await campaignService.cancelCampaign(id);
-  res.json({
+  res.json(await campaignImageResponse({
     success: true,
     message: 'Campaign cancelled successfully.',
     data: updated,
-  });
+  }));
+}));
+
+router.delete('/:id', handle(async (req, res) => {
+  const result = await campaignService.deleteCampaign(String(req.params.id));
+  res.json({ success: true, data: result });
 }));
 
 export default router;

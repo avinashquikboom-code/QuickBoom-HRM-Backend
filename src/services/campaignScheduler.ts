@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import { campaignImages } from './campaignImageService';
 import { prisma } from '../utils/db';
 import { campaignService } from './campaignService';
 import { localDate } from './campaignPolicy';
@@ -21,7 +22,7 @@ export async function runCampaignTick() {
         lockedAt: { lt: staleTime },
       },
       data: {
-        status: 'DRAFT',
+        status: 'DELIVERY_UNKNOWN',
         lockedAt: null,
       },
     });
@@ -102,6 +103,9 @@ export function initCampaignCron() {
   if (cronStarted) return;
   cronStarted = true;
   console.log('⏰ [CampaignCron] Initializing 1-minute campaign scheduler...');
+  cron.schedule('17 * * * *', () => {
+    void campaignImages.cleanup().catch(error => console.error('[CampaignImage] Cleanup failed', { code: error?.code }));
+  });
   cron.schedule('* * * * *', () => {
     void runCampaignTick().catch(err => {
       console.warn('⚠️ [CampaignCron] Background tick failed:', err);

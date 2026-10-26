@@ -1,3 +1,5 @@
+import { campaignImageResponse } from '../../services/campaignImageService';
+import { registerDeviceToken } from '../../services/deviceTokenService';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { prisma } from '../../utils/db';
@@ -38,7 +40,7 @@ export const fetchMyNotifications = async (
     res.json({
       success: true,
       data: {
-        notifications: formattedNotifications,
+        notifications: await campaignImageResponse(formattedNotifications),
         unreadCount,
       },
     });
@@ -85,7 +87,7 @@ export const getNotificationById = async (
         title: notification.title,
         body: notification.body,
         category: notification.category,
-        imageUrl: notification.imageUrl || null,
+        imageUrl: notification.imageUrl ? (await campaignImageResponse({ imageUrl: notification.imageUrl })).imageUrl : null,
         actionUrl: notification.actionUrl || null,
         actionId: notification.actionId || null,
         actionType: notification.actionType || null,
@@ -175,7 +177,7 @@ export const saveFCMToken = async (
 ): Promise<void> => {
   const { fcmToken, platform } = req.body;
 
-  if (!fcmToken) {
+  if (typeof fcmToken !== 'string' || !fcmToken.trim() || fcmToken.length > 4096) {
     res.status(400).json({ success: false, message: 'FCM token is required.' });
     return;
   }
@@ -186,66 +188,13 @@ export const saveFCMToken = async (
   }
 
   try {
-    // Check if token already exists for this user
-    const existingToken = await prisma.fCMToken.findFirst({
-      where: {
-        userId: req.user.id,
-        token: fcmToken,
-      },
-    });
-
-    if (existingToken) {
-      // Update the existing token
-      await prisma.fCMToken.update({
-        where: { id: existingToken.id },
-        data: {
-          platform: platform || 'unknown',
-          lastUsedAt: new Date(),
-          isActive: true,
-        },
-      });
-    } else {
-      // Create new token
-      await prisma.fCMToken.create({
-        data: {
-          userId: req.user.id,
-          token: fcmToken,
-          platform: platform || 'unknown',
-          isActive: true,
-        },
-      });
-
-      // Deactivate old tokens for this user (keep only last 5 active tokens)
-      const userTokens = await prisma.fCMToken.findMany({
-        where: {
-          userId: req.user.id,
-          isActive: true,
-          token: { not: fcmToken },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (userTokens.length > 4) {
-        // Deactivate tokens beyond the 5 most recent
-        const tokensToDeactivate = userTokens.slice(4);
-        await prisma.fCMToken.updateMany({
-          where: {
-            id: { in: tokensToDeactivate.map(t => t.id) },
-          },
-          data: {
-            isActive: false,
-          },
-        });
-      }
-    }
-
-    console.log(`✅ FCM token saved for user ${req.user.email}`);
+    await registerDeviceToken(req.user.id, fcmToken, typeof platform === 'string' ? platform : 'unknown', req.body.previousToken);
     res.json({ 
       success: true, 
       message: 'FCM token saved successfully.' 
     });
   } catch (error) {
-    console.error('Save FCM token error:', error);
+    console.error('Save FCM token error', { code: (error as any)?.code });
     res.status(500).json({ 
       success: false, 
       message: 'Failed to save FCM token.' 
@@ -262,7 +211,7 @@ export const removeFCMToken = async (
 ): Promise<void> => {
   const { fcmToken } = req.body;
 
-  if (!fcmToken) {
+  if (typeof fcmToken !== 'string' || !fcmToken.trim() || fcmToken.length > 4096) {
     res.status(400).json({ success: false, message: 'FCM token is required.' });
     return;
   }
@@ -273,15 +222,10 @@ export const removeFCMToken = async (
   }
 
   try {
-    await prisma.fCMToken.updateMany({
-      where: {
-        userId: req.user.id,
-        token: fcmToken,
-      },
-      data: {
-        isActive: false,
-      },
-    });
+    await prisma.$transaction([
+      prisma.fCMToken.updateMany({ where: { userId: req.user.id, token: fcmToken }, data: { isActive: false } }),
+      prisma.device.deleteMany({ where: { userId: req.user.id, fcmToken } }),
+    ]);
 
     console.log(`🗑️ FCM token removed for user ${req.user.email}`);
     res.json({ 

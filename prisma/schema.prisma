@@ -2140,3 +2140,14 @@ model CampaignRecipient {
   @@index([isRead])
   @@index([createdAt])
 }
+
+// Managed campaign assets only; legacy or unrelated objects are never garbage-collected.
+model CampaignImageAsset {
+  canonicalUrl String @id
+  objectKey    String
+  bucket       String?
+  lastUsedAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([lastUsedAt])
+}

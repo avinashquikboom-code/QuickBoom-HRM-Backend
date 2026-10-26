@@ -29,6 +29,7 @@ export class FirebaseNotificationService {
     const messagingInstance = this.getMessagingInstance();
     const imageUrl = options?.imageUrl || data?.imageUrl || data?.image || undefined;
 
+    const webLink = data?.web_url;
     const message: BaseMessage = {
       notification: {
         title,
@@ -37,7 +38,7 @@ export class FirebaseNotificationService {
       },
       data: {
         ...data,
-        ...(imageUrl ? { imageUrl, image: imageUrl } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
         timestamp: new Date().toISOString(),
         type: data?.type || 'general',
       },
@@ -82,9 +83,7 @@ export class FirebaseNotificationService {
             }
           ]
         },
-        fcmOptions: {
-          link: (data?.web_url || (data?.click_action && data.click_action.startsWith('/') ? data.click_action : undefined)) || '/notifications'
-        }
+        ...(webLink?.startsWith('https://') ? { fcmOptions: { link: webLink } } : {})
       }
     };
 

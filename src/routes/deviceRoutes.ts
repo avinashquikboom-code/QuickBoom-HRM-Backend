@@ -1,3 +1,4 @@
+import { registerDeviceToken } from '../services/deviceTokenService';
 import { Router, Request, Response } from 'express';
 import { authMiddleware, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
@@ -59,35 +60,7 @@ router.post('/register', async (req: AuthenticatedRequest, res: Response) => {
     }
 
     // Upsert the device token globally (since one device token belongs to one user at a time)
-    const device = await prisma.$transaction(async tx => {
-      const device = await tx.device.upsert({
-        where: { fcmToken: token },
-        update: {
-          userId,
-          platform: platform.toLowerCase(),
-          updatedAt: new Date(),
-        },
-        create: {
-          userId,
-          fcmToken: token,
-          platform: platform.toLowerCase(),
-          updatedAt: new Date(),
-        },
-      });
-
-      if (typeof previousToken === 'string' && previousToken !== token && previousToken.length <= 4096) {
-        await tx.device.deleteMany({ where: { fcmToken: previousToken, userId } });
-        await tx.fCMToken.updateMany({ where: { token: previousToken, userId }, data: { isActive: false } });
-      }
-      // A token belongs to the currently authenticated account across both stores.
-      await tx.fCMToken.updateMany({ where: { token, userId: { not: userId } }, data: { isActive: false } });
-      await tx.fCMToken.upsert({
-        where: { userId_token: { userId, token } },
-        update: { isActive: true, platform: platform.toLowerCase(), lastUsedAt: new Date() },
-        create: { userId, token, platform: platform.toLowerCase() }
-      });
-      return device;
-    });
+    const device = await registerDeviceToken(userId, token, platform.toLowerCase(), previousToken);
 
     console.log(`[DeviceRoutes] Registered token for user ${userId} on platform ${platform}`);
 
