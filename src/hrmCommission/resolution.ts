@@ -44,7 +44,7 @@ export async function resolveSubcategory(tx: Prisma.TransactionClient, line: Nor
   }
 
   // 2. Query HrmCommissionMapping with variant-specific precedence, falling back to product-level ('')
-  const mapping = await tx.hrmCommissionMapping.findFirst({
+  let mapping = await tx.hrmCommissionMapping.findFirst({
     where: {
       productId: line.productId,
       variantId: { in: [line.variantId, ''] },
@@ -55,6 +55,25 @@ export async function resolveSubcategory(tx: Prisma.TransactionClient, line: Nor
       { effectiveFrom: 'desc' }
     ]
   });
+
+  if (!mapping && !isUuid(line.productId)) {
+    const prodByCodeOrName = await tx.pOSProduct.findFirst({
+      where: { OR: [{ code: line.productId }, { name: line.productId }] }
+    }).catch(() => null);
+    if (prodByCodeOrName) {
+      mapping = await tx.hrmCommissionMapping.findFirst({
+        where: {
+          productId: prodByCodeOrName.id,
+          variantId: { in: [line.variantId, ''] },
+          effectiveFrom: { lte: at }
+        },
+        orderBy: [
+          { variantId: 'desc' },
+          { effectiveFrom: 'desc' }
+        ]
+      });
+    }
+  }
 
   if (mapping) {
     const sub = await tx.hrmCommissionSubcategory.findUnique({ where: { id: mapping.subcategoryId } });
@@ -67,7 +86,10 @@ export async function resolveSubcategory(tx: Prisma.TransactionClient, line: Nor
         where: { id: line.productId },
         include: { category: true }
       }).catch(() => null)
-    : null;
+    : await tx.pOSProduct.findFirst({
+        where: { OR: [{ code: line.productId }, { name: line.productId }] },
+        include: { category: true }
+      }).catch(() => null);
 
   if (product?.categoryId && product.category && product.category.parentId) {
     const posCat = product.category;

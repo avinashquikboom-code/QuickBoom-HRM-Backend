@@ -25,13 +25,27 @@ export async function recoverSavedInvoiceItems(tx: Prisma.TransactionClient, sna
       }
     } else if (item.productID) {
       // Saved snapshot was persisted with null subcategoryId: resolve via product mapping
-      const mapping = await tx.hrmCommissionMapping.findFirst({
+      let mapping = await tx.hrmCommissionMapping.findFirst({
         where: {
           productId: item.productID,
           variantId: { in: [item.variantId, ''] }
         },
         orderBy: [{ variantId: 'desc' }, { effectiveFrom: 'desc' }]
       });
+      if (!mapping && !uuid(item.productID)) {
+        const prod = await tx.pOSProduct.findFirst({
+          where: { OR: [{ code: item.productID }, { name: item.productID }] }
+        }).catch(() => null);
+        if (prod) {
+          mapping = await tx.hrmCommissionMapping.findFirst({
+            where: {
+              productId: prod.id,
+              variantId: { in: [item.variantId, ''] }
+            },
+            orderBy: [{ variantId: 'desc' }, { effectiveFrom: 'desc' }]
+          });
+        }
+      }
       if (mapping) {
         const sub = await tx.hrmCommissionSubcategory.findUnique({ where: { id: mapping.subcategoryId } });
         if (sub) {
@@ -39,10 +53,15 @@ export async function recoverSavedInvoiceItems(tx: Prisma.TransactionClient, sna
           item.subcategoryName = sub.name;
         }
       } else {
-        const prod = await tx.pOSProduct.findUnique({
-          where: { id: item.productID },
-          include: { category: true }
-        }).catch(() => null);
+        const prod = uuid(item.productID)
+          ? await tx.pOSProduct.findUnique({
+              where: { id: item.productID },
+              include: { category: true }
+            }).catch(() => null)
+          : await tx.pOSProduct.findFirst({
+              where: { OR: [{ code: item.productID }, { name: item.productID }] },
+              include: { category: true }
+            }).catch(() => null);
         if (prod?.categoryId && prod.category && prod.category.parentId) {
           item.subcategoryId = prod.category.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
           item.subcategoryName = prod.category.name;
