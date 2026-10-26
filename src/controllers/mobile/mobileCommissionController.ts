@@ -546,7 +546,7 @@ export const getMobileWebhookLogs = async (
         results.push({
           id: `hopkid-${log.id}`,
           eventType: meta.eventType || 'INVOICE_CREATED',
-          status: 'SUCCESS',
+          status: 'RECEIVED',
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -556,7 +556,7 @@ export const getMobileWebhookLogs = async (
           newAmount: hAmtVal,
           newBillAmount: hAmtVal,
           differenceAmount: null,
-          commissionAmount: meta.commissionAmount ?? 0,
+          commissionAmount: null,
           customerName: meta.customerName || 'N/A',
           errorMessage: null,
           createdAt: log.createdAt,

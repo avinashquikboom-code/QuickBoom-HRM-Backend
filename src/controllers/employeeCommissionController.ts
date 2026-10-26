@@ -1,3 +1,4 @@
+import { hasUnresolvedInvoiceItems } from '../services/invoiceCommissionCompleteness';
 import { ordinaryCommissionFilter } from '../services/rkdPayrollService';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
@@ -75,6 +76,7 @@ export const fetchCommissionWallet = async (
       orderBy: { createdAt: 'desc' }
     });
 
+    const unresolvedInvoiceCount = allTransactions.filter(hasUnresolvedInvoiceItems).length;
     const approvedOrPaid = allTransactions.filter(t => t.status !== 'REJECTED' && t.status !== 'CANCELLED');
     const pendingTransactions = approvedOrPaid.filter(t => t.status === 'PENDING' || t.status === 'APPROVED');
     const paidTransactions = approvedOrPaid.filter(t => t.status === 'PAID');
@@ -114,6 +116,8 @@ export const fetchCommissionWallet = async (
     const recentTransactions = allTransactions.slice(0, 50).map(t => {
       const numInv = getNumericInvoiceNumber(t);
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
+      const unresolved = hasUnresolvedInvoiceItems(t);
+      const external = ['INVOICE_CREATED', 'INVOICE_UPDATED'].includes(t.eventType ?? '');
       console.log({
         invoiceId: t.billId || t.id,
         billNumber: numInv,
@@ -129,22 +133,23 @@ export const fetchCommissionWallet = async (
         hopkidInvoiceNumber: `HopKid Invoice #${numInv}`,
         customerName: noteClean,
         billAmount: t.saleAmount,
-        commissionPercentage: t.commissionPercent !== null && t.commissionPercent !== undefined
+        commissionPercentage: unresolved ? null : external ? t.commissionPercent : t.commissionPercent !== null && t.commissionPercent !== undefined
           ? Number(t.commissionPercent)
           : (t.saleAmount > 0 && t.commissionAmount > 0
               ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
               : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
-        commissionPercent: t.commissionPercent !== null && t.commissionPercent !== undefined
+        commissionPercent: unresolved ? null : external ? t.commissionPercent : t.commissionPercent !== null && t.commissionPercent !== undefined
           ? Number(t.commissionPercent)
           : (t.saleAmount > 0 && t.commissionAmount > 0
               ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
               : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
-        commissionRate: t.commissionPercent !== null && t.commissionPercent !== undefined
+        commissionRate: unresolved ? null : external ? t.commissionPercent : t.commissionPercent !== null && t.commissionPercent !== undefined
           ? Number(t.commissionPercent)
           : (t.saleAmount > 0 && t.commissionAmount > 0
               ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
               : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : 0)),
-        commissionEarned: t.commissionAmount,
+        commissionEarned: unresolved ? null : t.commissionAmount,
+        hasUnresolvedInvoiceItems: unresolved,
         generatedDate: t.createdAt.toISOString(),
         paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
         status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
@@ -168,6 +173,8 @@ export const fetchCommissionWallet = async (
       success: true,
       data: {
         netSalary,
+        unresolvedInvoiceCount,
+        totalsComplete: unresolvedInvoiceCount === 0,
         totalEarnings: netSalary + pendingCommission,
         totalCommissionBalance: pendingCommission,
         currentMonthCommission,
