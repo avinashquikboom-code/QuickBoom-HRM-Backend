@@ -533,6 +533,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
   console.log(`Applicable Amounts: ${Array.from(commissionMap.values()).map(c => `₹${c.totalAmount}`).join(', ')}`);
 
   await prisma.$transaction(async (tx) => {
+    // Lock the invoice even when no transaction row exists yet (concurrent first delivery).
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${billIdKey}, 0))::text AS locked`;
     // Serialize invoice updates with review so an approval cannot be overwritten using a stale status.
     await tx.$queryRaw`SELECT id FROM "CommissionTransaction" WHERE "billId"=${billIdKey} ORDER BY id FOR UPDATE`;
     const existingTransactions = await tx.commissionTransaction.findMany({
@@ -677,7 +679,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             Math.abs(commDelta),
             commDelta > 0,
             `Commission Adjustment - HopKid Invoice ${billDisplayTag} (₹${oldSaleAmount} → ₹${newSaleAmount}, diff: ₹${saleDelta})`,
-            commDelta > 0 ? 'Commission Earned' : 'Commission Reversed'
+            commDelta > 0 ? 'Commission Earned' : 'Commission Reversed',
+            tx
           );
         } else {
           console.log(`[Commission Audit]   Wallet adjustment: NONE (delta=0, idempotent re-processing)`);
@@ -798,7 +801,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
               finalCommAmount,
               true,
               `Commission Earned - HopKid Invoice ${billDisplayTag}`,
-              'Commission Earned'
+              'Commission Earned',
+              tx
             );
           } else {
             console.log(`[Commission Audit]   Wallet credit: SKIPPED (race condition — record already existed, concurrent request should have credited)`);
@@ -871,7 +875,8 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
             reversedCommission,
             false,
             `Commission Reversed - Removed from HopKid Invoice ${billDisplayTag}`,
-            'Commission Reversed'
+            'Commission Reversed',
+            tx
           );
         }
 

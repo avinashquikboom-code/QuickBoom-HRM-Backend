@@ -1,3 +1,4 @@
+import { extractProductLineMeta } from '../utils/productLineMeta';
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 const D = Prisma.Decimal;
@@ -69,7 +70,7 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
       if(contract.netBasis==='NET_EX_TAX') { exTax=value; if(tax!==undefined) inclTax=value.plus(decimal(tax,'TAX')); }
       else { inclTax=value; if(tax!==undefined) {const t=decimal(tax,'TAX');requireValue(value.gte(t),'TAX_EXCEEDS_NET');exTax=value.minus(t);} }
     }
-    const subId = pick(item, ['subcategoryId', 'subCategoryId', 'SubCategoryID', 'SubCategoryId', 'subcategory_id']);
+    const subId = extractProductLineMeta(item).subcategoryId;
     return { id, productId, variantId, quantity, exTax, inclTax,
       unverifiedAmount: !exTax && !inclTax && pick(item, ['creditAmount', 'productNetAmount', 'netAmount', 'lineTotal', 'amount', 'refundAmount']) !== undefined,
       subcategoryExternalId: subId == null ? undefined : identifier(subId, 'SUBCATEGORY_ID'),

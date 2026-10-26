@@ -1,3 +1,4 @@
+import { reconcilePendingInvoiceCommissions } from '../services/pendingInvoiceReconciliation';
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
@@ -81,7 +82,15 @@ router.get('/exceptions', route(async req => {
   const actor = access(req, true);
   return prisma.hrmCommissionInbox.findMany({ where: { status: 'EXCEPTION' }, orderBy: { createdAt: 'desc' }, take: 100 });
 }));
-router.post('/process', route(async req => { access(req, true); requireValue((await prisma.hrmCommissionSettings.findUnique({where:{id:1}}))?.enabled, 'HRM_COMMISSION_IMPORT_DISABLED'); return projectStoredHopkidLogs(); }));
+router.post('/process', route(async req => {
+  const actor=access(req,true);
+  requireValue((await prisma.hrmCommissionSettings.findUnique({where:{id:1}}))?.enabled, 'HRM_COMMISSION_IMPORT_DISABLED');
+  const projection=await projectStoredHopkidLogs();
+  if(req.body?.reconcilePendingInvoices!==true) return projection;
+  requireValue(req.body.dryRun!==false || (Array.isArray(req.body.transactionIds) && req.body.transactionIds.length>0), 'RECONCILIATION_APPLY_REQUIRES_TRANSACTION_IDS');
+  const reconciliation=await reconcilePendingInvoiceCommissions({actorId:actor.id,dryRun:req.body.dryRun!==false,transactionIds:req.body.transactionIds,limit:req.body.limit});
+  return {projection,reconciliation};
+}));
 router.post('/exceptions/:id/retry', route(async req => {
   const actor = access(req, true);
   const inbox = await prisma.hrmCommissionInbox.findUniqueOrThrow({ where: { id: String(req.params.id) } });

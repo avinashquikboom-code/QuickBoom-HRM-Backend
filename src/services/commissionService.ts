@@ -1,6 +1,10 @@
+import { Prisma } from '@prisma/client';
+import { hasUnresolvedInvoiceItems } from './invoiceCommissionCompleteness';
 import { ordinaryCommissionFilter } from './rkdPayrollService';
 import { prisma } from '../utils/db';
 import { getTransactionNetContribution, getNumericInvoiceNumber, getIstMonthRange } from '../utils/commissionHelper';
+
+const sumMoney = (values: number[]) => values.reduce((total, value) => total.plus(String(value)), new Prisma.Decimal(0)).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toNumber();
 
 export class CommissionService {
   /**
@@ -49,14 +53,14 @@ export class CommissionService {
       });
     } catch (_) {}
 
-    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
-    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
+    const rawNetSales = sumMoney(sales.map(s => getTransactionNetContribution(s).netSales));
+    const rawCommission = sumMoney(sales.map(s => hasUnresolvedInvoiceItems(s) ? 0 : getTransactionNetContribution(s).netCommission));
 
-    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
-    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+    const creditSalesDeduction = sumMoney(creditLines.map(cl => Number(cl.creditAmount || 0)));
+    const creditCommDeduction = sumMoney(creditLines.map(cl => Number(cl.commissionAdjustment || 0)));
 
-    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
-    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
+    const totalNetSales = Math.max(0, sumMoney([rawNetSales, -creditSalesDeduction]));
+    const totalCommission = Math.max(0, sumMoney([rawCommission, -creditCommDeduction]));
 
     console.log(`[Daily Metrics] ✅ Results:`, {
       date: `${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`,
@@ -126,14 +130,14 @@ export class CommissionService {
       });
     } catch (_) {}
 
-    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
-    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
+    const rawNetSales = sumMoney(sales.map(s => getTransactionNetContribution(s).netSales));
+    const rawCommission = sumMoney(sales.map(s => hasUnresolvedInvoiceItems(s) ? 0 : getTransactionNetContribution(s).netCommission));
 
-    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
-    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+    const creditSalesDeduction = sumMoney(creditLines.map(cl => Number(cl.creditAmount || 0)));
+    const creditCommDeduction = sumMoney(creditLines.map(cl => Number(cl.commissionAdjustment || 0)));
 
-    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
-    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
+    const totalNetSales = Math.max(0, sumMoney([rawNetSales, -creditSalesDeduction]));
+    const totalCommission = Math.max(0, sumMoney([rawCommission, -creditCommDeduction]));
 
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`;
 
@@ -202,14 +206,14 @@ export class CommissionService {
       });
     } catch (_) {}
 
-    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
-    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
+    const rawNetSales = sumMoney(sales.map(s => getTransactionNetContribution(s).netSales));
+    const rawCommission = sumMoney(sales.map(s => hasUnresolvedInvoiceItems(s) ? 0 : getTransactionNetContribution(s).netCommission));
 
-    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
-    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+    const creditSalesDeduction = sumMoney(creditLines.map(cl => Number(cl.creditAmount || 0)));
+    const creditCommDeduction = sumMoney(creditLines.map(cl => Number(cl.commissionAdjustment || 0)));
 
-    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
-    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
+    const totalNetSales = Math.max(0, sumMoney([rawNetSales, -creditSalesDeduction]));
+    const totalCommission = Math.max(0, sumMoney([rawCommission, -creditCommDeduction]));
 
     console.log(`[Monthly Metrics] ✅ Results:`, {
       month: targetMonth,
@@ -280,14 +284,14 @@ export class CommissionService {
       });
     } catch (_) {}
 
-    const rawNetSales = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netSales, 0);
-    const rawCommission = sales.reduce((sum, s) => sum + getTransactionNetContribution(s).netCommission, 0);
+    const rawNetSales = sumMoney(sales.map(s => getTransactionNetContribution(s).netSales));
+    const rawCommission = sumMoney(sales.map(s => hasUnresolvedInvoiceItems(s) ? 0 : getTransactionNetContribution(s).netCommission));
 
-    const creditSalesDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.creditAmount || 0), 0);
-    const creditCommDeduction = creditLines.reduce((sum, cl) => sum + Number(cl.commissionAdjustment || 0), 0);
+    const creditSalesDeduction = sumMoney(creditLines.map(cl => Number(cl.creditAmount || 0)));
+    const creditCommDeduction = sumMoney(creditLines.map(cl => Number(cl.commissionAdjustment || 0)));
 
-    const totalNetSales = Math.max(0, rawNetSales - creditSalesDeduction);
-    const totalCommission = Math.max(0, rawCommission - creditCommDeduction);
+    const totalNetSales = Math.max(0, sumMoney([rawNetSales, -creditSalesDeduction]));
+    const totalCommission = Math.max(0, sumMoney([rawCommission, -creditCommDeduction]));
 
     return {
       start: weekStart.toISOString().split('T')[0],

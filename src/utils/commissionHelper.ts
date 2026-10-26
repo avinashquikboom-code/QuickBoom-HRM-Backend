@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 
 /**
@@ -1708,20 +1709,23 @@ export async function updateEmployeeWalletCommission(
   amount: number,
   isCredit: boolean,
   description: string,
-  title: string = isCredit ? 'Commission Earned' : 'Commission Reversed'
+  title: string = isCredit ? 'Commission Earned' : 'Commission Reversed',
+  tx?: Prisma.TransactionClient
 ): Promise<void> {
   const roundedAmount = Math.round(amount * 100) / 100;
   if (roundedAmount <= 0) return;
 
   try {
-    let wallet = await prisma.wallet.findUnique({
+    const client = tx ?? prisma;
+    if (tx) await tx.$queryRaw`SELECT pg_advisory_xact_lock(72191, ${employeeId}::int)::text AS locked`;
+    let wallet = await client.wallet.findUnique({
       where: { employeeId }
     });
 
     if (!wallet) {
-      const emp = await prisma.employee.findUnique({ where: { id: employeeId } });
+      const emp = await client.employee.findUnique({ where: { id: employeeId } });
       const empCode = emp?.employeeCode || String(employeeId);
-      wallet = await prisma.wallet.create({
+      wallet = await client.wallet.create({
         data: {
           employeeId,
           availableBalance: 0,
@@ -1738,12 +1742,12 @@ export async function updateEmployeeWalletCommission(
       ? currentBalance + roundedAmount
       : Math.max(0, currentBalance - roundedAmount);
 
-    await prisma.wallet.update({
+    await client.wallet.update({
       where: { id: wallet.id },
       data: { availableBalance: newBalance }
     });
 
-    await prisma.walletTransaction.create({
+    await client.walletTransaction.create({
       data: {
         walletId: wallet.id,
         title,
@@ -1759,6 +1763,7 @@ export async function updateEmployeeWalletCommission(
     console.log(`[Wallet] ✅ Employee ${employeeId} wallet updated: ${isCredit ? '+' : '-'}₹${roundedAmount}. New Balance: ₹${newBalance}`);
   } catch (err: any) {
     console.error(`[Wallet Error] ❌ Failed to update wallet for Employee ${employeeId}:`, err.message);
+    if (tx) throw err;
   }
 }
 

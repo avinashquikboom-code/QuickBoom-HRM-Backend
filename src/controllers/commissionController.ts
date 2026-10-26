@@ -6,6 +6,8 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { prisma } from '../utils/db';
 import {
+  updateEmployeeWalletCommission,
+  broadcastCommissionEvent,
   getCommissionStats,
   resolveEmployeeId,
   isEligibleCommissionEmployee,
@@ -1051,9 +1053,17 @@ export const approveCommissionTransaction = async (
       if(['APPROVED','PAID'].includes(existing.status)) return tx.commissionTransaction.findUniqueOrThrow({where:{id:numericId},include:{employee:true,store:true,policy:true}});
       const resolved=await prepareInvoiceApproval(tx,existing);
       const result=await tx.commissionTransaction.update({where:{id:numericId},data:{...resolved,status:'APPROVED',approvedBy:req.user?.id,approvedAt:new Date(),notes:notes??existing.notes},include:{employee:true,store:true,policy:true}});
+      if(isExternalInvoice(existing)) {
+        const delta = Math.round((result.commissionAmount - existing.commissionAmount) * 100) / 100;
+        if (delta !== 0) await updateEmployeeWalletCommission(existing.employeeId, Math.abs(delta), delta > 0,
+          `Commission reconciliation - ${existing.invoiceNumber ?? existing.billId ?? existing.id}`,
+          delta > 0 ? 'Commission Earned' : 'Commission Reversed', tx);
+      }
       if(isExternalInvoice(existing)) await tx.commissionHistory.create({data:{transactionId:numericId,employeeId:existing.employeeId,action:'APPROVED',previousStatus:existing.status,newStatus:'APPROVED',previousAmount:existing.commissionAmount,newAmount:result.commissionAmount,performedBy:req.user!.id,reason:'Approved from saved subcategory item calculations'}});
       return result;
     },{timeout:30000});
+
+    if(isExternalInvoice(transaction)) await broadcastCommissionEvent(transaction.employeeId, {type:'COMMISSION_RECONCILED',transactionId:transaction.id});
 
     res.json({
       success: true,
