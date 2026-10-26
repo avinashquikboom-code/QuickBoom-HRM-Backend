@@ -1,7 +1,7 @@
 import { recoverSavedInvoiceItems, recoverInvoiceItemIdentities } from './invoiceItemRecovery';
 import { CommissionTransaction, Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
-import { extractWebhookMeta, fetchHopkidInvoiceDetails, getNumericInvoiceNumber } from '../utils/commissionHelper';
+import { extractWebhookMeta, fetchHopkidInvoiceDetails, getNumericInvoiceNumber, parseIsOld } from '../utils/commissionHelper';
 import { extractProductLineMeta } from '../utils/productLineMeta';
 import { normalizePayload, money, earning, NormalizedLine } from '../hrmCommission/normalize';
 import { resolveSubcategory, resolveSubcategoryRate } from '../hrmCommission/resolution';
@@ -35,6 +35,32 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
     eligibleSaleAmount:complete&&lines.every(l=>l.eligibleSaleAmount!==null)?money(lines.reduce((n,l)=>n.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber():null,
     hasUnresolvedInvoiceItems:!complete,hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines };
 }
+// Canonical null/zero must not be replaced by a legacy alias or a current rate.
+function savedNumber(row: any, keys: string[]): number | null {
+  for (const key of keys) if (Object.prototype.hasOwnProperty.call(row,key)) return amount(row[key]);
+  return null;
+}
+function normalizeRecordedItem(row: any) {
+  return {...row,
+    commissionRate:savedNumber(row,['commissionRate','commissionPercent','commissionPercentage','productCommissionRate','directCommissionRate','CommissionRate','commission_rate']),
+    commissionAmount:savedNumber(row,['commissionAmount','productCommission','commissionEarned','earnedCommission','directCommissionAmount','CommissionAmount','commission_amount']),
+  };
+}
+
+function matchingInvoiceItem(items: any[], reference: any): any | null {
+  const product=extractProductLineMeta(reference).productId;
+  const lineId=reference.saleItemId ?? reference.lineItemId ?? reference.lineId;
+  const variant=reference.variantId ?? reference.variantID ?? reference.VariantID ?? extractProductLineMeta(reference).sku;
+  const sameProduct=(item:any)=>product==null || String(extractProductLineMeta(item).productId)===String(product);
+  if(lineId!=null) {
+    const exact=items.filter(item=>String(item.saleItemId??item.lineItemId??item.lineId??'')===String(lineId) && sameProduct(item));
+    if(exact.length===1) return exact[0];
+  }
+  if(product==null) return null;
+  const matches=items.filter(item=>sameProduct(item) && (variant==null || String(item.variantId??item.variantID??item.VariantID??extractProductLineMeta(item).sku??'')===String(variant)));
+  return matches.length===1?matches[0]:null;
+}
+
 function invoiceDataMessage(reason: string) {
   if(reason==='PRODUCT_LINES_MISSING') return 'Invoice item data is unavailable. The saved invoice needs its original product details.';
   if(reason==='PRODUCT_ID_MISSING') return 'The saved product is missing its catalog ID. Its subcategory cannot be verified yet.';
@@ -65,20 +91,117 @@ async function projectedInvoiceLine(tx: Tx, snapshot: any, base: any) {
 }
 
 /** Read-only invoice calculation. Approved/paid records are never recalculated using current policy. */
-export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransaction | null, raw: any, context: { storeId: number; at: Date; reference: string }) {
+export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransaction | null, raw: any, context: { storeId: number; at: Date; reference: string; employeeIdentifiers?: string[]; sourceRecordedAt?: Date }) {
   const meta = raw ? extractWebhookMeta(raw) : null;
   const raws = list(meta?.lineItems);
-  const saved = list(sale?.productBreakdown);
+  const saved = list(sale?.productBreakdown).map(normalizeRecordedItem);
   const display = (raws.length ? raws : saved).map(displayLine);
   const recordedTotal = amount(sale?.commissionAmount);
-  const valid = saved.length > 0 && saved.every(l => amount(l.commissionAmount ?? l.productCommission) !== null);
-  const sum = valid ? saved.reduce((n,l)=>n.plus(String(l.commissionAmount??l.productCommission)),new D(0)) : null;
+  let recoveredLedger = false;
+  const approvalCutoff = sale?.approvedAt ?? sale?.paidAt;
+  const ownerKeys = new Set((context.employeeIdentifiers ?? []).map(key=>key.trim().toLowerCase()));
+  const rawOwnersMatch = raws.every(line=>{
+    const owners=[line.employeeCode,line.employeeId,line.employeeID,line.employeePhoneNo].filter(value=>value!=null && String(value).trim());
+    return !owners.length || owners.some(value=>ownerKeys.has(String(value).trim().toLowerCase()));
+  });
+  const savedReconciles = saved.length>0 && recordedTotal!==null && saved.every(line=>line.commissionAmount!==null) &&
+    saved.reduce((total,line)=>total.plus(String(line.commissionAmount)),new D(0)).equals(new D(String(recordedTotal)));
+  if (frozen(sale) && rawOwnersMatch && approvalCutoff && recordedTotal !== null &&
+      (!savedReconciles || saved.some(line => line.commissionRate === null))) {
+    const references=[context.reference,sale!.billId,sale!.invoiceNumber].filter((value):value is string=>Boolean(value));
+    const documents=await tx.hrmCommissionDocument.findMany({where:{storeId:context.storeId,kind:'SALE',
+      OR:[{externalId:{in:references}},{invoiceNumber:{in:references}}]}});
+    if(documents.length===1) {
+      const siblings=await tx.commissionTransaction.count({where:{storeId:context.storeId,employeeId:{not:sale!.employeeId},
+        OR:[{billId:{in:references}},{invoiceNumber:{in:references}}],eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']}}});
+      if(siblings===0) {
+        const entries=await tx.hrmCommissionLedger.findMany({where:{documentId:documents[0].id,storeId:context.storeId,postedAt:{lte:approvalCutoff}},orderBy:[{postedAt:'asc'},{id:'asc'}]});
+        const latest=new Map<string,any>();
+        let ambiguousLedger=false;
+        for(const entry of entries) {
+          const previous=latest.get(entry.lineId);
+          if(previous && previous.postedAt.getTime()===entry.postedAt.getTime() &&
+              (JSON.stringify(previous.snapshot)!==JSON.stringify(entry.snapshot) || String(previous.rate)!==String(entry.rate))) ambiguousLedger=true;
+          latest.set(entry.lineId,entry);
+        }
+        const snapshots=Array.from(latest.values()).map(entry=>{
+          const snapshot=entry.snapshot as any;
+          if(!snapshot || amount(snapshot.newCommission)===null || amount(snapshot.newRevenue)===null || amount(snapshot.newQuantity)===null) return null;
+          const sources=raws.length?raws:saved;
+          const sourceMatches=sources.filter(line=>String(line.lineItemId??line.saleItemId??'')===String(snapshot.externalLineId) && String(extractProductLineMeta(line).productId)===String(snapshot.productId));
+          const productMatches=sources.filter(line=>String(extractProductLineMeta(line).productId)===String(snapshot.productId) &&
+            String(line.variantId??line.variantID??line.VariantID??extractProductLineMeta(line).sku??'')===String(snapshot.variantId??''));
+          const source=sourceMatches.length===1?sourceMatches[0]:productMatches.length===1?productMatches[0]:{};
+          return {...source,saleItemId:snapshot.externalLineId,productID:snapshot.productId,variantId:snapshot.variantId,
+            quantity:amount(snapshot.newQuantity),eligibleSaleAmount:amount(snapshot.newRevenue),saleAmount:amount(snapshot.newRevenue),
+            commissionAmount:amount(snapshot.newCommission),commissionRate:amount(String(entry.rate)),commissionType:entry.type,
+            fixedBasis:entry.fixedBasis,basis:entry.basis,rateId:snapshot.rateId,subcategoryId:entry.subcategoryId,subcategoryName:entry.subcategoryName,
+            commissionSource:'APPROVED_LEDGER',commissionState:'CONFIGURED',missingReason:null};
+        });
+        if(!ambiguousLedger && snapshots.length && snapshots.every(line=>line!==null)) {
+          const active=snapshots.filter((line):line is NonNullable<typeof line>=>line!==null && line.quantity!==null && line.quantity>0);
+          if(active.length && active.every(line=>line.commissionRate!==null && line.productID && !['0','00000000-0000-0000-0000-000000000000'].includes(String(line.productID))) &&
+              active.reduce((total,line)=>total.plus(String(line.commissionAmount)),new D(0)).equals(new D(String(recordedTotal)))) {
+            saved.splice(0,saved.length,...active);
+            recoveredLedger=true;
+          }
+        }
+      }
+    }
+  }
+  let recoveredSingleProduct = false;
+  // This copies recorded values, not a new percentage calculation. It is safe only
+  // when one identified, non-return product covers this employee's entire invoice.
+  if (frozen(sale) && rawOwnersMatch && recordedTotal !== null && sale!.commissionType === 'PERCENTAGE' &&
+      amount(sale!.commissionPercent) !== null && saved.length <= 1 && raws.length <= 1) {
+    const source = saved[0] ?? raws[0];
+    if (source) {
+      const identity = extractProductLineMeta(source);
+      const revenue = amount(source.eligibleSaleAmount ?? source.eligibleRevenue ?? source.saleAmount ?? source.productNetAmount ?? source.netAmountExTax ?? source.netAmount ?? source.lineTotal ?? source.amount);
+      const quantity = amount(source.quantity ?? source.qty);
+      const employeeKeys = new Set((context.employeeIdentifiers ?? []).map(key => key.trim().toLowerCase()));
+      const sourceHistoryVerified = saved.length === 1 || (meta?.eventType === 'INVOICE_CREATED' &&
+        (!sale!.approvedAt || (context.sourceRecordedAt != null && context.sourceRecordedAt <= sale!.approvedAt)));
+      const attributed = saved.length === 1 || [source.employeeCode,source.employeeId,source.employeeID,source.employeePhoneNo,meta?.employeeIdentifier]
+        .some(key => key != null && employeeKeys.has(String(key).trim().toLowerCase()));
+      const rawProduct = raws[0] ? extractProductLineMeta(raws[0]) : null;
+      const rawVariant = raws[0]?.variantId ?? raws[0]?.variantID ?? raws[0]?.VariantID ?? rawProduct?.sku;
+      const savedVariant = source.variantId ?? source.variantID ?? source.VariantID ?? identity.sku;
+      const matchingProduct = !rawProduct || (String(rawProduct.productId) === String(identity.productId) &&
+        (!rawVariant || !savedVariant || String(rawVariant) === String(savedVariant)));
+      const productKnown = identity.productId != null && !['','0','00000000-0000-0000-0000-000000000000'].includes(String(identity.productId));
+      const isReturn = parseIsOld(source);
+      if (productKnown && sourceHistoryVerified && attributed && matchingProduct && !isReturn && quantity !== null && quantity > 0 && revenue !== null &&
+          new D(String(revenue)).equals(new D(String(sale!.saleAmount))) &&
+          (saved.length === 0 || saved[0].commissionAmount === null || saved[0].commissionRate === null || !new D(String(saved[0].commissionAmount)).equals(new D(String(recordedTotal))))) {
+        const otherRecipients = await tx.commissionTransaction.count({where:{storeId:context.storeId,employeeId:{not:sale!.employeeId},
+          OR:[...(sale!.billId?[{billId:sale!.billId}]:[]),...(sale!.invoiceNumber?[{invoiceNumber:sale!.invoiceNumber}]:[])],
+          eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']}}});
+        if (otherRecipients === 0) {
+          saved.splice(0,saved.length,{...source,eligibleSaleAmount:revenue,saleAmount:revenue,quantity,
+            commissionRate:sale!.commissionPercent,commissionAmount:recordedTotal,commissionType:sale!.commissionType,
+            commissionSource:'SINGLE_PRODUCT_RECORDED',commissionState:'CONFIGURED',missingReason:null});
+          recoveredSingleProduct = true;
+        }
+      }
+    }
+  }
+  const valid = saved.length > 0 && saved.every(l => amount(l.commissionAmount) !== null);
+  const sum = valid ? saved.reduce((n,l)=>n.plus(String(l.commissionAmount)),new D(0)) : null;
   const reconciled = recordedTotal !== null && sum !== null && sum.equals(new D(String(recordedTotal)));
   const recordedPending = sale?.status === 'PENDING' && reconciled && saved.every(l => l.commissionState === 'CONFIGURED' && !l.missingReason);
   if (frozen(sale) || recordedPending) {
     if (!reconciled) {
       const reason=valid?'HISTORICAL_TOTAL_MISMATCH':'HISTORICAL_SNAPSHOT_MISSING';
-      const lines=display.map(l=>({...l,commissionState:reason,missingReason:reason,configurationMessage:messages[reason]}));
+      const historical = saved.length ? saved.map(displayLine) : display;
+      const lines=historical.map((line,index)=>({...line,
+        // A partially missing history does not erase independently recorded rates
+        // or other known item amounts. Contradictory totals still require review.
+        commissionRate:saved[index]?.commissionRate ?? null,
+        commissionAmount:!valid ? saved[index]?.commissionAmount ?? null : null,
+        commissionType:saved[index]?.commissionType ?? sale!.commissionType,
+        fixedBasis:saved[index]?.fixedBasis ?? null,
+        commissionState:reason,missingReason:reason,configurationMessage:messages[reason]}));
       const recordedRate=amount(sale!.commissionPercent);
       const recordedRateDisplay=recordedRate===null?'Approved item breakdown unavailable':sale!.commissionType==='FIXED'?`Recorded fixed rate ₹${recordedRate}`:`Recorded ${recordedRate}%`;
       return {...summarizeInvoiceLines(lines),commissionSource:'APPROVED_HISTORY',
@@ -91,15 +214,20 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
         reconciliationMessage:recordedTotal === null ? 'The approved commission record has no valid persisted amount. Accounting review is required.' : messages[reason],approvalStatus:sale!.status};
     }
     const lines=saved.map((snapshot,i)=>{
-      const raw=raws.find(r=>String(r.lineItemId??r.saleItemId??'')===String(snapshot.saleItemId??snapshot.lineItemId??'__missing'))??raws.find(r=>String(r.productID??r.productId)===String(snapshot.productID??snapshot.productId))??snapshot;
+      const raw=matchingInvoiceItem(raws,snapshot)??snapshot;
       const base=displayLine({...raw,...snapshot},i);
       const revenue=amount(snapshot.eligibleSaleAmount??snapshot.eligibleRevenue??snapshot.saleAmount??snapshot.productNetAmount);
       return {...base,subcategoryId:snapshot.subcategoryId??null,subcategoryName:snapshot.subcategoryName??snapshot.subcategory??base.subcategoryName,subcategory:snapshot.subcategoryName??snapshot.subcategory??null,
-        eligibleSaleAmount:revenue,saleAmount:revenue,commissionRate:amount(snapshot.commissionRate),commissionAmount:Number(snapshot.commissionAmount??snapshot.productCommission),
+        eligibleSaleAmount:revenue,saleAmount:revenue,commissionRate:amount(snapshot.commissionRate),commissionAmount:Number(snapshot.commissionAmount),
         commissionType:snapshot.commissionType??sale!.commissionType,fixedBasis:snapshot.fixedBasis??null,rateId:snapshot.rateId??null,commissionState:'CONFIGURED',missingReason:null,configurationMessage:null};
     });
+    if(raws.length) lines.sort((a,b)=>{
+      const first=raws.indexOf(matchingInvoiceItem(raws,a));
+      const second=raws.indexOf(matchingInvoiceItem(raws,b));
+      return (first<0?raws.length:first)-(second<0?raws.length:second);
+    });
     const result=summarizeInvoiceLines(lines,'HISTORICAL_SNAPSHOT');
-    return {...result,commissionSource:recordedPending?'RECORDED_SNAPSHOT':saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,commission:recordedTotal,commissionTotalState:'RECORDED',itemCommissionState:'COMPLETE',recordedCommissionAmount:recordedTotal,approvalStatus:sale!.status};
+    return {...result,commissionSource:recoveredLedger?'APPROVED_LEDGER':recoveredSingleProduct?'SINGLE_PRODUCT_RECORDED':recordedPending?'RECORDED_SNAPSHOT':saved.every(l=>l.commissionSource==='SUBCATEGORY')?'SUBCATEGORY_SNAPSHOT':'APPROVED_HISTORY',rateDisplay:result.commissionRate===null?'Recorded item commissions':result.rateDisplay,calculatedCommissionAmount:recoveredSingleProduct||recoveredLedger?null:result.calculatedCommissionAmount,commission:recordedTotal,commissionTotalState:'RECORDED',itemCommissionState:'COMPLETE',recordedCommissionAmount:recordedTotal,approvalStatus:sale!.status};
   }
 
   const documents = await tx.hrmCommissionDocument.findMany({ where: { storeId: context.storeId, kind: 'SALE', OR: [
@@ -201,7 +329,7 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
     const storeId=sale?.storeId??meta?.storeId;
     if(!storeId) throw Object.assign(new Error('Invoice store is missing'),{status:409});
     const at=sale?.createdAt??payload!.createdAt, reference=sale?.billId??String(meta?.billId??billId);
-    const result=await calculateInvoiceCommission(tx,sale,payload?.raw,{storeId,at,reference});
+    const result=await calculateInvoiceCommission(tx,sale,payload?.raw,{storeId,at,reference,sourceRecordedAt:payload?.createdAt,employeeIdentifiers:[employee.employeeID,employee.employeeCode,employee.mobileNumber].filter((value):value is string=>Boolean(value))});
     const number=getNumericInvoiceNumber(sale??{billId:reference,invoiceNumber:meta?.invoiceNumber});
     const invoice=meta?.invoice??{};
     return { billId:number,billNumber:number,invoiceNumber:sale?.invoiceNumber??meta?.invoiceNumber??reference,invoiceNo:sale?.invoiceNumber??meta?.invoiceNumber??reference,
@@ -212,7 +340,7 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
       customerName:meta?.customerName??null,customerPhone:meta?.customerPhone??null,paymentMode:meta?.paymentMode??null,
       storeName:meta?.storeName??employee.store?.name??null,externalEventId:payload?.id??null,
       products:list(meta?.lineItems).length > 0
-        ? list(meta?.lineItems).map((l:any,index:number)=>({name:result.productCommissionBreakdown[index]?.productName??extractProductLineMeta(l).productName??l.name??'Product',quantity:amount(l.quantity??l.qty)??1,price:Number(l.unitPrice??l.productPrice??l.price??0)}))
+        ? list(meta?.lineItems).map((l:any)=>({name:matchingInvoiceItem(result.productCommissionBreakdown,l)?.productName??extractProductLineMeta(l).productName??l.name??'Product',quantity:amount(l.quantity??l.qty)??1,price:Number(l.unitPrice??l.productPrice??l.price??0)}))
         : result.productCommissionBreakdown.map((l:any)=>({name:l.productName??'Product',quantity:l.quantity??1,price:l.saleAmount??0})),
       employee:{name:`${employee.firstName} ${employee.lastName}`.trim(),code:employee.employeeCode} };
   },{timeout:30000});
