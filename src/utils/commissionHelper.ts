@@ -42,6 +42,10 @@ export function getTransactionNetContribution(t: {
   newCommission?: number | string | null;
   commissionDifference?: number | string | null;
 }): { netSales: number; netCommission: number } {
+  if (['INVOICE_CREATED','INVOICE_UPDATED'].includes(t.eventType??'')) {
+    return {netSales:Number(t.saleAmount),netCommission:Number(t.commissionAmount)};
+  }
+
   const currentSales = t.newAmount !== null && t.newAmount !== undefined && Number(t.newAmount) > 0
     ? Number(t.newAmount)
     : Number(t.saleAmount || 0);

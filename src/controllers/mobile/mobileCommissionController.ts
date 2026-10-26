@@ -1,3 +1,4 @@
+import { recordedInvoiceCommission } from '../../services/recordedInvoiceCommission';
 import { mobileInvoiceDetail } from '../../services/invoiceCommissionService';
 import { hasUnresolvedInvoiceItems } from '../../services/invoiceCommissionCompleteness';
 import { Response } from 'express';
@@ -164,19 +165,11 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
 
     const mappedTransactions = transactions.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
-      const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
-      let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
-      const unresolved = hasUnresolvedInvoiceItems(t) || (t.status === 'PENDING' && t.commissionPercent == null);
-      const rate = unresolved
-        ? null
-        : (t.commissionPercent !== null && t.commissionPercent !== undefined
-            ? Number(t.commissionPercent)
-            : (effectiveSale > 0 && comm > 0
-                ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
-                : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : null)));
-      if (!unresolved && (!comm || comm === 0) && rate !== null && rate > 0) {
-        comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
-      }
+      const recorded = recordedInvoiceCommission(t);
+      const effectiveSale = Number(t.saleAmount);
+      const comm = recorded.commissionEarned;
+      const unresolved = recorded.hasUnresolvedInvoiceItems;
+      const rate = recorded.commissionRate;
 
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
 
@@ -201,7 +194,7 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
         commissionEarned: unresolved ? null : comm,
         totalCommission: unresolved ? null : comm,
         hasUnresolvedInvoiceItems: unresolved,
-        rateDisplay: unresolved ? 'Configuration required' : (rate !== null ? `${rate}%` : 'Rate unavailable'),
+        ...recorded,
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),
@@ -941,19 +934,12 @@ export const getMobileCommissionBills = async (
 
     const bills: any[] = txs.map((t) => {
       const numInv = getNumericInvoiceNumber(t);
-      const effectiveSale = Number(t.newAmount !== undefined && t.newAmount !== null && Number(t.newAmount) > 0 ? t.newAmount : (t.saleAmount || 0));
-      let comm = Number(t.newCommission !== undefined && t.newCommission !== null && Number(t.newCommission) > 0 ? t.newCommission : (t.commissionAmount || 0));
-      const unresolved = hasUnresolvedInvoiceItems(t) || (t.status === 'PENDING' && t.commissionPercent == null);
-      let rate = unresolved
-        ? null
-        : (t.commissionPercent !== null && t.commissionPercent !== undefined
-            ? Number(t.commissionPercent)
-            : (effectiveSale > 0 && comm > 0
-                ? Math.round(((comm / effectiveSale) * 100) * 100) / 100
-                : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined ? Number(employee.commissionPercentage) : null)));
-      if (!unresolved && (!comm || comm === 0) && rate !== null && rate > 0) {
-        comm = Math.round(((effectiveSale * rate) / 100) * 100) / 100;
-      }
+      const recorded = recordedInvoiceCommission(t);
+      const effectiveSale = Number(t.saleAmount);
+      const comm = recorded.commissionEarned;
+      const unresolved = recorded.hasUnresolvedInvoiceItems;
+      const rate = recorded.commissionRate;
+
       return {
         id: String(t.id),
         billId: numInv,
@@ -969,7 +955,7 @@ export const getMobileCommissionBills = async (
         commissionPercentage: rate,
         commissionPercent: rate,
         hasUnresolvedInvoiceItems: unresolved,
-        rateDisplay: unresolved ? 'Configuration required' : (rate !== null ? `${rate}%` : 'Rate unavailable'),
+        ...recorded,
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),

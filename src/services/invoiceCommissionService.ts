@@ -33,7 +33,7 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
     commissionRate:rate,commissionPercent:rate,commissionPercentage:rate,
     rateDisplay:uniform?(lines[0].commissionType==='FIXED'?'Fixed subcategory commission':`${rate}%`):complete?'Multiple subcategory rates':missingData?'Invoice item data unavailable':'Configuration required',
     eligibleSaleAmount:complete&&lines.every(l=>l.eligibleSaleAmount!==null)?money(lines.reduce((n,l)=>n.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber():null,
-    hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines };
+    hasUnresolvedInvoiceItems:!complete,hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines };
 }
 function invoiceDataMessage(reason: string) {
   if(reason==='PRODUCT_LINES_MISSING') return 'Invoice item data is unavailable. The saved invoice needs its original product details.';
@@ -45,7 +45,7 @@ function displayLine(raw: any, index: number) {
   const meta = extractProductLineMeta(raw);
   const lineAmt = amount(raw.saleAmount ?? raw.eligibleSaleAmount ?? raw.productNetAmount ?? raw.netAmount ?? raw.lineTotal ?? raw.amount ?? (raw.unitPrice != null ? Number(raw.unitPrice) * Number(raw.quantity ?? raw.qty ?? 1) : null));
   return { saleItemId: String(raw.saleItemId ?? raw.lineItemId ?? raw.lineId ?? `${meta.productId ?? index}:${raw.variantId ?? meta.sku ?? ''}`),
-    productID: meta.productId, productName: meta.productName ?? raw.name ?? 'Product', sku: meta.sku, variant: meta.variant,
+    productID: meta.productId, variantId: String(raw.variantId ?? raw.variantID ?? raw.VariantId ?? raw.VariantID ?? meta.sku ?? ''), productName: meta.productName ?? raw.name ?? 'Product', sku: meta.sku, variant: meta.variant,
     quantity: amount(raw.quantity ?? raw.qty) ?? 1, subcategoryId: null as string|null, subcategory: null as string|null,
     subcategoryName: raw.subcategoryName ?? raw.subCategoryName ?? raw.SubCategoryName ?? null,
     eligibleSaleAmount: lineAmt, saleAmount: lineAmt, commissionRate: null as number|null,

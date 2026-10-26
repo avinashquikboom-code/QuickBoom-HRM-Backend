@@ -1,3 +1,5 @@
+import { recordedInvoiceCommission } from '../services/recordedInvoiceCommission';
+import { Prisma } from '@prisma/client';
 import { hasUnresolvedInvoiceItems } from '../services/invoiceCommissionCompleteness';
 import { ordinaryCommissionFilter } from '../services/rkdPayrollService';
 import { Response } from 'express';
@@ -81,9 +83,10 @@ export const fetchCommissionWallet = async (
     const pendingTransactions = approvedOrPaid.filter(t => t.status === 'PENDING' || t.status === 'APPROVED');
     const paidTransactions = approvedOrPaid.filter(t => t.status === 'PAID');
 
-    const pendingCommission = pendingTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const paidCommission = paidTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const lifetimeCommission = approvedOrPaid.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const sumCommission=(rows:typeof allTransactions)=>rows.reduce((sum,t)=>sum.plus(String(recordedInvoiceCommission(t).commissionEarned??0)),new Prisma.Decimal(0)).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP).toNumber();
+    const pendingCommission = sumCommission(pendingTransactions);
+    const paidCommission = sumCommission(paidTransactions);
+    const lifetimeCommission = sumCommission(approvedOrPaid);
 
     const now = new Date();
     const istTime = now.getTime() + 5.5 * 60 * 60 * 1000;
@@ -104,7 +107,7 @@ export const fetchCommissionWallet = async (
       const dt = new Date(t.createdAt);
       return dt >= lastMonthRange.monthStart && dt <= lastMonthRange.monthEnd;
     });
-    const lastMonthCommission = lastMonthTxns.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const lastMonthCommission = sumCommission(lastMonthTxns);
 
     const todayCommission = today.commission;
     const todaySales = today.netSales;
@@ -116,17 +119,9 @@ export const fetchCommissionWallet = async (
     const recentTransactions = allTransactions.slice(0, 50).map(t => {
       const numInv = getNumericInvoiceNumber(t);
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
-      const unresolved = hasUnresolvedInvoiceItems(t) || (t.status === 'PENDING' && t.commissionPercent == null);
-      const resolvedRate = unresolved
-        ? null
-        : (t.commissionPercent !== null && t.commissionPercent !== undefined
-            ? Number(t.commissionPercent)
-            : (t.saleAmount > 0 && t.commissionAmount > 0
-                ? Math.round(((t.commissionAmount / t.saleAmount) * 100) * 100) / 100
-                : (employee.commissionPercentage !== null && employee.commissionPercentage !== undefined
-                    ? Number(employee.commissionPercentage)
-                    : null)));
-      const external = ['INVOICE_CREATED', 'INVOICE_UPDATED'].includes(t.eventType ?? '');
+      const recorded=recordedInvoiceCommission(t);
+      const unresolved=recorded.hasUnresolvedInvoiceItems;
+      const resolvedRate=recorded.commissionRate;
       console.log({
         invoiceId: t.billId || t.id,
         billNumber: numInv,
@@ -147,7 +142,7 @@ export const fetchCommissionWallet = async (
         commissionRate: resolvedRate,
         commissionEarned: unresolved ? null : t.commissionAmount,
         hasUnresolvedInvoiceItems: unresolved,
-        rateDisplay: unresolved ? 'Configuration required' : (resolvedRate !== null ? `${resolvedRate}%` : 'Rate unavailable'),
+        ...recorded,
         generatedDate: t.createdAt.toISOString(),
         paymentDate: t.paidAt ? t.paidAt.toISOString() : null,
         status: t.status === 'PAID' ? 'Paid' : (t.status === 'APPROVED' ? 'Approved' : 'Pending'),
@@ -538,9 +533,10 @@ export const fetchCommissionDetails = async (
     const pendingTransactions = approvedOrPaid.filter(t => t.status === 'PENDING' || t.status === 'APPROVED');
     const paidTransactions = approvedOrPaid.filter(t => t.status === 'PAID');
 
-    const pendingCommission = pendingTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const paidCommission = paidTransactions.reduce((sum, t) => sum + t.commissionAmount, 0);
-    const lifetimeCommission = approvedOrPaid.reduce((sum, t) => sum + t.commissionAmount, 0);
+    const sumCommission=(rows:typeof allTransactions)=>rows.reduce((sum,t)=>sum.plus(String(recordedInvoiceCommission(t).commissionEarned??0)),new Prisma.Decimal(0)).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP).toNumber();
+    const pendingCommission = sumCommission(pendingTransactions);
+    const paidCommission = sumCommission(paidTransactions);
+    const lifetimeCommission = sumCommission(approvedOrPaid);
     const totalSalesAmount = approvedOrPaid.reduce((sum, t) => sum + t.saleAmount, 0);
 
     const groups: { [key: string]: { sales: number, commission: number, bills: number, monthName: string, year: string } } = {};

@@ -52,7 +52,7 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
     const productId = identifier(pick(item, ['productID', 'productId', 'ProductID']), 'PRODUCT_ID');
     // Upstream Guid.Empty is a missing identity, not a catalog product that can be mapped.
     requireValue(productId !== '00000000-0000-0000-0000-000000000000', 'PRODUCT_ID_MISSING');
-    const variantId = String(pick(item, ['variantId', 'VariantID', 'sku', 'SKU']) ?? '');
+    const variantId = String(pick(item, ['variantId', 'variantID', 'VariantId', 'VariantID', 'sku', 'SKU']) ?? '');
     const id = identifier(pick(item, ['saleItemId', 'lineItemId', 'lineId', 'SalesProductID', 'creditNoteLineId']) ?? `${productId}:${variantId}`, 'LINE_ID');
     const quantity = decimal(pick(item, ['quantity', 'qty', 'Qty']), 'QUANTITY'); requireValue(quantity.gt(0), 'QUANTITY_INVALID');
     let exTax: Prisma.Decimal | undefined, inclTax: Prisma.Decimal | undefined;

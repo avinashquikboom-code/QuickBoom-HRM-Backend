@@ -24,7 +24,7 @@ export async function recoverSavedInvoiceItems(tx: Prisma.TransactionClient, sna
     const item = { ...snapshot, productID: extractProductLineMeta(snapshot).productId,
       lineItemId: snapshot.saleItemId ?? snapshot.lineItemId ?? snapshot.externalLineId,
       quantity: snapshot.quantity ?? snapshot.qty,
-      variantId: snapshot.variantId ?? snapshot.sku ?? '' };
+      variantId: snapshot.variantId ?? snapshot.variantID ?? snapshot.VariantId ?? snapshot.VariantID ?? snapshot.sku ?? snapshot.SKU ?? '' };
     if (snapshot.subcategoryExternalId != null) item.subcategoryId = snapshot.subcategoryExternalId;
     else if (uuid(snapshot.subcategoryId)) {
       // Saved snapshots use internal HRM IDs; payload normalization expects external IDs.
