@@ -551,7 +551,37 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
       const incompleteCommission = commissionData.products.some(p => p.commissionState !== 'CONFIGURED' || p.commissionRate === null || p.commissionRate === undefined);
       const commAmt = incompleteCommission ? 0 : Math.round(commissionData.totalCommission * 100) / 100;
       const invoiceCommissionStatus = isCancelledOrReturned ? 'REJECTED' : incompleteCommission ? 'PENDING' : 'APPROVED';
-      const targetStoreId = commissionData.products[0]?.storeId || meta.storeId || salesman.storeId;
+      let targetStoreId = commissionData.products[0]?.storeId || meta.storeId || salesman.storeId;
+      if (!targetStoreId && meta.branchId) {
+        const bId = Number(meta.branchId);
+        if (!isNaN(bId) && bId > 0) {
+          const storeById = await tx.store.findUnique({ where: { id: bId } });
+          if (storeById) targetStoreId = storeById.id;
+          else {
+            const branch = await tx.branch.findUnique({ where: { id: bId } });
+            if (branch?.name) {
+              const storeByName = await tx.store.findFirst({ where: { name: { equals: branch.name.trim(), mode: 'insensitive' } } });
+              if (storeByName) targetStoreId = storeByName.id;
+            }
+          }
+        }
+      }
+      if (!targetStoreId && meta.storeCode) {
+        const sByCode = await tx.store.findFirst({ where: { code: String(meta.storeCode).trim() } });
+        if (sByCode) targetStoreId = sByCode.id;
+      }
+      if (!targetStoreId && (meta.branchName || meta.storeName)) {
+        const sByName = await tx.store.findFirst({ where: { name: { equals: String(meta.branchName || meta.storeName).trim(), mode: 'insensitive' } } });
+        if (sByName) targetStoreId = sByName.id;
+      }
+      if (!targetStoreId && salesman.branchId) {
+        const storeById = await tx.store.findUnique({ where: { id: salesman.branchId } });
+        if (storeById) targetStoreId = storeById.id;
+      }
+      if (!targetStoreId && salesman.branchName) {
+        const sByName = await tx.store.findFirst({ where: { name: { equals: String(salesman.branchName).trim(), mode: 'insensitive' } } });
+        if (sByName) targetStoreId = sByName.id;
+      }
       const targetPolicyId = commissionData.products[0]?.policyId ?? null;
       const productNamesSummary = commissionData.products.map(p => p.productName).filter(Boolean).join(', ');
       const isUpdate = targetEventType === 'INVOICE_UPDATED' || existingTransactions.some(t => t.employeeId === salesman.id);

@@ -165,11 +165,7 @@ export const campaignImages = {
         }
       });
     } catch (uploadError: any) {
-      try {
-        await withCampaignImageLock(async tx => {
-          await tx.campaignImageAsset.deleteMany({ where: { canonicalUrl } });
-        });
-      } catch {}
+      // Preserve the reservation so partial objects remain discoverable by safe cleanup.
       console.error('[CampaignImage] Upload failed',{ key: `campaigns/${name}`, code: uploadError?.code || uploadError?.name });
       throw uploadError;
     }
@@ -195,7 +191,7 @@ export const campaignImages = {
     if (s3 && await s3.exists(`campaigns/${name}`)) {
       return s3.sign(`campaigns/${name}`);
     }
-    return `${base}/api/uploads/campaigns/${name}`;
+    return await localCampaignExists(name) ? `${base}/api/uploads/campaigns/${name}` : null;
   },
 
   async notificationUrl(url?: string | null): Promise<string | undefined> {

@@ -745,6 +745,8 @@ export interface ExtractedWebhookMeta {
   branchName: string | null;
   storeName: string | null;
   storeId: number | null;
+  branchId?: number | string | null;
+  storeCode?: string | null;
   invoice: any;
   lineItems: any[];
   firstItem: any;

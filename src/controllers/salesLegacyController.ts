@@ -64,7 +64,15 @@ export const addSales = async (
     });
 
     const parsedSaleAmount = parseFloat(saleAmount);
-    const targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
+    let targetStoreId = storeId ? parseInt(storeId, 10) : employee.storeId;
+    if (!targetStoreId && employee.branchId) {
+      const storeById = await prisma.store.findUnique({ where: { id: employee.branchId } });
+      if (storeById) targetStoreId = storeById.id;
+    }
+    if (!targetStoreId && employee.branchName) {
+      const storeByName = await prisma.store.findFirst({ where: { name: { equals: employee.branchName.trim(), mode: 'insensitive' } } });
+      if (storeByName) targetStoreId = storeByName.id;
+    }
 
     const rawLineItems = Array.isArray(req.body.SalesProductList) && req.body.SalesProductList.length > 0
       ? req.body.SalesProductList

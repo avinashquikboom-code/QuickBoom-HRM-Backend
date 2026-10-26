@@ -28,6 +28,7 @@ const db = {
   notification: { findFirst: async () => null, create: async () => ({ id: 1 }), update: async () => ({}), findMany: async () => notifications },
 };
 db.$transaction = async fn => fn(db);
+db.campaign.findFirst = db.campaign.findUnique;
 require.cache[require.resolve('../src/services/campaignS3Service')] = { exports: { campaignS3: async () => s3Storage } };
 require.cache[require.resolve('../src/utils/db')] = { exports: { prisma: db } };
 require.cache[require.resolve('../src/config/firebase')] = { exports: {

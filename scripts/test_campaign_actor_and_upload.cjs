@@ -135,13 +135,13 @@ require.cache[require.resolve('../src/services/campaignS3Service')] = { exports:
   // A. Stale / Bare Filename (campaign_1793030810851_22178914.png)
   const legacyFilename = 'campaign_1793030810851_22178914.png';
   const resolvedLegacy = await campaignImages.displayUrl(legacyFilename);
-  assert.equal(resolvedLegacy, `/api/uploads/campaigns/${legacyFilename}`, 'Bare filename must resolve to accessible /api/uploads/ path');
-  console.log('PASS: Bare filename resolves to /api/uploads/campaigns/...');
+  assert.equal(resolvedLegacy, null, 'Missing legacy files must not produce fabricated image URLs');
+  console.log('PASS: Missing legacy files are reported as missing');
 
   // B. Relative uploads path
   const relativeUpload = '/uploads/campaigns/v1-sample-detail.jpg';
   const resolvedRelative = await campaignImages.displayUrl(relativeUpload);
-  assert.equal(resolvedRelative, '/api/uploads/campaigns/v1-sample-detail.jpg', 'Relative /uploads/ path must normalize to /api/uploads/');
+  assert.equal(resolvedRelative, null, 'Missing relative files must not produce fabricated image URLs');
   console.log('PASS: Relative /uploads/ path normalizes to /api/uploads/');
 
   // C. Legacy / arbitrary S3 key signing (not matching v1 pattern)
@@ -175,8 +175,8 @@ require.cache[require.resolve('../src/services/campaignS3Service')] = { exports:
     /AccessDenied|storage/i,
     'S3 put failure must reject'
   );
-  assert.equal(ledger.size, 0, 'Failed upload must clean up pending ledger entry');
-  console.log('PASS: Failed S3 upload cleans up ledger entry and throws clear error');
+  assert.equal(ledger.size, 1, 'Partial/failed upload must retain its reservation for safe GC');
+  console.log('PASS: Failed S3 upload retains discoverable ledger entry and throws clear error');
 
   console.log('\nALL ACTOR SCOPING & IMAGE RESOLUTION TESTS PASSED SUCCESSFULLY!');
 })().catch(err => {

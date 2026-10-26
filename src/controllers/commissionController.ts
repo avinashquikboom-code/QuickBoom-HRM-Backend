@@ -483,6 +483,35 @@ export const createCommissionTransaction = async (
       res.status(409).json({success:false,message:'POS commissions must be created through POS sale and return workflows.'});
       return;
     }
+
+    if (!transactionData.storeId && transactionData.employeeId) {
+      const empId = parseInt(transactionData.employeeId, 10);
+      if (!isNaN(empId)) {
+        const emp = await prisma.employee.findUnique({
+          where: { id: empId },
+          include: { store: true, branch: true }
+        });
+        if (emp?.storeId) {
+          transactionData.storeId = emp.storeId;
+        } else if (emp?.branchId) {
+          const storeById = await prisma.store.findUnique({ where: { id: emp.branchId } });
+          if (storeById) {
+            transactionData.storeId = storeById.id;
+          } else if (emp.branch?.name) {
+            const storeByName = await prisma.store.findFirst({
+              where: { name: { equals: emp.branch.name.trim(), mode: 'insensitive' } }
+            });
+            if (storeByName) transactionData.storeId = storeByName.id;
+          }
+        } else if (emp?.branchName) {
+          const storeByName = await prisma.store.findFirst({
+            where: { name: { equals: emp.branchName.trim(), mode: 'insensitive' } }
+          });
+          if (storeByName) transactionData.storeId = storeByName.id;
+        }
+      }
+    }
+
     let transaction;
     if (transactionData.billId && transactionData.employeeId) {
       transaction = await prisma.commissionTransaction.upsert({

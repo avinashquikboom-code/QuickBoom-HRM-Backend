@@ -1,0 +1,14 @@
+# Opt-in overlay: preserve local campaign/receipt uploads and fail clearly if
+# required migrations cannot run. Back up the old container's uploads before
+# the first deployment using this volume (see docs/campaign-module-errors.md).
+services:
+  backend:
+    volumes:
+      - campaign_uploads:/app/uploads
+    command:
+      - sh
+      - -c
+      - node node_modules/prisma/build/index.js migrate deploy && exec node dist/index.js
+
+volumes:
+  campaign_uploads:
