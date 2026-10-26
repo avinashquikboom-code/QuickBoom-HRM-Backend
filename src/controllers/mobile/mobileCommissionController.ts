@@ -953,6 +953,7 @@ export const getMobileCommissionBills = async (
       const rate = recorded.commissionRate;
       const {
         commission: _recordedCommission,
+        commissionType: _recordedCommissionType,
         commissionAmount: _recordedAmount,
         commissionEarned: _recordedEarned,
         commissionRate: _recordedRate,
@@ -973,6 +974,7 @@ export const getMobileCommissionBills = async (
         saleAmount: effectiveSale,
         billAmount: effectiveSale,
         commission: unresolved ? null : comm,
+        commissionType: t.commissionType,
         commissionAmount: unresolved ? null : comm,
         commissionEarned: unresolved ? null : comm,
         commissionRate: rate,
