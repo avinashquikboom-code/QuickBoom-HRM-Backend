@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '../src/utils/db';
 import { processInvoiceCreated, processInvoiceUpdated } from '../src/controllers/webhookController';
 import { fetchCommissionWallet } from '../src/controllers/employeeCommissionController';
+import { getMobileWebhookLogs } from '../src/controllers/mobile/mobileCommissionController';
 import { hasUnresolvedInvoiceItems } from '../src/services/invoiceCommissionCompleteness';
 import { mobileInvoiceDetail } from '../src/services/invoiceCommissionService';
 
@@ -400,6 +401,55 @@ async function run() {
     assert.equal(tx1.commissionPercentage, 1, 'Configured commissionPercentage should be 1');
     assert.equal(tx1.commissionEarned, 50, 'Configured commissionEarned should be 50');
     assert.equal(tx1.hasUnresolvedInvoiceItems, false);
+  });
+
+  // TEST 8: getMobileWebhookLogs returns valid commission amounts (including zero and positive) and marks missing config as null
+  await test('getMobileWebhookLogs returns valid commission amounts (50, 0) and null for unconfigured invoices', async () => {
+    let webhookRes1: any = null;
+    const req1: any = { user: { id: user1.id, role: 'EMPLOYEE' }, query: { limit: '20' } };
+    const res1: any = {
+      status: (code: number) => res1,
+      json: (data: any) => { webhookRes1 = data; },
+    };
+
+    await getMobileWebhookLogs(req1, res1);
+    assert.ok(webhookRes1 && webhookRes1.success);
+    const logs1 = webhookRes1.data;
+    assert.ok(logs1.length > 0, 'Should return webhook logs for emp1');
+    const bill5000 = logs1.find((l: any) => Number(l.amount) === 5000);
+    assert.ok(bill5000, 'Should find 5000 bill in webhook logs');
+    assert.equal(bill5000.commissionAmount, 50, 'Commission amount should be 50');
+    assert.equal(bill5000.status, 'SUCCESS');
+
+    // Check user0 (configured 0% rate)
+    let webhookRes0: any = null;
+    const req0: any = { user: { id: user0.id, role: 'EMPLOYEE' }, query: { limit: '20' } };
+    const res0: any = {
+      status: (code: number) => res0,
+      json: (data: any) => { webhookRes0 = data; },
+    };
+    await getMobileWebhookLogs(req0, res0);
+    assert.ok(webhookRes0 && webhookRes0.success);
+    const logs0 = webhookRes0.data;
+    const bill2000 = logs0.find((l: any) => Number(l.amount) === 2000);
+    assert.ok(bill2000, 'Should find 2000 bill in webhook logs');
+    assert.equal(bill2000.commissionAmount, 0, 'Zero commission should be preserved as 0, not null');
+    assert.equal(bill2000.status, 'SUCCESS');
+
+    // Check userNull (unconfigured invoice should have commissionAmount: null and rateDisplay: 'Configuration required')
+    let webhookResNull: any = null;
+    const reqNull: any = { user: { id: userNull.id, role: 'EMPLOYEE' }, query: { limit: '20' } };
+    const resNull: any = {
+      status: (code: number) => resNull,
+      json: (data: any) => { webhookResNull = data; },
+    };
+    await getMobileWebhookLogs(reqNull, resNull);
+    assert.ok(webhookResNull && webhookResNull.success);
+    const logsNull = webhookResNull.data;
+    const bill3000 = logsNull.find((l: any) => Number(l.amount) === 3000);
+    assert.ok(bill3000, 'Should find 3000 unconfigured bill');
+    assert.equal(bill3000.commissionAmount, null, 'Unconfigured invoice must have commissionAmount: null');
+    assert.equal(bill3000.rateDisplay, 'Configuration required');
   });
 
   console.log(`\n========================================`);

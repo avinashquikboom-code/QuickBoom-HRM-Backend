@@ -447,6 +447,39 @@ export const getMobileWebhookLogs = async (
     const cnBillIds = empCreditNoteLines.map(c => c.creditNote.creditNoteNo).filter(Boolean);
     const cnInvoiceNos = empCreditNoteLines.map(c => c.creditNote.invoiceNo).filter(Boolean);
 
+    // Pre-fetch employee's Commission Transactions to correlate accurate commissions and statuses
+    let empCommissionTransactions: any[] = [];
+    try {
+      empCommissionTransactions = await prisma.commissionTransaction.findMany({
+        where: { employeeId: employee.id },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      });
+    } catch (_) {}
+
+    const findMatchingTx = (billIdStr: string | null, invNoStr: string | null, numBill: number | null) => {
+      const candidates = [
+        billIdStr,
+        invNoStr,
+        numBill ? String(numBill) : null,
+        numBill ? `HWM-${numBill}` : null,
+      ].filter((c): c is string => Boolean(c && String(c).trim().length > 0));
+
+      return empCommissionTransactions.find(tx => {
+        const txBill = String(tx.billId || '').trim();
+        const txInv = String(tx.invoiceNumber || '').trim();
+        const txNum = getNumericInvoiceNumber({ invoiceNumber: tx.invoiceNumber, billId: tx.billId, id: tx.id });
+
+        return candidates.some(cand => {
+          const candNorm = cand.trim().toLowerCase();
+          if (txBill && txBill.toLowerCase() === candNorm) return true;
+          if (txInv && txInv.toLowerCase() === candNorm) return true;
+          if (txNum && (candNorm === String(txNum) || candNorm === `hwm-${txNum}`)) return true;
+          return false;
+        });
+      });
+    };
+
     // 2. WebhookLog — filter by employeeId directly OR linked Credit Note numbers
     try {
       const wLogs = await prisma.webhookLog.findMany({
@@ -471,10 +504,36 @@ export const getMobileWebhookLogs = async (
           : (matchedCnLine ? matchedCnLine.creditNote.invoiceNo : `HWM-${numInv}`);
 
         const amtVal = isCreditNote && matchedCnLine ? Number(matchedCnLine.creditAmount) : Number(log.amount ?? meta.amount ?? 0);
+
+        const matchedTx = !isCreditNote ? findMatchingTx(log.billId || meta.billId, cleanInvoiceNo || meta.invoiceNumber, numInv) : null;
+        let commAmt: number | null = null;
+        let statusVal = log.status || 'SUCCESS';
+        let rateDisplay: string | null = null;
+        let commissionPercent: number | null = null;
+
+        if (isCreditNote && matchedCnLine) {
+          commAmt = -Number(matchedCnLine.commissionAdjustment);
+          statusVal = 'SUCCESS';
+        } else if (matchedTx) {
+          const unresolved = hasUnresolvedInvoiceItems(matchedTx);
+          if (unresolved) {
+            commAmt = null;
+            statusVal = (matchedTx.status === 'APPROVED' || matchedTx.status === 'PAID') ? 'SUCCESS' : 'PENDING';
+            rateDisplay = 'Configuration required';
+          } else {
+            commAmt = matchedTx.commissionAmount !== null && matchedTx.commissionAmount !== undefined ? Number(matchedTx.commissionAmount) : null;
+            statusVal = (matchedTx.status === 'APPROVED' || matchedTx.status === 'PAID') ? 'SUCCESS' : (matchedTx.status || 'SUCCESS');
+            commissionPercent = matchedTx.commissionPercent !== null ? Number(matchedTx.commissionPercent) : null;
+            rateDisplay = matchedTx.commissionPercent !== null ? `${matchedTx.commissionPercent}%` : null;
+          }
+        } else if (meta.commissionAmount !== null && meta.commissionAmount !== undefined) {
+          commAmt = Number(meta.commissionAmount);
+        }
+
         results.push({
           id: log.id,
           eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
-          status: log.status || 'SUCCESS',
+          status: statusVal,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -484,7 +543,9 @@ export const getMobileWebhookLogs = async (
           newAmount: amtVal,
           newBillAmount: amtVal,
           differenceAmount: null,
-          commissionAmount: isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : (meta.commissionAmount ?? 0),
+          commissionAmount: commAmt,
+          commissionPercent,
+          rateDisplay,
           customerName: meta.customerName && meta.customerName !== 'N/A' ? meta.customerName : '-',
           errorMessage: log.errorMessage || null,
           createdAt: log.createdAt,
@@ -513,6 +574,8 @@ export const getMobileWebhookLogs = async (
           newBillAmount: cnLineAmt,
           differenceAmount: null,
           commissionAmount: -Number(line.commissionAdjustment),
+          commissionPercent: null,
+          rateDisplay: null,
           customerName: 'Customer',
           errorMessage: null,
           createdAt: line.createdAt,
@@ -549,10 +612,32 @@ export const getMobileWebhookLogs = async (
 
         const hAmtVal = Number(log.amount ?? meta.amount ?? 0);
 
+        const matchedTx = findMatchingTx(log.billId || meta.billId, cleanInvoiceNo || meta.invoiceNumber, numInv);
+        let commAmt: number | null = null;
+        let statusVal = 'RECEIVED';
+        let rateDisplay: string | null = null;
+        let commissionPercent: number | null = null;
+
+        if (matchedTx) {
+          const unresolved = hasUnresolvedInvoiceItems(matchedTx);
+          if (unresolved) {
+            commAmt = null;
+            statusVal = 'RECEIVED';
+            rateDisplay = 'Configuration required';
+          } else {
+            commAmt = matchedTx.commissionAmount !== null && matchedTx.commissionAmount !== undefined ? Number(matchedTx.commissionAmount) : null;
+            statusVal = (matchedTx.status === 'APPROVED' || matchedTx.status === 'PAID') ? 'SUCCESS' : 'RECEIVED';
+            commissionPercent = matchedTx.commissionPercent !== null ? Number(matchedTx.commissionPercent) : null;
+            rateDisplay = matchedTx.commissionPercent !== null ? `${matchedTx.commissionPercent}%` : null;
+          }
+        } else if (meta.commissionAmount !== null && meta.commissionAmount !== undefined) {
+          commAmt = Number(meta.commissionAmount);
+        }
+
         results.push({
           id: `hopkid-${log.id}`,
           eventType: meta.eventType || 'INVOICE_CREATED',
-          status: 'RECEIVED',
+          status: statusVal,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -562,7 +647,9 @@ export const getMobileWebhookLogs = async (
           newAmount: hAmtVal,
           newBillAmount: hAmtVal,
           differenceAmount: null,
-          commissionAmount: null,
+          commissionAmount: commAmt,
+          commissionPercent,
+          rateDisplay,
           customerName: meta.customerName || 'N/A',
           errorMessage: null,
           createdAt: log.createdAt,
@@ -570,6 +657,45 @@ export const getMobileWebhookLogs = async (
         });
       }
     } catch (_) { /* table may not exist */ }
+
+    // 4. Fallback: Any CommissionTransaction for this employee not yet captured in webhook activity
+    for (const tx of empCommissionTransactions) {
+      const numInv = getNumericInvoiceNumber({ invoiceNumber: tx.invoiceNumber, billId: tx.billId, id: tx.id });
+      const cleanInvoiceNo = (tx.invoiceNumber && !/^[0-9a-fA-F-]{36}$/.test(tx.invoiceNumber))
+        ? tx.invoiceNumber
+        : (numInv ? `HWM-${numInv}` : '—');
+
+      const alreadyPresent = results.some(r =>
+        (numInv && r.billId === numInv) ||
+        (cleanInvoiceNo && (r.invoiceNo === cleanInvoiceNo || r.invoiceNumber === cleanInvoiceNo))
+      );
+
+      if (!alreadyPresent) {
+        const unresolved = hasUnresolvedInvoiceItems(tx);
+        const commAmt = unresolved ? null : (tx.commissionAmount !== null && tx.commissionAmount !== undefined ? Number(tx.commissionAmount) : null);
+        results.push({
+          id: `tx-${tx.id}`,
+          eventType: tx.eventType || 'INVOICE_CREATED',
+          status: (tx.status === 'APPROVED' || tx.status === 'PAID') ? 'SUCCESS' : (unresolved ? 'RECEIVED' : (tx.status || 'SUCCESS')),
+          billId: numInv,
+          invoiceNo: cleanInvoiceNo,
+          invoiceNumber: cleanInvoiceNo,
+          amount: Number(tx.saleAmount || 0),
+          oldAmount: tx.oldAmount !== null ? Number(tx.oldAmount) : null,
+          oldBillAmount: tx.oldAmount !== null ? Number(tx.oldAmount) : null,
+          newAmount: Number(tx.saleAmount || 0),
+          newBillAmount: Number(tx.saleAmount || 0),
+          differenceAmount: tx.commissionDifference !== null ? Number(tx.commissionDifference) : null,
+          commissionAmount: commAmt,
+          commissionPercent: tx.commissionPercent !== null ? Number(tx.commissionPercent) : null,
+          rateDisplay: unresolved ? 'Configuration required' : (tx.commissionPercent !== null ? `${tx.commissionPercent}%` : null),
+          customerName: 'POS Customer',
+          errorMessage: null,
+          createdAt: tx.createdAt,
+          externalEventId: tx.billId || `TX-${tx.id}`,
+        });
+      }
+    }
 
     // Sort combined result by newest first and cap at limit
     results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
