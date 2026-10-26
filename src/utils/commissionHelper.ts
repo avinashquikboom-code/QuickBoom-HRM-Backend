@@ -1253,8 +1253,60 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     firstItem?.branch ||
     null;
 
-  const storeIdParsed = creditNote.storeId ? parseInt(String(creditNote.storeId), 10) : (invoice.storeId ? parseInt(String(invoice.storeId), 10) : (payload?.storeId ? parseInt(String(payload.storeId), 10) : null));
-  const storeId = isNaN(storeIdParsed as number) ? null : storeIdParsed;
+  const rawStoreId =
+    creditNote.storeId ??
+    creditNote.StoreId ??
+    creditNote.store_id ??
+    invoice.storeId ??
+    invoice.StoreId ??
+    invoice.store_id ??
+    invoice.StoreID ??
+    payload?.data?.storeId ??
+    payload?.data?.StoreId ??
+    payload?.data?.invoice?.storeId ??
+    payload?.data?.invoice?.StoreId ??
+    payload?.storeId ??
+    payload?.StoreId ??
+    payload?.store_id ??
+    firstItem?.storeId ??
+    firstItem?.StoreId ??
+    firstItem?.store_id ??
+    null;
+
+  const storeIdParsed = rawStoreId !== null && rawStoreId !== undefined ? parseInt(String(rawStoreId), 10) : null;
+  const storeId = storeIdParsed !== null && !isNaN(storeIdParsed) && storeIdParsed > 0 ? storeIdParsed : null;
+
+  const rawBranchId =
+    creditNote.branchId ??
+    creditNote.BranchId ??
+    creditNote.branch_id ??
+    invoice.branchId ??
+    invoice.BranchId ??
+    invoice.branch_id ??
+    invoice.BranchID ??
+    payload?.data?.branchId ??
+    payload?.data?.BranchId ??
+    payload?.data?.invoice?.branchId ??
+    payload?.data?.invoice?.BranchId ??
+    payload?.branchId ??
+    payload?.BranchId ??
+    payload?.branch_id ??
+    firstItem?.branchId ??
+    firstItem?.BranchId ??
+    null;
+
+  const branchIdParsed = rawBranchId !== null && rawBranchId !== undefined ? parseInt(String(rawBranchId), 10) : null;
+  const branchId = branchIdParsed !== null && !isNaN(branchIdParsed) && branchIdParsed > 0 ? branchIdParsed : null;
+
+  const storeCode =
+    invoice.storeCode ??
+    invoice.StoreCode ??
+    invoice.store_code ??
+    payload?.data?.storeCode ??
+    payload?.data?.StoreCode ??
+    payload?.storeCode ??
+    payload?.StoreCode ??
+    null;
 
   const firstSalesman = (Array.isArray(salesmen) && salesmen[0]) || {};
 
@@ -1425,6 +1477,8 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     branchName: branchName ? String(branchName) : null,
     storeName: storeName ? String(storeName) : null,
     storeId,
+    branchId,
+    storeCode: storeCode ? String(storeCode) : null,
     invoice,
     lineItems,
     firstItem,
