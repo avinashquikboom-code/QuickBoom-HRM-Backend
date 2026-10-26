@@ -1,11 +1,48 @@
 import { campaignImageResponse } from '../services/campaignImageService';
 import { Router, Response } from 'express';
+import multer from 'multer';
 import { authenticateToken, requireRole, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { campaignService } from '../services/campaignService';
 import { CampaignError, validateCampaign } from '../services/campaignPolicy';
 import { prisma } from '../utils/db';
 
 const router = Router();
+
+const uploadMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new CampaignError(400, 'Only JPEG, PNG, WEBP, and GIF images are allowed'));
+    }
+  },
+}).fields([
+  { name: 'image', maxCount: 1 },
+  { name: 'file', maxCount: 1 },
+  { name: 'banner', maxCount: 1 },
+]);
+
+const parseUpload = (req: any, res: any): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    uploadMiddleware(req, res, (err: any) => {
+      if (err) {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return reject(new CampaignError(400, 'Image file must not exceed 5MB'));
+          }
+          return reject(new CampaignError(400, err.message));
+        }
+        return reject(err);
+      }
+      resolve();
+    });
+  });
+};
 
 const allowedRoles = ['SUPER_ADMIN', 'ADMIN', 'HR', 'PLATFORM_ADMIN', 'STORE_MANAGER'];
 router.use(authenticateToken, requireRole(allowedRoles));
@@ -44,7 +81,7 @@ router.get('/target-options', handle(async (req, res) => {
 
 router.get('/options', handle(async (req, res) => {
   const scope = await campaignService.actorScope(req.user?.id);
-  const restricted = Object.keys(scope).length > 0;
+  const isBranchOrStoreRestricted = Boolean(scope.storeId || scope.branchId);
   const [stores, branches, departments] = await Promise.all([
     prisma.store.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
     prisma.branch.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
@@ -65,9 +102,9 @@ router.get('/options', handle(async (req, res) => {
     data: {
       stores,
       branches,
-      departments: restricted ? [] : departments,
+      departments: isBranchOrStoreRestricted ? [] : departments,
       roles,
-      canTargetAll: !restricted,
+      canTargetAll: !isBranchOrStoreRestricted,
       timezone: 'Asia/Kolkata',
     },
   }));
@@ -218,23 +255,47 @@ router.post('/birthdays/send-wishes', handle(async (req, res) => {
 
 /**
  * 5. Upload Image (both /upload-image and /image endpoints)
+ * Supports multipart/form-data (fields 'image', 'file', 'banner') and JSON base64 payloads
  */
 const handleUploadImage = handle(async (req, res) => {
-  const { imageBase64, filename, mimeType } = req.body;
-  if (!imageBase64) {
-    throw new CampaignError(400, 'imageBase64 payload is required');
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    await parseUpload(req, res);
   }
 
-  const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-  const buffer = Buffer.from(base64Data, 'base64');
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const multipartFile =
+    files?.['image']?.[0] ||
+    files?.['file']?.[0] ||
+    files?.['banner']?.[0] ||
+    (req as any).file;
 
-  let detectedMime = mimeType || 'image/jpeg';
-  const match = imageBase64.match(/^data:(image\/\w+);base64,/);
-  if (match) detectedMime = match[1];
+  let buffer: Buffer;
+  let detectedMime: string;
+  let filename: string;
+
+  if (multipartFile) {
+    buffer = multipartFile.buffer;
+    detectedMime = multipartFile.mimetype || 'image/jpeg';
+    filename = multipartFile.originalname || 'banner.jpg';
+  } else {
+    const { imageBase64, filename: reqFilename, mimeType } = req.body || {};
+    if (!imageBase64) {
+      throw new CampaignError(400, 'Image file (field "image" or "file") or imageBase64 payload is required');
+    }
+
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    buffer = Buffer.from(base64Data, 'base64');
+
+    detectedMime = mimeType || 'image/jpeg';
+    const match = imageBase64.match(/^data:(image\/\w+);base64,/);
+    if (match) detectedMime = match[1];
+    filename = reqFilename || 'banner.jpg';
+  }
 
   const imageUrl = await campaignService.saveUploadedImage({
     buffer,
-    originalname: filename || 'banner.jpg',
+    originalname: filename,
     mimetype: detectedMime,
     size: buffer.length,
   });

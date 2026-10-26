@@ -43,7 +43,7 @@ export class CampaignService {
     // 2. Company administrators (ADMIN, PLATFORM_ADMIN, HR):
     // Authorized to manage campaigns across their company without requiring a store or branch.
     // If the administrator has an assigned office/company, scope to that office to prevent cross-company access.
-    if ([Role.ADMIN, Role.PLATFORM_ADMIN, Role.HR].includes(user.role)) {
+    if (user.role === Role.ADMIN || user.role === Role.PLATFORM_ADMIN || user.role === Role.HR) {
       if (user.employee?.officeId) {
         return { officeId: user.employee.officeId };
       }

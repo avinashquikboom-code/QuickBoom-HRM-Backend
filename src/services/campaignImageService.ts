@@ -38,20 +38,32 @@ export async function canonicalCampaignImage(url?: string | null): Promise<strin
   // A signed URL returned by this API is normalized back to its stored canonical key.
   const s3 = await campaignS3();
   if (s3 && /^https:\/\//.test(url)) {
-    const parsed = new URL(url);
-    if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
-      const name = parsed.pathname.replace(/^\/campaigns\//, '');
-      if (pattern.test(name)) return `s3://${s3.bucket}/campaigns/${name}`;
+    try {
+      const parsed = new URL(url);
+      if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
+        const key = parsed.pathname.replace(/^\/+/, '');
+        return `s3://${s3.bucket}/${key}`;
+      }
+    } catch {
+      // Keep url if URL parsing fails
     }
   }
   return url;
 }
 
 export async function validateManagedImage(url?: string | null) {
-  if (url?.startsWith('s3://')) {
+  if (!url) return;
+  if (url.startsWith('s3://')) {
     const s3 = await campaignS3();
-    if (!s3 || !url.startsWith(`s3://${s3.bucket}/campaigns/`) || !managedImageName(url)) throw new CampaignError(400, 'Unknown campaign image storage');
-    if (!(await s3.exists(`campaigns/${managedImageName(url)}`))) throw new CampaignError(400, 'Campaign image unavailable');
+    if (!s3) throw new CampaignError(400, 'Campaign image storage is not configured');
+    const match = /^s3:\/\/([^/]+)\/(.+)$/.exec(url);
+    if (!match || match[1] !== s3.bucket) {
+      throw new CampaignError(400, 'Unknown campaign image storage');
+    }
+    const key = match[2];
+    if (!(await s3.exists(key))) {
+      throw new CampaignError(400, 'Campaign image unavailable in storage');
+    }
     return;
   }
   const name = managedImageName(url);
@@ -114,30 +126,84 @@ export const campaignImages = {
         update: { lastUsedAt: new Date() },
       });
     });
-    await withCampaignImageLock(async () => {
-      if (!s3) await fs.mkdir(folder(), { recursive: true });
-      for (const [index, variant] of ['detail', 'notification', 'thumbnail'].entries()) {
-        const filename = `v1-${hash}-${variant}.jpg`;
-        if (s3) {
-          const key = `campaigns/${filename}`;
-          if (!(await s3.exists(key))) await s3.put(key, variants[index]);
-        } else {
-          const target = path.join(folder(), filename);
-          try { await fs.writeFile(target, variants[index], { flag: 'wx' }); }
-          catch (error: any) { if (error.code !== 'EEXIST') throw error; }
-          await fs.utimes(target, new Date(), new Date());
+    try {
+      await withCampaignImageLock(async () => {
+        if (!s3) await fs.mkdir(folder(), { recursive: true });
+        for (const [index, variant] of ['detail', 'notification', 'thumbnail'].entries()) {
+          const filename = `v1-${hash}-${variant}.jpg`;
+          if (s3) {
+            const key = `campaigns/${filename}`;
+            if (!(await s3.exists(key))) await s3.put(key, variants[index]);
+          } else {
+            const target = path.join(folder(), filename);
+            try { await fs.writeFile(target, variants[index], { flag: 'wx' }); }
+            catch (error: any) { if (error.code !== 'EEXIST') throw error; }
+            await fs.utimes(target, new Date(), new Date());
+          }
         }
-      }
-    });
+      });
+    } catch (uploadError) {
+      // Clean up ledger entry on failure so failed uploads are not left as valid
+      await withCampaignImageLock(async tx => {
+        await tx.campaignImageAsset.deleteMany({ where: { canonicalUrl } });
+      }).catch(() => {});
+      throw uploadError;
+    }
     console.info('[CampaignImage] Upload ready', { key: `campaigns/${name}`, storage: s3 ? 's3' : 'local', inputBytes: file.buffer.length, storedBytes: variants.map(b => b.length) });
     return canonicalUrl;
   },
 
   async displayUrl(url: string): Promise<string> {
-    if (!url.startsWith('s3://')) return url;
-    const s3 = await campaignS3();
-    if (!s3 || !url.startsWith(`s3://${s3.bucket}/campaigns/`) || !managedImageName(url)) throw new Error('Campaign S3 configuration does not match stored image');
-    return s3.sign(`campaigns/${managedImageName(url)}`);
+    if (!url) return '';
+    // 1. If it's an S3 canonical URI (s3://bucket/key)
+    if (url.startsWith('s3://')) {
+      const match = /^s3:\/\/([^/]+)\/(.+)$/.exec(url);
+      if (!match) return url;
+      const [, bucket, key] = match;
+      const s3 = await campaignS3();
+      if (s3 && s3.bucket === bucket) {
+        return s3.sign(key);
+      }
+      return url;
+    }
+
+    // 2. If it's an S3 HTTPS URL that is signed or private
+    if (/^https:\/\/[^/]+\.s3\./.test(url) || /^https:\/\/s3\.[^/]+\.amazonaws\.com/.test(url)) {
+      const s3 = await campaignS3();
+      if (s3) {
+        try {
+          const parsed = new URL(url);
+          if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
+            const key = parsed.pathname.replace(/^\/+/, '');
+            return s3.sign(key);
+          }
+        } catch {
+          // ignore URL parsing error
+        }
+      }
+      return url;
+    }
+
+    // 3. If it's already an absolute HTTP/HTTPS URL
+    if (/^https?:\/\//.test(url)) {
+      return url;
+    }
+
+    // 4. If it's a relative path or bare filename
+    const base = process.env.PUBLIC_API_URL?.replace(/\/$/, '') || '';
+    const clean = url.replace(/^\/+/, '');
+
+    // Check if it's already an api uploads or uploads path
+    if (clean.startsWith('api/uploads/')) {
+      return base ? `${base}/${clean}` : `/${clean}`;
+    }
+    if (clean.startsWith('uploads/')) {
+      return base ? `${base}/api/${clean}` : `/api/${clean}`;
+    }
+
+    // Bare filename e.g. campaign_1793030810851_22178914.png or v1-xxx-detail.jpg
+    const fullPath = `api/uploads/campaigns/${clean}`;
+    return base ? `${base}/${fullPath}` : `/${fullPath}`;
   },
 
   async notificationUrl(url?: string | null): Promise<string | undefined> {
@@ -146,8 +212,10 @@ export const campaignImages = {
     const variant = name ? url.replace(/-detail\.jpg$/, '-notification.jpg') : url;
     if (variant.startsWith('s3://')) return this.displayUrl(variant);
     const base = process.env.PUBLIC_API_URL?.replace(/\/$/, '');
-    const absolute = variant.startsWith('/') && base ? `${base}${variant}` : variant;
-    return /^https?:\/\//.test(absolute) ? absolute : undefined;
+    const displayed = await this.displayUrl(variant);
+    if (/^https?:\/\//.test(displayed)) return displayed;
+    if (displayed.startsWith('/') && base) return `${base}${displayed}`;
+    return undefined;
   },
 
   async cleanup(): Promise<number> {
