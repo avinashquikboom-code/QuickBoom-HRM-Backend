@@ -31,7 +31,7 @@
     "test:pos:subcategory-commission": "ts-node --transpile-only scripts/test_pos_subcategory_commission.ts",
     "test:hrm:subcategory-commission": "ts-node --transpile-only scripts/test_hrm_external_subcategory_commission.ts",
     "test:mobile:invoice-subcategory": "ts-node --transpile-only scripts/test_mobile_invoice_subcategory_commission.ts",
-    "test:campaigns": "node scripts/test_campaign_reliability.cjs && node scripts/test_campaign_s3.cjs"
+    "test:campaigns": "node scripts/test_campaign_reliability.cjs && node scripts/test_campaign_s3.cjs && node scripts/test_campaign_actor_and_upload.cjs"
   },
   "keywords": [],
   "author": "",
