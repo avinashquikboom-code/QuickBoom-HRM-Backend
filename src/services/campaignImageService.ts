@@ -33,34 +33,51 @@ export async function withCampaignImageLock<T>(fn: (tx: Prisma.TransactionClient
   }, { timeout: 30000 });
 }
 
+function campaignFilename(value: string): string | null {
+  let pathname = value;
+  if (/^https?:\/\//.test(value)) {
+    try { pathname = new URL(value).pathname; } catch { return null; }
+  }
+  const clean = pathname.replace(/^\/+/, '');
+  if (/^https?:\/\//.test(value) && !/^(?:api\/)*uploads\/campaigns\//.test(clean)) return null;
+  const name = clean.replace(/^(?:api\/)*uploads\/campaigns\//, '');
+  if (name === clean && clean.includes('/')) return null;
+  return /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.(?:png|jpe?g|webp|gif)$/i.test(name) && !name.includes('..') ? name : null;
+}
+
+async function localCampaignExists(name: string): Promise<boolean> {
+  for (const candidate of [path.join(folder(),name),path.resolve(__dirname,'..','uploads','campaigns',name)]) {
+    try { await fs.access(candidate); return true; }
+    catch (error: any) { if (error.code !== 'ENOENT') throw error; }
+  }
+  return false;
+}
+
+function bucketKey(value: string, bucket: string): string | null {
+  if (value.startsWith(`s3://${bucket}/`)) return value.slice(`s3://${bucket}/`.length);
+  if (!value.startsWith('https://')) return null;
+  const parsed = new URL(value);
+  if ((parsed.hostname.startsWith(`${bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${bucket}.s3.amazonaws.com`) return parsed.pathname.replace(/^\/+/, '');
+  return null;
+}
+
+function validCampaignKey(key: string): boolean {
+  return key.startsWith('campaigns/') && campaignFilename(key.slice('campaigns/'.length)) !== null;
+}
+
 export async function canonicalCampaignImage(url?: string | null): Promise<string | null | undefined> {
   if (!url) return url;
-  // A signed URL returned by this API is normalized back to its stored canonical key.
-  const s3 = await campaignS3();
-  if (s3) {
-    if (/^https:\/\//.test(url)) {
-      try {
-        const parsed = new URL(url);
-        if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
-          const key = parsed.pathname.replace(/^\/+/, '');
-          return `s3://${s3.bucket}/${key}`;
-        }
-      } catch {
-        // Keep url if URL parsing fails
-      }
-    }
-    // If it's a stale local URL or bare filename for an image stored in S3, canonicalize to S3
-    const clean = url.replace(/^\/+/, '').replace(/^(api\/)?uploads\/campaigns\//, '');
-    if (url.includes('uploads/campaigns') || (!url.includes('/') && url.includes('.'))) {
-      const s3Key = `campaigns/${clean}`;
-      try {
-        if (await s3.exists(s3Key)) {
-          return `s3://${s3.bucket}/${s3Key}`;
-        }
-      } catch {
-        // keep url
-      }
-    }
+  const name = campaignFilename(url);
+  const s3 = name || url.startsWith('s3://') || /\.s3\./.test(url) ? await campaignS3() : null;
+  const key = s3 ? bucketKey(url,s3.bucket) : null;
+  if (key) {
+    if (!validCampaignKey(key)) throw new CampaignError(400,'Unknown campaign image key');
+    return `s3://${s3!.bucket}/${key}`;
+  }
+  if (name) {
+    if (await localCampaignExists(name)) return `/uploads/campaigns/${name}`;
+    if (s3 && await s3.exists(`campaigns/${name}`)) return `s3://${s3.bucket}/campaigns/${name}`;
+    throw new CampaignError(400,'Campaign image is missing. Please upload it again or remove it.');
   }
   return url;
 }
@@ -69,22 +86,13 @@ export async function validateManagedImage(url?: string | null) {
   if (!url) return;
   if (url.startsWith('s3://')) {
     const s3 = await campaignS3();
-    if (!s3) throw new CampaignError(400, 'Campaign image storage is not configured');
-    const match = /^s3:\/\/([^/]+)\/(.+)$/.exec(url);
-    if (!match || match[1] !== s3.bucket) {
-      throw new CampaignError(400, 'Unknown campaign image storage');
-    }
-    const key = match[2];
-    if (!(await s3.exists(key))) {
-      throw new CampaignError(400, 'Campaign image unavailable in storage');
-    }
+    const key = s3 ? bucketKey(url,s3.bucket) : null;
+    if (!key || !validCampaignKey(key)) throw new CampaignError(400,'Unknown campaign image storage');
+    if (!(await s3!.exists(key))) throw new CampaignError(400,'Campaign image is missing. Please upload it again.');
     return;
   }
-  const name = managedImageName(url);
-  if (name) {
-    try { await fs.access(path.join(folder(), name)); }
-    catch { throw new CampaignError(400, 'Campaign image has expired. Please upload it again.'); }
-  }
+  const name = campaignFilename(url);
+  if (name && !(await localCampaignExists(name))) throw new CampaignError(400,'Campaign image is missing. Please upload it again.');
 }
 
 /** Refresh signed URLs at response time; only database keys are persisted. */
@@ -95,6 +103,7 @@ export async function campaignImageResponse<T>(value: T): Promise<T> {
   for (const [key, item] of Object.entries(value)) {
     result[key] = key === 'imageUrl' && typeof item === 'string'
       ? await campaignImages.displayUrl(item) : await campaignImageResponse(item);
+    if (key === 'imageUrl' && item && result[key] === null) result.imageMissing = true;
   }
   return result;
 }
@@ -104,9 +113,8 @@ export const campaignImages = {
     if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype)) {
       throw new CampaignError(400, 'Only JPEG, PNG, WEBP, and GIF images are allowed');
     }
-    if (!file.buffer.length || file.buffer.length > 5 * 1024 * 1024) {
-      throw new CampaignError(400, 'Image must contain between 1 byte and 5MB');
-    }
+    if (!file.buffer.length) throw new CampaignError(400,'Image is empty');
+    if (file.buffer.length > 5 * 1024 * 1024) throw new CampaignError(413,'Image file must not exceed 5MB');
     // Decode the actual file; MIME headers and filenames are not trusted.
     let normalized: Buffer;
     try {
@@ -156,102 +164,48 @@ export const campaignImages = {
           }
         }
       });
-    } catch (uploadError) {
-      // Clean up ledger entry on failure so failed uploads are not left as valid
-      await withCampaignImageLock(async tx => {
-        await tx.campaignImageAsset.deleteMany({ where: { canonicalUrl } });
-      }).catch(() => {});
+    } catch (uploadError: any) {
+      try {
+        await withCampaignImageLock(async tx => {
+          await tx.campaignImageAsset.deleteMany({ where: { canonicalUrl } });
+        });
+      } catch {}
+      console.error('[CampaignImage] Upload failed',{ key: `campaigns/${name}`, code: uploadError?.code || uploadError?.name });
       throw uploadError;
     }
     console.info('[CampaignImage] Upload ready', { key: `campaigns/${name}`, storage: s3 ? 's3' : 'local', inputBytes: file.buffer.length, storedBytes: variants.map(b => b.length) });
     return canonicalUrl;
   },
 
-  async displayUrl(url: string): Promise<string> {
-    if (!url) return '';
-    // 1. If it's an S3 canonical URI (s3://bucket/key)
+  async displayUrl(url: string): Promise<string | null> {
+    if (!url) return null;
+    const name = campaignFilename(url);
+    const s3 = name || url.startsWith('s3://') || /\.s3\./.test(url) ? await campaignS3() : null;
+    const key = s3 ? bucketKey(url,s3.bucket) : null;
+    if (key) {
+      if (!validCampaignKey(key)) return null;
+      return await s3!.exists(key) ? s3!.sign(key) : null;
+    }
     if (url.startsWith('s3://')) {
-      const match = /^s3:\/\/([^/]+)\/(.+)$/.exec(url);
-      if (!match) return url;
-      const [, bucket, key] = match;
-      const s3 = await campaignS3();
-      if (s3 && s3.bucket === bucket) {
-        return s3.sign(key);
-      }
-      return url;
+      console.warn('[CampaignImage] Stored image storage is unavailable');
+      return null;
     }
-
-    // 2. If it's an S3 HTTPS URL that is signed or private
-    if (/^https:\/\/[^/]+\.s3\./.test(url) || /^https:\/\/s3\.[^/]+\.amazonaws\.com/.test(url)) {
-      const s3 = await campaignS3();
-      if (s3) {
-        try {
-          const parsed = new URL(url);
-          if ((parsed.hostname.startsWith(`${s3.bucket}.s3.`) && parsed.hostname.endsWith('.amazonaws.com')) || parsed.hostname === `${s3.bucket}.s3.amazonaws.com`) {
-            const key = parsed.pathname.replace(/^\/+/, '');
-            return s3.sign(key);
-          }
-        } catch {
-          // ignore URL parsing error
-        }
-      }
-      return url;
+    if (!name) return url; // Preserve unrelated external/static banners.
+    const base = process.env.PUBLIC_API_URL?.replace(/\/$/,'').replace(/\/api(?:\/v\d+)?$/,'') || '';
+    if (s3 && await s3.exists(`campaigns/${name}`)) {
+      return s3.sign(`campaigns/${name}`);
     }
-
-    // 3. If it's already an absolute external HTTP/HTTPS URL
-    if (/^https?:\/\//.test(url)) {
-      return url;
-    }
-
-    // 4. If it's a relative path or bare filename
-    const clean = url.replace(/^\/+/, '');
-    const filename = clean.replace(/^(api\/)?uploads\/campaigns\//, '');
-
-    // Check if S3 is active
-    const s3 = await campaignS3();
-    if (s3) {
-      const s3Key = `campaigns/${filename}`;
-      try {
-        if (await s3.exists(s3Key)) {
-          return await s3.sign(s3Key);
-        }
-        if (await s3.exists(filename)) {
-          return await s3.sign(filename);
-        }
-      } catch (err) {
-        console.warn(`[CampaignImage] S3 check error for ${filename}:`, err);
-      }
-
-      // Check if file is present on local disk candidates
-      const candidatePaths = [
-        path.join(process.cwd(), 'uploads', 'campaigns', filename),
-        path.resolve(__dirname, '..', '..', 'uploads', 'campaigns', filename),
-        path.resolve(__dirname, '..', 'uploads', 'campaigns', filename),
-        path.join(process.cwd(), 'dist', 'uploads', 'campaigns', filename),
-      ];
-      const existsOnDisk = candidatePaths.some(p => {
-        try { return require('fs').existsSync(p); } catch { return false; }
-      });
-
-      if (!existsOnDisk) {
-        // Stop generating local /api/uploads/campaigns/... URLs for S3-backed images
-        return await s3.sign(s3Key);
-      }
-    }
-
-    // 5. Local delivery: normalize to /api/uploads/campaigns/...
-    const base = process.env.PUBLIC_API_URL?.replace(/\/$/, '') || '';
-    const fullPath = `api/uploads/campaigns/${filename}`;
-    return base ? `${base}/${fullPath}` : `/${fullPath}`;
+    return `${base}/api/uploads/campaigns/${name}`;
   },
 
   async notificationUrl(url?: string | null): Promise<string | undefined> {
     if (!url) return undefined;
     const name = managedImageName(url);
     const variant = name ? url.replace(/-detail\.jpg$/, '-notification.jpg') : url;
-    if (variant.startsWith('s3://')) return this.displayUrl(variant);
+    if (variant.startsWith('s3://')) return (await this.displayUrl(variant)) || undefined;
     const base = process.env.PUBLIC_API_URL?.replace(/\/$/, '');
     const displayed = await this.displayUrl(variant);
+    if (!displayed) return undefined;
     if (/^https?:\/\//.test(displayed)) return displayed;
     if (displayed.startsWith('/') && base) return `${base}${displayed}`;
     return undefined;

@@ -4,15 +4,22 @@ import path from 'path';
 import multer from 'multer';
 import { authenticateToken, requireRole, AuthenticatedRequest } from '../middlewares/authMiddleware';
 import { campaignService } from '../services/campaignService';
-import { CampaignError, validateCampaign } from '../services/campaignPolicy';
+import { CampaignError, validateCampaign, validModes } from '../services/campaignPolicy';
+import { Role } from '@prisma/client';
 import { prisma } from '../utils/db';
 
 const router = Router();
+const campaignId = (req: AuthenticatedRequest): string => {
+  const value = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  if (!value || value.length > 128 || ['undefined','null'].includes(value) || value.includes('/')) throw new CampaignError(400, 'A valid campaign identifier is required');
+  return value;
+};
 
 const uploadMiddleware = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB
+    files: 1,
   },
   fileFilter: (_req, file, cb) => {
     const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -34,7 +41,7 @@ const parseUpload = (req: any, res: any): Promise<void> => {
       if (err) {
         if (err instanceof multer.MulterError) {
           if (err.code === 'LIMIT_FILE_SIZE') {
-            return reject(new CampaignError(400, 'Image file must not exceed 5MB'));
+            return reject(new CampaignError(413, 'Image file must not exceed 5MB'));
           }
           return reject(new CampaignError(400, err.message));
         }
@@ -59,10 +66,15 @@ const handle = (fn: (req: AuthenticatedRequest, res: Response) => Promise<any>) 
       if (error instanceof CampaignError) {
         res.status(error.status).json({ success: false, message: error.message });
       } else {
-        console.error('[CampaignRoutes] Error:', error);
-        res.status(500).json({
+        const schemaUnavailable = ['P2021','P2022'].includes(error?.code);
+        console.error('[CampaignRoutes] Operation failed', {
+          operation: req.route?.path, actorId: req.user?.id, code: error?.code || error?.name,
+          table: error?.meta?.table, column: error?.meta?.column,
+        });
+        res.status(schemaUnavailable ? 503 : 500).json({
           success: false,
-          message: error?.message || 'Campaign operation failed. Please try again.',
+          code: schemaUnavailable ? 'CAMPAIGN_SCHEMA_UNAVAILABLE' : 'CAMPAIGN_OPERATION_FAILED',
+          message: schemaUnavailable ? 'Campaign storage is not ready. Please ask an administrator to apply pending database migrations.' : 'Campaign operation failed. Please try again.',
         });
       }
     }
@@ -73,7 +85,7 @@ const handle = (fn: (req: AuthenticatedRequest, res: Response) => Promise<any>) 
  * 1. Target Options for modal dropdowns and CampaignPanel
  */
 router.get('/target-options', handle(async (req, res) => {
-  const options = await campaignService.getTargetOptions();
+  const options = await campaignService.getTargetOptions(req.user?.id);
   res.json(await campaignImageResponse({
     success: true,
     data: options,
@@ -156,8 +168,13 @@ router.get('/employees', handle(async (req, res) => {
 router.get('/recipients/preview', handle(async (req, res) => {
   const { audienceType, storeId, storeIds, branchId, branchIds, departmentId, departmentIds, employeeIds, roles, role, designationId, birthdayOnly, timezone } = req.query;
 
-  const toNums = (v: any) =>
-    v ? (Array.isArray(v) ? v : String(v).split(',')).map(x => parseInt(String(x), 10)).filter(Number.isSafeInteger) : [];
+  if (audienceType !== undefined && !validModes.includes(String(audienceType))) throw new CampaignError(400, 'Invalid campaign audience');
+  const toNums = (value: any): number[] => {
+    if (value == null || value === '') return [];
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    if (values.some(item => !/^[1-9]\d*$/.test(String(item)) || !Number.isSafeInteger(Number(item)))) throw new CampaignError(400, 'Audience IDs must be positive integers');
+    return [...new Set(values.map(Number))];
+  };
 
   const parsedStoreIds = toNums(storeIds || storeId);
   const parsedBranchIds = toNums(branchIds || branchId);
@@ -170,6 +187,8 @@ router.get('/recipients/preview', handle(async (req, res) => {
         .filter(Boolean) as any
     : [];
 
+  if (parsedRoles.some((value: string) => !Object.values(Role).includes(value as Role))) throw new CampaignError(400, 'Invalid audience role');
+  if (timezone) { try { new Intl.DateTimeFormat('en', { timeZone: String(timezone) }).format(); } catch { throw new CampaignError(400, 'Invalid audience timezone'); } }
   const criteria = {
     storeId: parsedStoreIds[0],
     storeIds: parsedStoreIds,
@@ -177,7 +196,7 @@ router.get('/recipients/preview', handle(async (req, res) => {
     branchIds: parsedBranchIds,
     departmentId: parsedDepartmentIds[0],
     departmentIds: parsedDepartmentIds,
-    designationId: designationId ? parseInt(String(designationId), 10) : undefined,
+    designationId: toNums(designationId)[0],
     role: parsedRoles[0],
     roles: parsedRoles,
     employeeIds: parsedEmployeeIds,
@@ -281,11 +300,13 @@ const handleUploadImage = handle(async (req, res) => {
     filename = multipartFile.originalname || 'banner.jpg';
   } else {
     const { imageBase64, filename: reqFilename, mimeType } = req.body || {};
-    if (!imageBase64) {
+    if (typeof imageBase64 !== 'string' || !imageBase64) {
       throw new CampaignError(400, 'Image file (field "image" or "file") or imageBase64 payload is required');
     }
 
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    if (imageBase64.length > Math.ceil(5 * 1024 * 1024 / 3) * 4 + 100) throw new CampaignError(413, 'Image file must not exceed 5MB');
+    const base64Data = imageBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
+    if (!base64Data.length || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64Data) || base64Data.length % 4 === 1) throw new CampaignError(400, 'Invalid base64 image payload');
     buffer = Buffer.from(base64Data, 'base64');
 
     detectedMime = mimeType || 'image/jpeg';
@@ -333,7 +354,7 @@ router.get('/', handle(async (req, res) => {
     search: search ? String(search) : undefined,
     page: page ? parseInt(String(page), 10) : 1,
     limit: limit ? parseInt(String(limit), 10) : 20,
-  });
+  }, req.user?.id);
 
   // Provide both formats so both frontend consumers work seamlessly
   res.json(await campaignImageResponse({
@@ -364,8 +385,8 @@ router.post('/', handle(async (req, res) => {
  * 8. Get Campaign Analytics
  */
 router.get('/:id/analytics', handle(async (req, res) => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const analytics = await campaignService.getCampaignAnalytics(id);
+  const id = campaignId(req);
+  const analytics = await campaignService.getCampaignAnalytics(id, req.user?.id);
   res.json(await campaignImageResponse({
     success: true,
     data: analytics,
@@ -376,8 +397,8 @@ router.get('/:id/analytics', handle(async (req, res) => {
  * 9. Get Campaign by ID
  */
 router.get('/:id', handle(async (req, res) => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const campaign = await campaignService.getCampaignById(id);
+  const id = campaignId(req);
+  const campaign = await campaignService.getCampaignById(id, req.user?.id);
   res.json(await campaignImageResponse({
     success: true,
     data: campaign,
@@ -388,7 +409,7 @@ router.get('/:id', handle(async (req, res) => {
  * 10. Update Campaign
  */
 const handleUpdate = handle(async (req, res) => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = campaignId(req);
   const validated = validateCampaign(req.body);
   const updated = await campaignService.updateCampaign(id, validated, req.user?.id);
   res.json(await campaignImageResponse({
@@ -405,7 +426,7 @@ router.patch('/:id', handleUpdate);
  * 11. Send Campaign Immediately
  */
 router.post('/:id/send', handle(async (req, res) => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = campaignId(req);
   const result = await campaignService.sendCampaign(id, req.user?.id);
   res.json(await campaignImageResponse({
     success: true,
@@ -418,13 +439,13 @@ router.post('/:id/send', handle(async (req, res) => {
  * 12. Schedule Campaign
  */
 router.post('/:id/schedule', handle(async (req, res) => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = campaignId(req);
   const { scheduledAt } = req.body;
   if (!scheduledAt) {
     throw new CampaignError(400, 'scheduledAt date is required');
   }
 
-  const updated = await campaignService.scheduleCampaign(id, scheduledAt);
+  const updated = await campaignService.scheduleCampaign(id, scheduledAt, req.user?.id);
   res.json(await campaignImageResponse({
     success: true,
     message: 'Campaign scheduled successfully.',
@@ -436,8 +457,8 @@ router.post('/:id/schedule', handle(async (req, res) => {
  * 13. Cancel Campaign
  */
 router.post('/:id/cancel', handle(async (req, res) => {
-  const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const updated = await campaignService.cancelCampaign(id);
+  const id = campaignId(req);
+  const updated = await campaignService.cancelCampaign(id, req.user?.id);
   res.json(await campaignImageResponse({
     success: true,
     message: 'Campaign cancelled successfully.',
@@ -446,7 +467,7 @@ router.post('/:id/cancel', handle(async (req, res) => {
 }));
 
 router.delete('/:id', handle(async (req, res) => {
-  const result = await campaignService.deleteCampaign(String(req.params.id));
+  const result = await campaignService.deleteCampaign(campaignId(req), req.user?.id);
   res.json({ success: true, data: result });
 }));
 

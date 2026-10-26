@@ -85,21 +85,13 @@ export class CampaignService {
     throw new CampaignError(403, 'Campaign actor has no assigned store or branch');
   }
 
-  /**
-   * Resolve audience based on criteria and scoping
-   */
-  async resolveAudience(
-    audienceType: string,
-    criteria: Audience,
-    actorId?: number,
-    targetDateStr?: string
-  ) {
+  private async audienceWhere(audienceType: string, criteria: Audience, actorId?: number): Promise<Prisma.EmployeeWhereInput> {
     const mode = normalizeAudienceMode(audienceType);
     const scope = await this.actorScope(actorId);
 
     const conditions: Prisma.EmployeeWhereInput[] = [
       { status: { in: ['active', 'ACTIVE'] } },
-      { user: { isActive: true } },
+      { OR: [{ userId: null }, { user: { isActive: true } }] },
     ];
 
     if (Object.keys(scope).length > 0) {
@@ -108,7 +100,7 @@ export class CampaignService {
 
     switch (mode) {
       case 'STORES':
-        if (!criteria.storeIds?.length && !criteria.storeId) return [];
+        if (!criteria.storeIds?.length && !criteria.storeId) return { id: { in: [] } };
         if (criteria.storeIds?.length > 0) {
           conditions.push({ storeId: { in: criteria.storeIds } });
         } else if (criteria.storeId) {
@@ -117,7 +109,7 @@ export class CampaignService {
         break;
 
       case 'BRANCHES':
-        if (!criteria.branchIds?.length && !criteria.branchId) return [];
+        if (!criteria.branchIds?.length && !criteria.branchId) return { id: { in: [] } };
         if (criteria.branchIds?.length > 0) {
           conditions.push({ branchId: { in: criteria.branchIds } });
         } else if (criteria.branchId) {
@@ -126,7 +118,7 @@ export class CampaignService {
         break;
 
       case 'DEPARTMENTS':
-        if (!criteria.departmentIds?.length && !criteria.departmentId) return [];
+        if (!criteria.departmentIds?.length && !criteria.departmentId) return { id: { in: [] } };
         if (criteria.departmentIds?.length > 0) {
           conditions.push({ departmentId: { in: criteria.departmentIds } });
         } else if (criteria.departmentId) {
@@ -135,7 +127,7 @@ export class CampaignService {
         break;
 
       case 'ROLES':
-        if (!criteria.roles?.length && !criteria.designationId) return [];
+        if (!criteria.roles?.length && !criteria.designationId) return { id: { in: [] } };
         if (criteria.roles?.length > 0) {
           conditions.push({ user: { role: { in: criteria.roles } } });
         }
@@ -148,7 +140,7 @@ export class CampaignService {
         if (criteria.employeeIds?.length > 0) {
           conditions.push({ id: { in: criteria.employeeIds } });
         } else {
-          return [];
+          return { id: { in: [] } };
         }
         break;
 
@@ -159,7 +151,7 @@ export class CampaignService {
         if (criteria.departmentIds?.length) orClauses.push({ departmentId: { in: criteria.departmentIds } });
         if (criteria.roles?.length) orClauses.push({ user: { role: { in: criteria.roles } } });
         if (criteria.employeeIds?.length) orClauses.push({ id: { in: criteria.employeeIds } });
-        if (orClauses.length === 0) return [];
+        if (orClauses.length === 0) return { id: { in: [] } };
         conditions.push({ OR: orClauses });
         break;
       }
@@ -170,8 +162,24 @@ export class CampaignService {
         throw new CampaignError(400, 'Invalid campaign audience');
     }
 
+    return { AND: conditions };
+  }
+
+  /**
+   * Resolve audience based on criteria and scoping
+   */
+  async resolveAudience(
+    audienceType: string,
+    criteria: Audience,
+    actorId?: number,
+    targetDateStr?: string,
+    limit?: number
+  ) {
+    const where = await this.audienceWhere(audienceType, criteria, actorId);
+
     const employees = await prisma.employee.findMany({
-      where: { AND: conditions },
+      where,
+      ...(limit ? { take: limit } : {}),
       select: {
         id: true,
         userId: true,
@@ -215,7 +223,30 @@ export class CampaignService {
    * Preview audience before sending
    */
   async previewAudience(audienceType: string, criteria: Audience, actorId?: number) {
-    const employees = await this.resolveAudience(audienceType, criteria, actorId);
+    const where = await this.audienceWhere(audienceType, criteria, actorId);
+    // Count employees once, independent of their number of registered devices.
+    const birthdayEmployees = criteria.birthdayOnly ? await this.resolveAudience(audienceType, criteria, actorId) : null;
+    const [totalCount, reachableByPush, employees] = birthdayEmployees
+      ? [birthdayEmployees.length, birthdayEmployees.filter(emp => [...(emp.user?.fcmTokens || []).map(t=>t.token),...(emp.user?.devices || []).map(d=>d.fcmToken)].some(token=>Boolean(token?.trim()))).length, birthdayEmployees.slice(0,50)] as const
+      : await Promise.all([
+          prisma.employee.count({ where }),
+          prisma.employee.count({
+            where: {
+              AND: [
+                where,
+                {
+                  user: {
+                    OR: [
+                      { fcmTokens: { some: { isActive: true, token: { not: '' } } } },
+                      { devices: { some: { fcmToken: { not: '' } } } },
+                    ],
+                  },
+                },
+              ],
+            },
+          }),
+          this.resolveAudience(audienceType, criteria, actorId, undefined, 50),
+        ]);
 
     const formatted = employees.map(emp => {
       const userTokens = [
@@ -236,16 +267,25 @@ export class CampaignService {
     });
 
     return {
-      totalCount: formatted.length,
-      reachableByPush: formatted.filter(e => e.hasPushToken).length,
+      totalCount,
+      reachableByPush,
       preview: formatted.slice(0, 50),
     };
+  }
+
+  /** Visibility follows the existing office/store/branch actor scope. */
+  async campaignScope(actorId?: number): Promise<Prisma.CampaignWhereInput> {
+    if (!actorId) return {}; // Internal scheduler/service calls retain their contract.
+    const scope = await this.actorScope(actorId);
+    if (!Object.keys(scope).length) return {};
+    return { OR: [{ createdById: actorId }, { creator: { is: { employee: { is: scope } } } }] };
   }
 
   /**
    * Create Campaign
    */
   async createCampaign(data: any, actorId?: number) {
+    if (actorId) await this.actorScope(actorId);
     let status = data.status || (data.scheduledAt ? 'SCHEDULED' : 'DRAFT');
 
     data = { ...data, imageUrl: await canonicalCampaignImage(data.imageUrl) };
@@ -276,7 +316,7 @@ export class CampaignService {
    * Update Campaign
    */
   async updateCampaign(id: string, data: any, actorId?: number) {
-    const existing = await prisma.campaign.findUnique({ where: { id } });
+    const existing = await prisma.campaign.findFirst({ where: { id, ...await this.campaignScope(actorId) } });
     if (!existing) {
       throw new CampaignError(404, 'Campaign not found');
     }
@@ -324,7 +364,7 @@ export class CampaignService {
    * Deliver Campaign Notifications immediately (FCM Multicast + In-App DB records)
    */
   async sendCampaign(id: string, actorId?: number) {
-    let campaign = await prisma.campaign.findUnique({ where: { id } });
+    let campaign = await prisma.campaign.findFirst({ where: { id, ...await this.campaignScope(actorId) } });
     if (!campaign) {
       throw new CampaignError(404, 'Campaign not found');
     }
@@ -657,8 +697,8 @@ export class CampaignService {
   /**
    * Schedule campaign
    */
-  async scheduleCampaign(id: string, scheduledAt: string | Date) {
-    const campaign = await prisma.campaign.findUnique({ where: { id } });
+  async scheduleCampaign(id: string, scheduledAt: string | Date, actorId?: number) {
+    const campaign = await prisma.campaign.findFirst({ where: { id, ...await this.campaignScope(actorId) } });
     if (!campaign) throw new CampaignError(404, 'Campaign not found');
 
     if (!['DRAFT', 'SCHEDULED'].includes(campaign.status)) throw new CampaignError(409, 'Only unsent campaigns can be scheduled');
@@ -678,8 +718,8 @@ export class CampaignService {
   /**
    * Cancel campaign
    */
-  async cancelCampaign(id: string) {
-    const campaign = await prisma.campaign.findUnique({ where: { id } });
+  async cancelCampaign(id: string, actorId?: number) {
+    const campaign = await prisma.campaign.findFirst({ where: { id, ...await this.campaignScope(actorId) } });
     if (!campaign) throw new CampaignError(404, 'Campaign not found');
     if (['SENDING', 'SENT', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'DELIVERY_UNKNOWN'].includes(campaign.status)) {
       throw new CampaignError(409, 'Cannot cancel a campaign that has already been dispatched');
@@ -694,9 +734,10 @@ export class CampaignService {
   }
 
   /** Permanent deletion preserves notification history and its image references. */
-  async deleteCampaign(id: string) {
+  async deleteCampaign(id: string, actorId?: number) {
+    const scope = await this.campaignScope(actorId);
     return withCampaignImageLock(async tx => {
-      const campaign = await tx.campaign.findUnique({ where: { id } });
+      const campaign = await tx.campaign.findFirst({ where: { id, ...scope } });
       if (!campaign) throw new CampaignError(404, 'Campaign not found');
       if (campaign.status === 'SENDING') throw new CampaignError(409, 'Cannot delete a campaign being dispatched');
       const deleted = await tx.campaign.deleteMany({ where: { id, status: { not: 'SENDING' } } });
@@ -709,9 +750,9 @@ export class CampaignService {
   /**
    * Get single campaign by ID with recipient stats
    */
-  async getCampaignById(id: string) {
-    const campaign = await prisma.campaign.findUnique({
-      where: { id },
+  async getCampaignById(id: string, actorId?: number) {
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, ...await this.campaignScope(actorId) },
       include: {
         recipients: {
           take: 100,
@@ -745,11 +786,12 @@ export class CampaignService {
     search?: string;
     page?: number;
     limit?: number;
-  }) {
+  }, actorId?: number) {
     const { status, notificationType, search, page = 1, limit = 20 } = params;
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new CampaignError(400, 'Invalid campaign pagination');
     const skip = (page - 1) * limit;
 
-    const where: Prisma.CampaignWhereInput = {};
+    const where: Prisma.CampaignWhereInput = { AND: [await this.campaignScope(actorId)] };
     if (status && status !== 'ALL') {
       where.status = status;
     }
@@ -785,9 +827,9 @@ export class CampaignService {
   /**
    * Get campaign analytics
    */
-  async getCampaignAnalytics(id: string) {
-    const campaign = await prisma.campaign.findUnique({
-      where: { id },
+  async getCampaignAnalytics(id: string, actorId?: number) {
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, ...await this.campaignScope(actorId) },
       include: {
         recipients: {
           take: 100,
@@ -841,7 +883,8 @@ export class CampaignService {
   /**
    * Get target options for campaign modal dropdowns
    */
-  async getTargetOptions() {
+  async getTargetOptions(actorId?: number) {
+    const scope = await this.actorScope(actorId);
     const [stores, departments, designations, employees] = await Promise.all([
       prisma.store.findMany({
         where: { isActive: true },
@@ -857,7 +900,7 @@ export class CampaignService {
         orderBy: { name: 'asc' },
       }),
       prisma.employee.findMany({
-        where: { status: { in: ['active', 'ACTIVE'] } },
+        where: { AND: [scope, { status: { in: ['active', 'ACTIVE'] } }] },
         select: {
           id: true,
           firstName: true,
@@ -883,9 +926,9 @@ export class CampaignService {
     ];
 
     return {
-      stores,
-      departments,
-      designations,
+      stores: Object.keys(scope).length ? stores.filter(item=>employees.some(employee=>employee.storeId===item.id)) : stores,
+      departments: Object.keys(scope).length ? departments.filter(item=>employees.some(employee=>employee.departmentId===item.id)) : departments,
+      designations: Object.keys(scope).length ? designations.filter(item=>employees.some(employee=>employee.designationId===item.id)) : designations,
       roles,
       employees: employees.map(e => ({
         id: e.id,

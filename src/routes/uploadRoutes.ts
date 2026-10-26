@@ -201,14 +201,12 @@ router.get('/campaigns/:filename', async (req, res) => {
         res.redirect(302, signedUrl);
         return;
       }
-      if (await s3.exists(filename)) {
-        const signedUrl = await s3.sign(filename);
-        res.redirect(302, signedUrl);
-        return;
-      }
+
     }
   } catch (s3Err) {
-    console.warn(`[Campaign Image Delivery] S3 lookup failed for "${filename}":`, s3Err);
+    console.error('[CampaignImage] Delivery lookup failed', { filename, code: (s3Err as any)?.code || (s3Err as any)?.name });
+    res.status(503).json({success:false,message:'Campaign image storage is temporarily unavailable'});
+    return;
   }
 
   // 3. File not found on disk and not found in S3

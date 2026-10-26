@@ -11,7 +11,7 @@ function storageFailure(action: string, key: string, error: any): Error {
     key,
     code,
     httpStatus: status,
-    message: error?.message,
+
   });
 
   if (status === 403 || code === 'AccessDenied') {
@@ -20,7 +20,7 @@ function storageFailure(action: string, key: string, error: any): Error {
   if (status === 404 || code === 'NoSuchBucket') {
     return new CampaignError(500, `Storage bucket not found during ${action}. Please verify AWS S3 bucket configuration.`);
   }
-  return new CampaignError(status >= 400 && status < 600 ? status : 500, `Campaign image storage ${action} failed: ${error?.message || code}`);
+  return new CampaignError(500, `Campaign image storage ${action} failed. Please check backend storage configuration.`);
 }
 
 /** Uses the same backend integration settings as the Settings page. No public ACLs. */
