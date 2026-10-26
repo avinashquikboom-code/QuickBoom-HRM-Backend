@@ -13,7 +13,7 @@ import { campaignImages, withCampaignImageLock, validateManagedImage, canonicalC
 
 export class CampaignService {
   /**
-   * Determine actor scope for role-based scoping (Store Managers, etc.)
+   * Determine actor scope for role-based scoping (Global, Company, Branch, and Store levels)
    */
   async actorScope(actorId?: number): Promise<Prisma.EmployeeWhereInput> {
     if (!actorId) return {};
@@ -23,12 +23,34 @@ export class CampaignService {
     });
     if (!user || !user.isActive) throw new CampaignError(403, 'Active campaign actor required');
 
-    // Platform / Super Admins / Admins have company-wide access
-    if (['SUPER_ADMIN', 'ADMIN', 'PLATFORM_ADMIN'].includes(user.role)) {
+    const CAMPAIGN_ALLOWED_ROLES: Role[] = [
+      Role.SUPER_ADMIN,
+      Role.ADMIN,
+      Role.PLATFORM_ADMIN,
+      Role.HR,
+      Role.STORE_MANAGER,
+    ];
+
+    if (!CAMPAIGN_ALLOWED_ROLES.includes(user.role)) {
+      throw new CampaignError(403, 'Unauthorized to access campaign management');
+    }
+
+    // 1. Global administrators: unrestricted access across all companies and locations
+    if (user.role === Role.SUPER_ADMIN) {
       return {};
     }
 
-    // HR and Store Managers can only target within their assigned store/branch
+    // 2. Company administrators (ADMIN, PLATFORM_ADMIN, HR):
+    // Authorized to manage campaigns across their company without requiring a store or branch.
+    // If the administrator has an assigned office/company, scope to that office to prevent cross-company access.
+    if ([Role.ADMIN, Role.PLATFORM_ADMIN, Role.HR].includes(user.role)) {
+      if (user.employee?.officeId) {
+        return { officeId: user.employee.officeId };
+      }
+      return {};
+    }
+
+    // 3. Branch / Store administrators (e.g. STORE_MANAGER)
     if (user.employee?.storeId) {
       return { storeId: user.employee.storeId };
     }
@@ -36,6 +58,7 @@ export class CampaignService {
       return { branchId: user.employee.branchId };
     }
 
+    // Store / branch-level user lacks an assigned store or branch
     throw new CampaignError(403, 'Campaign actor has no assigned store or branch');
   }
 
