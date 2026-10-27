@@ -647,7 +647,7 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
 
     if(!storeId) {
       console.warn(`[InvoiceCommission] Invoice store is missing for bill ${billId}`);
-      throw Object.assign(new Error('Invoice store is missing'),{status:409});
+      throw Object.assign(new Error('STORE_ID_MISSING: Invoice store mapping is unavailable'),{status:409});
     }
 
     if(role==='STORE_MANAGER'&&employee.storeId&&storeId!==employee.storeId) {

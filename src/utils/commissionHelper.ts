@@ -1265,6 +1265,7 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
   const rawStoreId =
     creditNote.storeId ??
     creditNote.StoreId ??
+    creditNote.StoreID ??
     creditNote.store_id ??
     invoice.storeId ??
     invoice.StoreId ??
@@ -1272,22 +1273,26 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     invoice.StoreID ??
     payload?.data?.storeId ??
     payload?.data?.StoreId ??
+    payload?.data?.StoreID ??
     payload?.data?.invoice?.storeId ??
     payload?.data?.invoice?.StoreId ??
     payload?.storeId ??
     payload?.StoreId ??
+    payload?.StoreID ??
     payload?.store_id ??
     firstItem?.storeId ??
     firstItem?.StoreId ??
+    firstItem?.StoreID ??
     firstItem?.store_id ??
     null;
 
-  const storeIdParsed = rawStoreId !== null && rawStoreId !== undefined ? parseInt(String(rawStoreId), 10) : null;
-  const storeId = storeIdParsed !== null && !isNaN(storeIdParsed) && storeIdParsed > 0 ? storeIdParsed : null;
+  const storeIdParsed = rawStoreId !== null && rawStoreId !== undefined ? Number(String(rawStoreId).trim()) : null;
+  const storeId = storeIdParsed !== null && Number.isSafeInteger(storeIdParsed) && storeIdParsed > 0 && storeIdParsed <= 2147483647 ? storeIdParsed : null;
 
   const rawBranchId =
     creditNote.branchId ??
     creditNote.BranchId ??
+    creditNote.BranchID ??
     creditNote.branch_id ??
     invoice.branchId ??
     invoice.BranchId ??
@@ -1295,17 +1300,20 @@ export function extractWebhookMeta(data: any): ExtractedWebhookMeta {
     invoice.BranchID ??
     payload?.data?.branchId ??
     payload?.data?.BranchId ??
+    payload?.data?.BranchID ??
     payload?.data?.invoice?.branchId ??
     payload?.data?.invoice?.BranchId ??
     payload?.branchId ??
     payload?.BranchId ??
+    payload?.BranchID ??
     payload?.branch_id ??
     firstItem?.branchId ??
     firstItem?.BranchId ??
+    firstItem?.BranchID ??
     null;
 
-  const branchIdParsed = rawBranchId !== null && rawBranchId !== undefined ? parseInt(String(rawBranchId), 10) : null;
-  const branchId = branchIdParsed !== null && !isNaN(branchIdParsed) && branchIdParsed > 0 ? branchIdParsed : null;
+  const branchIdParsed = rawBranchId !== null && rawBranchId !== undefined ? Number(String(rawBranchId).trim()) : null;
+  const branchId = branchIdParsed !== null && Number.isSafeInteger(branchIdParsed) && branchIdParsed > 0 && branchIdParsed <= 2147483647 ? branchIdParsed : null;
 
   const storeCode =
     invoice.storeCode ??

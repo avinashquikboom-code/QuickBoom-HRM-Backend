@@ -22,7 +22,11 @@ const tx={
  }},
 };
 require.cache[require.resolve('../src/utils/db')]={exports:{prisma:tx}};
-const helper=require('../src/utils/commissionHelper');helper.resolveEmployeeId=async()=>42;
+const helper=require('../src/utils/commissionHelper');
+assert.equal(helper.extractWebhookMeta({eventType:'INVOICE_CREATED',StoreID:'9',data:{invoice:{invoiceId:'1'}}}).storeId,9);
+assert.equal(helper.extractWebhookMeta({eventType:'INVOICE_CREATED',BranchID:'7',data:{invoice:{invoiceId:'1'}}}).branchId,7);
+assert.equal(helper.extractWebhookMeta({eventType:'INVOICE_CREATED',StoreID:'9-unverified',data:{invoice:{invoiceId:'1'}}}).storeId,null);
+helper.resolveEmployeeId=async()=>42;
 const {groupAndCalculateCommissionBySalesman}=require('../src/controllers/webhookController');
 const {resolveInvoiceStore,prepareInvoiceApproval,calculateInvoiceCommission}=require('../src/services/invoiceCommissionService');
 const {recordedInvoiceCommission}=require('../src/services/recordedInvoiceCommission');

@@ -6,7 +6,7 @@ const numeric = (value: unknown): number | null => value !== null && value !== u
 export function recordedInvoiceCommission(sale: Partial<CommissionTransaction>) {
   const recordedEarned = numeric(sale.commissionAmount);
   const lines = Array.isArray(sale.productBreakdown) ? (sale.productBreakdown as any[]) : [];
-  const missingData = lines.some(line => line?.commissionState === 'INVOICE_DATA_MISSING');
+  const missingData = !lines.length || lines.some(line => line?.commissionState === 'INVOICE_DATA_MISSING');
   const missingConfig = lines.some(line => line?.commissionState === 'MISSING_CONFIGURATION' || (line?.missingReason && line.missingReason !== ''));
   const hasRealFailure = sale.status === 'PENDING' && (missingData || missingConfig);
 
@@ -36,4 +36,3 @@ export function recordedInvoiceCommission(sale: Partial<CommissionTransaction>) 
     commissionState: state, missingReason: reason, rateDisplay
   };
 }
-
