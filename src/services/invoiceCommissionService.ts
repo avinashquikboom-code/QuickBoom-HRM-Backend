@@ -31,7 +31,7 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
   return { commissionSource:'SUBCATEGORY', commissionState:complete?state:missingData?'INVOICE_DATA_MISSING':'MISSING_CONFIGURATION',
     commissionAmount:total,commissionEarned:total,totalCommission:total,newCommission:total,calculatedCommissionAmount:total,
     commissionRate:rate,commissionPercent:rate,commissionPercentage:rate,
-    rateDisplay:uniform?(lines[0].commissionType==='FIXED'?`₹${rate} / ${lines[0].fixedBasis==='LINE'?'line':'unit'}`:`${rate}%`):complete?'Multiple subcategory rates':missingData?'Invoice item data unavailable':'Configuration required',
+    rateDisplay:uniform?(lines[0].commissionType==='FIXED'?`₹${rate} / ${lines[0].fixedBasis==='LINE'?'line':'unit'}`:`${rate}%`):complete?'Multiple subcategory rates':missingData?(lines.some(l=>l.missingReason==='STORE_ID_MISSING')?'Invoice store mapping unavailable':'Invoice item data unavailable'):'Configuration required',
     eligibleSaleAmount:complete&&lines.every(l=>l.eligibleSaleAmount!==null)?money(lines.reduce((n,l)=>n.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber():null,
     hasUnresolvedInvoiceItems:!complete,hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines };
 }
@@ -62,6 +62,7 @@ function matchingInvoiceItem(items: any[], reference: any): any | null {
 }
 
 function invoiceDataMessage(reason: string) {
+  if(reason==='STORE_ID_MISSING') return 'Invoice store mapping is unavailable. Verify the HopKid store or branch mapping; product data and configured rates have not been changed.';
   if(reason==='PRODUCT_LINES_MISSING') return 'Invoice item data is unavailable. The saved invoice needs its original product details.';
   if(reason==='PRODUCT_ID_MISSING') return 'The saved product is missing its catalog ID. Its subcategory cannot be verified yet.';
   if(reason==='QUANTITY_INVALID') return 'The saved product quantity is unavailable or invalid.';
@@ -321,10 +322,10 @@ export async function findInvoicePayload(tx: Tx, aliases: string[], storeId?: nu
  * 3. POSSale by aliases / invoiceNo
  * 4. HrmCommissionDocument by aliases / externalId / invoiceNumber
  * 5. meta.storeCode matching Store.code
- * 6. meta.branchId matching Store.id or Branch -> Store.name
+ * 6. meta.branchId matching Branch -> a unique Store.name
  * 7. meta.branchName / meta.storeName matching Store.name (case-insensitive)
- * 8. Selling employee's storeId, branchId, or branchName
- * 9. Viewing/attributed employee's storeId, branchId, or branchName
+ * 8. Selling employee's storeId or verified branch-name mapping
+ * 9. Attributed employee's storeId or verified branch-name mapping
  *
  * If resolved and sale exists with missing storeId, performs safe auditable backfill.
  */
@@ -335,9 +336,15 @@ export async function resolveInvoiceStore(
     meta?: any;
     aliases?: string[];
     employee?: any;
+    persist?: boolean;
   }
 ): Promise<number | null> {
   const { sale, meta, aliases = [], employee } = options;
+  const uniqueStore = async (query: any) => {
+    const stores = await tx.store.findMany({...query, take:2});
+    if (stores.length > 1) throw Object.assign(new Error('STORE_MAPPING_AMBIGUOUS'), {status:409});
+    return stores[0] ?? null;
+  };
 
   // 1. Direct sale.storeId
   if (sale?.storeId) {
@@ -357,7 +364,7 @@ export async function resolveInvoiceStore(
       if (tx.store?.findUnique) {
         const metaStore = await tx.store.findUnique({ where: { id: sId } });
         if (metaStore) {
-          if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+          if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
             await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: metaStore.id } });
             sale.storeId = metaStore.id;
           }
@@ -369,56 +376,13 @@ export async function resolveInvoiceStore(
     }
   }
 
-  const cleanAliases = [...new Set(aliases.map(a => String(a || '').trim()).filter(Boolean))];
-
-  // 3. POSSale lookup by aliases / invoiceNo
-  if (cleanAliases.length > 0 && tx.pOSSale?.findFirst) {
-    const pos = await tx.pOSSale.findFirst({
-      where: { invoiceNo: { in: cleanAliases } },
-      select: { storeId: true }
-    });
-    if (pos?.storeId) {
-      const posStore = tx.store?.findUnique ? await tx.store.findUnique({ where: { id: pos.storeId } }) : { id: pos.storeId };
-      if (posStore) {
-        if (sale && !sale.storeId && tx.commissionTransaction?.update) {
-          await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: posStore.id } });
-          sale.storeId = posStore.id;
-        }
-        return posStore.id;
-      }
-    }
-  }
-
-  // 4. HrmCommissionDocument lookup by aliases
-  if (cleanAliases.length > 0 && tx.hrmCommissionDocument?.findFirst) {
-    const doc = await tx.hrmCommissionDocument.findFirst({
-      where: {
-        OR: [
-          { externalId: { in: cleanAliases } },
-          { invoiceNumber: { in: cleanAliases } }
-        ]
-      },
-      select: { storeId: true }
-    });
-    if (doc?.storeId) {
-      const docStore = tx.store?.findUnique ? await tx.store.findUnique({ where: { id: doc.storeId } }) : { id: doc.storeId };
-      if (docStore) {
-        if (sale && !sale.storeId && tx.commissionTransaction?.update) {
-          await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: docStore.id } });
-          sale.storeId = docStore.id;
-        }
-        return docStore.id;
-      }
-    }
-  }
-
   // 5. meta.storeCode
-  if (meta?.storeCode && tx.store?.findFirst) {
+  if (meta?.storeCode) {
     const codeStr = String(meta.storeCode).trim();
     if (codeStr) {
-      const storeByCode = await tx.store.findFirst({ where: { code: codeStr } });
+      const storeByCode = await uniqueStore({ where: { code: codeStr } });
       if (storeByCode) {
-        if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+        if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
           await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByCode.id } });
           sale.storeId = storeByCode.id;
         }
@@ -431,14 +395,14 @@ export async function resolveInvoiceStore(
   if (meta?.branchId) {
     const bId = Number(meta.branchId);
     if (!isNaN(bId) && bId > 0) {
-      if (tx.branch?.findUnique && tx.store?.findFirst) {
+      if (tx.branch?.findUnique) {
         const branch = await tx.branch.findUnique({ where: { id: bId } });
         if (branch?.name) {
-          const storeByName = await tx.store.findFirst({
+          const storeByName = await uniqueStore({
             where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
           });
           if (storeByName) {
-            if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+            if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
               await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByName.id } });
               sale.storeId = storeByName.id;
             }
@@ -446,31 +410,68 @@ export async function resolveInvoiceStore(
           }
         }
       }
-      if (tx.store?.findUnique) {
-        const storeById = await tx.store.findUnique({ where: { id: bId } });
-        if (storeById) {
-          if (sale && !sale.storeId && tx.commissionTransaction?.update) {
-            await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeById.id } });
-            sale.storeId = storeById.id;
-          }
-          return storeById.id;
-        }
-      }
     }
   }
 
   // 7. meta.branchName or meta.storeName
   const metaName = String(meta?.branchName || meta?.storeName || '').trim();
-  if (metaName && tx.store?.findFirst) {
-    const storeByName = await tx.store.findFirst({
+  if (metaName) {
+    const storeByName = await uniqueStore({
       where: { name: { equals: metaName, mode: 'insensitive' } }
     });
     if (storeByName) {
-      if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+      if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
         await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByName.id } });
         sale.storeId = storeByName.id;
       }
       return storeByName.id;
+    }
+  }
+
+
+  const cleanAliases = [...new Set(aliases.map(a => String(a || '').trim()).filter(Boolean))];
+
+  // 3. POSSale lookup by aliases / invoiceNo
+  if (cleanAliases.length > 0 && tx.pOSSale?.findMany) {
+    const matches = await tx.pOSSale.findMany({
+      where: { invoiceNo: { in: cleanAliases } }, select: { storeId: true }, distinct:['storeId'], take:2
+    });
+    if(matches.length>1) throw Object.assign(new Error('STORE_MAPPING_AMBIGUOUS'),{status:409});
+    const pos=matches[0];
+    if (pos?.storeId) {
+      const posStore = tx.store?.findUnique ? await tx.store.findUnique({ where: { id: pos.storeId } }) : { id: pos.storeId };
+      if (posStore) {
+        if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
+          await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: posStore.id } });
+          sale.storeId = posStore.id;
+        }
+        return posStore.id;
+      }
+    }
+  }
+
+  // 4. HrmCommissionDocument lookup by aliases
+  if (cleanAliases.length > 0 && tx.hrmCommissionDocument?.findMany) {
+    const matches = await tx.hrmCommissionDocument.findMany({
+      where: {
+        OR: [
+          { externalId: { in: cleanAliases } },
+          { invoiceNumber: { in: cleanAliases } }
+        ]
+      },
+      select: { storeId: true }, distinct:['storeId'], take:2
+    });
+    if(matches.length>1) throw Object.assign(new Error('STORE_MAPPING_AMBIGUOUS'),{status:409});
+    const doc=matches[0];
+    if (doc?.storeId) {
+      const docStore = tx.store?.findUnique ? await tx.store.findUnique({ where: { id: doc.storeId } }) : { id: doc.storeId };
+      if (docStore) {
+        if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
+          await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: docStore.id } });
+          sale.storeId = docStore.id;
+        }
+        return docStore.id;
+      }
     }
   }
 
@@ -483,7 +484,7 @@ export async function resolveInvoiceStore(
   if (seller?.storeId) {
     const sellerStore = seller.store ?? (tx.store?.findUnique ? await tx.store.findUnique({ where: { id: seller.storeId } }) : { id: seller.storeId });
     if (sellerStore) {
-      if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+      if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
         await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: sellerStore.id } });
         sale.storeId = sellerStore.id;
       }
@@ -492,14 +493,14 @@ export async function resolveInvoiceStore(
   }
 
   if (seller?.branchId) {
-    if (tx.branch?.findUnique && tx.store?.findFirst) {
+    if (tx.branch?.findUnique) {
       const branch = seller.branch ?? await tx.branch.findUnique({ where: { id: seller.branchId } });
       if (branch?.name) {
-        const storeByName = await tx.store.findFirst({
+        const storeByName = await uniqueStore({
           where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
         });
         if (storeByName) {
-          if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+          if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
             await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByName.id } });
             sale.storeId = storeByName.id;
           }
@@ -507,24 +508,14 @@ export async function resolveInvoiceStore(
         }
       }
     }
-    if (tx.store?.findUnique) {
-      const storeById = await tx.store.findUnique({ where: { id: seller.branchId } });
-      if (storeById) {
-        if (sale && !sale.storeId && tx.commissionTransaction?.update) {
-          await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeById.id } });
-          sale.storeId = storeById.id;
-        }
-        return storeById.id;
-      }
-    }
   }
 
-  if (seller?.branchName && tx.store?.findFirst) {
-    const storeByName = await tx.store.findFirst({
+  if (seller?.branchName) {
+    const storeByName = await uniqueStore({
       where: { name: { equals: seller.branchName.trim(), mode: 'insensitive' } }
     });
     if (storeByName) {
-      if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+      if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
         await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByName.id } });
         sale.storeId = storeByName.id;
       }
@@ -532,11 +523,14 @@ export async function resolveInvoiceStore(
     }
   }
 
-  // 9. Viewing/requesting employee's store or branch
+  // The caller fallback is valid only for the attributed seller, never an unrelated manager.
+  if (sale && employee && sale.employeeId !== employee.id) return null;
+
+  // 9. Attributed employee's store or branch
   if (employee?.storeId) {
     const empStore = employee.store ?? (tx.store?.findUnique ? await tx.store.findUnique({ where: { id: employee.storeId } }) : { id: employee.storeId });
     if (empStore) {
-      if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+      if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
         await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: empStore.id } });
         sale.storeId = empStore.id;
       }
@@ -545,14 +539,14 @@ export async function resolveInvoiceStore(
   }
 
   if (employee?.branchId) {
-    if (tx.branch?.findUnique && tx.store?.findFirst) {
+    if (tx.branch?.findUnique) {
       const branch = employee.branch ?? await tx.branch.findUnique({ where: { id: employee.branchId } });
       if (branch?.name) {
-        const storeByName = await tx.store.findFirst({
+        const storeByName = await uniqueStore({
           where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
         });
         if (storeByName) {
-          if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+          if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
             await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByName.id } });
             sale.storeId = storeByName.id;
           }
@@ -560,24 +554,14 @@ export async function resolveInvoiceStore(
         }
       }
     }
-    if (tx.store?.findUnique) {
-      const storeById = await tx.store.findUnique({ where: { id: employee.branchId } });
-      if (storeById) {
-        if (sale && !sale.storeId && tx.commissionTransaction?.update) {
-          await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeById.id } });
-          sale.storeId = storeById.id;
-        }
-        return storeById.id;
-      }
-    }
   }
 
-  if (employee?.branchName && tx.store?.findFirst) {
-    const storeByName = await tx.store.findFirst({
+  if (employee?.branchName) {
+    const storeByName = await uniqueStore({
       where: { name: { equals: employee.branchName.trim(), mode: 'insensitive' } }
     });
     if (storeByName) {
-      if (sale && !sale.storeId && tx.commissionTransaction?.update) {
+      if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
         await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByName.id } });
         sale.storeId = storeByName.id;
       }
@@ -718,21 +702,16 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
 /** Existing approval endpoint freezes resolved item snapshots once; never rewrites paid/approved history. */
 export async function prepareInvoiceApproval(tx: Tx, sale: CommissionTransaction) {
   if(!isExternalInvoice(sale)||frozen(sale)) return {};
-  const siblings=await tx.commissionTransaction.count({where:{storeId:sale.storeId,OR:[...(sale.billId?[{billId:sale.billId}]:[]),...(sale.invoiceNumber?[{invoiceNumber:sale.invoiceNumber}]:[])],employeeId:{not:sale.employeeId},eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']}}});
+  const aliases=[sale.billId??'',sale.invoiceNumber??''].filter(Boolean);
+  const payload=await findInvoicePayload(tx,aliases,sale.storeId);
+  const meta=payload?extractWebhookMeta(payload.raw):null;
+  const storeId=await resolveInvoiceStore(tx,{sale,meta,aliases,persist:false});
+  if(!storeId) throw Object.assign(new Error('STORE_ID_MISSING: Invoice store mapping is unavailable'),{status:409});
+  const siblings=await tx.commissionTransaction.count({where:{storeId,OR:[...(sale.billId?[{billId:sale.billId}]:[]),...(sale.invoiceNumber?[{invoiceNumber:sale.invoiceNumber}]:[])],employeeId:{not:sale.employeeId},eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']}}});
   if(siblings) throw Object.assign(new Error('Shared invoice allocation requires accounting review before approval'),{status:409});
-  let storeId=sale.storeId;
-  if(!storeId) {
-    storeId=await resolveInvoiceStore(tx,{sale,aliases:[sale.billId??'',sale.invoiceNumber??''].filter(Boolean)});
-    if(storeId) {
-      await tx.commissionTransaction.update({where:{id:sale.id},data:{storeId}});
-      sale.storeId=storeId;
-    }
-  }
-  if(!sale.storeId) throw Object.assign(new Error('Invoice store is required before commission approval'),{status:409});
-  const payload=await findInvoicePayload(tx,[sale.billId??'',sale.invoiceNumber??''],sale.storeId);
-  const result=await calculateInvoiceCommission(tx,sale,payload?.raw,{storeId:sale.storeId,at:sale.createdAt,reference:sale.billId??sale.invoiceNumber??String(sale.id)});
-  if(result.commissionAmount===null) throw Object.assign(new Error('Subcategory commission configuration or invoice data is incomplete'),{status:409});
-  return { commissionAmount:result.commissionAmount,newCommission:result.commissionAmount,commissionPercent:result.commissionRate,
+  const result=await calculateInvoiceCommission(tx,sale,payload?.raw,{storeId,at:sale.createdAt,reference:sale.billId??sale.invoiceNumber??String(sale.id)});
+  if(result.commissionAmount===null) throw Object.assign(new Error(`Invoice commission unresolved: ${(result.productCommissionBreakdown as any[]).map(l=>l.missingReason).filter(Boolean).join(', ') || 'invoice data missing'}`),{status:409});
+  return { storeId, commissionAmount:result.commissionAmount,newCommission:result.commissionAmount,commissionPercent:result.commissionRate,
     commissionType:result.productCommissionBreakdown.every((l:any)=>l.commissionType==='FIXED')?'FIXED':'PERCENTAGE',
     productBreakdown:JSON.parse(JSON.stringify(result.productCommissionBreakdown.map((l:any)=>({...l,commissionSource:'SUBCATEGORY'})))) };
 }

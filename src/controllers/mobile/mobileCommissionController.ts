@@ -167,9 +167,9 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
       const numInv = getNumericInvoiceNumber(t);
       const recorded = recordedInvoiceCommission(t);
       const effectiveSale = Number(t.saleAmount);
-      const comm = recorded.commissionEarned;
-      const unresolved = recorded.hasUnresolvedInvoiceItems;
-      const rate = recorded.commissionRate;
+      const comm = recorded.commissionEarned ?? (t.commissionAmount !== null ? Number(t.commissionAmount) : null);
+      const unresolved = comm !== null ? false : recorded.hasUnresolvedInvoiceItems;
+      const rate = recorded.commissionRate ?? (effectiveSale > 0 && comm !== null && comm > 0 ? Number(((comm / effectiveSale) * 100).toFixed(2)) : null);
 
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
       const {
@@ -198,19 +198,19 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
         amount: effectiveSale,
         saleAmount: effectiveSale,
         billAmount: effectiveSale,
-        commission: unresolved ? null : comm,
+        commission: comm,
         commissionType: t.commissionType,
         commissionPercent: rate,
         commissionPercentage: rate,
         commissionRate: rate,
-        commissionAmount: unresolved ? null : comm,
-        commissionEarned: unresolved ? null : comm,
-        totalCommission: unresolved ? null : comm,
+        commissionAmount: comm,
+        commissionEarned: comm,
+        totalCommission: comm,
         hasUnresolvedInvoiceItems: unresolved,
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),
-        newCommission: unresolved ? null : comm,
+        newCommission: comm,
         status: t.status,
         date: t.createdAt,
         createdAt: t.createdAt,
@@ -508,11 +508,12 @@ export const getMobileWebhookLogs = async (
         const recorded = matchedTx ? recordedInvoiceCommission(matchedTx) : null;
         const commAmt = isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : recorded?.commissionAmount ?? null;
 
+        const eventStatus = log.status === 'FAILED' || log.status === 'REJECTED' ? log.status : (log.status || 'SUCCESS');
         results.push({
           id: log.id,
           eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
-          status: log.status || 'RECEIVED',
-          deliveryStatus: log.status || 'RECEIVED',
+          status: eventStatus,
+          deliveryStatus: log.status || 'SUCCESS',
           approvalStatus: matchedTx?.status ?? null,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
@@ -600,8 +601,8 @@ export const getMobileWebhookLogs = async (
         results.push({
           id: `hopkid-${log.id}`,
           eventType: meta.eventType || 'INVOICE_CREATED',
-          status: 'RECEIVED',
-          deliveryStatus: 'RECEIVED',
+          status: 'SUCCESS',
+          deliveryStatus: 'SUCCESS',
           approvalStatus: matchedTx?.status ?? null,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
@@ -639,8 +640,8 @@ export const getMobileWebhookLogs = async (
         results.push({
           id: `tx-${tx.id}`,
           eventType: tx.eventType || 'INVOICE_CREATED',
-          status: 'UNKNOWN',
-          deliveryStatus: 'UNKNOWN',
+          status: tx.status === 'REJECTED' ? 'FAILED' : 'SUCCESS',
+          deliveryStatus: 'SUCCESS',
           approvalStatus: tx.status,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
@@ -915,9 +916,9 @@ export const getMobileCommissionBills = async (
       const numInv = getNumericInvoiceNumber(t);
       const recorded = recordedInvoiceCommission(t);
       const effectiveSale = Number(t.saleAmount);
-      const comm = recorded.commissionEarned;
-      const unresolved = recorded.hasUnresolvedInvoiceItems;
-      const rate = recorded.commissionRate;
+      const comm = recorded.commissionEarned ?? (t.commissionAmount !== null ? Number(t.commissionAmount) : null);
+      const unresolved = comm !== null ? false : recorded.hasUnresolvedInvoiceItems;
+      const rate = recorded.commissionRate ?? (effectiveSale > 0 && comm !== null && comm > 0 ? Number(((comm / effectiveSale) * 100).toFixed(2)) : null);
       const {
         commission: _recordedCommission,
         commissionType: _recordedCommissionType,
@@ -940,10 +941,10 @@ export const getMobileCommissionBills = async (
         ...recordedMetadata,
         saleAmount: effectiveSale,
         billAmount: effectiveSale,
-        commission: unresolved ? null : comm,
+        commission: comm,
         commissionType: t.commissionType,
-        commissionAmount: unresolved ? null : comm,
-        commissionEarned: unresolved ? null : comm,
+        commissionAmount: comm,
+        commissionEarned: comm,
         commissionRate: rate,
         commissionPercentage: rate,
         commissionPercent: rate,
@@ -951,8 +952,8 @@ export const getMobileCommissionBills = async (
         oldAmount: Number(t.oldAmount || 0),
         newAmount: effectiveSale,
         oldCommission: Number(t.oldCommission || 0),
-        newCommission: unresolved ? null : comm,
-        totalCommission: unresolved ? null : comm,
+        newCommission: comm,
+        totalCommission: comm,
         date: t.createdAt,
         status: t.status,
         description: t.notes,
