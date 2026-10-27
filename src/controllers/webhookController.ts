@@ -1703,6 +1703,7 @@ async function executeWebhookPipeline(
     await processor(payload, resolvedEventId);
 
     // STEP 4: UPDATE WEBHOOK LOG TO SUCCESS
+    let deliveryCompleted = false;
     if (logEntry) {
       if (!resolvedLogEmpId && billId) {
         const createdTx = await prisma.commissionTransaction.findFirst({
@@ -1714,14 +1715,36 @@ async function executeWebhookPipeline(
         }
       }
 
-      await prisma.webhookLog.update({
+      const completedLog = await prisma.webhookLog.update({
         where: { id: logEntry.id },
         data: {
           status: 'SUCCESS',
+          errorMessage: null,
           processedAt: new Date(),
           ...(resolvedLogEmpId ? { employeeId: resolvedLogEmpId } : {}),
         },
-      }).catch(() => {});
+      }).catch(() => null);
+      deliveryCompleted = completedLog?.status === 'SUCCESS';
+    }
+
+    // Processors emit while this log is still PROCESSING. Notify again only
+    // after delivery completion is persisted so clients can fetch the final state.
+    if (logEntry && ['INVOICE_CREATED','INVOICE_UPDATED'].includes(normalizedType)) {
+      if (deliveryCompleted) {
+        const aliases = [...new Set([billId, meta.invoiceNumber].filter(Boolean).map(String))];
+        const recipients = new Set<number>(resolvedLogEmpId ? [resolvedLogEmpId] : []);
+        if (aliases.length && (meta.storeId || resolvedLogEmpId)) {
+          const transactions = await prisma.commissionTransaction.findMany({where:{
+            ...(meta.storeId ? {storeId:meta.storeId} : {employeeId:resolvedLogEmpId!}),
+            OR:[{billId:{in:aliases}},{invoiceNumber:{in:aliases}}],
+          },select:{employeeId:true}}).catch(() => []);
+          transactions.forEach(transaction => recipients.add(transaction.employeeId));
+        }
+        for (const employeeId of recipients) await broadcastCommissionEvent(employeeId, {
+          type:'WEBHOOK_PROCESSED',eventType:normalizedType,billId,
+          deliveryStatus:'SUCCESS',externalEventId:logEntry.id,
+        });
+      }
     }
 
     res.status(200).json({

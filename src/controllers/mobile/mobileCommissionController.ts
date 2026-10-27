@@ -462,14 +462,21 @@ export const getMobileWebhookLogs = async (
       });
     } catch (_) {}
 
-    const invoiceKey = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/^hwm-(\d+)$/, '$1');
-    const findMatchingTx = (billIdStr: string | null, invNoStr: string | null, storeId?: number | null) => {
+    const invoiceKey = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/^(?:hwm-|inv-)(\d+)$/, '$1');
+    const findMatchingTx = async (billIdStr: string | null, invNoStr: string | null, storeId?: number | null) => {
       const keys = [billIdStr, invNoStr].filter(Boolean).map(invoiceKey);
       const matches = empCommissionTransactions.filter(tx => (!storeId || !tx.storeId || tx.storeId === storeId) &&
         [tx.billId, tx.invoiceNumber].filter(Boolean).some(value => keys.includes(invoiceKey(value))));
       const scoped = storeId && matches.some(tx => tx.storeId === storeId)
         ? matches.filter(tx => tx.storeId === storeId) : matches;
-      return scoped.length === 1 ? scoped[0] : null;
+      if (scoped.length) return scoped.length === 1 ? scoped[0] : null;
+      // Activity may reference an invoice outside the latest 100 transactions.
+      const aliases = [...new Set(keys.flatMap(key => /^\d+$/.test(key) ? [key, `HWM-${key}`, `INV-${key}`] : [key]))];
+      if (!aliases.length) return null;
+      const older = await prisma.commissionTransaction.findMany({where:{employeeId:employee.id,
+        ...(storeId ? {OR:[{storeId},{storeId:null}]} : {}),
+        AND:[{OR:[{billId:{in:aliases,mode:'insensitive'}},{invoiceNumber:{in:aliases,mode:'insensitive'}}]}]},take:2});
+      return older.length === 1 ? older[0] : null;
     };
 
     // 2. WebhookLog — filter by employeeId directly OR linked Credit Note numbers
@@ -497,33 +504,16 @@ export const getMobileWebhookLogs = async (
 
         const amtVal = isCreditNote && matchedCnLine ? Number(matchedCnLine.creditAmount) : Number(log.amount ?? meta.amount ?? 0);
 
-        const matchedTx = !isCreditNote ? findMatchingTx(log.billId || meta.billId, meta.invoiceNumber, meta.storeId) : null;
-        let commAmt: number | null = null;
-        let statusVal = log.status || 'SUCCESS';
-        let rateDisplay: string | null = null;
-        let commissionPercent: number | null = null;
-
-        if (isCreditNote && matchedCnLine) {
-          commAmt = -Number(matchedCnLine.commissionAdjustment);
-          statusVal = 'SUCCESS';
-        } else if (matchedTx) {
-          const unresolved = hasUnresolvedInvoiceItems(matchedTx);
-          if (unresolved) {
-            commAmt = null;
-            statusVal = (matchedTx.status === 'APPROVED' || matchedTx.status === 'PAID') ? 'SUCCESS' : 'PENDING';
-            rateDisplay = 'Configuration required';
-          } else {
-            commAmt = matchedTx.commissionAmount !== null && matchedTx.commissionAmount !== undefined ? Number(matchedTx.commissionAmount) : null;
-            statusVal = (matchedTx.status === 'APPROVED' || matchedTx.status === 'PAID') ? 'SUCCESS' : (matchedTx.status || 'SUCCESS');
-            commissionPercent = matchedTx.commissionPercent !== null ? Number(matchedTx.commissionPercent) : null;
-            rateDisplay = matchedTx.commissionPercent !== null ? `${matchedTx.commissionPercent}%` : null;
-          }
-        }
+        const matchedTx = !isCreditNote ? await findMatchingTx(log.billId || meta.billId, meta.invoiceNumber, meta.storeId) : null;
+        const recorded = matchedTx ? recordedInvoiceCommission(matchedTx) : null;
+        const commAmt = isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : recorded?.commissionAmount ?? null;
 
         results.push({
           id: log.id,
           eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
-          status: statusVal,
+          status: log.status || 'RECEIVED',
+          deliveryStatus: log.status || 'RECEIVED',
+          approvalStatus: matchedTx?.status ?? null,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -533,12 +523,10 @@ export const getMobileWebhookLogs = async (
           newAmount: amtVal,
           newBillAmount: amtVal,
           differenceAmount: null,
+          ...(recorded ?? {commissionState: commAmt !== null ? 'COMPLETE' : 'UNKNOWN', hasMissingConfiguration:false}),
           commissionAmount: commAmt,
           commissionEarned: commAmt,
-          commissionState: commAmt !== null ? 'COMPLETE' : matchedTx ? 'MISSING_CONFIGURATION' : 'PENDING',
-          hasMissingConfiguration: !!matchedTx && commAmt === null,
-          commissionPercent,
-          rateDisplay,
+          commissionStatus: recorded?.commissionState ?? (commAmt !== null ? 'COMPLETE' : 'UNKNOWN'),
           customerName: meta.customerName && meta.customerName !== 'N/A' ? meta.customerName : '-',
           errorMessage: log.errorMessage || null,
           createdAt: log.createdAt,
@@ -605,30 +593,16 @@ export const getMobileWebhookLogs = async (
 
         const hAmtVal = Number(log.amount ?? meta.amount ?? 0);
 
-        const matchedTx = findMatchingTx(log.billId || meta.billId, meta.invoiceNumber, meta.storeId ?? log.storeId);
-        let commAmt: number | null = null;
-        let statusVal = 'RECEIVED';
-        let rateDisplay: string | null = null;
-        let commissionPercent: number | null = null;
-
-        if (matchedTx) {
-          const unresolved = hasUnresolvedInvoiceItems(matchedTx);
-          if (unresolved) {
-            commAmt = null;
-            statusVal = 'RECEIVED';
-            rateDisplay = 'Configuration required';
-          } else {
-            commAmt = matchedTx.commissionAmount !== null && matchedTx.commissionAmount !== undefined ? Number(matchedTx.commissionAmount) : null;
-            statusVal = (matchedTx.status === 'APPROVED' || matchedTx.status === 'PAID') ? 'SUCCESS' : 'RECEIVED';
-            commissionPercent = matchedTx.commissionPercent !== null ? Number(matchedTx.commissionPercent) : null;
-            rateDisplay = matchedTx.commissionPercent !== null ? `${matchedTx.commissionPercent}%` : null;
-          }
-        }
+        const matchedTx = await findMatchingTx(log.billId || meta.billId, meta.invoiceNumber, meta.storeId ?? log.storeId);
+        const recorded = matchedTx ? recordedInvoiceCommission(matchedTx) : null;
+        const commAmt = recorded?.commissionAmount ?? null;
 
         results.push({
           id: `hopkid-${log.id}`,
           eventType: meta.eventType || 'INVOICE_CREATED',
-          status: statusVal,
+          status: 'RECEIVED',
+          deliveryStatus: 'RECEIVED',
+          approvalStatus: matchedTx?.status ?? null,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -638,12 +612,8 @@ export const getMobileWebhookLogs = async (
           newAmount: hAmtVal,
           newBillAmount: hAmtVal,
           differenceAmount: null,
-          commissionAmount: commAmt,
-          commissionEarned: commAmt,
-          commissionState: commAmt !== null ? 'COMPLETE' : matchedTx ? 'MISSING_CONFIGURATION' : 'PENDING',
-          hasMissingConfiguration: !!matchedTx && commAmt === null,
-          commissionPercent,
-          rateDisplay,
+          ...(recorded ?? {commissionState:'UNKNOWN', hasMissingConfiguration:false, commissionAmount:commAmt, commissionEarned:commAmt}),
+          commissionStatus: recorded?.commissionState ?? 'UNKNOWN',
           customerName: meta.customerName || 'N/A',
           errorMessage: null,
           createdAt: log.createdAt,
@@ -665,12 +635,13 @@ export const getMobileWebhookLogs = async (
       );
 
       if (!alreadyPresent) {
-        const unresolved = hasUnresolvedInvoiceItems(tx);
-        const commAmt = unresolved ? null : (tx.commissionAmount !== null && tx.commissionAmount !== undefined ? Number(tx.commissionAmount) : null);
+        const recorded = recordedInvoiceCommission(tx);
         results.push({
           id: `tx-${tx.id}`,
           eventType: tx.eventType || 'INVOICE_CREATED',
-          status: (tx.status === 'APPROVED' || tx.status === 'PAID') ? 'SUCCESS' : (unresolved ? 'RECEIVED' : (tx.status || 'SUCCESS')),
+          status: 'UNKNOWN',
+          deliveryStatus: 'UNKNOWN',
+          approvalStatus: tx.status,
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -680,12 +651,8 @@ export const getMobileWebhookLogs = async (
           newAmount: Number(tx.saleAmount || 0),
           newBillAmount: Number(tx.saleAmount || 0),
           differenceAmount: tx.commissionDifference !== null ? Number(tx.commissionDifference) : null,
-          commissionAmount: commAmt,
-          commissionEarned: commAmt,
-          commissionState: unresolved ? 'MISSING_CONFIGURATION' : 'COMPLETE',
-          hasMissingConfiguration: unresolved,
-          commissionPercent: tx.commissionPercent !== null ? Number(tx.commissionPercent) : null,
-          rateDisplay: unresolved ? 'Configuration required' : (tx.commissionPercent !== null ? `${tx.commissionPercent}%` : null),
+          ...recorded,
+          commissionStatus: recorded.commissionState,
           customerName: 'POS Customer',
           errorMessage: null,
           createdAt: tx.createdAt,
