@@ -30,3 +30,26 @@ Validation:
 - Flutter commission model, activity, invoice, and wallet regressions, including successful calculation with an older delivery status and a genuine missing store despite successful webhook delivery.
 
 The configured live database refused the read-only diagnostic (`ECONNREFUSED`). The affected live invoices were not inspected or recalculated, and the working-invoice examples above were not represented as live database verification.
+
+## Files changed for this regression
+
+Backend:
+- `src/controllers/webhookController.ts`: carry original metadata into store resolution before calculation; persist the same store.
+- `src/services/invoiceCommissionService.ts`: verified and unambiguous store resolution; metadata-first reconciliation; accurate missing-store errors; no-write preview.
+- `src/utils/commissionHelper.ts`: uppercase StoreID/BranchID payload aliases and strict numeric ID parsing.
+- `src/services/invoiceCommissionCompleteness.ts`: provisional totals cannot prove a pending invoice is resolved.
+- `src/services/recordedInvoiceCommission.ts`: preserve genuine missing-data errors and configured rates; no inferred percentage.
+- `scripts/reconcile_pending_invoice_commissions.ts`: explicit bill selectors for the existing guarded repair operation.
+- `scripts/test_hopkid_store_subcategory_regression.cjs`: isolated regression and idempotent wallet repair tests.
+- `docs/hopkid-store-subcategory-regression.md`: Git comparison, validation and repair instructions.
+
+Flutter:
+- `lib/features/commission/data/commission_response.dart`: successful calculation controls the activity badge; explicit errors remain unresolved.
+- `lib/features/commission/data/commission_models.dart`: wallet transactions use recorded rates and authoritative resolution state.
+- `lib/features/commission/data/models/commission_models.dart`: per-product and invoice values preserve unknown rates/amounts and payout status.
+- `lib/screens/commission/commission_detail_screen.dart`: do not display missing commission as zero or silently promote approval status.
+- `lib/features/commission/presentation/widgets/webhook_logs_widget.dart`: existing SUCCESS badge and Commission Earned styling; accurate missing-store message.
+- `lib/features/commission/presentation/screens/webhook_logs_screen.dart`: calculation badge is independent of delivery state.
+- `test/commission_response_sync_test.dart`: completed-calculation badge and missing-store regression coverage.
+
+Existing wallet and invoice refresh code from the preceding synchronization fix is retained. Unrelated working-tree changes are not part of this regression's file list.

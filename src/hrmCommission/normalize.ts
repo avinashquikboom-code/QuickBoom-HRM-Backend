@@ -74,7 +74,7 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
     return { id, productId, variantId, quantity, exTax, inclTax,
       unverifiedAmount: !exTax && !inclTax && pick(item, ['creditAmount', 'productNetAmount', 'netAmount', 'lineTotal', 'amount', 'refundAmount']) !== undefined,
       subcategoryExternalId: subId == null ? undefined : identifier(subId, 'SUBCATEGORY_ID'),
-      subcategoryName: pick(item, ['subcategoryName', 'subCategoryName', 'SubCategoryName']),
+      subcategoryName: extractProductLineMeta(item).subcategoryName ?? pick(item, ['subcategoryName', 'subCategoryName', 'SubCategoryName', 'subcategory', 'Subcategory', 'subCategory', 'SubCategory']),
       categoryExternalId: pick(item, ['categoryId', 'CategoryID']),
       originalLineId: pick(item, ['originalSaleItemId', 'originalLineId', 'originalSalesProductId']),
       originalInvoiceId: pick(item, ['originalInvoiceId', 'originalBillId']) ?? originalInvoiceId };

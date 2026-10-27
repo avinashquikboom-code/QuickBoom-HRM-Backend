@@ -167,9 +167,9 @@ function sanitizeHopKidNote(note: string | null | undefined, numInv: number): st
       const numInv = getNumericInvoiceNumber(t);
       const recorded = recordedInvoiceCommission(t);
       const effectiveSale = Number(t.saleAmount);
-      const comm = recorded.commissionEarned ?? (t.commissionAmount !== null ? Number(t.commissionAmount) : null);
-      const unresolved = comm !== null ? false : recorded.hasUnresolvedInvoiceItems;
-      const rate = recorded.commissionRate ?? (effectiveSale > 0 && comm !== null && comm > 0 ? Number(((comm / effectiveSale) * 100).toFixed(2)) : null);
+      const comm = recorded.commissionEarned;
+      const unresolved = recorded.hasUnresolvedInvoiceItems;
+      const rate = recorded.commissionRate;
 
       const noteClean = sanitizeHopKidNote(t.notes, numInv);
       const {
@@ -916,9 +916,9 @@ export const getMobileCommissionBills = async (
       const numInv = getNumericInvoiceNumber(t);
       const recorded = recordedInvoiceCommission(t);
       const effectiveSale = Number(t.saleAmount);
-      const comm = recorded.commissionEarned ?? (t.commissionAmount !== null ? Number(t.commissionAmount) : null);
-      const unresolved = comm !== null ? false : recorded.hasUnresolvedInvoiceItems;
-      const rate = recorded.commissionRate ?? (effectiveSale > 0 && comm !== null && comm > 0 ? Number(((comm / effectiveSale) * 100).toFixed(2)) : null);
+      const comm = recorded.commissionEarned;
+      const unresolved = recorded.hasUnresolvedInvoiceItems;
+      const rate = recorded.commissionRate;
       const {
         commission: _recordedCommission,
         commissionType: _recordedCommissionType,
