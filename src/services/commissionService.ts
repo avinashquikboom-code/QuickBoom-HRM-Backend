@@ -1,4 +1,5 @@
-import { projectInvoiceCommissionsForRead } from './invoiceCommissionReadProjection';
+import { recordedInvoiceCommission } from './recordedInvoiceCommission';
+import { projectInvoiceCommissionsForRead, projectInvoiceCommissionForRead } from './invoiceCommissionReadProjection';
 import { Prisma } from '@prisma/client';
 import { hasUnresolvedInvoiceItems } from './invoiceCommissionCompleteness';
 import { ordinaryCommissionFilter } from './rkdPayrollService';
@@ -318,7 +319,7 @@ export class CommissionService {
   static async getLatestSale(employeeId: number): Promise<any> {
     console.log(`[Latest Sale] Employee: ${employeeId}`);
 
-    const latestSale = await prisma.commissionTransaction.findFirst({
+    const latestRecordedSale = await prisma.commissionTransaction.findFirst({
       where: {
         employeeId: employeeId,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] }
@@ -326,6 +327,7 @@ export class CommissionService {
       orderBy: { id: 'desc' }
     });
 
+    const latestSale=latestRecordedSale?await projectInvoiceCommissionForRead(latestRecordedSale):null;
     if (!latestSale) {
       console.log(`[Latest Sale] ⚠️ No sales found`);
       return null;
@@ -338,14 +340,16 @@ export class CommissionService {
     });
 
     const numInv = getNumericInvoiceNumber(latestSale);
+    const recorded=recordedInvoiceCommission(latestSale);
     return {
       billId: numInv,
       invoiceNumber: latestSale.invoiceNumber || `HWM-${numInv}`,
       billNumber: numInv,
       date: latestSale.createdAt,
       netAmount: latestSale.saleAmount,
-      commission: latestSale.commissionAmount,
-      commissionRate: latestSale.commissionPercent || 0,
+      ...recorded,
+      commission: recorded.commissionEarned,
+      commissionRate: recorded.commissionRate,
       description: latestSale.notes
     };
   }

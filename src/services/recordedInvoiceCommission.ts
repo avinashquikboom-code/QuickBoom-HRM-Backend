@@ -42,7 +42,7 @@ export function recordedInvoiceCommission(sale: Partial<CommissionTransaction>) 
     commissionAmount: earned, commissionEarned: earned, commission: earned, totalCommission: earned,
     hasUnresolvedInvoiceItems: unresolved, hasMissingConfiguration: unresolved && !missingData, hasMissingInvoiceData: unresolved && missingData,
     productCommissionBreakdown:lines,productWiseCommission:lines,
-    commissionSource:unresolved?'UNRESOLVED':(sale as any).commissionSource??(lines.every(line=>line.commissionState==='CONFIGURED')?'SUBCATEGORY':'RECORDED'),
+    commissionSource:unresolved?'UNRESOLVED':(sale as any).commissionSource??(lines.length>0&&lines.every(line=>line.commissionState==='CONFIGURED')?'SUBCATEGORY':'RECORDED'),
     saleOccurredAt:(sale as any).saleOccurredAt??null,saleTimestampField:(sale as any).saleTimestampField??null,
     saleTimeZone:(sale as any).saleTimeZone??null,saleTimeZoneSource:(sale as any).saleTimeZoneSource??null,
     commissionState: state, missingReason: reason, rateDisplay

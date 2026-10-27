@@ -9,6 +9,9 @@ const raw = {eventType:'INVOICE_UPDATED',data:{invoice:{invoiceId:'29146',invoic
 const db = {
   employee:{findFirst:async()=>({id:7,employeeCode:'TEST',mobileNumber:'',firstName:'Test',lastName:'Seller'})},
   creditNoteLine:{findMany:async()=>[]},
+  hrmCommissionDocument:{findMany:async()=>[]},
+  hrmCommissionSettings:{findUnique:async()=>null},
+  pOSProduct:{findMany:async()=>[]},
   commissionTransaction:{findMany:async({where})=> {
     assert.equal(where.employeeId,7);
     return older && !where.AND ? [] : [sale];

@@ -68,13 +68,23 @@ const tx = {
   hrmCommissionSettings: { findUnique: async () => null },
   hrmCommissionSubcategory: {
     findUnique: async ({ where }) => subcategories.find(s => (where.externalId && s.externalId === where.externalId) || (where.id && s.id === where.id)) || null,
-    findFirst: async ({ where }) => subcategories.find(s => where.name && s.name.toLowerCase() === where.name.equals.toLowerCase()) || null,
+    findFirst: async ({ where }) => {
+      if (where.name) {
+        const target = (typeof where.name === 'string' ? where.name : where.name.equals || '').toLowerCase();
+        return subcategories.find(s => s.name.toLowerCase() === target) || null;
+      }
+      if (where.categoryExternalId) {
+        return subcategories.find(s => s.categoryExternalId === where.categoryExternalId) || null;
+      }
+      return null;
+    },
     findMany: async ({ where }) => {
       if (where.OR) {
         return subcategories.filter(s => {
           const extIn = where.OR.find(o => o.externalId)?.externalId?.in || [];
           const idIn = where.OR.find(o => o.id)?.id?.in || [];
-          return extIn.includes(s.externalId) || idIn.includes(s.id);
+          const catIn = where.OR.find(o => o.categoryExternalId)?.categoryExternalId?.in || [];
+          return extIn.includes(s.externalId) || idIn.includes(s.id) || (s.categoryExternalId && catIn.includes(s.categoryExternalId));
         });
       }
       if (where.externalId?.in) return subcategories.filter(s => where.externalId.in.includes(s.externalId));
@@ -186,7 +196,6 @@ async function runTests() {
     reference: 'HWM-1002'
   });
 
-  console.log('DEBUG calcFootwear:', JSON.stringify(calcFootwear, null, 2));
   assert.equal(calcFootwear.commissionState, 'COMPLETE');
   assert.equal(calcFootwear.commissionRate, 5, 'Footwear rate must dynamically resolve to 5%');
   assert.equal(calcFootwear.rateDisplay, '5%');

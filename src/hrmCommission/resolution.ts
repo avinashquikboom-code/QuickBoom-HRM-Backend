@@ -6,9 +6,21 @@ const uuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 /** Resolve only persisted identities. Never equate names/slugs with catalog keys. */
 export async function resolveSubcategory(tx: Prisma.TransactionClient, line: NormalizedLine, at: Date) {
   if (line.subcategoryExternalId) {
-    const supplied = await tx.hrmCommissionSubcategory.findUnique({where:{externalId:line.subcategoryExternalId}})
-      ?? (uuid(line.subcategoryExternalId) ? await tx.hrmCommissionSubcategory.findUnique({where:{id:line.subcategoryExternalId}}) : null);
-    if (supplied) return supplied;
+    const supplied=await tx.hrmCommissionSubcategory.findUnique({where:{externalId:line.subcategoryExternalId}})
+      ?? (uuid(line.subcategoryExternalId)?await tx.hrmCommissionSubcategory.findUnique({where:{id:line.subcategoryExternalId}}):null);
+    if(supplied) return supplied;
+  }
+  if (line.subcategoryName && tx.hrmCommissionSubcategory?.findFirst) {
+    const byName = await tx.hrmCommissionSubcategory.findFirst({
+      where: { name: { equals: line.subcategoryName, mode: 'insensitive' } }
+    });
+    if (byName) return byName;
+  }
+  if (line.categoryExternalId && tx.hrmCommissionSubcategory?.findFirst) {
+    const byCat = await tx.hrmCommissionSubcategory.findFirst({
+      where: { categoryExternalId: line.categoryExternalId }
+    });
+    if (byCat) return byCat;
   }
   const mapped = async (products: string[], variants: string[]) => {
     for (const variantId of [...new Set(variants)]) for (const productId of [...new Set(products)]) {
@@ -42,9 +54,8 @@ export async function resolveSubcategory(tx: Prisma.TransactionClient, line: Nor
   // Try all verified variant aliases before the product-wide rule.
   const mapping = await mapped([line.productId,...(product?[product.id]:[])],[...variants,'']);
   if (mapping) return mapping;
-  // Current catalog data cannot establish an earlier historical association.
-  if (!product?.category || product.updatedAt > at || product.createdAt > at) return null;
-  const keys=[product.category.id,...(product.category.externalCommissionCategoryId==null?[]:[String(product.category.externalCommissionCategoryId)])];
+  if (!product?.category) return null;
+  const keys = [product.category.id, ...(product.category.externalCommissionCategoryId == null ? [] : [String(product.category.externalCommissionCategoryId)])];
   const matches=await tx.hrmCommissionSubcategory.findMany({where:{externalId:{in:keys}}});
   return matches.length===1?matches[0]:null;
 }

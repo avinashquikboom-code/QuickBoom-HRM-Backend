@@ -61,6 +61,10 @@ const {parseSaleDateCorrectly}=require('../src/utils/commissionHelper');
  const projected=await projectInvoiceCommissionForRead(sale,tx),wallet=recordedInvoiceCommission(projected);
  assert.equal(wallet.commissionAmount,result.commissionAmount);assert.equal(wallet.commissionRate,result.commissionRate);
  assert.equal(projected.status,'PENDING');assert.equal(sale.commissionAmount,0);assert.equal(writes,0);
+ tx.commissionTransaction.findFirst=async()=>sale;
+ const {CommissionService}=require('../src/services/commissionService');
+ const latest=await CommissionService.getLatestSale(7);
+ assert.equal(latest.commission,46.48);assert.equal(latest.commissionRate,2.75);
  const frozen={...sale,status:'PAID',commissionAmount:77};assert.equal(await projectInvoiceCommissionForRead(frozen,tx),frozen);
  // Apply uses the same result, fixes only the pending sale timestamp, and credits once.
  let persisted={...sale};let credited=0;
