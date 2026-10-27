@@ -110,7 +110,7 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
       if (inclTax && !exTax) { requireValue(inclTax.gte(t), 'TAX_EXCEEDS_NET'); exTax = inclTax.minus(t); }
       if (exTax && inclTax) requireValue(inclTax.minus(exTax).equals(t), 'TAX_TOTAL_MISMATCH');
     }
-    if (!exTax && !inclTax && item[contract.netField] !== undefined && contract.discounted && ['NET_EX_TAX','NET_INCL_TAX'].includes(contract.netBasis)) {
+    if (!exTax && !inclTax && item[contract.netField] !== undefined && ['NET_EX_TAX','NET_INCL_TAX'].includes(contract.netBasis)) {
       const value=decimal(item[contract.netField],'CONTRACT_NET_AMOUNT');
       if(contract.netBasis==='NET_EX_TAX') { exTax=value; if(tax!==undefined) inclTax=value.plus(decimal(tax,'TAX')); }
       else { inclTax=value; if(tax!==undefined) {const t=decimal(tax,'TAX');requireValue(value.gte(t),'TAX_EXCEEDS_NET');exTax=value.minus(t);} }

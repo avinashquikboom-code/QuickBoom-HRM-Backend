@@ -1,6 +1,6 @@
 import { projectInvoiceCommissionsForRead, projectInvoiceCommissionForRead } from '../../services/invoiceCommissionReadProjection';
 import { recordedInvoiceCommission } from '../../services/recordedInvoiceCommission';
-import { mobileInvoiceDetail } from '../../services/invoiceCommissionService';
+import { mobileInvoiceDetail, calculateInvoiceCommission, resolveInvoiceStore } from '../../services/invoiceCommissionService';
 import { hasUnresolvedInvoiceItems } from '../../services/invoiceCommissionCompleteness';
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
@@ -507,16 +507,66 @@ export const getMobileWebhookLogs = async (
         const amtVal = isCreditNote && matchedCnLine ? Number(matchedCnLine.creditAmount) : Number(log.amount ?? meta.amount ?? 0);
 
         const matchedTx = !isCreditNote ? await findMatchingTx(log.billId || meta.billId, meta.invoiceNumber, meta.storeId) : null;
-        const recorded = matchedTx ? recordedInvoiceCommission(matchedTx) : null;
-        const commAmt = isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : recorded?.commissionAmount ?? null;
+        let recorded = matchedTx ? recordedInvoiceCommission(matchedTx) : null;
+        let commAmt = isCreditNote && matchedCnLine ? -Number(matchedCnLine.commissionAdjustment) : recorded?.commissionAmount ?? null;
+
+        if (!isCreditNote && (commAmt == null || recorded?.commissionState === 'INVOICE_DATA_MISSING')) {
+          try {
+            const raw = JSON.parse(log.payload);
+            const rawMeta = extractWebhookMeta(raw);
+            const resolvedStoreId = await resolveInvoiceStore(prisma, {
+              sale: matchedTx,
+              meta: rawMeta,
+              aliases: [log.billId, meta.billId, meta.invoiceNumber, String(numInv)].filter((v): v is string => Boolean(v)),
+              employee
+            });
+            if (resolvedStoreId) {
+              const calcResult = await calculateInvoiceCommission(prisma, matchedTx, raw, {
+                storeId: resolvedStoreId,
+                at: log.createdAt,
+                reference: log.billId || meta.billId || meta.invoiceNumber || String(numInv),
+                sourceRecordedAt: log.createdAt,
+                employeeIdentifiers: [employee.employeeCode, employee.mobileNumber].filter((v): v is string => Boolean(v))
+              });
+              if (calcResult.commissionAmount !== null) {
+                commAmt = calcResult.commissionAmount;
+                recorded = {
+                  commissionRate: calcResult.commissionRate,
+                  commissionPercent: calcResult.commissionRate,
+                  commissionPercentage: calcResult.commissionRate,
+                  commissionType: calcResult.productCommissionBreakdown.every((l: any) => l.commissionType === 'FIXED') ? 'FIXED' : 'PERCENTAGE',
+                  fixedBasis: 'UNIT',
+                  commissionAmount: calcResult.commissionAmount,
+                  commissionEarned: calcResult.commissionAmount,
+                  commission: calcResult.commissionAmount,
+                  totalCommission: calcResult.commissionAmount,
+                  hasUnresolvedInvoiceItems: false,
+                  hasMissingConfiguration: false,
+                  hasMissingInvoiceData: false,
+                  productCommissionBreakdown: calcResult.productCommissionBreakdown,
+                  productWiseCommission: calcResult.productCommissionBreakdown,
+                  commissionSource: calcResult.commissionSource,
+                  saleOccurredAt: (calcResult as any).saleOccurredAt ?? null,
+                  saleTimestampField: (calcResult as any).saleTimestampField ?? null,
+                  saleTimeZone: (calcResult as any).saleTimeZone ?? null,
+                  saleTimeZoneSource: (calcResult as any).saleTimeZoneSource ?? null,
+                  commissionState: 'COMPLETE',
+                  missingReason: null,
+                  rateDisplay: calcResult.rateDisplay,
+                };
+              }
+            }
+          } catch (_) {}
+        }
 
         const eventStatus = log.status === 'FAILED' || log.status === 'REJECTED' ? log.status : (log.status || 'SUCCESS');
+        const commState = recorded?.commissionState ?? (commAmt !== null ? 'COMPLETE' : 'UNKNOWN');
         results.push({
           id: log.id,
           eventType: log.eventType || meta.eventType || 'INVOICE_CREATED',
           status: eventStatus,
           deliveryStatus: log.status || 'SUCCESS',
-          approvalStatus: matchedTx?.status ?? null,
+          approvalStatus: matchedTx?.status ?? 'PENDING',
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -526,10 +576,15 @@ export const getMobileWebhookLogs = async (
           newAmount: amtVal,
           newBillAmount: amtVal,
           differenceAmount: null,
-          ...(recorded ?? {commissionState: commAmt !== null ? 'COMPLETE' : 'UNKNOWN', hasMissingConfiguration:false}),
+          ...(recorded ?? {commissionState: commState, hasMissingConfiguration: false, hasMissingInvoiceData: commAmt == null}),
           commissionAmount: commAmt,
           commissionEarned: commAmt,
-          commissionStatus: recorded?.commissionState ?? (commAmt !== null ? 'COMPLETE' : 'UNKNOWN'),
+          totalCommission: commAmt,
+          commissionRate: recorded?.commissionRate ?? null,
+          commissionPercent: recorded?.commissionPercent ?? null,
+          commissionPercentage: recorded?.commissionPercentage ?? null,
+          commissionStatus: commState,
+          rateDisplay: recorded?.rateDisplay ?? (commAmt !== null ? (recorded?.commissionRate != null ? `${recorded.commissionRate}%` : null) : 'Invoice item data unavailable'),
           customerName: meta.customerName && meta.customerName !== 'N/A' ? meta.customerName : '-',
           errorMessage: log.errorMessage || null,
           createdAt: log.createdAt,
@@ -597,15 +652,65 @@ export const getMobileWebhookLogs = async (
         const hAmtVal = Number(log.amount ?? meta.amount ?? 0);
 
         const matchedTx = await findMatchingTx(log.billId || meta.billId, meta.invoiceNumber, meta.storeId ?? log.storeId);
-        const recorded = matchedTx ? recordedInvoiceCommission(matchedTx) : null;
-        const commAmt = recorded?.commissionAmount ?? null;
+        let recorded = matchedTx ? recordedInvoiceCommission(matchedTx) : null;
+        let commAmt = recorded?.commissionAmount ?? null;
 
+        if (commAmt == null || recorded?.commissionState === 'INVOICE_DATA_MISSING') {
+          try {
+            const raw = JSON.parse(log.rawPayload);
+            const rawMeta = extractWebhookMeta(raw);
+            const resolvedStoreId = await resolveInvoiceStore(prisma, {
+              sale: matchedTx,
+              meta: rawMeta,
+              aliases: [log.billId, meta.billId, meta.invoiceNumber, String(numInv)].filter((v): v is string => Boolean(v)),
+              employee
+            });
+            if (resolvedStoreId) {
+              const calcResult = await calculateInvoiceCommission(prisma, matchedTx, raw, {
+                storeId: resolvedStoreId,
+                at: log.createdAt,
+                reference: log.billId || meta.billId || meta.invoiceNumber || String(numInv),
+                sourceRecordedAt: log.createdAt,
+                employeeIdentifiers: [employee.employeeCode, employee.mobileNumber].filter((v): v is string => Boolean(v))
+              });
+              if (calcResult.commissionAmount !== null) {
+                commAmt = calcResult.commissionAmount;
+                recorded = {
+                  commissionRate: calcResult.commissionRate,
+                  commissionPercent: calcResult.commissionRate,
+                  commissionPercentage: calcResult.commissionRate,
+                  commissionType: calcResult.productCommissionBreakdown.every((l: any) => l.commissionType === 'FIXED') ? 'FIXED' : 'PERCENTAGE',
+                  fixedBasis: 'UNIT',
+                  commissionAmount: calcResult.commissionAmount,
+                  commissionEarned: calcResult.commissionAmount,
+                  commission: calcResult.commissionAmount,
+                  totalCommission: calcResult.commissionAmount,
+                  hasUnresolvedInvoiceItems: false,
+                  hasMissingConfiguration: false,
+                  hasMissingInvoiceData: false,
+                  productCommissionBreakdown: calcResult.productCommissionBreakdown,
+                  productWiseCommission: calcResult.productCommissionBreakdown,
+                  commissionSource: calcResult.commissionSource,
+                  saleOccurredAt: (calcResult as any).saleOccurredAt ?? null,
+                  saleTimestampField: (calcResult as any).saleTimestampField ?? null,
+                  saleTimeZone: (calcResult as any).saleTimeZone ?? null,
+                  saleTimeZoneSource: (calcResult as any).saleTimeZoneSource ?? null,
+                  commissionState: 'COMPLETE',
+                  missingReason: null,
+                  rateDisplay: calcResult.rateDisplay,
+                };
+              }
+            }
+          } catch (_) {}
+        }
+
+        const commState = recorded?.commissionState ?? (commAmt !== null ? 'COMPLETE' : 'UNKNOWN');
         results.push({
           id: `hopkid-${log.id}`,
           eventType: meta.eventType || 'INVOICE_CREATED',
           status: 'SUCCESS',
           deliveryStatus: 'SUCCESS',
-          approvalStatus: matchedTx?.status ?? null,
+          approvalStatus: matchedTx?.status ?? 'PENDING',
           billId: numInv,
           invoiceNo: cleanInvoiceNo,
           invoiceNumber: cleanInvoiceNo,
@@ -615,8 +720,15 @@ export const getMobileWebhookLogs = async (
           newAmount: hAmtVal,
           newBillAmount: hAmtVal,
           differenceAmount: null,
-          ...(recorded ?? {commissionState:'UNKNOWN', hasMissingConfiguration:false, commissionAmount:commAmt, commissionEarned:commAmt}),
-          commissionStatus: recorded?.commissionState ?? 'UNKNOWN',
+          ...(recorded ?? {commissionState: commState, hasMissingConfiguration: false, hasMissingInvoiceData: commAmt == null}),
+          commissionAmount: commAmt,
+          commissionEarned: commAmt,
+          totalCommission: commAmt,
+          commissionRate: recorded?.commissionRate ?? null,
+          commissionPercent: recorded?.commissionPercent ?? null,
+          commissionPercentage: recorded?.commissionPercentage ?? null,
+          commissionStatus: commState,
+          rateDisplay: recorded?.rateDisplay ?? (commAmt !== null ? (recorded?.commissionRate != null ? `${recorded.commissionRate}%` : null) : 'Invoice item data unavailable'),
           customerName: meta.customerName || 'N/A',
           errorMessage: null,
           createdAt: log.createdAt,

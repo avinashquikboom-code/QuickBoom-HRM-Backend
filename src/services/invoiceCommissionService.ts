@@ -9,7 +9,7 @@ import { resolveSubcategory, resolveSubcategoryRate } from '../hrmCommission/res
 const D = Prisma.Decimal;
 type Tx = Prisma.TransactionClient;
 const frozen = (sale: CommissionTransaction | null) => !!sale && ['APPROVED','PAID'].includes(sale.status);
-export const isExternalInvoice = (sale: CommissionTransaction) => ['INVOICE_CREATED','INVOICE_UPDATED'].includes(sale.eventType ?? '') && !/^(POS|RKD)[-A-Z]*-/i.test(sale.billId ?? '');
+export const isExternalInvoice = (sale: CommissionTransaction) => (!sale.eventType || ['INVOICE_CREATED','INVOICE_UPDATED'].includes(sale.eventType)) && !/^(POS|RKD)[-A-Z]*-/i.test(sale.billId ?? '');
 const list = (value: unknown): any[] => Array.isArray(value) ? value.filter(x => x && typeof x === 'object') : [];
 const finite = (n: unknown) => (typeof n === 'number' || typeof n === 'string') && n !== '' && Number.isFinite(Number(n));
 function amount(n: unknown): number | null { return finite(n) ? Number(n) : null; }
@@ -289,7 +289,7 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
       storeId: context.storeId,
       invoice: { ...(meta?.invoice ?? {}),
         invoiceId: context.reference, invoiceDate: saleTime.occurredAt.toISOString(),
-        storeId: context.storeId, lineItems: calculationItems } } }, settings ?? { netField:'productNetAmount',netBasis:'UNVERIFIED',discounted:false });
+        storeId: context.storeId, lineItems: calculationItems } } }, (settings?.netBasis && settings.netBasis !== 'UNVERIFIED') ? settings : { netField: settings?.netField ?? 'productNetAmount', netBasis: 'NET_EX_TAX', discounted: true });
   } catch (e: any) {
     const lines = display.map(l => ({ ...l, missingReason: e.message, commissionState:'INVOICE_DATA_MISSING', configurationMessage: invoiceDataMessage(e.message) }));
     return { ...summarizeInvoiceLines(lines),itemDataSource,approvalStatus:sale?.status??'PENDING',reconciliationMessage:invoiceDataMessage(e.message),invoiceDataReason:e.message };
@@ -328,32 +328,100 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
 }
 
 export async function findInvoicePayload(tx: Tx, aliases: string[], storeId?: number | null) {
-  const ids=[...new Set(aliases.filter(Boolean))];
-  const primary=await tx.webhookLog.findMany({ where:{ OR:[{id:{in:ids}},{billId:{in:ids}},{eventId:{in:ids}}] },orderBy:{createdAt:'desc'},take:50 });
-  for(const row of primary) { try {
-    const raw=JSON.parse(row.payload),meta=extractWebhookMeta(raw);
-    if(storeId) {
-      if(meta.storeId === storeId) return {raw,id:row.id,createdAt:row.createdAt};
-      const resolved = await resolveInvoiceStore(tx, {meta, aliases:[row.billId, row.id, ...(row.eventId ? [row.eventId] : [])].filter((v): v is string => Boolean(v)), persist:false});
-      if(resolved && resolved !== storeId) continue;
+  const expanded = new Set<string>();
+  for (const a of aliases) {
+    if (!a) continue;
+    const str = String(a).trim();
+    if (!str) continue;
+    expanded.add(str);
+    const m = /^(?:HWM-|INV-)?(\d+)$/i.exec(str);
+    if (m) {
+      const num = m[1];
+      expanded.add(num);
+      expanded.add(`HWM-${num}`);
+      expanded.add(`INV-${num}`);
     }
-    return {raw,id:row.id,createdAt:row.createdAt};
-  }catch{} }
-  const other=await tx.hopkidWebhookLog.findMany({ where:{OR:[{id:{in:ids}},{billId:{in:ids}}]},orderBy:{createdAt:'desc'},take:50 });
-  for(const row of other) { try {
-    const raw=JSON.parse(row.rawPayload),meta=extractWebhookMeta(raw);
-    const logStore = meta.storeId ?? row.storeId;
-    if(storeId) {
-      if(logStore === storeId) {
-        const rawWithStore = (row.storeId && !meta.storeId) ? { ...raw, storeId: row.storeId, data: { ...(raw.data || {}), storeId: row.storeId } } : raw;
-        return {raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId};
+  }
+  const ids = Array.from(expanded);
+  if (!ids.length) return null;
+
+  let firstCandidate: { raw: any; id: string; createdAt: Date; storeId?: number | null } | null = null;
+
+  const primary = await tx.webhookLog.findMany({
+    where: { OR: [{ id: { in: ids } }, { billId: { in: ids } }, { eventId: { in: ids } }] },
+    orderBy: { createdAt: 'desc' },
+    take: 50
+  });
+  for (const row of primary) {
+    try {
+      const raw = JSON.parse(row.payload), meta = extractWebhookMeta(raw);
+      if (storeId) {
+        if (meta.storeId === storeId) return { raw, id: row.id, createdAt: row.createdAt };
+        const resolved = await resolveInvoiceStore(tx, {
+          meta,
+          aliases: [row.billId, row.id, ...(row.eventId ? [row.eventId] : [])].filter((v): v is string => Boolean(v)),
+          persist: false
+        });
+        if (resolved === storeId) return { raw, id: row.id, createdAt: row.createdAt };
+        if (!firstCandidate) firstCandidate = { raw, id: row.id, createdAt: row.createdAt };
+        continue;
       }
-      const resolved = await resolveInvoiceStore(tx, {meta: {...meta, storeId: logStore}, aliases:[row.billId, row.id].filter((v): v is string => Boolean(v)), persist:false});
-      if(resolved && resolved !== storeId) continue;
-    }
-    const rawWithStore = (row.storeId && !meta.storeId) ? { ...raw, storeId: row.storeId, data: { ...(raw.data || {}), storeId: row.storeId } } : raw;
-    return {raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId};
-  }catch{} }
+      return { raw, id: row.id, createdAt: row.createdAt };
+    } catch {}
+  }
+
+  const other = await tx.hopkidWebhookLog.findMany({
+    where: { OR: [{ id: { in: ids } }, { billId: { in: ids } }] },
+    orderBy: { createdAt: 'desc' },
+    take: 50
+  });
+  for (const row of other) {
+    try {
+      const raw = JSON.parse(row.rawPayload), meta = extractWebhookMeta(raw);
+      const logStore = meta.storeId ?? row.storeId;
+      const rawWithStore = (row.storeId && !meta.storeId) ? { ...raw, storeId: row.storeId, data: { ...(raw.data || {}), storeId: row.storeId } } : raw;
+      if (storeId) {
+        if (logStore === storeId) return { raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId };
+        const resolved = await resolveInvoiceStore(tx, {
+          meta: { ...meta, storeId: logStore },
+          aliases: [row.billId, row.id].filter((v): v is string => Boolean(v)),
+          persist: false
+        });
+        if (resolved === storeId) return { raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId };
+        if (!firstCandidate) firstCandidate = { raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId };
+        continue;
+      }
+      return { raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId };
+    } catch {}
+  }
+
+  if (firstCandidate) return firstCandidate;
+
+  const numericIds = ids.filter(id => /^\d+$/.test(id));
+  if (numericIds.length) {
+    try {
+      const fallbackLogs = await tx.hopkidWebhookLog.findMany({
+        where: {
+          OR: numericIds.flatMap(num => [
+            { rawPayload: { contains: `"${num}"` } },
+            { rawPayload: { contains: `HWM-${num}` } },
+            { rawPayload: { contains: `INV-${num}` } }
+          ])
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10
+      });
+      for (const row of fallbackLogs) {
+        try {
+          const raw = JSON.parse(row.rawPayload);
+          const meta = extractWebhookMeta(raw);
+          const rawWithStore = (row.storeId && !meta.storeId) ? { ...raw, storeId: row.storeId, data: { ...(raw.data || {}), storeId: row.storeId } } : raw;
+          return { raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId };
+        } catch {}
+      }
+    } catch {}
+  }
+
   return null;
 }
 

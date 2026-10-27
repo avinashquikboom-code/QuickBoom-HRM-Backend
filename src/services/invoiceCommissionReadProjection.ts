@@ -1,16 +1,18 @@
 import { CommissionTransaction, Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
-import { extractWebhookMeta } from '../utils/commissionHelper';
+import { extractWebhookMeta, getNumericInvoiceNumber } from '../utils/commissionHelper';
 import { calculateInvoiceCommission, findInvoicePayload, isExternalInvoice, resolveInvoiceStore } from './invoiceCommissionService';
 import { hasUnresolvedInvoiceItems } from './invoiceCommissionCompleteness';
 
 /** Read-only shared result for details, activity and wallet. Never approves or posts wallet money. */
 export async function projectInvoiceCommissionForRead<T extends CommissionTransaction>(sale:T, tx:Prisma.TransactionClient=prisma):Promise<T> {
   if (!isExternalInvoice(sale) || sale.status !== 'PENDING' || !hasUnresolvedInvoiceItems(sale)) return sale;
-  const aliases=[sale.billId??'',sale.invoiceNumber??''].filter(Boolean);
-  const payload=await findInvoicePayload(tx,aliases,sale.storeId);
-  const meta=payload?extractWebhookMeta(payload.raw):null;
-  const storeId=await resolveInvoiceStore(tx,{sale,meta,aliases,persist:false});
+  const rawAliases = [sale.billId ?? '', sale.invoiceNumber ?? '', String(sale.id)].filter(Boolean);
+  const numInv = getNumericInvoiceNumber(sale);
+  const aliases = [...new Set([...rawAliases, ...(numInv > 0 ? [String(numInv), `HWM-${numInv}`, `INV-${numInv}`] : [])])];
+  const payload = await findInvoicePayload(tx, aliases, sale.storeId);
+  const meta = payload ? extractWebhookMeta(payload.raw) : null;
+  const storeId = await resolveInvoiceStore(tx, { sale, meta, aliases, persist: false });
   if (!storeId) return sale;
   const result=await calculateInvoiceCommission(tx,sale,payload?.raw,{storeId,at:sale.createdAt,
     reference:sale.billId??sale.invoiceNumber??String(sale.id),sourceRecordedAt:payload?.createdAt});
