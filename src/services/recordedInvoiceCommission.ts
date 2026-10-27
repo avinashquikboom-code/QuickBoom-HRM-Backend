@@ -33,6 +33,7 @@ export function recordedInvoiceCommission(sale: Partial<CommissionTransaction>) 
     commissionRate: rate, commissionPercent: rate, commissionPercentage: rate, commissionType: type, fixedBasis,
     commissionAmount: earned, commissionEarned: earned, commission: earned, totalCommission: earned,
     hasUnresolvedInvoiceItems: unresolved, hasMissingConfiguration: unresolved && !missingData, hasMissingInvoiceData: unresolved && missingData,
+    productCommissionBreakdown:lines,productWiseCommission:lines,
     commissionState: state, missingReason: reason, rateDisplay
   };
 }

@@ -13,6 +13,7 @@ const list = (value: unknown): any[] => Array.isArray(value) ? value.filter(x =>
 const finite = (n: unknown) => (typeof n === 'number' || typeof n === 'string') && n !== '' && Number.isFinite(Number(n));
 function amount(n: unknown): number | null { return finite(n) ? Number(n) : null; }
 const messages: Record<string,string> = {
+  PRODUCT_VARIANT_AMBIGUOUS: 'The invoice variant matches conflicting catalog identifiers. Verify the product variant mapping.',
   SUBCATEGORY_MAPPING_REQUIRED: 'No verified subcategory mapping is effective for this product and invoice date. Ask an administrator to verify the product ID and create an effective-dated HRM product mapping.',
   SUBCATEGORY_RATE_INACTIVE: 'The applicable subcategory commission rule is inactive. Ask an administrator to create an active rule effective for this invoice date.',
   HISTORICAL_OR_CURRENT_RATE_MISSING: 'No subcategory commission configuration is effective on the invoice date.',
@@ -21,6 +22,14 @@ const messages: Record<string,string> = {
   HISTORICAL_TOTAL_MISMATCH: 'Saved item commissions do not reconcile to the approved amount. Accounting review is required.',
 };
 export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
+  lines = lines.map(line => ({...line,
+    productId:line.productID ?? line.productId ?? null,
+    unitPrice:line.unitPrice ?? invoiceUnitPrice(line),
+    totalAmount:line.totalAmount ?? line.saleAmount ?? null,
+    commissionEarned:line.commissionAmount,
+    rateDisplay:line.commissionRate == null ? null : line.commissionType === 'FIXED'
+      ? `₹${line.commissionRate} / ${line.fixedBasis === 'LINE' ? 'line' : 'unit'}` : `${line.commissionRate}%`,
+  }));
   const complete = lines.length > 0 && lines.every(l => l.commissionAmount !== null && l.commissionState === 'CONFIGURED');
   const total = complete ? money(lines.reduce((sum,l) => sum.plus(String(l.commissionAmount)),new D(0))).toNumber() : null;
   const rates = new Set(lines.filter(l => l.commissionRate !== null).map(l => `${l.commissionType}:${l.commissionRate}:${l.fixedBasis}`));
@@ -33,7 +42,7 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
     commissionRate:rate,commissionPercent:rate,commissionPercentage:rate,
     rateDisplay:uniform?(lines[0].commissionType==='FIXED'?`₹${rate} / ${lines[0].fixedBasis==='LINE'?'line':'unit'}`:`${rate}%`):complete?'Multiple subcategory rates':missingData?(lines.some(l=>l.missingReason==='STORE_ID_MISSING')?'Invoice store mapping unavailable':'Invoice item data unavailable'):'Configuration required',
     eligibleSaleAmount:complete&&lines.every(l=>l.eligibleSaleAmount!==null)?money(lines.reduce((n,l)=>n.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber():null,
-    hasUnresolvedInvoiceItems:!complete,hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines };
+    hasUnresolvedInvoiceItems:!complete,hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines,productWiseCommission:lines };
 }
 // Canonical null/zero must not be replaced by a legacy alias or a current rate.
 function savedNumber(row: any, keys: string[]): number | null {
@@ -70,10 +79,11 @@ function invoiceDataMessage(reason: string) {
 }
 function displayLine(raw: any, index: number) {
   const meta = extractProductLineMeta(raw);
-  const lineAmt = amount(raw.saleAmount ?? raw.eligibleSaleAmount ?? raw.productNetAmount ?? raw.netAmount ?? raw.lineTotal ?? raw.amount ?? (raw.unitPrice != null ? Number(raw.unitPrice) * Number(raw.quantity ?? raw.qty ?? 1) : null));
+  const lineAmt = amount(raw.saleAmount ?? raw.eligibleSaleAmount ?? raw.productNetAmount ?? raw.netAmountInclTax ?? raw.netAmountExTax ?? raw.taxableAmount ?? raw.netAmount ?? raw.lineTotal ?? raw.amount ?? (raw.unitPrice != null ? Number(raw.unitPrice) * Number(raw.quantity ?? raw.qty ?? 1) : null));
   return { saleItemId: String(raw.saleItemId ?? raw.lineItemId ?? raw.lineId ?? `${meta.productId ?? index}:${raw.variantId ?? meta.sku ?? ''}`),
     productID: meta.productId, variantId: String(raw.variantId ?? raw.variantID ?? raw.VariantId ?? raw.VariantID ?? meta.sku ?? ''), productName: meta.productName ?? raw.name ?? 'Product', sku: meta.sku, variant: meta.variant,
-    quantity: amount(raw.quantity ?? raw.qty ?? raw.Qty ?? raw.Quantity) ?? 1, subcategoryId: null as string|null, subcategory: null as string|null,
+    quantity: amount(raw.quantity ?? raw.qty ?? raw.Qty ?? raw.Quantity) ?? 1,
+    unitPrice:invoiceUnitPrice(raw),totalAmount:lineAmt,categoryId:meta.rawCategoryId,category:meta.category, subcategoryId: null as string|null, subcategory: null as string|null,
     subcategoryName: raw.subcategoryName ?? raw.subCategoryName ?? raw.SubCategoryName ?? null,
     eligibleSaleAmount: lineAmt, saleAmount: lineAmt, commissionRate: null as number|null,
     commissionAmount: null as number|null, commissionType: null as string|null, fixedBasis: null as string|null,
@@ -104,6 +114,13 @@ async function projectedInvoiceLine(tx: Tx, snapshot: any, base: any) {
 /** Read-only invoice calculation. Approved/paid records are never recalculated using current policy. */
 export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransaction | null, raw: any, context: { storeId: number; at: Date; reference: string; employeeIdentifiers?: string[]; sourceRecordedAt?: Date }) {
   const meta = raw ? extractWebhookMeta(raw) : null;
+  // Every calculation entry point must resolve store metadata before normalization.
+  // Never let a legacy zero context overwrite a verified invoice store/branch.
+  if (!frozen(sale) && (!Number.isSafeInteger(context.storeId) || context.storeId <= 0)) {
+    const storeId = await resolveInvoiceStore(tx, {sale, meta,
+      aliases:[context.reference,sale?.billId??'',sale?.invoiceNumber??'',String(meta?.invoiceNumber??'')], persist:false});
+    if (storeId) context = {...context,storeId};
+  }
   const raws = list(meta?.lineItems);
   const saved = list(sale?.productBreakdown).map(normalizeRecordedItem);
   const display = (raws.length ? raws : saved).map(displayLine);
@@ -269,11 +286,14 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
     const lines = display.map(l => ({ ...l, missingReason: e.message, commissionState:'INVOICE_DATA_MISSING', configurationMessage: invoiceDataMessage(e.message) }));
     return { ...summarizeInvoiceLines(lines),itemDataSource,approvalStatus:sale?.status??'PENDING',reconciliationMessage:invoiceDataMessage(e.message),invoiceDataReason:e.message };
   }
-  if (doc.cancelled || (documents.length===1 && documents[0].status==='CANCELLED')) return {
+  if (doc.cancelled || (documents.length===1 && documents[0].status==='CANCELLED')) {
+    const cancelledLines=display.map(l=>({...l,eligibleSaleAmount:0,saleAmount:0,commissionAmount:0,commissionEarned:0,commissionState:'CANCELLED',missingReason:null,configurationMessage:null}));
+    return {
     ...summarizeInvoiceLines([]), commissionState:'CANCELLED',commissionAmount:0,commissionEarned:0,totalCommission:0,newCommission:0,
     calculatedCommissionAmount:0,eligibleSaleAmount:0,hasMissingConfiguration:false,rateDisplay:'Commission reversed',approvalStatus:sale?.status??'REJECTED',
-    productCommissionBreakdown:display.map(l=>({...l,eligibleSaleAmount:0,saleAmount:0,commissionAmount:0,commissionState:'CANCELLED',missingReason:null,configurationMessage:null})),
+    hasUnresolvedInvoiceItems:false,hasMissingInvoiceData:false,productCommissionBreakdown:cancelledLines,productWiseCommission:cancelledLines,
   };
+  }
   const lines: any[] = [];
   for (let i=0;i<doc.lines.length;i++) {
     const source: NormalizedLine = doc.lines[i], line = display[i] ?? displayLine(raws[i] ?? {},i);
@@ -284,7 +304,7 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
       }
       const subcategory=await resolveSubcategory(tx,source,doc.occurredAt);
       if (!subcategory) throw new Error('SUBCATEGORY_MAPPING_REQUIRED');
-      Object.assign(line,{ subcategoryId:subcategory.id,subcategoryName:subcategory.name,subcategory:subcategory.name });
+      Object.assign(line,{ subcategoryId:subcategory.id,subcategoryExternalId:subcategory.externalId,categoryId:line.categoryId??subcategory.categoryExternalId??null,subcategoryName:subcategory.name,subcategory:subcategory.name });
       const rate=await resolveSubcategoryRate(tx,subcategory.id,context.storeId,doc.occurredAt);
       Object.assign(line,{commissionRate:rate.rate.toNumber(),commissionType:rate.type,fixedBasis:rate.fixedBasis,rateId:rate.id,basis:rate.basis});
       const revenue=rate.basis==='NET_EX_TAX'?source.exTax:source.inclTax;
@@ -373,6 +393,21 @@ export async function resolveInvoiceStore(
       } else {
         return sId;
       }
+      if (tx.branch?.findUnique) {
+        const branch = await tx.branch.findUnique({ where: { id: sId } });
+        if (branch?.name) {
+          const storeByName = await uniqueStore({
+            where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
+          });
+          if (storeByName) {
+            if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
+              await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: storeByName.id } });
+              sale.storeId = storeByName.id;
+            }
+            return storeByName.id;
+          }
+        }
+      }
     }
   }
 
@@ -426,8 +461,45 @@ export async function resolveInvoiceStore(
       }
       return storeByName.id;
     }
+    if (tx.branch?.findFirst) {
+      const branchByName = await tx.branch.findFirst({
+        where: { name: { equals: metaName, mode: 'insensitive' } }
+      });
+      if (branchByName?.name) {
+        const storeByBranch = await uniqueStore({
+          where: { name: { equals: branchByName.name.trim(), mode: 'insensitive' } }
+        });
+        if (storeByBranch) return storeByBranch.id;
+      }
+    }
   }
 
+  // 7b. Line item storeId / branchId / storeName / branchName
+  const firstItem = meta?.firstItem ?? (Array.isArray(meta?.lineItems) ? meta.lineItems[0] : null);
+  if (firstItem) {
+    const itemStoreId = Number(firstItem.storeId ?? firstItem.StoreId ?? firstItem.StoreID ?? firstItem.store_id);
+    if (!isNaN(itemStoreId) && itemStoreId > 0 && tx.store?.findUnique) {
+      const itemStore = await tx.store.findUnique({ where: { id: itemStoreId } });
+      if (itemStore) return itemStore.id;
+    }
+    const itemBranchId = Number(firstItem.branchId ?? firstItem.BranchId ?? firstItem.BranchID ?? firstItem.branch_id);
+    if (!isNaN(itemBranchId) && itemBranchId > 0 && tx.branch?.findUnique) {
+      const branch = await tx.branch.findUnique({ where: { id: itemBranchId } });
+      if (branch?.name) {
+        const storeByName = await uniqueStore({
+          where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
+        });
+        if (storeByName) return storeByName.id;
+      }
+    }
+    const itemStoreName = String(firstItem.branchName ?? firstItem.BranchName ?? firstItem.storeName ?? firstItem.StoreName ?? '').trim();
+    if (itemStoreName) {
+      const storeByName = await uniqueStore({
+        where: { name: { equals: itemStoreName, mode: 'insensitive' } }
+      });
+      if (storeByName) return storeByName.id;
+    }
+  }
 
   const cleanAliases = [...new Set(aliases.map(a => String(a || '').trim()).filter(Boolean))];
 
@@ -523,12 +595,12 @@ export async function resolveInvoiceStore(
     }
   }
 
-  // The caller fallback is valid only for the attributed seller, never an unrelated manager.
-  if (sale && employee && sale.employeeId !== employee.id) return null;
+  // 9. Attributed employee's store or branch (only if caller is the attributed seller or no sale exists)
+  const isCallerUnrelatedManager = sale && employee && sale.employeeId !== employee.id;
+  const empTarget = isCallerUnrelatedManager ? null : (employee ?? seller);
 
-  // 9. Attributed employee's store or branch
-  if (employee?.storeId) {
-    const empStore = employee.store ?? (tx.store?.findUnique ? await tx.store.findUnique({ where: { id: employee.storeId } }) : { id: employee.storeId });
+  if (empTarget?.storeId) {
+    const empStore = empTarget.store ?? (tx.store?.findUnique ? await tx.store.findUnique({ where: { id: empTarget.storeId } }) : { id: empTarget.storeId });
     if (empStore) {
       if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
         await tx.commissionTransaction.update({ where: { id: sale.id }, data: { storeId: empStore.id } });
@@ -538,9 +610,9 @@ export async function resolveInvoiceStore(
     }
   }
 
-  if (employee?.branchId) {
+  if (empTarget?.branchId) {
     if (tx.branch?.findUnique) {
-      const branch = employee.branch ?? await tx.branch.findUnique({ where: { id: employee.branchId } });
+      const branch = empTarget.branch ?? await tx.branch.findUnique({ where: { id: empTarget.branchId } });
       if (branch?.name) {
         const storeByName = await uniqueStore({
           where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
@@ -556,9 +628,9 @@ export async function resolveInvoiceStore(
     }
   }
 
-  if (employee?.branchName) {
+  if (empTarget?.branchName) {
     const storeByName = await uniqueStore({
-      where: { name: { equals: employee.branchName.trim(), mode: 'insensitive' } }
+      where: { name: { equals: empTarget.branchName.trim(), mode: 'insensitive' } }
     });
     if (storeByName) {
       if (options.persist !== false && sale && !sale.storeId && tx.commissionTransaction?.update) {
@@ -691,9 +763,9 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
       paymentMode:meta?.paymentMode??null,
       storeName,
       externalEventId:payload?.id??null,
-      products:list(meta?.lineItems).length > 0
-        ? list(meta?.lineItems).map((l:any)=>({name:matchingInvoiceItem(result.productCommissionBreakdown,l)?.productName??extractProductLineMeta(l).productName??l.name??'Product',quantity:amount(l.quantity??l.qty??l.Qty??l.Quantity)??1,price:invoiceUnitPrice(l)}))
-        : result.productCommissionBreakdown.map((l:any)=>({name:l.productName??'Product',quantity:l.quantity??1,price:invoiceUnitPrice(l)})),
+      products:result.productCommissionBreakdown.map((line:any)=>({
+        ...line,name:line.productName??'Product',price:line.unitPrice??invoiceUnitPrice(line),
+      })),
       employee:{name:`${saleEmp.firstName} ${saleEmp.lastName}`.trim(),code:saleEmp.employeeCode}
     };
   },{timeout:30000});
