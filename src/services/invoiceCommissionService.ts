@@ -1,3 +1,4 @@
+import { resolveInvoiceSaleTime } from './invoiceSaleTime';
 import { recoverSavedInvoiceItems, recoverInvoiceItemIdentities } from './invoiceItemRecovery';
 import { CommissionTransaction, Prisma } from '@prisma/client';
 import { prisma } from '../utils/db';
@@ -27,8 +28,8 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
     unitPrice:line.unitPrice ?? invoiceUnitPrice(line),
     totalAmount:line.totalAmount ?? line.saleAmount ?? null,
     commissionEarned:line.commissionAmount,
-    rateDisplay:line.commissionRate == null ? null : line.commissionType === 'FIXED'
-      ? `₹${line.commissionRate} / ${line.fixedBasis === 'LINE' ? 'line' : 'unit'}` : `${line.commissionRate}%`,
+    rateDisplay:line.commissionRate == null ? null : (line.commissionType === 'FIXED' || (line.commissionRate === 0 && (line.commissionAmount ?? 0) > 0))
+      ? `₹${(line.commissionRate !== null && line.commissionRate > 0) ? line.commissionRate : line.commissionAmount} / ${line.fixedBasis === 'LINE' ? 'line' : 'unit'}` : `${line.commissionRate}%`,
   }));
   const complete = lines.length > 0 && lines.every(l => l.commissionAmount !== null && l.commissionState === 'CONFIGURED');
   const total = complete ? money(lines.reduce((sum,l) => sum.plus(String(l.commissionAmount)),new D(0))).toNumber() : null;
@@ -37,10 +38,12 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
   const rate = uniform ? lines[0].commissionRate : null;
   const missingConfiguration = lines.some(l=>['SUBCATEGORY_MAPPING_REQUIRED','HISTORICAL_OR_CURRENT_RATE_MISSING','SUBCATEGORY_RATE_INACTIVE'].includes(l.missingReason));
   const missingData = !complete && !missingConfiguration;
-  return { commissionSource:'SUBCATEGORY', commissionState:complete?state:missingData?'INVOICE_DATA_MISSING':'MISSING_CONFIGURATION',
+  const isUniformFixed = uniform && (lines[0].commissionType === 'FIXED' || (rate === 0 && total !== null && total > 0));
+  const uniformFixedRate = (rate !== null && rate > 0) ? rate : total;
+  return { commissionSource:complete?'SUBCATEGORY':'UNRESOLVED', commissionState:complete?state:missingData?'INVOICE_DATA_MISSING':'MISSING_CONFIGURATION',
     commissionAmount:total,commissionEarned:total,totalCommission:total,newCommission:total,calculatedCommissionAmount:total,
     commissionRate:rate,commissionPercent:rate,commissionPercentage:rate,
-    rateDisplay:uniform?(lines[0].commissionType==='FIXED'?`₹${rate} / ${lines[0].fixedBasis==='LINE'?'line':'unit'}`:`${rate}%`):complete?'Multiple subcategory rates':missingData?(lines.some(l=>l.missingReason==='STORE_ID_MISSING')?'Invoice store mapping unavailable':'Invoice item data unavailable'):'Configuration required',
+    rateDisplay:uniform?(isUniformFixed?`₹${uniformFixedRate} / ${lines[0].fixedBasis==='LINE'?'line':'unit'}`:`${rate}%`):complete?'Multiple subcategory rates':missingData?(lines.some(l=>String(l.missingReason??'').startsWith('SALE_DATE'))?'Invoice sale timestamp unavailable':lines.some(l=>l.missingReason==='STORE_ID_MISSING')?'Invoice store mapping unavailable':'Invoice item data unavailable'):'Configuration required',
     eligibleSaleAmount:complete&&lines.every(l=>l.eligibleSaleAmount!==null)?money(lines.reduce((n,l)=>n.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber():null,
     hasUnresolvedInvoiceItems:!complete,hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines,productWiseCommission:lines };
 }
@@ -71,6 +74,7 @@ function matchingInvoiceItem(items: any[], reference: any): any | null {
 }
 
 function invoiceDataMessage(reason: string) {
+  if(reason.startsWith('SALE_DATE')) return `Invoice sale timestamp could not be verified (${reason}). Supply its explicit offset or the verified HopKid store/source timezone; receipt time is not a substitute.`;
   if(reason==='STORE_ID_MISSING') return 'Invoice store mapping is unavailable. Verify the HopKid store or branch mapping; product data and configured rates have not been changed.';
   if(reason==='PRODUCT_LINES_MISSING') return 'Invoice item data is unavailable. The saved invoice needs its original product details.';
   if(reason==='PRODUCT_ID_MISSING') return 'The saved product is missing its catalog ID. Its subcategory cannot be verified yet.';
@@ -278,10 +282,14 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
   const itemDataSource = raws.length ? 'INVOICE_PAYLOAD' : saved.length ? 'SAVED_PRODUCT_BREAKDOWN' : 'UNAVAILABLE';
   const settings = await tx.hrmCommissionSettings.findUnique({ where: { id: 1 } });
   let doc;
+  let saleTime: Awaited<ReturnType<typeof resolveInvoiceSaleTime>>;
   try {
-    doc = normalizePayload({ eventType: 'INVOICE_CREATED', data: { invoice: { ...(meta?.invoice ?? {}),
-      invoiceId: context.reference, invoiceDate: meta?.invoice?.invoiceDate ?? meta?.invoice?.date ?? context.at.toISOString(),
-      storeId: context.storeId, lineItems: calculationItems } } }, settings ?? { netField:'productNetAmount',netBasis:'UNVERIFIED',discounted:false });
+    saleTime = await resolveInvoiceSaleTime(tx,meta?.invoice??{},context.storeId,sale?context.at:undefined);
+    doc = normalizePayload({ eventType: 'INVOICE_CREATED', data: {
+      storeId: context.storeId,
+      invoice: { ...(meta?.invoice ?? {}),
+        invoiceId: context.reference, invoiceDate: saleTime.occurredAt.toISOString(),
+        storeId: context.storeId, lineItems: calculationItems } } }, settings ?? { netField:'productNetAmount',netBasis:'UNVERIFIED',discounted:false });
   } catch (e: any) {
     const lines = display.map(l => ({ ...l, missingReason: e.message, commissionState:'INVOICE_DATA_MISSING', configurationMessage: invoiceDataMessage(e.message) }));
     return { ...summarizeInvoiceLines(lines),itemDataSource,approvalStatus:sale?.status??'PENDING',reconciliationMessage:invoiceDataMessage(e.message),invoiceDataReason:e.message };
@@ -314,23 +322,37 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
         basis:rate.basis,commissionState:'CONFIGURED',missingReason:null,configurationMessage:null });
     } catch(e:any) { lines.push({ ...line,missingReason:e.message,configurationMessage:messages[e.message] ?? 'Subcategory commission configuration requires review.' }); }
   }
-  return { ...summarizeInvoiceLines(lines),itemDataSource,approvalStatus:sale?.status??'PENDING' };
+  return { ...summarizeInvoiceLines(lines),itemDataSource,approvalStatus:sale?.status??'PENDING',
+    saleOccurredAt:doc.occurredAt.toISOString(),saleTimestampField:saleTime.field,saleTimestampRaw:saleTime.rawValue,
+    saleTimeZone:saleTime.timeZone,saleTimeZoneSource:saleTime.timeZoneSource,sourceRecordedAt:context.sourceRecordedAt??null };
 }
 
 export async function findInvoicePayload(tx: Tx, aliases: string[], storeId?: number | null) {
   const ids=[...new Set(aliases.filter(Boolean))];
-  const primary=await tx.webhookLog.findMany({ where:{ OR:[{id:{in:ids}},{billId:{in:ids}}], eventType:{in:['INVOICE_CREATED','INVOICE_UPDATED']} },orderBy:{createdAt:'desc'},take:50 });
+  const primary=await tx.webhookLog.findMany({ where:{ OR:[{id:{in:ids}},{billId:{in:ids}},{eventId:{in:ids}}] },orderBy:{createdAt:'desc'},take:50 });
   for(const row of primary) { try {
     const raw=JSON.parse(row.payload),meta=extractWebhookMeta(raw);
-    if(storeId && meta.storeId && meta.storeId!==storeId) continue;
+    if(storeId) {
+      if(meta.storeId === storeId) return {raw,id:row.id,createdAt:row.createdAt};
+      const resolved = await resolveInvoiceStore(tx, {meta, aliases:[row.billId, row.id, ...(row.eventId ? [row.eventId] : [])].filter((v): v is string => Boolean(v)), persist:false});
+      if(resolved && resolved !== storeId) continue;
+    }
     return {raw,id:row.id,createdAt:row.createdAt};
   }catch{} }
   const other=await tx.hopkidWebhookLog.findMany({ where:{OR:[{id:{in:ids}},{billId:{in:ids}}]},orderBy:{createdAt:'desc'},take:50 });
   for(const row of other) { try {
     const raw=JSON.parse(row.rawPayload),meta=extractWebhookMeta(raw);
     const logStore = meta.storeId ?? row.storeId;
-    if(storeId && logStore && logStore!==storeId) continue;
-    return {raw,id:row.id,createdAt:row.createdAt};
+    if(storeId) {
+      if(logStore === storeId) {
+        const rawWithStore = (row.storeId && !meta.storeId) ? { ...raw, storeId: row.storeId, data: { ...(raw.data || {}), storeId: row.storeId } } : raw;
+        return {raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId};
+      }
+      const resolved = await resolveInvoiceStore(tx, {meta: {...meta, storeId: logStore}, aliases:[row.billId, row.id].filter((v): v is string => Boolean(v)), persist:false});
+      if(resolved && resolved !== storeId) continue;
+    }
+    const rawWithStore = (row.storeId && !meta.storeId) ? { ...raw, storeId: row.storeId, data: { ...(raw.data || {}), storeId: row.storeId } } : raw;
+    return {raw: rawWithStore, id: row.id, createdAt: row.createdAt, storeId: row.storeId};
   }catch{} }
   return null;
 }
@@ -475,14 +497,14 @@ export async function resolveInvoiceStore(
   }
 
   // 7b. Line item storeId / branchId / storeName / branchName
-  const firstItem = meta?.firstItem ?? (Array.isArray(meta?.lineItems) ? meta.lineItems[0] : null);
-  if (firstItem) {
-    const itemStoreId = Number(firstItem.storeId ?? firstItem.StoreId ?? firstItem.StoreID ?? firstItem.store_id);
+  const candidateItems = Array.isArray(meta?.lineItems) && meta.lineItems.length ? meta.lineItems : (meta?.firstItem ? [meta.firstItem] : []);
+  for (const item of candidateItems) {
+    const itemStoreId = Number(item.storeId ?? item.StoreId ?? item.StoreID ?? item.store_id);
     if (!isNaN(itemStoreId) && itemStoreId > 0 && tx.store?.findUnique) {
       const itemStore = await tx.store.findUnique({ where: { id: itemStoreId } });
       if (itemStore) return itemStore.id;
     }
-    const itemBranchId = Number(firstItem.branchId ?? firstItem.BranchId ?? firstItem.BranchID ?? firstItem.branch_id);
+    const itemBranchId = Number(item.branchId ?? item.BranchId ?? item.BranchID ?? item.branch_id);
     if (!isNaN(itemBranchId) && itemBranchId > 0 && tx.branch?.findUnique) {
       const branch = await tx.branch.findUnique({ where: { id: itemBranchId } });
       if (branch?.name) {
@@ -492,7 +514,7 @@ export async function resolveInvoiceStore(
         if (storeByName) return storeByName.id;
       }
     }
-    const itemStoreName = String(firstItem.branchName ?? firstItem.BranchName ?? firstItem.storeName ?? firstItem.StoreName ?? '').trim();
+    const itemStoreName = String(item.branchName ?? item.BranchName ?? item.storeName ?? item.StoreName ?? '').trim();
     if (itemStoreName) {
       const storeByName = await uniqueStore({
         where: { name: { equals: itemStoreName, mode: 'insensitive' } }
@@ -543,6 +565,83 @@ export async function resolveInvoiceStore(
           sale.storeId = docStore.id;
         }
         return docStore.id;
+      }
+    }
+  }
+
+  // 4b. HopkidWebhookLog lookup by aliases
+  if (cleanAliases.length > 0 && tx.hopkidWebhookLog?.findMany) {
+    const hopkidLogs = await tx.hopkidWebhookLog.findMany({
+      where: { billId: { in: cleanAliases } },
+      select: { storeId: true, employeeCode: true, mobileNo: true },
+      take: 5
+    });
+    for (const log of hopkidLogs) {
+      if (log.storeId) {
+        if (tx.store?.findUnique) {
+          const logStore = await tx.store.findUnique({ where: { id: log.storeId } });
+          if (logStore) return logStore.id;
+        }
+        if (tx.branch?.findUnique) {
+          const branch = await tx.branch.findUnique({ where: { id: log.storeId } });
+          if (branch?.name) {
+            const storeByName = await uniqueStore({
+              where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
+            });
+            if (storeByName) return storeByName.id;
+          }
+        }
+      }
+      if ((log.employeeCode || log.mobileNo) && tx.employee?.findFirst) {
+        const emp = await tx.employee.findFirst({
+          where: {
+            OR: [
+              ...(log.employeeCode ? [{ employeeCode: log.employeeCode }, { employeeID: log.employeeCode }] : []),
+              ...(log.mobileNo ? [{ mobileNumber: log.mobileNo }] : [])
+            ]
+          },
+          include: { store: true, branch: true }
+        });
+        if (emp?.storeId) {
+          const empStore = emp.store ?? (tx.store?.findUnique ? await tx.store.findUnique({ where: { id: emp.storeId } }) : null);
+          if (empStore) return empStore.id;
+        }
+        if (emp?.branchId && tx.branch?.findUnique) {
+          const branch = emp.branch ?? await tx.branch.findUnique({ where: { id: emp.branchId } });
+          if (branch?.name) {
+            const storeByName = await uniqueStore({
+              where: { name: { equals: branch.name.trim(), mode: 'insensitive' } }
+            });
+            if (storeByName) return storeByName.id;
+          }
+        }
+      }
+    }
+  }
+
+  // 8b. Salesman from webhook meta
+  const salesmanIdent = meta?.employeeIdentifier || meta?.firstItem?.employeeCode || meta?.firstItem?.employeePhoneNo;
+  if (salesmanIdent && tx.employee?.findFirst) {
+    const sIdentStr = String(salesmanIdent).trim();
+    const salesmanEmp = await tx.employee.findFirst({
+      where: {
+        OR: [
+          { employeeCode: sIdentStr },
+          { employeeID: sIdentStr },
+          { mobileNumber: sIdentStr }
+        ]
+      },
+      include: { store: true, branch: true }
+    });
+    if (salesmanEmp?.storeId) {
+      const s = salesmanEmp.store ?? (tx.store?.findUnique ? await tx.store.findUnique({ where: { id: salesmanEmp.storeId } }) : null);
+      if (s) return s.id;
+    }
+    if (salesmanEmp?.branchId && tx.branch?.findUnique) {
+      const b = salesmanEmp.branch ?? await tx.branch.findUnique({ where: { id: salesmanEmp.branchId } });
+      if (b?.name) {
+        const s = await uniqueStore({ where: { name: { equals: b.name.trim(), mode: 'insensitive' } } });
+        if (s) return s.id;
       }
     }
   }
@@ -752,7 +851,7 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
       tax:Number(invoice.taxTotal??invoice.taxAmount??invoice.tax??0),
       ...result,
       status:sale?.status??'PENDING',
-      date:invoice.invoiceDate??at,
+      date:(result as any).saleOccurredAt??at,
       createdAt:at,
       description:sale?.notes??null,
       oldAmount:0,
@@ -772,7 +871,10 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
 }
 
 /** Existing approval endpoint freezes resolved item snapshots once; never rewrites paid/approved history. */
-export async function prepareInvoiceApproval(tx: Tx, sale: CommissionTransaction) {
+export async function prepareInvoiceApproval(tx: Tx, sale: CommissionTransaction): Promise<{
+  storeId?: number; createdAt?: Date; commissionAmount?: number; newCommission?: number;
+  commissionPercent?: number | null; commissionType?: string; productBreakdown?: Prisma.InputJsonValue;
+}> {
   if(!isExternalInvoice(sale)||frozen(sale)) return {};
   const aliases=[sale.billId??'',sale.invoiceNumber??''].filter(Boolean);
   const payload=await findInvoicePayload(tx,aliases,sale.storeId);
@@ -783,7 +885,7 @@ export async function prepareInvoiceApproval(tx: Tx, sale: CommissionTransaction
   if(siblings) throw Object.assign(new Error('Shared invoice allocation requires accounting review before approval'),{status:409});
   const result=await calculateInvoiceCommission(tx,sale,payload?.raw,{storeId,at:sale.createdAt,reference:sale.billId??sale.invoiceNumber??String(sale.id)});
   if(result.commissionAmount===null) throw Object.assign(new Error(`Invoice commission unresolved: ${(result.productCommissionBreakdown as any[]).map(l=>l.missingReason).filter(Boolean).join(', ') || 'invoice data missing'}`),{status:409});
-  return { storeId, commissionAmount:result.commissionAmount,newCommission:result.commissionAmount,commissionPercent:result.commissionRate,
+  return { storeId, ...((result as any).saleOccurredAt?{createdAt:new Date((result as any).saleOccurredAt)}:{}), commissionAmount:result.commissionAmount,newCommission:result.commissionAmount,commissionPercent:result.commissionRate,
     commissionType:result.productCommissionBreakdown.every((l:any)=>l.commissionType==='FIXED')?'FIXED':'PERCENTAGE',
     productBreakdown:JSON.parse(JSON.stringify(result.productCommissionBreakdown.map((l:any)=>({...l,commissionSource:'SUBCATEGORY'})))) };
 }

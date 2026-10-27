@@ -658,7 +658,9 @@ export function getIstMonthRange(yearInput?: number | null, monthInput?: number 
 export async function parseSaleDateCorrectly(invoiceDateString: string): Promise<Date> {
   console.log('[Date Parse] Input:', invoiceDateString);
   try {
-    const date = safeParseDate(invoiceDateString);
+    const qualified=/(?:Z|[+-]\d{2}:?\d{2})$/i.test(invoiceDateString.trim());
+    const date = qualified ? new Date(invoiceDateString) : safeParseDate(invoiceDateString);
+    if(!Number.isFinite(date.getTime())) throw new Error('SALE_DATE_INVALID');
     console.log('[Date Parse] Parsed ISO:', date.toISOString());
     console.log('[Date Parse] Local String:', date.toString());
     return date;

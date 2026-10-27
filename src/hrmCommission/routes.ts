@@ -86,9 +86,9 @@ router.post('/process', route(async req => {
   const actor=access(req,true);
   requireValue((await prisma.hrmCommissionSettings.findUnique({where:{id:1}}))?.enabled, 'HRM_COMMISSION_IMPORT_DISABLED');
   const projection=await projectStoredHopkidLogs();
-  if(req.body?.reconcilePendingInvoices!==true) return projection;
-  requireValue(req.body.dryRun!==false || (Array.isArray(req.body.transactionIds) && req.body.transactionIds.length>0), 'RECONCILIATION_APPLY_REQUIRES_TRANSACTION_IDS');
-  const reconciliation=await reconcilePendingInvoiceCommissions({actorId:actor.id,dryRun:req.body.dryRun!==false,transactionIds:req.body.transactionIds,limit:req.body.limit});
+  const reconcileAll = req.body?.reconcileAll === true;
+  requireValue(req.body.dryRun!==false || reconcileAll || (Array.isArray(req.body.transactionIds) && req.body.transactionIds.length>0), 'RECONCILIATION_APPLY_REQUIRES_TRANSACTION_IDS');
+  const reconciliation=await reconcilePendingInvoiceCommissions({actorId:actor.id,dryRun:req.body.dryRun!==false,transactionIds:req.body.transactionIds,limit:req.body.limit,reconcileAll});
   return {projection,reconciliation};
 }));
 router.post('/exceptions/:id/retry', route(async req => {

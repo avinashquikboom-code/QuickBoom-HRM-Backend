@@ -1,3 +1,4 @@
+import { invoiceTimestampField, resolveInvoiceSaleTime } from '../services/invoiceSaleTime';
 import { calculateInvoiceCommission, resolveInvoiceStore } from '../services/invoiceCommissionService';
 import { extractProductLineMeta } from '../utils/productLineMeta';
 import { Request, Response } from 'express';
@@ -35,7 +36,9 @@ export async function storeWebhookData(data: any): Promise<void> {
   try {
     const meta = extractWebhookMeta(data);
     const dateVal = meta.invoice?.invoiceDate || meta.invoice?.date || data.invoiceDate || data.date || data.createdAt || data.transactionDate;
-    const parsedDate = safeParseDate(dateVal);
+    const parsedDate = String(meta.eventType??'').includes('INVOICE')
+      ? await resolveInvoiceSaleTime(prisma,meta.invoice,meta.storeId??0).then(time=>time.occurredAt).catch(()=>null)
+      : safeParseDate(dateVal);
 
     const mobileNo = meta.firstItem?.employeePhoneNo || meta.firstItem?.employeeContactNo || data.mobileNo || data.mobileNumber || data.phone || data.phoneNumber || null;
     const employeeCode = meta.firstItem?.employeeCode || data.employeeCode || data.code || data.empCode || data.hopkidCode || null;
@@ -198,10 +201,11 @@ export async function groupAndCalculateCommissionBySalesman(
       let resolvedInvoice = calculations.get(calculationKey);
       if (!resolvedInvoice) {
         resolvedInvoice = await calculateInvoiceCommission(prisma, null, { eventType:'INVOICE_CREATED', data:{invoice:{
+          ...(invoiceData.meta?.invoice??{}),
           invoiceId:invoiceData.invoiceNo,invoiceNo:invoiceData.invoiceNo,
-          invoiceDate:invoiceData.invoiceDate instanceof Date?invoiceData.invoiceDate.toISOString():invoiceData.invoiceDate,
+          ...(invoiceTimestampField(invoiceData.meta?.invoice)?{}:{invoiceDate:invoiceData.invoiceDate instanceof Date?invoiceData.invoiceDate.toISOString():invoiceData.invoiceDate}),
           storeId:targetStoreId,netAmount:invoiceData.netAmount,lineItems,
-        }}}, {storeId:calculationKey,at:new Date(invoiceData.invoiceDate),reference:invoiceData.invoiceNo});
+        }}}, {storeId:calculationKey,at:new Date(),reference:invoiceData.invoiceNo});
         calculations.set(calculationKey, resolvedInvoice);
       }
       const resolvedLine = resolvedInvoice.productCommissionBreakdown[i];
@@ -229,7 +233,7 @@ export async function groupAndCalculateCommissionBySalesman(
           commissionAmount: null,
           commissionRate: null,
           policyId: null,
-          appliedLevel: 'SUBCATEGORY',
+          appliedLevel: 'UNRESOLVED',
           commissionState: resolvedLine?.commissionState ?? 'MISSING_CONFIGURATION',
           missingReason: resolvedLine?.missingReason ?? 'SUBCATEGORY_MAPPING_REQUIRED',
         };
@@ -251,6 +255,7 @@ export async function groupAndCalculateCommissionBySalesman(
 
       const productSnapshot = {
         ...resolvedLine,
+        ...((resolvedInvoice as any).saleOccurredAt?{saleOccurredAt:(resolvedInvoice as any).saleOccurredAt}:{}),
         commissionSource: commResult.appliedLevel,
         productID: productId,
         productName: resolvedLine?.productName ?? productName,
@@ -510,17 +515,21 @@ async function processInvoiceInternal(rawSalesData: any, targetEventType: string
 
   console.log(`[WEBHOOK_INVOICE] invoiceNo: ${meta.invoiceNumber || primaryBillId} | branchName: ${meta.branchName || 'N/A'} | netAmount: ₹${primaryAmount} | customerName: ${meta.customerName ?? 'N/A'} | customerPhone: ${meta.customerPhone ?? 'N/A'}`);
 
-  const dateStr = meta.invoice?.invoiceDate || meta.invoice?.date || effectiveData.createdAt || effectiveData.transactionDate;
-  const validDate = await parseSaleDateCorrectly(dateStr || '');
+  const dateStr = invoiceTimestampField(meta.invoice)?.value;
+  // Receipt time is only persistence metadata when source sale time is unresolved.
+  let validDate = new Date();
 
   const commissionMap = await groupAndCalculateCommissionBySalesman(itemsToProcess, {
     invoiceNo: String(primaryBillId),
-    invoiceDate: dateStr || validDate,
+    invoiceDate: typeof dateStr==='string'||dateStr instanceof Date?dateStr:'',
     netAmount: primaryAmount,
     metaStoreId: meta.storeId,
     meta,
     defaultIdentifier: meta.employeeIdentifier,
   });
+
+  const verifiedSaleTimes=[...commissionMap.values()].flatMap(group=>group.products.map(product=>product.saleOccurredAt).filter(Boolean));
+  if(verifiedSaleTimes.length) validDate=new Date(verifiedSaleTimes[0]);
 
   const invoiceStatus = (invoice.status || effectiveData.status || 'ACTIVE').toUpperCase();
   const isCancelledOrReturned = invoiceStatus === 'CANCELLED' || invoiceStatus === 'CANCEL' || invoiceStatus === 'RETURNED' || invoiceStatus === 'RETURN' || invoiceStatus === 'INACTIVE';

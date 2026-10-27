@@ -1,3 +1,4 @@
+import { projectInvoiceCommissionsForRead } from './invoiceCommissionReadProjection';
 import { Prisma } from '@prisma/client';
 import { hasUnresolvedInvoiceItems } from './invoiceCommissionCompleteness';
 import { ordinaryCommissionFilter } from './rkdPayrollService';
@@ -28,7 +29,7 @@ export class CommissionService {
 
     console.log(`[Daily Metrics] Employee: ${employeeId}, IST Date: ${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`);
 
-    const sales = await prisma.commissionTransaction.findMany({
+    const sales = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: {
         ...ordinaryCommissionFilter,
         employeeId: employeeId,
@@ -38,7 +39,7 @@ export class CommissionService {
           lte: dayEnd
         }
       }
-    });
+    }));
 
     let creditLines: any[] = [];
     try {
@@ -105,7 +106,7 @@ export class CommissionService {
 
     console.log(`[Yesterday Metrics] Employee: ${employeeId}, IST Date: ${year}-${String(month + 1).padStart(2, '0')}-${String(dateVal).padStart(2, '0')}`);
 
-    const sales = await prisma.commissionTransaction.findMany({
+    const sales = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: {
         ...ordinaryCommissionFilter,
         employeeId: employeeId,
@@ -115,7 +116,7 @@ export class CommissionService {
           lte: dayEnd
         }
       }
-    });
+    }));
 
     let creditLines: any[] = [];
     try {
@@ -181,7 +182,7 @@ export class CommissionService {
     const monthStart = monthRange.monthStart;
     const monthEnd = monthRange.monthEnd;
 
-    const sales = await prisma.commissionTransaction.findMany({
+    const sales = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: {
         ...ordinaryCommissionFilter,
         employeeId: employeeId,
@@ -191,7 +192,7 @@ export class CommissionService {
           lte: monthEnd
         }
       }
-    });
+    }));
 
     let creditLines: any[] = [];
     try {
@@ -259,7 +260,7 @@ export class CommissionService {
 
     console.log(`[Weekly Metrics] Employee: ${employeeId}, IST 7 Days: ${weekStart.toISOString()} to ${weekEnd.toISOString()}`);
 
-    const sales = await prisma.commissionTransaction.findMany({
+    const sales = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: {
         ...ordinaryCommissionFilter,
         employeeId: employeeId,
@@ -269,7 +270,7 @@ export class CommissionService {
           lte: weekEnd
         }
       }
-    });
+    }));
 
     let creditLines: any[] = [];
     try {

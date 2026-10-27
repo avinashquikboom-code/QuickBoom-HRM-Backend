@@ -44,7 +44,8 @@ async function calculate(meta={branchId:7}) {
   assert(result.products.every(p=>p.storeId===9&&p.commissionState==='CONFIGURED'));
  }
  // A branch's numeric ID must never be interpreted as a Store ID.
- assert.equal(await resolveInvoiceStore(tx,{meta:{branchId:99}}),null);
+ stores.push({id:99,name:'Unrelated branch-number collision',code:'WRONG'});
+ assert.equal(await resolveInvoiceStore(tx,{meta:{branchId:99}}),null);stores.pop();
  employee.branchId=7;assert.equal(Math.round((await calculate({})).totalCommission*100)/100,39.98);employee.branchId=null;
  stores.push({id:10,name:'HopKid Branch A',code:'HK-DUP'});
  await assert.rejects(resolveInvoiceStore(tx,{meta:{branchName:'HopKid Branch A'}}),/STORE_MAPPING_AMBIGUOUS/);
@@ -55,6 +56,18 @@ async function calculate(meta={branchId:7}) {
  assert.equal(projected.commissionAmount,null);assert.equal(projected.hasMissingConfiguration,false);
  assert.equal(projected.rateDisplay,'Invoice store mapping unavailable');
  savedRaw={eventType:'INVOICE_CREATED',data:{invoice:{invoiceId:'12032',invoiceNo:'HWM-12032',invoiceDate:'2026-10-01',branchName:'HopKid Branch A',lineItems:items}}};
+ const direct=await calculateInvoiceCommission(tx,null,savedRaw,{storeId:0,at:new Date('2026-10-01'),reference:'12032'});
+ assert.equal(direct.commissionAmount,39.98,'zero caller context must resolve the verified branch itself');
+ assert.equal(direct.commissionRate,null,'mixed-rate invoice must not advertise a single percentage');
+ assert.equal(direct.rateDisplay,'Multiple subcategory rates');
+ assert.deepEqual(direct.productWiseCommission,direct.productCommissionBreakdown);
+ assert.deepEqual(direct.productWiseCommission.map(p=>[p.productId,p.quantity,p.unitPrice,p.totalAmount,p.commissionRate,p.commissionEarned]),
+   [['hopkid-a',1,499,499,2,9.98],['hopkid-b',2,500,1000,3,30]]);
+ const revisedRaw=JSON.parse(JSON.stringify(savedRaw));
+ revisedRaw.eventType='INVOICE_UPDATED';revisedRaw.data.invoice.lineItems[1].quantity=3;
+ revisedRaw.data.invoice.lineItems[1].netAmountExTax=1500;
+ const revised=await calculateInvoiceCommission(tx,null,revisedRaw,{storeId:0,at:new Date('2026-10-01'),reference:'12032'});
+ assert.equal(revised.commissionAmount,54.98);assert.equal(revised.productWiseCommission[1].commissionEarned,45);
  const sale={id:5,employeeId:42,storeId:null,billId:'12032',invoiceNumber:'HWM-12032',status:'PENDING',eventType:'INVOICE_CREATED',commissionAmount:0,saleAmount:1499,createdAt:new Date('2026-10-01'),productBreakdown:missing.products};
  const first=await prepareInvoiceApproval(tx,sale),second=await prepareInvoiceApproval(tx,sale);
  assert.equal(first.storeId,9);assert.equal(first.commissionAmount,39.98);

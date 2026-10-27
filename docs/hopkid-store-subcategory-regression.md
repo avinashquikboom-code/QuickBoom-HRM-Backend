@@ -53,3 +53,25 @@ Flutter:
 - `test/commission_response_sync_test.dart`: completed-calculation badge and missing-store regression coverage.
 
 Existing wallet and invoice refresh code from the preceding synchronization fix is retained. Unrelated working-tree changes are not part of this regression's file list.
+
+## API and catalog contract follow-up
+
+The calculator itself now resolves missing/zero store context from verified invoice metadata using the shared resolver before normalization. A caller's legacy zero cannot erase a known store. Store/branch numeric collisions remain errors; no arbitrary store or future policy is selected.
+
+`productWiseCommission` and `productCommissionBreakdown` return the same line data. Invoice `products` now carries those same identifiers and line details rather than dropping them to name/quantity/price only. Each line exposes product/variant identity, quantity, invoice-derived unit price and line total, resolved subcategory, configured rate, earned commission and calculation state. Mixed-rate invoice headers retain a null single rate and `Multiple subcategory rates`.
+
+Catalog variant aliases (UUID, SKU or barcode) are resolved only within the matching persisted product. Variant-specific rules take precedence over product-wide rules. Subcategory mapping and rate queries retain their invoice-date constraints. No category-name guessing, percentage inference, or future-rate fallback is used. The mobile transaction/bill endpoints preserve unresolved nulls instead of substituting provisional totals.
+
+Flutter's existing detail model accepts `productWiseCommission` and preserves the additional line identifiers and monetary fields. The existing product-wise card renders each line's API rate and amount. No GetX controller exists on these paths; the existing Riverpod/StatefulWidget refresh implementation is retained.
+
+Additional files in this follow-up:
+- `src/hrmCommission/resolution.ts`
+- `src/controllers/mobile/mobileCommissionController.ts`
+- `src/services/invoiceCommissionService.ts`
+- `src/services/recordedInvoiceCommission.ts`
+- `scripts/test_invoice_mapping_recovery.ts`
+- `scripts/test_hopkid_store_subcategory_regression.cjs`
+- Flutter `lib/features/commission/data/models/commission_models.dart`
+- Flutter `test/commission_response_sync_test.dart`
+
+Validation: 41 Flutter commission tests passed; Dart analysis reported no issues. Backend TypeScript, recorded-history, webhook-state, exact catalog mapping, mixed-rate invoice updates, missing-store resolution, no-future-rate selection and wallet repair idempotency regressions passed. Live reprocessing was again blocked by `ECONNREFUSED`; no live invoice or payout was changed.

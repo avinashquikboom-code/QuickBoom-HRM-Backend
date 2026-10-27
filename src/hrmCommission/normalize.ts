@@ -15,15 +15,51 @@ export function decimal(value: unknown, field: string) {
   requireValue(typeof value === 'number' || (typeof value === 'string' && /^\d+(\.\d+)?$/.test(value)), `${field}_INVALID`);
   const n = new D(String(value)); requireValue(n.isFinite() && n.gte(0), `${field}_INVALID`); return n;
 }
-export function date(value: unknown, field: string) {
+export function date(value: unknown, field: string, timeZone?: string) {
   requireValue(typeof value === 'string' || value instanceof Date, `${field}_MISSING`);
-  // Date-only upstream values are IST calendar days. Never use the server's local timezone.
-  if (typeof value === 'string') requireValue(/^\d{4}-\d{2}-\d{2}$/.test(value) || /(?:Z|[+-]\d{2}:\d{2})$/.test(value), `${field}_TIMEZONE_REQUIRED`);
-  const d = new Date(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00+05:30` : value as string);
-  requireValue(Number.isFinite(d.getTime()), `${field}_INVALID`); if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) requireValue(new Date(d.getTime()+19800000).toISOString().slice(0,10) === value, `${field}_INVALID`);
-  return d;
+  if (value instanceof Date) {
+    requireValue(Number.isFinite(value.getTime()), `${field}_INVALID`);
+    return value;
+  }
+  const raw=value.trim();
+  const dateOnly=/^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const qualified=/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  // Date-only values retain the existing IST calendar-day contract. Local clocks
+  // require a verified source/store zone; UTC receipt times cannot supply it.
+  if (!qualified && !dateOnly) requireValue(timeZone, `${field}_TIMEZONE_REQUIRED`);
+  const local=/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?$/.exec(raw);
+  if (!qualified) {
+    requireValue(local, `${field}_INVALID`);
+    const [year,month,day,hour,minute,second]=[local[1],local[2],local[3],local[4]??'0',local[5]??'0',local[6]??'0'].map(Number);
+    const ms=Number((local[7]??'').padEnd(3,'0').slice(0,3));
+    const wall=new Date(Date.UTC(year,month-1,day,hour,minute,second,ms));
+    requireValue(wall.getUTCFullYear()===year&&wall.getUTCMonth()===month-1&&wall.getUTCDate()===day&&hour<24&&minute<60&&second<60,`${field}_INVALID`);
+    if (!timeZone && dateOnly) return new Date(wall.getTime()-19800000);
+    if (timeZone && /^[+-]\d{2}:?\d{2}$/.test(timeZone)) return date(`${wall.toISOString().slice(0,-1)}${timeZone}`,field);
+    let formatter: Intl.DateTimeFormat;
+    try { formatter=new Intl.DateTimeFormat('en-GB',{timeZone,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+    catch { throw new CommissionInputError(`${field}_TIMEZONE_INVALID`); }
+    const offset=(instant:number)=>{
+      const parts=Object.fromEntries(formatter.formatToParts(new Date(instant)).map(p=>[p.type,p.value]));
+      return Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day),Number(parts.hour),Number(parts.minute),Number(parts.second))-Math.floor(instant/1000)*1000;
+    };
+    const target=wall.getTime();
+    const offsets=new Set([offset(target-86400000),offset(target),offset(target+86400000)]);
+    const candidates=[...offsets].map(delta=>target-delta).filter(instant=>instant+offset(instant)===target);
+    requireValue(candidates.length===1,`${field}_TIMEZONE_AMBIGUOUS_OR_NONEXISTENT`);
+    return new Date(candidates[0]);
+  }
+  requireValue(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw),`${field}_INVALID`);
+  const clock=/[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(raw)!;
+  requireValue(Number(clock[1])<24&&Number(clock[2])<60&&Number(clock[3]??0)<60,`${field}_INVALID`);
+  const parsed=new Date(raw.replace(' ','T'));
+  requireValue(Number.isFinite(parsed.getTime()),`${field}_INVALID`);
+  // Reject Date's rollover of e.g. February 30 even when an offset is supplied.
+  const calendar=raw.slice(0,10), check=new Date(`${calendar}T00:00:00Z`);
+  requireValue(Number.isFinite(check.getTime())&&check.toISOString().slice(0,10)===calendar,`${field}_INVALID`);
+  return parsed;
 }
-export type SourceContract = { netField: string; netBasis: string; discounted: boolean };
+export type SourceContract = { netField: string; netBasis: string; discounted: boolean; timeZone?: string };
 export type NormalizedLine = { id: string; productId: string; variantId: string; quantity: Prisma.Decimal;
   subcategoryExternalId?: string; subcategoryName?: string; categoryExternalId?: string;
   exTax?: Prisma.Decimal; inclTax?: Prisma.Decimal; unverifiedAmount?: boolean; originalLineId?: string; originalInvoiceId?: string };
@@ -37,9 +73,18 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
   const inv = refund ? data.creditNote ?? data : data.invoice ?? data;
   requireValue(refund || event.includes('INVOICE') || event.includes('SALE') || !!data.invoice || !!pick(data, ['invoiceId','invoiceNo','billId']), 'UNSUPPORTED_EVENT');
   const externalId = identifier(pick(inv, refund ? ['creditNoteNo', 'cnNo', 'CreditNoteNo', 'id'] : ['invoiceId', 'InvoiceID', 'salesID', 'SalesID', 'billId', 'invoiceNo', 'invoiceNumber']) ?? pick(data, ['billId', 'invoiceNo']), 'DOCUMENT_ID');
-  const storeId = Number(pick(inv, ['storeId', 'StoreID', 'branchId', 'BranchID']) ?? pick(data, ['storeId', 'StoreID', 'branchId', 'BranchID']));
+  const storeId = Number(pick(inv, ['storeId', 'StoreID', 'branchId', 'BranchID']) ?? pick(data, ['storeId', 'StoreID', 'branchId', 'BranchID']) ?? pick(raw, ['storeId', 'StoreID', 'branchId', 'BranchID']));
   requireValue(Number.isSafeInteger(storeId) && storeId > 0, 'STORE_ID_MISSING');
-  const occurredAt = date(pick(inv, refund ? ['creditDate', 'date', 'createdAt'] : ['invoiceDate', 'saleDate', 'date', 'createdAt']), 'SALE_DATE');
+  const occurredAt = date(
+    pick(inv, refund
+      ? ['creditDate', 'date', 'createdAt', 'created_at']
+      : ['invoiceDate', 'saleDate', 'generatedDate', 'date', 'createdAt', 'created_at', 'invoice_date', 'sale_date', 'generated_date']
+    ) ?? pick(data, refund
+      ? ['creditDate', 'date', 'createdAt', 'created_at']
+      : ['invoiceDate', 'saleDate', 'generatedDate', 'date', 'createdAt', 'created_at', 'invoice_date', 'sale_date', 'generated_date']
+    ),
+    'SALE_DATE', contract.timeZone
+  );
   const revision = pick(inv, ['updatedAt', 'modifiedAt', 'lastModifiedAt']);
   const status = String(inv.status ?? data.status ?? (event.includes('CANCEL') || event.includes('DELET') ? 'CANCELLED' : 'ACTIVE')).toUpperCase();
   requireValue(['ACTIVE', 'COMPLETED', 'PAID', 'APPROVED', 'CANCELLED', 'CANCELED', 'CANCEL', 'DELETED', 'INACTIVE', 'RETURNED', 'RETURN', 'PARTIALLY_RETURNED'].includes(status), 'UNRECOGNIZED_SALE_STATUS');
@@ -81,7 +126,7 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
   });
   requireValue(lines.length <= 1000, 'TOO_MANY_LINES');
   requireValue(new Set(lines.map(l => l.id)).size === lines.length, 'AMBIGUOUS_DUPLICATE_PRODUCT_LINES');
-  return { externalId, invoiceNumber: pick(inv, ['invoiceNo', 'invoiceNumber', 'billNumber']), kind: refund ? 'REFUND' : 'SALE', storeId, occurredAt, updatedAt: revision ? date(revision, 'REVISION_DATE') : undefined,
+  return { externalId, invoiceNumber: pick(inv, ['invoiceNo', 'invoiceNumber', 'billNumber']), kind: refund ? 'REFUND' : 'SALE', storeId, occurredAt, updatedAt: revision ? date(revision, 'REVISION_DATE', contract.timeZone) : undefined,
     cancelled, lines, originalInvoiceId: originalInvoiceId == null ? undefined : String(originalInvoiceId) };
 }
 export function economicHash(doc: NormalizedDocument) {

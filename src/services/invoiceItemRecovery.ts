@@ -7,13 +7,16 @@ const placeholder = (value: unknown) => typeof value !== 'string' || !value.trim
 /** Display enrichment uses only an exact persisted catalog primary key, never a name/variant guess. */
 export async function recoverInvoiceItemIdentities(tx: Prisma.TransactionClient, items: any[]) {
   const ids = [...new Set(items.map(item => extractProductLineMeta(item).productId).filter(uuid))];
-  const products = ids.length ? await tx.pOSProduct.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : [];
-  const names = new Map(products.map(product => [product.id, product.name]));
+  const products = ids.length ? await tx.pOSProduct.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, categoryId:true, category:{select:{name:true}} } }) : [];
+  const catalog = new Map(products.map(product => [product.id, product]));
   return items.map(item => {
     const meta = extractProductLineMeta(item);
     const current = meta.productName ?? item.name;
-    const name = placeholder(current) && typeof meta.productId === 'string' ? names.get(meta.productId) : current;
-    return { ...item, productID: meta.productId, ...(name ? { productName: name } : {}) };
+    const product=typeof meta.productId==='string'?catalog.get(meta.productId):undefined;
+    const name = placeholder(current) ? product?.name : current;
+    return { ...item, productID: meta.productId,
+      categoryId:meta.rawCategoryId??product?.categoryId??null,category:meta.category??product?.category?.name??null,
+      ...(name ? { productName: name } : {}) };
   });
 }
 

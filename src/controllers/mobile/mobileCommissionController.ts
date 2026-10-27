@@ -1,3 +1,4 @@
+import { projectInvoiceCommissionsForRead, projectInvoiceCommissionForRead } from '../../services/invoiceCommissionReadProjection';
 import { recordedInvoiceCommission } from '../../services/recordedInvoiceCommission';
 import { mobileInvoiceDetail } from '../../services/invoiceCommissionService';
 import { hasUnresolvedInvoiceItems } from '../../services/invoiceCommissionCompleteness';
@@ -138,10 +139,10 @@ export const getMobileCommissionTransactions = async (
       }
     }
 
-    const allMatchingRaw = await prisma.commissionTransaction.findMany({
+    const allMatchingRaw = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: whereClause,
       orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
-    });
+    }));
 
     const allMatchingDeduplicated = deduplicateCommissionTransactions(allMatchingRaw);
 
@@ -460,6 +461,7 @@ export const getMobileWebhookLogs = async (
         orderBy: { createdAt: 'desc' },
         take: 100,
       });
+      empCommissionTransactions=await projectInvoiceCommissionsForRead(empCommissionTransactions);
     } catch (_) {}
 
     const invoiceKey = (value: unknown) => String(value ?? '').trim().toLowerCase().replace(/^(?:hwm-|inv-)(\d+)$/, '$1');
@@ -476,7 +478,7 @@ export const getMobileWebhookLogs = async (
       const older = await prisma.commissionTransaction.findMany({where:{employeeId:employee.id,
         ...(storeId ? {OR:[{storeId},{storeId:null}]} : {}),
         AND:[{OR:[{billId:{in:aliases,mode:'insensitive'}},{invoiceNumber:{in:aliases,mode:'insensitive'}}]}]},take:2});
-      return older.length === 1 ? older[0] : null;
+      return older.length === 1 ? await projectInvoiceCommissionForRead(older[0]) : null;
     };
 
     // 2. WebhookLog — filter by employeeId directly OR linked Credit Note numbers
@@ -697,12 +699,12 @@ export const getMobileCommissionSummary = async (
     const summary = await CommissionService.getCompleteSummary(employee.id);
 
     // Calculate actual status-based pending and paid commission sums
-    const allTransactions = await prisma.commissionTransaction.findMany({
+    const allTransactions = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: {
         employeeId: employee.id,
         status: { in: ['PENDING', 'APPROVED', 'PAID'] }
       }
-    });
+    }));
 
     const pendingCommission = allTransactions
       .filter(t => t.status === 'PENDING' || t.status === 'APPROVED')
@@ -903,12 +905,12 @@ export const getMobileCommissionBills = async (
     const limitNum = parseInt(limit as string, 10) || 20;
     const offsetNum = parseInt(offset as string, 10) || 0;
 
-    const txs = await prisma.commissionTransaction.findMany({
+    const txs = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where,
       orderBy: [{ id: 'desc' }, { createdAt: 'desc' }],
       take: limitNum,
       skip: offsetNum,
-    });
+    }));
 
     const totalTxs = await prisma.commissionTransaction.count({ where });
 

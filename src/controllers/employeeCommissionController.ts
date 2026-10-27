@@ -1,3 +1,4 @@
+import { projectInvoiceCommissionsForRead } from '../services/invoiceCommissionReadProjection';
 import { recordedInvoiceCommission } from '../services/recordedInvoiceCommission';
 import { Prisma } from '@prisma/client';
 import { hasUnresolvedInvoiceItems } from '../services/invoiceCommissionCompleteness';
@@ -73,10 +74,10 @@ export const fetchCommissionWallet = async (
       return;
     }
 
-    const allTransactions = await prisma.commissionTransaction.findMany({
+    const allTransactions = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: { ...ordinaryCommissionFilter, employeeId: employee.id },
       orderBy: { createdAt: 'desc' }
-    });
+    }));
 
     const unresolvedInvoiceCount = allTransactions.filter(hasUnresolvedInvoiceItems).length;
     const approvedOrPaid = allTransactions.filter(t => t.status !== 'REJECTED' && t.status !== 'CANCELLED');
@@ -470,10 +471,10 @@ export const fetchCommissionDetails = async (
       return;
     }
 
-    const allTransactions = await prisma.commissionTransaction.findMany({
+    const allTransactions = await projectInvoiceCommissionsForRead(await prisma.commissionTransaction.findMany({
       where: { ...ordinaryCommissionFilter, employeeId: employee.id },
       orderBy: { createdAt: 'desc' }
-    });
+    }));
 
     let approvedOrPaid = allTransactions.filter(t => t.status !== 'REJECTED' && t.status !== 'CANCELLED');
 

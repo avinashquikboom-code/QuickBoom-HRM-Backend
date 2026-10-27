@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
 import { normalizePayload } from '../src/hrmCommission/normalize';
-import { resolveSubcategory } from '../src/hrmCommission/resolution';
+import { resolveSubcategory, resolveSubcategoryRate } from '../src/hrmCommission/resolution';
 import { calculateInvoiceCommission, invoiceUnitPrice } from '../src/services/invoiceCommissionService';
 
 async function main() {
@@ -59,6 +59,32 @@ async function main() {
   assert.equal(invoiceUnitPrice({saleAmount: 499, quantity: 0}), null);
   tx.pOSProduct.findMany = async () => [{id: productId}, {id: 'other'}];
   assert.equal(await resolveSubcategory(tx, doc.lines[0], at), null);
+  const variantId='22222222-2222-4222-8222-222222222222';
+  tx.pOSProduct.findMany=async()=>[{id:productId,name:'Shirt',category:null}];
+  tx.pOSProductVariant={findMany:async ({where}:any)=>{
+    assert.equal(where.productId,productId,'variant identity must be scoped to its exact catalog product');
+    return [{id:variantId,sku:'blue',barcode:'blue-barcode'}];
+  }};
+  tx.hrmCommissionMapping.findFirst=async({where}:any)=>where.productId===productId&&where.variantId===variantId
+    ? {subcategoryId:sub.id}:where.variantId===''?{subcategoryId:'generic'}:null;
+  const lookup=tx.hrmCommissionSubcategory.findUnique;
+  tx.hrmCommissionSubcategory.findUnique=async(query:any)=>query.where.id==='generic'?{id:'generic'}:lookup(query);
+  assert.equal((await resolveSubcategory(tx,doc.lines[0],at))?.id,sub.id,'verified variant rate precedes product-wide rate');
+  tx.pOSProductVariant.findMany=async()=>[{id:variantId,sku:'blue',barcode:'x'},{id:productId,sku:'x',barcode:'blue'}];
+  await assert.rejects(resolveSubcategory(tx,doc.lines[0],at),/PRODUCT_VARIANT_AMBIGUOUS/);
+  tx.pOSProductVariant.findMany=async()=>[];
+  tx.hrmCommissionMapping.findFirst=async()=>null;
+  tx.pOSProduct.findMany=async()=>[{id:productId,category:{id:'leaf-subcategory'},createdAt:new Date('2026-01-01'),updatedAt:new Date('2026-01-01')}];
+  tx.hrmCommissionSubcategory.findMany=async({where}:any)=>{
+    assert.deepEqual(where.externalId.in,['leaf-subcategory']);return [sub];
+  };
+  assert.equal((await resolveSubcategory(tx,doc.lines[0],at))?.id,sub.id,'exact catalog category links to configured subcategory');
+  let rateQueries=0;
+  tx.hrmCommissionRate.findMany=async({where}:any)=>{
+    rateQueries++;return where.effectiveFrom?[]:[policy];
+  };
+  await assert.rejects(resolveSubcategoryRate(tx,sub.id,1,at),/HISTORICAL_OR_CURRENT_RATE_MISSING/);
+  assert.equal(rateQueries,1,'a missing historical rule must not fall back to a future rate');
   console.log('PASS exact external product/variant mapping, configured calculation, fixed display, missing policy, ambiguous catalog and verified unit prices');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
