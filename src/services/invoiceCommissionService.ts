@@ -31,7 +31,7 @@ export function summarizeInvoiceLines(lines: any[], state = 'COMPLETE') {
   return { commissionSource:'SUBCATEGORY', commissionState:complete?state:missingData?'INVOICE_DATA_MISSING':'MISSING_CONFIGURATION',
     commissionAmount:total,commissionEarned:total,totalCommission:total,newCommission:total,calculatedCommissionAmount:total,
     commissionRate:rate,commissionPercent:rate,commissionPercentage:rate,
-    rateDisplay:uniform?(lines[0].commissionType==='FIXED'?'Fixed subcategory commission':`${rate}%`):complete?'Multiple subcategory rates':missingData?'Invoice item data unavailable':'Configuration required',
+    rateDisplay:uniform?(lines[0].commissionType==='FIXED'?`₹${rate} / ${lines[0].fixedBasis==='LINE'?'line':'unit'}`:`${rate}%`):complete?'Multiple subcategory rates':missingData?'Invoice item data unavailable':'Configuration required',
     eligibleSaleAmount:complete&&lines.every(l=>l.eligibleSaleAmount!==null)?money(lines.reduce((n,l)=>n.plus(String(l.eligibleSaleAmount)),new D(0))).toNumber():null,
     hasUnresolvedInvoiceItems:!complete,hasMissingConfiguration:missingConfiguration,hasMissingInvoiceData:missingData,productCommissionBreakdown:lines };
 }
@@ -72,12 +72,22 @@ function displayLine(raw: any, index: number) {
   const lineAmt = amount(raw.saleAmount ?? raw.eligibleSaleAmount ?? raw.productNetAmount ?? raw.netAmount ?? raw.lineTotal ?? raw.amount ?? (raw.unitPrice != null ? Number(raw.unitPrice) * Number(raw.quantity ?? raw.qty ?? 1) : null));
   return { saleItemId: String(raw.saleItemId ?? raw.lineItemId ?? raw.lineId ?? `${meta.productId ?? index}:${raw.variantId ?? meta.sku ?? ''}`),
     productID: meta.productId, variantId: String(raw.variantId ?? raw.variantID ?? raw.VariantId ?? raw.VariantID ?? meta.sku ?? ''), productName: meta.productName ?? raw.name ?? 'Product', sku: meta.sku, variant: meta.variant,
-    quantity: amount(raw.quantity ?? raw.qty) ?? 1, subcategoryId: null as string|null, subcategory: null as string|null,
+    quantity: amount(raw.quantity ?? raw.qty ?? raw.Qty ?? raw.Quantity) ?? 1, subcategoryId: null as string|null, subcategory: null as string|null,
     subcategoryName: raw.subcategoryName ?? raw.subCategoryName ?? raw.SubCategoryName ?? null,
     eligibleSaleAmount: lineAmt, saleAmount: lineAmt, commissionRate: null as number|null,
     commissionAmount: null as number|null, commissionType: null as string|null, fixedBasis: null as string|null,
     rateId: null as string|null, commissionState: 'MISSING_CONFIGURATION', missingReason: 'SUBCATEGORY_MAPPING_REQUIRED',
     configurationMessage: messages.SUBCATEGORY_MAPPING_REQUIRED };
+}
+
+/** Derive a unit rate only from verified line data, never the invoice total. */
+export function invoiceUnitPrice(line: any): number | null {
+  const explicit = amount(line.unitPrice ?? line.productPrice ?? line.price ?? line.rate);
+  const quantity = amount(line.quantity ?? line.qty ?? line.Qty ?? line.Quantity);
+  const total = amount(line.netAmountInclTax ?? line.netAmountExTax ?? line.taxableAmount ?? line.productNetAmount ?? line.netAmount ?? line.lineTotal ?? line.saleAmount ?? line.eligibleSaleAmount);
+  if (explicit !== null && explicit >= 0 && (explicit > 0 || total === null || total === 0)) return explicit;
+  return quantity !== null && quantity > 0 && total !== null && total >= 0
+    ? money(new D(String(total)).div(String(quantity))).toNumber() : null;
 }
 
 async function projectedInvoiceLine(tx: Tx, snapshot: any, base: any) {
@@ -267,7 +277,7 @@ export async function calculateInvoiceCommission(tx: Tx, sale: CommissionTransac
   for (let i=0;i<doc.lines.length;i++) {
     const source: NormalizedLine = doc.lines[i], line = display[i] ?? displayLine(raws[i] ?? {},i);
     try {
-      const snapshots = projected.filter(l => l.externalLineId === source.id);
+      const snapshots = projected.filter(l => l.externalLineId === source.id && l.productId === source.productId && l.variantId === source.variantId && l.quantity.equals(source.quantity) && (l.basis === 'NET_EX_TAX' ? source.exTax : source.inclTax)?.equals(l.eligibleRevenue));
       if (snapshots.length === 1) {
         lines.push(await projectedInvoiceLine(tx,snapshots[0],line)); continue;
       }
@@ -698,8 +708,8 @@ export async function mobileInvoiceDetail(userId: number, billId: string, role: 
       storeName,
       externalEventId:payload?.id??null,
       products:list(meta?.lineItems).length > 0
-        ? list(meta?.lineItems).map((l:any)=>({name:matchingInvoiceItem(result.productCommissionBreakdown,l)?.productName??extractProductLineMeta(l).productName??l.name??'Product',quantity:amount(l.quantity??l.qty)??1,price:Number(l.unitPrice??l.productPrice??l.price??0)}))
-        : result.productCommissionBreakdown.map((l:any)=>({name:l.productName??'Product',quantity:l.quantity??1,price:l.saleAmount??0})),
+        ? list(meta?.lineItems).map((l:any)=>({name:matchingInvoiceItem(result.productCommissionBreakdown,l)?.productName??extractProductLineMeta(l).productName??l.name??'Product',quantity:amount(l.quantity??l.qty??l.Qty??l.Quantity)??1,price:invoiceUnitPrice(l)}))
+        : result.productCommissionBreakdown.map((l:any)=>({name:l.productName??'Product',quantity:l.quantity??1,price:invoiceUnitPrice(l)})),
       employee:{name:`${saleEmp.firstName} ${saleEmp.lastName}`.trim(),code:saleEmp.employeeCode}
     };
   },{timeout:30000});

@@ -49,12 +49,12 @@ export function normalizePayload(raw: any, contract: SourceContract): Normalized
   const originalInvoiceId = refund ? pick(inv, ['originalInvoiceId', 'originalBillId', 'salesID', 'SalesID', 'invoiceNo', 'invoiceNumber']) : undefined;
   const lines: NormalizedLine[] = cancelled ? [] : items.map((item: any): NormalizedLine => {
     requireValue(![true, 1, '1', 'true'].includes(pick(item, ['IsOld', 'isOld'])), 'EXCHANGE_LINE_REQUIRES_EXPLICIT_DOCUMENT_LINK');
-    const productId = identifier(pick(item, ['productID', 'productId', 'ProductID']), 'PRODUCT_ID');
+    const productId = identifier(pick(item, ['productID', 'productId', 'ProductID', 'product_id', 'item_id', 'itemId']), 'PRODUCT_ID');
     // Upstream Guid.Empty is a missing identity, not a catalog product that can be mapped.
     requireValue(productId !== '00000000-0000-0000-0000-000000000000', 'PRODUCT_ID_MISSING');
     const variantId = String(pick(item, ['variantId', 'variantID', 'VariantId', 'VariantID', 'sku', 'SKU']) ?? '');
     const id = identifier(pick(item, ['saleItemId', 'lineItemId', 'lineId', 'SalesProductID', 'creditNoteLineId']) ?? `${productId}:${variantId}`, 'LINE_ID');
-    const quantity = decimal(pick(item, ['quantity', 'qty', 'Qty']), 'QUANTITY'); requireValue(quantity.gt(0), 'QUANTITY_INVALID');
+    const quantity = decimal(pick(item, ['quantity', 'qty', 'Qty', 'Quantity']), 'QUANTITY'); requireValue(quantity.gt(0), 'QUANTITY_INVALID');
     let exTax: Prisma.Decimal | undefined, inclTax: Prisma.Decimal | undefined;
     if (pick(item, ['netAmountExTax', 'taxableAmount']) !== undefined) exTax = decimal(pick(item, ['netAmountExTax', 'taxableAmount']), 'NET_EX_TAX');
     if (item.netAmountInclTax !== undefined) inclTax = decimal(item.netAmountInclTax, 'NET_INCL_TAX');

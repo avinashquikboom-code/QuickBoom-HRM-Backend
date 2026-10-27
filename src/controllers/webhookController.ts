@@ -73,10 +73,8 @@ export async function groupAndCalculateCommissionBySalesman(
 ): Promise<Map<number, { salesman: any; totalAmount: number; totalCommission: number; effectiveRate: number; products: any[] }>> {
   const commissionMap = new Map<number, { salesman: any; totalAmount: number; totalCommission: number; effectiveRate: number; products: any[] }>();
 
-  const resolvedInvoice = await calculateInvoiceCommission(prisma, null, { eventType:'INVOICE_CREATED', data:{invoice:{
-    invoiceId:invoiceData.invoiceNo,invoiceNo:invoiceData.invoiceNo,invoiceDate:invoiceData.invoiceDate instanceof Date?invoiceData.invoiceDate.toISOString():invoiceData.invoiceDate,
-    storeId:invoiceData.metaStoreId,netAmount:invoiceData.netAmount,lineItems,
-  }}}, {storeId:invoiceData.metaStoreId??0,at:new Date(invoiceData.invoiceDate),reference:invoiceData.invoiceNo});
+  // Resolve the seller/store before looking up store-specific commission rules.
+  const calculations = new Map<number, Awaited<ReturnType<typeof calculateInvoiceCommission>>>();
 
   for (let i = 0; i < lineItems.length; i++) {
     const lineItem = lineItems[i];
@@ -84,7 +82,7 @@ export async function groupAndCalculateCommissionBySalesman(
     try {
       const lineMeta = extractProductLineMeta(lineItem);
       const productName = lineMeta.productName || lineItem.name || 'Unknown Product';
-      const productId = lineItem.productID ?? lineItem.productId ?? lineItem.ProductID ?? null;
+      const productId = lineMeta.productId;
 
       const rawProdAmount =
         lineItem.productNetAmount ??
@@ -192,6 +190,16 @@ export async function groupAndCalculateCommissionBySalesman(
 
       const targetStoreId = invoiceData.metaStoreId || salesman.storeId;
 
+      if (!targetStoreId) throw new Error('Invoice store is missing');
+      let resolvedInvoice = calculations.get(targetStoreId);
+      if (!resolvedInvoice) {
+        resolvedInvoice = await calculateInvoiceCommission(prisma, null, { eventType:'INVOICE_CREATED', data:{invoice:{
+          invoiceId:invoiceData.invoiceNo,invoiceNo:invoiceData.invoiceNo,
+          invoiceDate:invoiceData.invoiceDate instanceof Date?invoiceData.invoiceDate.toISOString():invoiceData.invoiceDate,
+          storeId:targetStoreId,netAmount:invoiceData.netAmount,lineItems,
+        }}}, {storeId:targetStoreId,at:new Date(invoiceData.invoiceDate),reference:invoiceData.invoiceNo});
+        calculations.set(targetStoreId, resolvedInvoice);
+      }
       const resolvedLine = resolvedInvoice.productCommissionBreakdown[i];
       let commResult: {
         commissionAmount: number | null;
@@ -248,7 +256,7 @@ export async function groupAndCalculateCommissionBySalesman(
         variant: lineMeta.variant,
         subcategoryId: resolvedLine?.subcategoryId ?? lineMeta.subcategoryId ?? lineItem.subcategoryId ?? null,
         subcategoryName: resolvedLine?.subcategoryName ?? lineMeta.subcategoryName ?? lineItem.subcategoryName ?? null,
-        quantity: Number(lineItem.quantity ?? lineItem.qty ?? 1),
+        quantity: Number(lineItem.quantity ?? lineItem.qty ?? lineItem.Qty ?? lineItem.Quantity ?? 1),
         saleAmount: effectiveProdAmount,
         productNetAmount: effectiveProdAmount,
         commissionRate: commResult.commissionRate,
