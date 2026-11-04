@@ -79,6 +79,7 @@ export interface PayrollCalculation {
   commissionEarned: number;
   isCommissionEligible?: boolean;
   overtimeHours: number;
+  overtimeRate?: number;
   attendanceSummary?: AttendanceSummary;
   components: PayslipSalaryComponents;
 }
@@ -138,6 +139,8 @@ export interface SalaryStructure {
   salaryAdvanceLimit?: number;
   pfEnabled?: boolean;
   esicEnabled?: boolean;
+  overtimeHourlyRate?: number | null;
+  overtimeMultiplier?: number | null;
   pf: number;
   esi: number;
   professionalTax: number;
@@ -225,8 +228,9 @@ class PayrollService {
       const extraHolidayPayout = Math.round((attendanceData.holidayWorkedCount * dailySalary * 1.0) * 100) / 100;
       const extraWeeklyOffPayout = Math.round((attendanceData.weeklyOffWorkedCount * dailySalary * 1.0) * 100) / 100;
 
-      // Calculate overtime & bonus (if any)
-      const overtime = this.calculateOvertime(attendanceData, salaryStructure);
+      // Calculate approved overtime & bonus (if any)
+      const { overtimeAmount: overtime, overtimeHours, overtimeHourlyRate } =
+        await this.calculateOvertime(employeeId, month, year, salaryStructure, dailySalary);
       const bonus = await this.calculateBonus(employeeId, month, year);
 
       // Fetch commission earned strictly for this month (IST boundaries)
@@ -415,7 +419,8 @@ class PayrollService {
         rkdRequests: rkd.requests,
         commissionEarned,
         isCommissionEligible,
-        overtimeHours: attendanceData.overtimeHours,
+        overtimeHours,
+        overtimeRate: overtimeHourlyRate,
         attendanceSummary: attendanceSummaryFromClassification(attendanceData.classification),
         components: {
           hra: salaryStructure.hra || 0,
@@ -723,6 +728,8 @@ class PayrollService {
         salaryAdvanceLimit: structure.salaryAdvanceLimit ?? 0,
         pfEnabled: structure.pfEnabled,
         esicEnabled: structure.esicEnabled,
+        overtimeHourlyRate: structure.overtimeHourlyRate,
+        overtimeMultiplier: structure.overtimeMultiplier,
         pf,
         esi,
         professionalTax: 0,
@@ -912,6 +919,8 @@ class PayrollService {
         salaryAdvanceLimit: structure.salaryAdvanceLimit ?? 0,
         pfEnabled: structure.pfEnabled,
         esicEnabled: structure.esicEnabled,
+        overtimeHourlyRate: structure.overtimeHourlyRate,
+        overtimeMultiplier: structure.overtimeMultiplier,
         pf,
         esi,
         professionalTax: 0,
@@ -1183,8 +1192,56 @@ class PayrollService {
     }
   }
 
-  private calculateOvertime(attendanceData: any, salaryStructure: SalaryStructure): number {
-    return 0;
+  private async calculateOvertime(
+    employeeId: number,
+    month: number,
+    year: number,
+    salaryStructure?: any,
+    dailySalary = 0
+  ): Promise<{ overtimeAmount: number; overtimeHours: number; overtimeHourlyRate: number }> {
+    try {
+      const monthStr = String(month).padStart(2, '0');
+      const prefix = `${year}-${monthStr}`;
+
+      // Only APPROVED overtime records are payable!
+      const approvedRecords = await prisma.overtimeRecord.findMany({
+        where: {
+          employeeId,
+          overtimeDate: { startsWith: prefix },
+          approvalStatus: 'APPROVED',
+        },
+      });
+
+      const totalApprovedMinutes = approvedRecords.reduce(
+        (sum, r) => sum + (r.totalOvertimeMinutes || 0),
+        0
+      );
+      const overtimeHours = Math.round((totalApprovedMinutes / 60) * 100) / 100;
+
+      if (overtimeHours <= 0) {
+        return { overtimeAmount: 0, overtimeHours: 0, overtimeHourlyRate: 0 };
+      }
+
+      // Overtime rate: configurable by company/employee policy
+      let overtimeHourlyRate = salaryStructure?.overtimeHourlyRate || 0;
+      if (!overtimeHourlyRate || overtimeHourlyRate <= 0) {
+        const baseDaily = dailySalary > 0 ? dailySalary : (salaryStructure?.grossSalary || 0) / 26;
+        const shiftHours = 8;
+        const multiplier = salaryStructure?.overtimeMultiplier || 1.0;
+        overtimeHourlyRate = Math.round((baseDaily / shiftHours) * multiplier * 100) / 100;
+      }
+
+      const overtimeAmount = Math.round(overtimeHours * overtimeHourlyRate * 100) / 100;
+
+      return {
+        overtimeAmount,
+        overtimeHours,
+        overtimeHourlyRate,
+      };
+    } catch (error) {
+      console.error('[calculateOvertime] error:', error);
+      return { overtimeAmount: 0, overtimeHours: 0, overtimeHourlyRate: 0 };
+    }
   }
 
   private async calculateBonus(employeeId: number, month: number, year: number): Promise<number> {
@@ -1386,6 +1443,9 @@ class PayrollService {
           commissionEarned: calculation.commissionEarned,
           advanceDeduction: calculation.advanceDeduction,
           expenseReimbursement: calculation.expenseReimbursement,
+          overtimeHours: calculation.overtimeHours || 0,
+          overtimeAmount: calculation.overtime || 0,
+          overtimeRate: calculation.overtimeRate || 0,
           ...payslipComponentData(calculation),
           netInWords,
           status: preservedStatus,
@@ -1424,11 +1484,27 @@ class PayrollService {
           workingDays: calculation.workingDays,
           totalCalendarDays: calculation.totalCalendarDays,
           commissionEarned: calculation.commissionEarned,
+          overtimeHours: calculation.overtimeHours || 0,
+          overtimeAmount: calculation.overtime || 0,
+          overtimeRate: calculation.overtimeRate || 0,
           ...payslipComponentData(calculation),
           netInWords,
           createdAt: new Date()
         }
       });
+
+        // Link approved overtime records for this month to this payslip
+        const otMonthStr = `${calculation.year}-${String(calculation.month).padStart(2, '0')}`;
+        await tx.overtimeRecord.updateMany({
+          where: {
+            employeeId: calculation.employeeId,
+            overtimeDate: { startsWith: otMonthStr },
+            approvalStatus: 'APPROVED',
+          },
+          data: {
+            payrollId: saved.id,
+          },
+        });
         const rkd = await getRkdPayrollEarnings(calculation.employeeId, calculation.month, calculation.year, tx, existingSlip?.id);
         if (Math.abs(rkd.amount - (calculation.rkdIncentive || 0)) > 0.005) {
           throw new Error('RKD earnings changed during payroll calculation. Recalculate before saving.');
@@ -1953,7 +2029,9 @@ class PayrollService {
       dailySalary: ps.dailySalary || 0,
       workingDays: schedWorkingDays,
       totalCalendarDays: ps.totalCalendarDays || calendarDays,
-      overtimeHours: storedAttendanceSummary ? Math.round((storedAttendanceSummary.overtimeMinutes / 60) * 100) / 100 : 0,
+      overtimeHours: ps.overtimeHours || (storedAttendanceSummary ? Math.round((storedAttendanceSummary.overtimeMinutes / 60) * 100) / 100 : 0),
+      overtimeAmount: ps.overtimeAmount || 0,
+      overtimeRate: ps.overtimeRate || 0,
       attendanceSummary: storedAttendanceSummary,
       expenseCategories,
       expenses: expensesByCategory,

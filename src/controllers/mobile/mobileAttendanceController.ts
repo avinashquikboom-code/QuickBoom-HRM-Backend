@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../utils/db';
 import { AuthenticatedRequest } from '../../middlewares/authMiddleware';
 import { getWebSocketInstance } from '../../utils/websocketSingleton';
+import { OvertimeService } from '../../services/overtimeService';
 import geofenceService from '../../services/geofenceService';
 import { Role } from '@prisma/client';
 import { getEffectiveUserPermissions } from '../../utils/permissionHelper';
@@ -464,6 +465,13 @@ export const mobilePunchIn = async (req: AuthenticatedRequest, res: Response): P
       timezone: timezone || 'not provided',
       clientTimestampUsed: clientTimestamp ? 'yes' : 'no'
     });
+
+    // Sync before-shift overtime if punched in early
+    try {
+      await OvertimeService.syncOvertimeRecord(attendance.id);
+    } catch (otErr) {
+      console.warn('⚠️ [OvertimeService] Overtime sync warning on punch-in:', otErr);
+    }
     
     // Broadcast real-time attendance update
     try {
@@ -753,6 +761,13 @@ export const mobilePunchOut = async (req: AuthenticatedRequest, res: Response): 
       timezone: timezone || 'not provided',
       clientTimestampUsed: clientTimestamp ? 'yes' : 'no'
     });
+
+    // Calculate & synchronize overtime (before-shift + after-shift)
+    try {
+      await OvertimeService.syncOvertimeRecord(updatedAttendance.id);
+    } catch (otErr) {
+      console.warn('⚠️ [OvertimeService] Overtime sync warning on punch-out:', otErr);
+    }
     
     // Broadcast real-time attendance update
     try {
