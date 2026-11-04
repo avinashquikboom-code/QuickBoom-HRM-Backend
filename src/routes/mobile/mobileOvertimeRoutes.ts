@@ -15,6 +15,7 @@ router.use(authMiddleware);
 router.get('/today', MobileOvertimeController.getTodayOvertime);
 router.get('/summary', MobileOvertimeController.getMonthlySummary);
 router.get('/history', MobileOvertimeController.getHistory);
+router.post('/request', MobileOvertimeController.requestOvertime);
 
 export default router;
 

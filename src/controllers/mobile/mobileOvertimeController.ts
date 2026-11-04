@@ -114,5 +114,51 @@ export class MobileOvertimeController {
       });
     }
   }
+
+  /**
+   * POST /api/mobile/overtime/request
+   * Allows an employee to submit an Overtime Request.
+   */
+  public static async requestOvertime(req: AuthenticatedRequest, res: Response): Promise<void> {
+    try {
+      const employee = await MobileOvertimeController.getEmployee(req);
+      if (!employee) {
+        res.status(404).json({ success: false, message: 'Employee profile not found' });
+        return;
+      }
+
+      const { date, beforeShiftMinutes, afterShiftMinutes, totalOvertimeMinutes, reason, shiftId } = req.body;
+
+      if (!date) {
+        res.status(400).json({ success: false, message: 'Date is required' });
+        return;
+      }
+      if (!reason || typeof reason !== 'string' || !reason.trim()) {
+        res.status(400).json({ success: false, message: 'Reason/justification is required' });
+        return;
+      }
+
+      const record = await OvertimeService.requestEmployeeOvertime(employee.id, {
+        date,
+        beforeShiftMinutes: beforeShiftMinutes ? Number(beforeShiftMinutes) : undefined,
+        afterShiftMinutes: afterShiftMinutes ? Number(afterShiftMinutes) : undefined,
+        totalOvertimeMinutes: totalOvertimeMinutes ? Number(totalOvertimeMinutes) : undefined,
+        reason: reason.trim(),
+        shiftId: shiftId ? Number(shiftId) : undefined,
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Overtime request submitted successfully and is pending approval',
+        data: record,
+      });
+    } catch (error: any) {
+      console.error('[MobileOvertimeController] requestOvertime error:', error);
+      res.status(400).json({
+        success: false,
+        message: error?.message || 'Failed to submit overtime request',
+      });
+    }
+  }
 }
 

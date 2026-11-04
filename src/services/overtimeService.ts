@@ -662,4 +662,135 @@ export class OvertimeService {
 
     return { updatedCount: updated.count };
   }
+
+  /**
+   * Allows an employee to submit an Overtime Request.
+   */
+  public static async requestEmployeeOvertime(
+    employeeId: number,
+    dto: {
+      date: string; // "YYYY-MM-DD"
+      beforeShiftMinutes?: number;
+      afterShiftMinutes?: number;
+      totalOvertimeMinutes?: number;
+      reason: string;
+      shiftId?: number;
+    }
+  ) {
+    if (!dto.date) {
+      throw new Error('Date is required for overtime request.');
+    }
+    if (!dto.reason || dto.reason.trim().length === 0) {
+      throw new Error('Reason or justification is required for overtime request.');
+    }
+
+    const beforeMins = Math.max(0, Number(dto.beforeShiftMinutes) || 0);
+    const afterMins = Math.max(0, Number(dto.afterShiftMinutes) || 0);
+    let totalMins = Math.max(0, Number(dto.totalOvertimeMinutes) || 0);
+    if (totalMins === 0) {
+      totalMins = beforeMins + afterMins;
+    }
+    if (totalMins <= 0) {
+      throw new Error('Total overtime minutes must be greater than 0.');
+    }
+
+    const dateStr = dto.date.substring(0, 10);
+
+    // Find or create Attendance record for that date
+    let attendance = await prisma.attendance.findFirst({
+      where: {
+        employeeId,
+        date: { startsWith: dateStr },
+      },
+    });
+
+    if (!attendance) {
+      attendance = await prisma.attendance.create({
+        data: {
+          employeeId,
+          date: dateStr,
+          status: 'PRESENT',
+          notes: `Overtime Request: ${dto.reason.trim()}`,
+        },
+      });
+    }
+
+    // Resolve shift assignment
+    let shiftId = dto.shiftId ? Number(dto.shiftId) : null;
+    let scheduledStartTime: string | null = null;
+    let scheduledEndTime: string | null = null;
+
+    if (!shiftId) {
+      const activeAssignment = await prisma.shiftAssignment.findFirst({
+        where: { employeeId, effectiveTo: null },
+        include: { shift: true },
+        orderBy: { id: 'desc' },
+      });
+      if (activeAssignment?.shift) {
+        shiftId = activeAssignment.shift.id;
+        scheduledStartTime = activeAssignment.shift.startTime;
+        scheduledEndTime = activeAssignment.shift.endTime;
+      }
+    } else {
+      const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
+      if (shift) {
+        scheduledStartTime = shift.startTime;
+        scheduledEndTime = shift.endTime;
+      }
+    }
+
+    // Fetch employee salary structure to set hourlyRate if available
+    const salaryStructure = await prisma.salaryStructure.findFirst({
+      where: { employeeId, isActive: true },
+      orderBy: { id: 'desc' },
+    });
+
+    let hourlyRate: number | null = null;
+    if (salaryStructure) {
+      hourlyRate = salaryStructure.overtimeHourlyRate || null;
+      if (!hourlyRate && salaryStructure.basicSalary) {
+        const mult = salaryStructure.overtimeMultiplier || 1.0;
+        hourlyRate = (salaryStructure.basicSalary / (30 * 8)) * mult;
+      }
+    }
+
+    const payableAmount = hourlyRate ? (totalMins / 60) * hourlyRate : null;
+
+    // Upsert OvertimeRecord
+    const record = await prisma.overtimeRecord.upsert({
+      where: { attendanceId: attendance.id },
+      create: {
+        employeeId,
+        attendanceId: attendance.id,
+        shiftId,
+        overtimeDate: dateStr,
+        scheduledStartTime,
+        scheduledEndTime,
+        actualCheckIn: attendance.checkIn,
+        actualCheckOut: attendance.checkOut,
+        beforeShiftMinutes: beforeMins,
+        afterShiftMinutes: afterMins,
+        totalOvertimeMinutes: totalMins,
+        approvalStatus: 'PENDING',
+        remarks: dto.reason.trim(),
+        hourlyRate,
+        payableAmount,
+      },
+      update: {
+        beforeShiftMinutes: beforeMins,
+        afterShiftMinutes: afterMins,
+        totalOvertimeMinutes: totalMins,
+        approvalStatus: 'PENDING',
+        remarks: dto.reason.trim(),
+        hourlyRate: hourlyRate ?? undefined,
+        payableAmount: payableAmount ?? undefined,
+        rejectionReason: null,
+      },
+      include: {
+        shift: true,
+      },
+    });
+
+    return record;
+  }
 }
