@@ -1,29 +1,41 @@
-name: Build & Push Backend
+name: Build & Deploy Backend (ECR → EC2)
 
-# Build the image and push it to AWS ECR on every push to main.
-# Deployment to the server is MANUAL (pull + docker compose up on the VPS).
+# Auto-deploy on every push to main. Trigger manually from the Actions tab too.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: true
+
+# Secrets (Settings → Secrets and variables → Actions):
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  IAM user of the Sydney ECR account (211107604014) with push access to hrm-backend
+#   EC2_HOST, EC2_USER, EC2_DEPLOY_DIR        the shared AWS server and /var/www/hrm on it
+#   EC2_SSH_KEY                               private key whose public half is in ubuntu's authorized_keys
+# The old Mumbai/VPS secrets (AWS_REGION, ECR_REPOSITORY, VPS_*) are no longer used.
+# Runtime secrets (DATABASE_URL, JWT_*, ...) live in /var/www/hrm/.env on the server, never in GitHub.
 env:
-  # Hardcoded ECR target (no secrets needed for region/repo).
   AWS_REGION: ap-southeast-2
-  IMAGE_URI: 211107604014.dkr.ecr.ap-southeast-2.amazonaws.com/hrm-backend
+  ECR_REPOSITORY: hrm-backend
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+  EC2_USER: ${{ secrets.EC2_USER }}
+  DEPLOY_DIR: ${{ secrets.EC2_DEPLOY_DIR }}   # /var/www/hrm; must match DEPLOY_DIR in the server's config.sh
 
 jobs:
-  build-and-push:
-    name: Build image and push to ECR
+  build-and-deploy:
+    name: Build image, push to ECR, deploy to EC2
     runs-on: ubuntu-latest
     env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true   # kept from the previous workflow (it was proven on this runner)
 
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -35,17 +47,65 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push image to ECR
+        id: build-image
         env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
           docker build \
+            --platform linux/amd64 \
             -f Dockerfile.deploy \
             -t "$IMAGE_URI:$IMAGE_TAG" \
             -t "$IMAGE_URI:latest" \
             .
           docker push "$IMAGE_URI:$IMAGE_TAG"
           docker push "$IMAGE_URI:latest"
-          echo "Pushed $IMAGE_URI:latest (and :$IMAGE_TAG)"
+          echo "image=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Add SSH key
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${EC2_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # Pin the new registry + image tag in the server's config.sh, then run
+      # backend.sh (pull -> prisma migrate -> restart the API container only).
+      # The job fails if the container does not become healthy.
+      - name: Pin image and deploy
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes "${EC2_USER}@${EC2_HOST}" \
+            bash -s -- "${DEPLOY_DIR}" "${ECR_REGISTRY}" "${IMAGE_TAG}" <<'REMOTE'
+          set -euo pipefail
+          DEPLOY_DIR="$1"; REGISTRY="$2"; TAG="$3"
+          cd "$DEPLOY_DIR"
+          chmod +x ./*.sh
+          sed -i "s|^export ECR_REGISTRY=.*|export ECR_REGISTRY=\"${REGISTRY}\"|" config.sh
+          sed -i "s|^export API_IMAGE_TAG=.*|export API_IMAGE_TAG=\"${TAG}\"|" config.sh
+          ./backend.sh
+          for i in $(seq 1 30); do
+            s=$(docker inspect -f '{{.State.Health.Status}}' hrm-backend 2>/dev/null || echo none)
+            if [ "$s" = healthy ]; then echo "hrm-backend is healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "hrm-backend did not become healthy" >&2
+          docker logs --tail 60 hrm-backend || true
+          exit 1
+          REMOTE
+
+      - name: Deploy summary
+        if: always()
+        run: |
+          echo "### Backend deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: \`${{ steps.build-image.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${GITHUB_SHA::12}\`" >> "$GITHUB_STEP_SUMMARY"
