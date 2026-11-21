@@ -41,6 +41,20 @@ export function extractEmployeeIdentifier(payload: any): string | null {
   return id ? String(id).trim() : null;
 }
 
+function webhookEmployeeRecord(payload: any): any {
+  const data = payload?.data ?? payload;
+  return data?.employee ?? payload?.employee ?? data;
+}
+
+function validateEmployeePayload(payload: any): { employee: any; identifier: string; name: string } {
+  const employee = webhookEmployeeRecord(payload);
+  const identifier = extractEmployeeIdentifier(payload);
+  const name = String(employee?.name || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim()).trim();
+  if (!identifier) throw new Error('Invalid employee webhook: missing external employee ID/code.');
+  if (!name) throw new Error('Invalid employee webhook: missing employee name.');
+  return { employee, identifier, name };
+}
+
 /**
  * Robust Store & Office resolver supporting all HopKid store payload variations
  */
@@ -186,20 +200,9 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
   try {
     console.log('[Process] Step 1: Extract employee identifier');
 
-    const empCode = extractEmployeeIdentifier(payload);
-    if (!empCode) {
-      console.error('[Process] ❌ Invalid payload structure: missing employee identifier');
-      await createWebhookLog({
-        eventType: 'EMPLOYEE_CREATED',
-        status: 'FAILED',
-        payload: payload,
-        errorMessage: 'Invalid payload structure: missing employee identifier'
-      });
-      return;
-    }
+    const { employee, identifier: empCode, name: rawName } = validateEmployeePayload(payload);
 
     const data = payload.data || payload;
-    const employee = data.employee || payload.employee || data;
     const hopkidEmployeeId = employee.employeeID || employee.id ? String(employee.employeeID || employee.id).toLowerCase() : null;
 
     const rawMobile = employee.mobileNo || employee.mobileNumber || employee.phone || employee.phoneNumber || employee.contactNo;
@@ -247,7 +250,6 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
 
     console.log('[Process] ✅ New employee, creating...');
 
-    const rawName = String(employee.name || `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Employee').trim();
     const nameParts = rawName.split(' ');
     const firstName = nameParts[0] || 'HopKid';
     const lastName = nameParts.slice(1).join(' ') || 'Employee';
@@ -343,6 +345,7 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
       payload: payload,
       errorMessage: error.message
     });
+    throw error;
   }
 }
 
@@ -391,20 +394,9 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
   try {
     console.log('[Update] Step 1: Extract employee identifier');
 
-    const empCode = extractEmployeeIdentifier(payload);
-    if (!empCode) {
-      console.error('[Update] ❌ Invalid payload: missing employee identifier');
-      await createWebhookLog({
-        eventType: 'EMPLOYEE_UPDATED',
-        status: 'FAILED',
-        payload: payload,
-        errorMessage: 'Invalid payload: missing employee identifier'
-      });
-      return;
-    }
+    const { employee, identifier: empCode, name } = validateEmployeePayload(payload);
 
     const data = payload.data || payload;
-    const employee = data.employee || payload.employee || data;
     const hopkidEmployeeId = employee.employeeID || employee.id ? String(employee.employeeID || employee.id).toLowerCase() : null;
 
     let existingEmployee = await prisma.employee.findFirst({
@@ -428,16 +420,15 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
     const updateData: any = {};
     const changes: string[] = [];
 
-    if (employee.name || employee.firstName) {
-      const rawName = String(employee.name || `${employee.firstName || ''} ${employee.lastName || ''}`.trim()).trim();
-      const nameParts = rawName.split(' ');
+    if (employee.name || employee.firstName || employee.lastName) {
+      const nameParts = name.split(' ');
       const newFirst = nameParts[0] || existingEmployee.firstName;
       const newLast = nameParts.slice(1).join(' ') || existingEmployee.lastName;
 
       if (newFirst !== existingEmployee.firstName || newLast !== existingEmployee.lastName) {
         updateData.firstName = newFirst;
         updateData.lastName = newLast;
-        changes.push(`Name: ${currentName} → ${rawName}`);
+        changes.push(`Name: ${currentName} → ${name}`);
       }
     }
 
@@ -553,6 +544,7 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
       payload: payload,
       errorMessage: error.message
     });
+    throw error;
   }
 }
 
@@ -602,16 +594,7 @@ export async function processEmployeeDeleted(payload: any): Promise<void> {
     console.log('[Delete] Step 1: Extract employee identifier from payload');
 
     const identifier = extractEmployeeIdentifier(payload);
-    if (!identifier) {
-      console.error('[Delete] ❌ Missing employee identifier in payload');
-      await createWebhookLog({
-        eventType: 'EMPLOYEE_DELETED',
-        status: 'FAILED',
-        payload: payload,
-        errorMessage: 'Invalid payload: missing employee identifier'
-      });
-      return;
-    }
+    if (!identifier) throw new Error('Invalid employee deleted webhook: missing external employee ID/code.');
 
     console.log('[Delete] Target employee identifier:', identifier);
 
@@ -686,6 +669,7 @@ export async function processEmployeeDeleted(payload: any): Promise<void> {
       payload: payload,
       errorMessage: error.message
     });
+    throw error;
   }
 }
 
