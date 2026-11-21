@@ -24,7 +24,6 @@ import {
   processEmployeeCreated as execEmployeeCreated,
   processEmployeeUpdated as execEmployeeUpdated,
   processEmployeeDeleted as execEmployeeDeleted,
-  extractEmployeeIdentifier,
 } from './employeeWebhookController';
 
 console.log('[Webhook Controller] ✅ Centralized Webhook Controller Loaded');
@@ -1642,13 +1641,25 @@ async function executeWebhookPipeline(
   console.log(`╚════════════════════════════════════════════════════════════╝`);
 
   if (normalizedType.startsWith('EMPLOYEE_')) {
+    const payloadRecord = payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : null;
+    const dataRecord = payloadRecord?.data && typeof payloadRecord.data === 'object' && !Array.isArray(payloadRecord.data)
+      ? payloadRecord.data as Record<string, unknown>
+      : null;
     console.info('[Employee Webhook Diagnostic] Received', {
       receivedAt: new Date().toISOString(),
       method: req.method,
       url: `${req.baseUrl}${req.path}`,
       headerNames: Object.keys(req.headers).sort(),
-      eventType: payload && typeof payload === 'object' ? (payload as any).eventType ?? normalizedType : normalizedType,
-      externalEmployeeIdPresent: Boolean(extractEmployeeIdentifier(payload)),
+      safeHeaders: {
+        contentType: req.get('content-type')?.slice(0, 100) ?? null,
+        contentLength: req.get('content-length')?.slice(0, 32) ?? null,
+      },
+      eventType: payloadRecord?.eventType ?? normalizedType,
+      testMarkerPresent: payloadRecord?.test === true || payloadRecord?.isTest === true || payloadRecord?.ping === true,
+      dataObjectPresent: Boolean(dataRecord),
+      dataObjectEmpty: dataRecord ? Object.keys(dataRecord).length === 0 : null,
       payloadShape: describeWebhookShape(payload),
     });
   }

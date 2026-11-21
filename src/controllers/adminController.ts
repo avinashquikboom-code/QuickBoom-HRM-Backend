@@ -686,7 +686,7 @@ export const fetchEmployees = async (
     const activeCount = await prisma.employee.count({
       where: {
         ...whereClause,
-        status: 'active'
+        status: { equals: 'active', mode: 'insensitive' }
       }
     });
     const assignedCount = await prisma.employee.count({
