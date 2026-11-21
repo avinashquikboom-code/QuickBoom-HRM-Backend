@@ -6,8 +6,13 @@ export interface IdempotencyResult {
   isDuplicate: boolean;
   dedupKey: string;
   existingLogId?: number | string | null;
+  retryLogId?: string | null;
   eventId?: string | null;
 }
+
+// A delivery that has been PROCESSING for this long without a completion
+// timestamp is assumed to have died with its worker and may be reclaimed.
+const STALE_PROCESSING_MS = 15 * 60 * 1000;
 
 /**
  * Computes a deterministic payload hash for idempotency comparison,
@@ -62,19 +67,23 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
   // 1. Check by explicit eventId in WebhookLog
   if (eventId) {
     const existingLog = await prisma.webhookLog.findFirst({
-      where: {
-        OR: [
-          { eventId: String(eventId) },
-          {
-            eventType: { equals: eventType, mode: 'insensitive' },
-            status: { in: ['SUCCESS', 'PROCESSING'] },
-            payload: { contains: String(eventId) },
-          }
-        ]
-      },
+      where: { eventId: String(eventId) },
     });
 
     if (existingLog) {
+      if (existingLog.status === 'FAILED' || (
+        existingLog.status === 'PROCESSING' &&
+        !existingLog.processedAt &&
+        existingLog.createdAt.getTime() < Date.now() - STALE_PROCESSING_MS
+      )) {
+        return {
+          isDuplicate: false,
+          dedupKey,
+          existingLogId: existingLog.id,
+          retryLogId: existingLog.id,
+          eventId: String(eventId),
+        };
+      }
       console.log(`[Webhook Idempotency] Duplicate detected by eventId: ${eventId}`);
       return {
         isDuplicate: true,
@@ -82,6 +91,25 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
         existingLogId: existingLog.id,
         eventId: String(eventId),
       };
+    }
+
+    // Older integrations sometimes put the event ID in the serialized payload
+    // but did not populate WebhookLog.eventId.
+    const legacyLog = await prisma.webhookLog.findFirst({
+      where: {
+        eventType: { equals: eventType, mode: 'insensitive' },
+        status: { in: ['SUCCESS', 'PROCESSING'] },
+        payload: { contains: String(eventId) },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (legacyLog) {
+      const stale = legacyLog.status === 'PROCESSING' && !legacyLog.processedAt &&
+        legacyLog.createdAt.getTime() < Date.now() - STALE_PROCESSING_MS;
+      if (stale) {
+        return { isDuplicate: false, dedupKey, existingLogId: legacyLog.id, retryLogId: legacyLog.id, eventId: String(eventId) };
+      }
+      return { isDuplicate: true, dedupKey, existingLogId: legacyLog.id, eventId: String(eventId) };
     }
   }
 
@@ -100,6 +128,11 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
     for (const log of matchingLogs) {
       const logHash = computePayloadHash(log.payload);
       if (logHash === hash) {
+        const stale = log.status === 'PROCESSING' && !log.processedAt &&
+          log.createdAt.getTime() < Date.now() - STALE_PROCESSING_MS;
+        if (stale) {
+          return { isDuplicate: false, dedupKey, existingLogId: log.id, retryLogId: log.id, eventId: eventId ? String(eventId) : null };
+        }
         console.log(`[Webhook Idempotency] Duplicate detected by payload hash for billId: ${billId}`);
         return {
           isDuplicate: true,
@@ -146,6 +179,11 @@ export async function checkWebhookIdempotency(payload: any, rawEventType?: strin
 
     for (const log of matchingLogs) {
       if (computePayloadHash(log.payload) === hash) {
+        const stale = log.status === 'PROCESSING' && !log.processedAt &&
+          log.createdAt.getTime() < Date.now() - STALE_PROCESSING_MS;
+        if (stale) {
+          return { isDuplicate: false, dedupKey, existingLogId: log.id, retryLogId: log.id, eventId: eventId ? String(eventId) : null };
+        }
         console.log(`[Webhook Idempotency] Duplicate detected by fallback payload hash`);
         return {
           isDuplicate: true,

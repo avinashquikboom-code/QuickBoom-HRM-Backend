@@ -1663,17 +1663,51 @@ async function executeWebhookPipeline(
     }
 
     try {
-      logEntry = await prisma.webhookLog.create({
-        data: {
-          eventId: resolvedEventId,
-          eventType: normalizedType,
-          status: 'PROCESSING',
-          payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
-          billId: billId ? String(billId) : null,
-          amount: amount !== null ? Number(amount) : null,
-          employeeId: resolvedLogEmpId,
-        },
-      });
+      if (idempotency.retryLogId) {
+        // Atomically reclaim a failed delivery or a long-abandoned PROCESSING
+        // row. processedAt acts as the claim timestamp while it is running, so
+        // concurrent provider retries receive a duplicate response.
+        const claimed = await prisma.webhookLog.updateMany({
+          where: {
+            id: idempotency.retryLogId,
+            OR: [
+              { status: 'FAILED' },
+              {
+                status: 'PROCESSING',
+                processedAt: null,
+                createdAt: { lt: new Date(Date.now() - 15 * 60 * 1000) },
+              },
+            ],
+          },
+          data: {
+            status: 'PROCESSING',
+            processedAt: new Date(),
+            errorMessage: null,
+            payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+            eventType: normalizedType,
+            billId: billId ? String(billId) : null,
+            amount: amount !== null ? Number(amount) : null,
+            employeeId: resolvedLogEmpId,
+          },
+        });
+        if (!claimed.count) {
+          res.status(200).json({ success: true, message: 'Webhook already processing or processed', duplicate: true, dedupKey: idempotency.dedupKey });
+          return;
+        }
+        logEntry = { id: idempotency.retryLogId };
+      } else {
+        logEntry = await prisma.webhookLog.create({
+          data: {
+            eventId: resolvedEventId,
+            eventType: normalizedType,
+            status: 'PROCESSING',
+            payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+            billId: billId ? String(billId) : null,
+            amount: amount !== null ? Number(amount) : null,
+            employeeId: resolvedLogEmpId,
+          },
+        });
+      }
     } catch (logErr) {
       console.warn('[WebhookLog] Concurrent duplicate detected during insert:', logErr);
       res.status(200).json({
