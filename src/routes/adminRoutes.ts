@@ -127,6 +127,14 @@ import {
 } from '../controllers/storeController';
 
 import {
+  fetchBranches,
+  fetchBranchById,
+  createBranch,
+  updateBranch,
+  deleteBranch,
+} from '../controllers/branchController';
+
+import {
   getCommissionDashboard,
   createCommissionPolicy,
   getCommissionPolicies,
@@ -179,6 +187,13 @@ router.post('/stores/:id/pos-credentials', requireStorePOSAdmin, setStorePOSCred
 router.put('/stores/:id/pos-credentials', requireStorePOSAdmin, setStorePOSCredentials);
 router.post('/stores/:id/pos-password/reset', requireStorePOSAdmin, resetStorePOSPassword);
 router.patch('/stores/:id/pos-access', requireStorePOSAdmin, updateStorePOSAccess);
+
+// Branch Routes
+router.get('/branches', roleMiddleware(storeManagerAllowedRoles), fetchBranches);
+router.get('/branches/:id', roleMiddleware(storeManagerAllowedRoles), fetchBranchById);
+router.post('/branches', roleMiddleware(adminOnlyRoles), createBranch);
+router.put('/branches/:id', roleMiddleware(adminOnlyRoles), updateBranch);
+router.delete('/branches/:id', roleMiddleware(adminOnlyRoles), deleteBranch);
 
 
 

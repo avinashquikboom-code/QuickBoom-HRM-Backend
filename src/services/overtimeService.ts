@@ -473,12 +473,21 @@ export class OvertimeService {
       prisma.overtimeRecord.count({ where }),
     ]);
 
+    const totalPages = Math.ceil(totalCount / limit) || 1;
     return {
       items,
+      records: items,
       totalCount,
+      total: totalCount,
       page,
       limit,
-      totalPages: Math.ceil(totalCount / limit),
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        totalPages,
+      },
     };
   }
 
@@ -565,12 +574,21 @@ export class OvertimeService {
       prisma.overtimeRecord.count({ where }),
     ]);
 
+    const totalPages = Math.ceil(totalCount / limit) || 1;
     return {
       items,
+      records: items,
       totalCount,
+      total: totalCount,
       page,
       limit,
-      totalPages: Math.ceil(totalCount / limit),
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total: totalCount,
+        totalPages,
+      },
     };
   }
 

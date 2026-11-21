@@ -32,6 +32,7 @@
     "test:hrm:subcategory-commission": "ts-node --transpile-only scripts/test_hrm_external_subcategory_commission.ts",
     "test:mobile:invoice-subcategory": "ts-node --transpile-only scripts/test_mobile_invoice_subcategory_commission.ts",
     "test:hopkid-reports": "ts-node --transpile-only scripts/test_hopkid_reports_integration.ts",
+    "test:branches": "ts-node --transpile-only scripts/test_branch_api.ts",
     "test:overtime": "ts-node --transpile-only scripts/test_overtime_management.ts",
     "test:campaigns": "node scripts/test_campaign_reliability.cjs && node scripts/test_campaign_s3.cjs && node scripts/test_campaign_actor_and_upload.cjs"
   },

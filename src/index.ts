@@ -208,6 +208,7 @@ app.use('/api/mobile/overtime', mobileOvertimeRoutes);
 app.use('/api/v1/mobile/overtime', mobileOvertimeRoutes);
 app.use('/api/employee/overtime', mobileOvertimeRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/v1/admin', adminRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/employee/tasks', mobileEmployeeTaskRoutes);
 // RKD authorizes sales employees itself; handle it before the broader employee role gate.
