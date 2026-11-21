@@ -184,12 +184,6 @@ router.post('/created', async (req: Request, res: Response) => {
 
 export async function processEmployeeCreated(payload: any): Promise<void> {
   try {
-    const idempotency = await checkWebhookIdempotency(payload, 'EMPLOYEE_CREATED');
-    if (idempotency.isDuplicate) {
-      console.log(`[Employee Webhook] ℹ️ Duplicate EMPLOYEE_CREATED event safely ignored (Key: ${idempotency.dedupKey})`);
-      return;
-    }
-
     console.log('[Process] Step 1: Extract employee identifier');
 
     const empCode = extractEmployeeIdentifier(payload);
