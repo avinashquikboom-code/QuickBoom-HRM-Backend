@@ -94,7 +94,7 @@ export class HopKidFilterService {
       const res = await hopkidApiClient.get<Array<{ branchID: string; branchName: string }>>(
         'Branch/GetBranchSelectList'
       );
-      const rawItems = Array.isArray(res.data) ? res.data : [];
+      const rawItems = this.requireArray(res.data, 'Branch/GetBranchSelectList');
 
       // Attempt to map with internal DB Branch / Store records
       let internalBranches: Array<{ id: number; name: string }> = [];
@@ -108,9 +108,9 @@ export class HopKidFilterService {
         console.warn('[HopKidFilterService] Could not query internal branches/stores for mapping:', e);
       }
 
-      return rawItems.map((item, idx) => {
-        const uuid = (item.branchID || '').trim();
-        const name = (item.branchName || '').trim();
+      return rawItems.flatMap((item) => {
+        const uuid = this.requireUuid(item?.branchID, 'branchID');
+        const name = this.requireString(item?.branchName, 'branchName');
 
         // Match against internal branch/store
         const matchedBranch = internalBranches.find(
@@ -120,14 +120,14 @@ export class HopKidFilterService {
           s => s.name.trim().toLowerCase() === name.toLowerCase()
         );
 
-        const internalId = matchedBranch?.id ?? matchedStore?.id ?? (idx + 1);
+        const internalId = matchedBranch?.id ?? matchedStore?.id ?? null;
 
-        return {
+        return [{
           id: uuid,
           uuid,
           name,
           internalId,
-        };
+        }];
       });
     });
   }
@@ -140,16 +140,15 @@ export class HopKidFilterService {
       const res = await hopkidApiClient.get<Array<{ brandID: string; brandName: string }>>(
         'Brand/GetBrandSelectList'
       );
-      const rawItems = Array.isArray(res.data) ? res.data : [];
-      return rawItems.map((item, idx) => {
-        const uuid = (item.brandID || '').trim();
-        const name = (item.brandName || '').trim();
-        return {
+      const rawItems = this.requireArray(res.data, 'Brand/GetBrandSelectList');
+      return rawItems.flatMap((item) => {
+        const uuid = this.requireUuid(item?.brandID, 'brandID');
+        const name = this.requireString(item?.brandName, 'brandName');
+        return [{
           id: uuid,
           uuid,
           name,
-          internalId: idx + 1,
-        };
+        }];
       });
     });
   }
@@ -162,16 +161,15 @@ export class HopKidFilterService {
       const res = await hopkidApiClient.get<Array<{ categoryID: string; categoryName: string }>>(
         'Category/GetCategorySelectList'
       );
-      const rawItems = Array.isArray(res.data) ? res.data : [];
-      return rawItems.map((item, idx) => {
-        const uuid = (item.categoryID || '').trim();
-        const name = (item.categoryName || '').trim();
-        return {
+      const rawItems = this.requireArray(res.data, 'Category/GetCategorySelectList');
+      return rawItems.flatMap((item) => {
+        const uuid = this.requireUuid(item?.categoryID, 'categoryID');
+        const name = this.requireString(item?.categoryName, 'categoryName');
+        return [{
           id: uuid,
           uuid,
           name,
-          internalId: idx + 1,
-        };
+        }];
       });
     });
   }
@@ -184,16 +182,15 @@ export class HopKidFilterService {
       const res = await hopkidApiClient.get<Array<{ subCategoryID: string; subCategoryName: string }>>(
         'SubCategory/GetSubCategorySelectList'
       );
-      const rawItems = Array.isArray(res.data) ? res.data : [];
-      return rawItems.map((item, idx) => {
-        const uuid = (item.subCategoryID || '').trim();
-        const name = (item.subCategoryName || '').trim();
-        return {
+      const rawItems = this.requireArray(res.data, 'SubCategory/GetSubCategorySelectList');
+      return rawItems.flatMap((item) => {
+        const uuid = this.requireUuid(item?.subCategoryID, 'subCategoryID');
+        const name = this.requireString(item?.subCategoryName, 'subCategoryName');
+        return [{
           id: uuid,
           uuid,
           name,
-          internalId: idx + 1,
-        };
+        }];
       });
     });
   }
@@ -206,7 +203,7 @@ export class HopKidFilterService {
       const res = await hopkidApiClient.get<Array<{ departmentID: string; departmentName: string }>>(
         'Department/GetDepartmentSelectList'
       );
-      const rawItems = Array.isArray(res.data) ? res.data : [];
+      const rawItems = this.requireArray(res.data, 'Department/GetDepartmentSelectList');
 
       let internalDepts: Array<{ id: number; name: string }> = [];
       try {
@@ -215,17 +212,17 @@ export class HopKidFilterService {
         console.warn('[HopKidFilterService] Could not query internal departments for mapping:', e);
       }
 
-      return rawItems.map((item, idx) => {
-        const uuid = (item.departmentID || '').trim();
-        const name = (item.departmentName || '').trim();
+      return rawItems.flatMap((item) => {
+        const uuid = this.requireUuid(item?.departmentID, 'departmentID');
+        const name = this.requireString(item?.departmentName, 'departmentName');
         const matched = internalDepts.find(d => d.name.trim().toLowerCase() === name.toLowerCase());
 
-        return {
+        return [{
           id: uuid,
           uuid,
           name,
-          internalId: matched?.id ?? (idx + 1),
-        };
+          internalId: matched?.id ?? null,
+        }];
       });
     });
   }
@@ -238,16 +235,15 @@ export class HopKidFilterService {
       const res = await hopkidApiClient.get<Array<{ supplyID: string; supplierName: string }>>(
         'Supply/GetSupplyDropdown'
       );
-      const rawItems = Array.isArray(res.data) ? res.data : [];
-      return rawItems.map((item, idx) => {
-        const uuid = (item.supplyID || '').trim();
-        const name = (item.supplierName || '').trim();
-        return {
+      const rawItems = this.requireArray(res.data, 'Supply/GetSupplyDropdown');
+      return rawItems.flatMap((item) => {
+        const uuid = this.requireUuid(item?.supplyID, 'supplyID');
+        const name = this.requireString(item?.supplierName, 'supplierName');
+        return [{
           id: uuid,
           uuid,
           name,
-          internalId: idx + 1,
-        };
+        }];
       });
     });
   }
@@ -378,13 +374,30 @@ export class HopKidFilterService {
 
       return items;
     } catch (error) {
-      // If error occurs but stale cache exists, log warning and return stale cache
-      if (entry) {
-        console.warn(`[HopKidFilterService] Upstream fetch failed for ${type}, returning stale cache:`, error);
-        return entry.data;
-      }
+      console.error('[HopKidFilterService] Filter fetch failed', {
+        type,
+        cachedDataAvailable: Boolean(entry),
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      });
       throw error;
     }
+  }
+
+  private requireArray(value: unknown, endpoint: string): any[] {
+    if (value === null) return [];
+    if (!Array.isArray(value)) throw new Error(`HopKid ${endpoint} returned data in an unexpected format.`);
+    return value;
+  }
+
+  private requireString(value: unknown, field: string): string {
+    if (typeof value !== 'string' || value.trim() === '') throw new Error(`HopKid filter item is missing a valid ${field}.`);
+    return value.trim();
+  }
+
+  private requireUuid(value: unknown, field: string): string {
+    const uuid = this.requireString(value, field);
+    if (!UUID_REGEX.test(uuid)) throw new Error(`HopKid filter item has an invalid UUID in ${field}.`);
+    return uuid;
   }
 }
 

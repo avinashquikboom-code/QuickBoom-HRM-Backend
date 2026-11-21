@@ -66,15 +66,6 @@ export class HopKidApiClient {
   }
 
   /**
-   * Mask sensitive keys in logs
-   */
-  private maskKey(key: string): string {
-    if (!key) return '(not configured)';
-    if (key.length <= 8) return '****';
-    return `${key.slice(0, 4)}...${key.slice(-4)}`;
-  }
-
-  /**
    * Performs an authenticated GET request.
    */
   public async get<T = any>(
@@ -109,7 +100,7 @@ export class HopKidApiClient {
     const apiKey = this.getApiKey();
 
     if (!apiKey) {
-      console.warn('[HopKidApiClient] Missing HOPKID_REPORT_API_KEY in environment');
+      console.error('[HopKidApiClient] Request rejected: report API key is not configured.');
       throw new HopKidReportError(
         'HopKid Report API Key is missing. Please configure HOPKID_REPORT_API_KEY in the backend environment.',
         500,
@@ -134,9 +125,7 @@ export class HopKidApiClient {
 
     const startTime = Date.now();
     try {
-      console.info(
-        `[HopKidApiClient] -> ${method} ${fullUrl} [Key: ${this.maskKey(apiKey)}]`
-      );
+      console.info(`[HopKidApiClient] -> ${method} ${endpoint}`);
 
       const response = await fetch(fullUrl, {
         method,
@@ -146,9 +135,10 @@ export class HopKidApiClient {
       });
 
       const durationMs = Date.now() - startTime;
-      console.info(`[HopKidApiClient] <- ${method} ${fullUrl} HTTP ${response.status} (${durationMs}ms)`);
+      console.info(`[HopKidApiClient] <- ${method} ${endpoint} HTTP ${response.status} (${durationMs}ms)`);
 
       if (response.status === 401) {
+        console.error('[HopKidApiClient] Upstream authentication rejected', { method, endpoint, status: response.status });
         throw new HopKidReportError(
           'HopKid API rejected credentials (401 Unauthorized). Verify that HOPKID_REPORT_API_KEY is valid and authorized for reports.',
           401,
@@ -157,6 +147,7 @@ export class HopKidApiClient {
       }
 
       if (response.status === 404) {
+        console.error('[HopKidApiClient] Upstream endpoint not found', { method, endpoint, status: response.status });
         throw new HopKidReportError(
           `HopKid endpoint not found (404 Not Found): ${endpoint}`,
           404,
@@ -165,17 +156,19 @@ export class HopKidApiClient {
       }
 
       if (!response.ok) {
-        let errBodyText = '';
+        let upstreamMessage: string | undefined;
         try {
-          errBodyText = await response.text();
+          const errorBody = await response.json() as { message?: unknown };
+          if (typeof errorBody?.message === 'string') upstreamMessage = errorBody.message.slice(0, 300);
         } catch {
           // ignore
         }
+        console.error('[HopKidApiClient] Upstream HTTP failure', { method, endpoint, status: response.status });
         throw new HopKidReportError(
-          `HopKid service returned HTTP error ${response.status}: ${response.statusText || 'Unknown'}`,
+          `HopKid service returned HTTP ${response.status}.`,
           response.status >= 500 ? 502 : response.status,
           'ERR_UPSTREAM_HTTP',
-          errBodyText
+          upstreamMessage
         );
       }
 
@@ -191,9 +184,9 @@ export class HopKidApiClient {
       }
 
       // Check the envelope
-      if (typeof json === 'object' && json !== null) {
+      if (typeof json === 'object' && json !== null && !Array.isArray(json)) {
         if (json.success === false) {
-          const msg = json.message || 'HopKid reported an unsuccessful request.';
+          const msg = typeof json.message === 'string' ? json.message.slice(0, 300) : 'HopKid reported an unsuccessful request.';
           if (/unauthorized/i.test(msg)) {
             throw new HopKidReportError(
               `HopKid API authentication failed: ${msg}`,
@@ -209,15 +202,13 @@ export class HopKidApiClient {
             msg
           );
         }
+        if (json.success !== true || !Object.prototype.hasOwnProperty.call(json, 'data')) {
+          throw new HopKidReportError('HopKid response did not match the expected success/data envelope.', 502, 'ERR_INVALID_ENVELOPE');
+        }
         return json as HopKidEnvelope<T>;
       }
 
-      // Fallback if returned raw array or object
-      return {
-        success: true,
-        message: '',
-        data: json as T,
-      };
+      throw new HopKidReportError('HopKid returned an unexpected response format.', 502, 'ERR_INVALID_ENVELOPE');
     } catch (error: any) {
       if (error instanceof HopKidReportError) {
         throw error;
@@ -232,7 +223,7 @@ export class HopKidApiClient {
         );
       }
 
-      console.error(`[HopKidApiClient] Network or fetch error for ${endpoint}:`, error?.message || error);
+      console.error('[HopKidApiClient] Network failure', { method, endpoint, errorName: error?.name || 'Error' });
       throw new HopKidReportError(
         `Failed to communicate with HopKid API: ${error?.message || 'Network connection failed'}`,
         502,
