@@ -23,6 +23,7 @@ import {
 } from '../utils/protectedAccounts';
 import { sendHRNotification, notifyEmployee } from '../utils/hrNotificationHelper';
 import { computeGrossSalary } from '../utils/salaryGross';
+import { integrationSettingsForClient, mergeIntegrationSettings } from '../utils/integrationSettingsView';
 const PdfPrinter = require('pdfmake');
 
 // Primary color for all PDF reports
@@ -7754,12 +7755,9 @@ export const fetchAdminSettings = async (
         includeTax: true,
         includeProvidentFund: true,
       },
-      integrations: (settingsRecord as any).integrations || {
+      integrations: integrationSettingsForClient((settingsRecord as any).integrations || {
         hopkidApiUrl: 'https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList',
-        hopkidApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
-        mobileApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
-        firebaseServerKey: '',
-      },
+      }),
     };
 
     res.json({ success: true, settings });
@@ -7811,17 +7809,17 @@ export const fetchAdminSettings = async (
           dailyReports: true,
           weeklyReports: true,
         },
-        integrations: {
+        integrations: integrationSettingsForClient({
           hopkidApiUrl: 'https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList',
-          hopkidApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
-          mobileApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
+          hopkidApiKey: '',
+          mobileApiKey: '',
           firebaseServerKey: '',
           googleMapsApiKey: '',
           awsAccessKeyId: '',
           awsSecretAccessKey: '',
           awsRegion: 'ap-south-1',
           awsBucketName: '',
-        },
+        }),
       },
     });
   }
@@ -7846,7 +7844,15 @@ export const updateAdminSettings = async (
 
   try {
     const updateData: any = {};
-    updateData[category] = updatedSettings;
+    if (category === 'integrations') {
+      const current = await prisma.systemSetting.findUnique({
+        where: { id: 1 },
+        select: { integrations: true },
+      });
+      updateData.integrations = mergeIntegrationSettings(current?.integrations, updatedSettings);
+    } else {
+      updateData[category] = updatedSettings;
+    }
 
     const updatedRecord = await prisma.systemSetting.upsert({
       where: { id: 1 },
@@ -7864,10 +7870,15 @@ export const updateAdminSettings = async (
     res.json({ 
       success: true, 
       message: `${category.charAt(0).toUpperCase() + category.slice(1)} settings updated successfully.`,
-      settings: (updatedRecord as any)[category]
+      settings: category === 'integrations'
+        ? integrationSettingsForClient((updatedRecord as any)[category])
+        : (updatedRecord as any)[category]
     });
   } catch (error) {
-    console.error('Update admin settings error:', error);
+    console.error('[admin settings] Update failed', {
+      code: (error as any)?.code,
+      name: (error as any)?.name,
+    });
     res.status(500).json({ success: false, message: 'Failed to update settings.' });
   }
 };

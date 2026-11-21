@@ -14,7 +14,8 @@ export interface IntegrationSettings {
 
 const DEFAULT_SETTINGS: IntegrationSettings = {
   hopkidApiUrl: process.env.HOPKID_API_URL || 'https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList',
-  hopkidApiKey: process.env.HOPKID_API_KEY || 'HOPKID-MOBILE-ACCESS-API-KEY',
+  // Never send a placeholder as if it were a valid provider credential.
+  hopkidApiKey: process.env.HOPKID_API_KEY?.trim() || '',
   mobileApiKey: process.env.MOBILE_API_KEY || 'HOPKID-MOBILE-ACCESS-API-KEY',
   firebaseServerKey: process.env.FIREBASE_SERVER_KEY || '',
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || '',
@@ -41,7 +42,10 @@ export async function getIntegrationSettings(): Promise<IntegrationSettings> {
 
     cachedSettings = {
       hopkidApiUrl: rawIntegrations.hopkidApiUrl?.trim() || DEFAULT_SETTINGS.hopkidApiUrl,
-      hopkidApiKey: rawIntegrations.hopkidApiKey?.trim() || DEFAULT_SETTINGS.hopkidApiKey,
+      hopkidApiKey: (() => {
+        const configured = rawIntegrations.hopkidApiKey?.trim() || DEFAULT_SETTINGS.hopkidApiKey;
+        return configured === 'HOPKID-MOBILE-ACCESS-API-KEY' ? '' : configured;
+      })(),
       mobileApiKey: rawIntegrations.mobileApiKey?.trim() || DEFAULT_SETTINGS.mobileApiKey,
       firebaseServerKey: rawIntegrations.firebaseServerKey?.trim() || DEFAULT_SETTINGS.firebaseServerKey,
       googleMapsApiKey: rawIntegrations.googleMapsApiKey?.trim() || DEFAULT_SETTINGS.googleMapsApiKey,

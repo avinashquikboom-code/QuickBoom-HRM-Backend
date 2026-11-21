@@ -89,20 +89,18 @@ export const triggerEmployeeSync = async (
   res: Response
 ): Promise<void> => {
   try {
-    // Run sync in background (non-blocking)
-    syncHopkidEmployees().catch((err) =>
-      console.error('Manual HopKid sync error:', err)
-    );
-
-    res.json({
-      success: true,
-      message: 'HopKid employee synchronization initiated in background.',
-    });
+    const result = await syncHopkidEmployees();
+    res.status(result.success ? 200 : 422).json(result);
   } catch (error: any) {
-    console.error('Trigger employee sync error:', error);
-    res.status(500).json({
+    const message = error instanceof Error ? error.message : 'HopKid employee sync failed.';
+    console.error('[employee sync request] Failed', { message });
+    res.status(message.includes('not configured') ? 503 : message.includes('HTTP ') ? 502 : 500).json({
       success: false,
-      message: 'Failed to initiate HopKid employee sync.',
+      fetchedCount: 0,
+      syncedCount: 0,
+      skippedCount: 0,
+      invalidCount: 0,
+      message,
     });
   }
 };

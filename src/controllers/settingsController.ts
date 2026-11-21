@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../utils/db';
 import { clearIntegrationCache } from '../utils/configService';
 import { initializeFirebaseFromDb } from '../config/firebase';
+import { mergeIntegrationSettings, settingsForClient } from '../utils/integrationSettingsView';
 
 const DEFAULT_SYSTEM_SETTINGS = {
   id: 1,
@@ -25,7 +26,7 @@ const DEFAULT_SYSTEM_SETTINGS = {
   },
   integrations: {
     hopkidApiUrl: 'https://hopkidapi.3dweb.in/api/Employee/GetEmployeeList',
-    hopkidApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
+    hopkidApiKey: '',
     mobileApiKey: 'HOPKID-MOBILE-ACCESS-API-KEY',
     firebaseServerKey: '',
     googleMapsApiKey: '',
@@ -68,17 +69,18 @@ export const getSettings = async (req: Request, res: Response): Promise<void> =>
       }
     }
 
+    const safeSettings = settingsForClient(settings as any);
     res.json({
       success: true,
-      settings,
-      data: settings,
+      settings: safeSettings,
+      data: safeSettings,
     });
   } catch (error: any) {
     console.error('Error fetching settings:', error);
     res.json({
       success: true,
-      settings: DEFAULT_SYSTEM_SETTINGS,
-      data: DEFAULT_SYSTEM_SETTINGS,
+      settings: settingsForClient(DEFAULT_SYSTEM_SETTINGS as any),
+      data: settingsForClient(DEFAULT_SYSTEM_SETTINGS as any),
     });
   }
 };
@@ -121,6 +123,13 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
       console.warn('[updateSettings] DB lookup failed:', err);
     }
 
+    if (fieldsToUpdate.integrations) {
+      fieldsToUpdate.integrations = mergeIntegrationSettings(
+        existing?.integrations,
+        fieldsToUpdate.integrations
+      );
+    }
+
     let updatedSettings;
     if (existing) {
       updatedSettings = await prisma.systemSetting.update({
@@ -141,14 +150,18 @@ export const updateSettings = async (req: Request, res: Response): Promise<void>
       console.warn('⚠️ [settingsController] Re-initializing Firebase from DB failed:', err);
     });
 
+    const safeSettings = settingsForClient(updatedSettings as any);
     res.json({
       success: true,
       message: 'Settings updated successfully',
-      settings: updatedSettings,
-      data: updatedSettings,
+      settings: safeSettings,
+      data: safeSettings,
     });
   } catch (error: any) {
-    console.error('Error updating settings:', error);
+    console.error('[settingsController] Update failed', {
+      code: error?.code,
+      name: error?.name,
+    });
     res.status(400).json({
       success: false,
       message: error?.message || 'Failed to update settings',

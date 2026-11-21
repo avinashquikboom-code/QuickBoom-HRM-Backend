@@ -6,6 +6,15 @@ import userSessionService from '../services/userSessionService';
 let lastSyncTime = 0;
 const SYNC_COOLDOWN = 10 * 1000; // 10 seconds cooldown to prevent spamming the external API
 
+export interface HopkidEmployeeSyncResult {
+  success: boolean;
+  fetchedCount: number;
+  syncedCount: number;
+  skippedCount: number;
+  invalidCount: number;
+  message: string;
+}
+
 export async function syncStoresAndOffices(): Promise<void> {
   try {
     console.log('🔄 [syncStoresAndOffices] Mirroring Stores to Offices...');
@@ -81,14 +90,10 @@ export async function syncStoresAndOffices(): Promise<void> {
   }
 }
 
-export async function syncHopkidEmployees(): Promise<void> {
-  // First ensure stores and offices tables are synced
-  await syncStoresAndOffices();
-
+export async function syncHopkidEmployees(): Promise<HopkidEmployeeSyncResult> {
   const now = Date.now();
   if (now - lastSyncTime < SYNC_COOLDOWN) {
-    console.log('🔄 [syncHopkidEmployees] Skipped external employee sync: rate limit cooldown active.');
-    return;
+    return { success: false, fetchedCount: 0, syncedCount: 0, skippedCount: 0, invalidCount: 0, message: 'An employee sync was just attempted. Wait a few seconds and retry.' };
   }
   
   lastSyncTime = now;
@@ -96,28 +101,42 @@ export async function syncHopkidEmployees(): Promise<void> {
   
   try {
     const { hopkidApiUrl, hopkidApiKey } = await getIntegrationSettings();
+    if (!hopkidApiUrl?.trim()) throw new Error('HopKid employee endpoint is not configured.');
+    if (!hopkidApiKey?.trim()) throw new Error('HopKid API key is not configured on the backend. Set HOPKID_API_KEY or restore saved integration settings.');
+    const endpoint = new URL(hopkidApiUrl);
+    if (endpoint.protocol !== 'https:') throw new Error('HopKid employee endpoint must use HTTPS.');
     const response = await fetch(hopkidApiUrl, {
       method: 'GET',
       headers: {
-        'x-api-key': hopkidApiKey,
+        'x-api-key': hopkidApiKey.trim(),
         'Content-Type': 'application/json',
       },
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!response.ok) {
-      console.error(`❌ [syncHopkidEmployees] External API responded with status ${response.status}`);
-      return;
+      throw new Error(`HopKid employee endpoint returned HTTP ${response.status}. Check the backend credential and provider access.`);
     }
 
     const result = (await response.json()) as any;
-    const dataList = result.data || [];
+    const dataList = result?.data;
+    if (!Array.isArray(dataList)) {
+      throw new Error('HopKid employee endpoint returned an unsupported response: expected a data array. No records were imported.');
+    }
 
-    console.log(`🔄 [syncHopkidEmployees] Fetched ${dataList.length} employees. Syncing to local DB...`);
+    console.info('[syncHopkidEmployees] Provider response received', { status: response.status, fetchedCount: dataList.length });
+    await syncStoresAndOffices();
 
     let syncCount = 0;
+    let skippedCount = 0;
+    let invalidCount = 0;
 
-    for (const emp of dataList) {
-      if (!emp.employeeCode) continue;
+    for (const [index, emp] of dataList.entries()) {
+      if (!emp || typeof emp !== 'object' || !String(emp.employeeCode ?? '').trim() || !String(emp.employeeName ?? '').trim() || typeof emp.isActive !== 'boolean') {
+        invalidCount++;
+        console.error('[syncHopkidEmployees] Rejected invalid provider record', { recordIndex: index, missingEmployeeCode: !String(emp?.employeeCode ?? '').trim(), missingEmployeeName: !String(emp?.employeeName ?? '').trim(), invalidEmploymentStatus: typeof emp?.isActive !== 'boolean' });
+        continue;
+      }
 
       let localStoreId: number | null = null;
       let localOfficeId: number | null = null;
@@ -167,21 +186,32 @@ export async function syncHopkidEmployees(): Promise<void> {
       const lastName = emp.employeeName ? emp.employeeName.split(' ').slice(1).join(' ') : '';
       const mobileNumber = emp.mobileNo || '';
       const joiningDate = emp.dateofJoining ? new Date(emp.dateofJoining) : null;
+      if (joiningDate && isNaN(joiningDate.getTime())) {
+        invalidCount++;
+        console.error('[syncHopkidEmployees] Rejected provider record with invalid joining date', { recordIndex: index });
+        continue;
+      }
       const status = emp.isActive ? 'active' : 'inactive';
       const commissionPercentage = (emp.commissionPercentage !== undefined && emp.commissionPercentage !== null && !isNaN(Number(emp.commissionPercentage)))
         ? Number(emp.commissionPercentage)
         : null;
-      const employeeID = emp.employeeID ? emp.employeeID.toLowerCase() : null;
+      const employeeID = emp.employeeID ? String(emp.employeeID).toLowerCase() : null;
 
       // Upsert the Employee by employeeCode
       // Check if employee already exists locally
-      const existingEmployee = await prisma.employee.findUnique({
-        where: { employeeCode: emp.employeeCode },
+      const existingEmployee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            ...(employeeID ? [{ employeeID: { equals: employeeID, mode: 'insensitive' as const } }] : []),
+            { employeeCode: { equals: String(emp.employeeCode).trim(), mode: 'insensitive' as const } },
+          ],
+        },
       });
 
       if (existingEmployee) {
         if (existingEmployee.source === 'MANUAL') {
           console.log(`⚠️ [syncHopkidEmployees] Skipped manual employee: Code ${emp.employeeCode} (${existingEmployee.firstName} ${existingEmployee.lastName})`);
+          skippedCount++;
           continue;
         }
 
@@ -189,15 +219,16 @@ export async function syncHopkidEmployees(): Promise<void> {
         await prisma.employee.update({
           where: { id: existingEmployee.id },
           data: {
-            employeeID,
+            ...(employeeID ? { employeeID } : {}),
+            employeeCode: String(emp.employeeCode).trim(),
             firstName,
             lastName,
-            mobileNumber,
-            joiningDate,
+            ...(mobileNumber ? { mobileNumber } : {}),
+            ...(joiningDate ? { joiningDate } : {}),
+            ...(typeof emp.designation === 'string' && emp.designation.trim() ? { designation: emp.designation.trim() } : {}),
             status,
-            commissionPercentage,
-            storeId: localStoreId,
-            officeId: localOfficeId,
+            ...(emp.commissionPercentage !== undefined && emp.commissionPercentage !== null && !isNaN(Number(emp.commissionPercentage)) ? { commissionPercentage } : {}),
+            ...(emp.branchName ? { storeId: localStoreId, officeId: localOfficeId } : {}),
             source: 'HOPKID',
           },
         });
@@ -217,24 +248,36 @@ export async function syncHopkidEmployees(): Promise<void> {
         await prisma.employee.create({
           data: {
             employeeID,
-            employeeCode: emp.employeeCode,
+            employeeCode: String(emp.employeeCode).trim(),
             firstName,
             lastName,
-            mobileNumber,
+            mobileNumber: mobileNumber || null,
             joiningDate,
+            designation: typeof emp.designation === 'string' && emp.designation.trim() ? emp.designation.trim() : null,
             status,
-            commissionPercentage,
-            storeId: localStoreId,
-            officeId: localOfficeId,
+            commissionPercentage: emp.commissionPercentage !== undefined && emp.commissionPercentage !== null && !isNaN(Number(emp.commissionPercentage)) ? commissionPercentage : null,
+            storeId: emp.branchName ? localStoreId : null,
+            officeId: emp.branchName ? localOfficeId : null,
             source: 'HOPKID',
           },
         });
       }
       syncCount++;
     }
-    console.log(`✅ [syncHopkidEmployees] Sync completed successfully! Synchronized ${syncCount} employees.`);
+    const summary: HopkidEmployeeSyncResult = {
+      success: invalidCount === 0,
+      fetchedCount: dataList.length,
+      syncedCount: syncCount,
+      skippedCount,
+      invalidCount,
+      message: invalidCount ? `Synced ${syncCount} of ${dataList.length} records; ${invalidCount} invalid records need provider correction.` : `Synced ${syncCount} employee records; ${skippedCount} manual records were preserved.`,
+    };
+    console.info('[syncHopkidEmployees] Sync completed', summary);
+    return summary;
   } catch (error) {
-    console.error('❌ [syncHopkidEmployees] Error during employee synchronization:', error);
+    const message = error instanceof Error ? error.message : 'Unknown employee synchronization error';
+    console.error('[syncHopkidEmployees] Sync failed', { message });
+    throw error instanceof Error ? error : new Error(message);
   }
 }
 
