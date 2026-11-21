@@ -189,8 +189,20 @@ async function main() {
     } catch (err: any) {
       assert(err instanceof HopKidReportError);
       assert.equal(err.errorCode, 'ERR_MISSING_API_KEY');
-      assert.equal(err.statusCode, 500);
-      console.log('  ✓ Missing API key throws ERR_MISSING_API_KEY with status 500.');
+      assert.equal(err.statusCode, 503);
+      console.log('  ✓ Missing API key throws ERR_MISSING_API_KEY with status 503.');
+    }
+
+    const filterCalls = [
+      ['branches', () => hopkidFilterService.getBranches(true)],
+      ['suppliers', () => hopkidFilterService.getSuppliers(true)],
+      ['brands', () => hopkidFilterService.getBrands(true)],
+      ['categories', () => hopkidFilterService.getCategories(true)],
+      ['subcategories', () => hopkidFilterService.getSubCategories(true)],
+    ] as const;
+    for (const [name, call] of filterCalls) {
+      await assert.rejects(call(), (err: any) => err instanceof HopKidReportError && err.errorCode === 'ERR_MISSING_API_KEY' && err.statusCode === 503);
+      console.log(`  ✓ ${name} filter fails clearly with missing API key (503).`);
     }
 
     // 2. Unauthorized key

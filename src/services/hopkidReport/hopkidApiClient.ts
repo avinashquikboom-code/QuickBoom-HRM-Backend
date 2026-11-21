@@ -102,8 +102,8 @@ export class HopKidApiClient {
     if (!apiKey) {
       console.error('[HopKidApiClient] Request rejected: report API key is not configured.');
       throw new HopKidReportError(
-        'HopKid Report API Key is missing. Please configure HOPKID_REPORT_API_KEY in the backend environment.',
-        500,
+        'HopKid Reports are unavailable because HOPKID_REPORT_API_KEY is not configured in the backend environment.',
+        503,
         'ERR_MISSING_API_KEY'
       );
     }

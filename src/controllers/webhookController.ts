@@ -24,9 +24,35 @@ import {
   processEmployeeCreated as execEmployeeCreated,
   processEmployeeUpdated as execEmployeeUpdated,
   processEmployeeDeleted as execEmployeeDeleted,
+  extractEmployeeIdentifier,
 } from './employeeWebhookController';
 
 console.log('[Webhook Controller] ✅ Centralized Webhook Controller Loaded');
+
+function describeWebhookShape(value: unknown, depth = 0): unknown {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) {
+    const firstObject = value.find(item => item !== null && typeof item === 'object');
+    return {
+      type: 'array',
+      length: value.length,
+      itemKeys: firstObject ? Object.keys(firstObject).slice(0, 80) : [],
+    };
+  }
+  if (typeof value !== 'object') return typeof value;
+  const record = value as Record<string, unknown>;
+  const fields: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(record).slice(0, 80)) {
+    if (depth >= 2) {
+      fields[key] = child === null ? 'null' : Array.isArray(child) ? 'array' : typeof child;
+    } else if (child !== null && typeof child === 'object') {
+      fields[key] = describeWebhookShape(child, depth + 1);
+    } else {
+      fields[key] = child === null ? 'null' : typeof child;
+    }
+  }
+  return { type: 'object', fields };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPER: Store Raw Ingress Webhook Payload
@@ -1615,6 +1641,18 @@ async function executeWebhookPipeline(
   console.log(`║ [WEBHOOK INGRESS] Event: ${normalizedType.padEnd(33)} ║`);
   console.log(`╚════════════════════════════════════════════════════════════╝`);
 
+  if (normalizedType.startsWith('EMPLOYEE_')) {
+    console.info('[Employee Webhook Diagnostic] Received', {
+      receivedAt: new Date().toISOString(),
+      method: req.method,
+      url: `${req.baseUrl}${req.path}`,
+      headerNames: Object.keys(req.headers).sort(),
+      eventType: payload && typeof payload === 'object' ? (payload as any).eventType ?? normalizedType : normalizedType,
+      externalEmployeeIdPresent: Boolean(extractEmployeeIdentifier(payload)),
+      payloadShape: describeWebhookShape(payload),
+    });
+  }
+
   // Handle empty or test verification payload from HopKid test delivery button
   if (!payload || (typeof payload === 'object' && Object.keys(payload).length === 0) || payload.test === true || payload.isTest === true || payload.ping === true) {
     console.log(`[Webhook Ingress] ℹ️ Test delivery / verification ping received for ${normalizedType}. Responding HTTP 200 OK.`);
@@ -1772,9 +1810,29 @@ async function executeWebhookPipeline(
       message: 'Webhook processed successfully',
       duplicate: false,
     });
+    if (normalizedType.startsWith('EMPLOYEE_')) {
+      console.info('[Employee Webhook Diagnostic] Completed', {
+        completedAt: new Date().toISOString(),
+        eventType: normalizedType,
+        result: 'SUCCESS',
+        statusCode: 200,
+        duplicate: false,
+      });
+    }
   } catch (err: any) {
     const errorDetails = `[${err.name || 'Error'}] ${err.message}${err.code ? ` (Code: ${err.code})` : ''}${err.stack ? `\nStack:\n${err.stack}` : ''}`;
     console.error(`[Webhook Handler] ❌ Error processing ${normalizedType}:\n${errorDetails}`);
+    if (normalizedType.startsWith('EMPLOYEE_')) {
+      console.error('[Employee Webhook Diagnostic] Failed', {
+        failedAt: new Date().toISOString(),
+        eventType: normalizedType,
+        result: 'FAILED',
+        statusCode: 500,
+        errorName: err.name || 'Error',
+        errorCode: err.code || null,
+        errorMessage: err.message || 'Unknown webhook processing error',
+      });
+    }
 
     const resolvedEventId = meta.eventId ? String(meta.eventId) : null;
     if (logEntry?.id) {
