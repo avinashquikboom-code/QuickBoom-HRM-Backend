@@ -588,9 +588,22 @@ server.listen(port, host, () => {
     .then(() => console.log('✅ [Startup Patch] Role permissions verified/initialized.'))
     .catch((err: unknown) => console.error('❌ [Startup Patch] Role permissions initialization failed:', err));
 
-  // HopKid employees are now synchronized via Webhook events (EMPLOYEE_CREATED, EMPLOYEE_UPDATED, EMPLOYEE_DELETED)
-  // Background API polling disabled to prevent rate limits and latency
-  console.log('ℹ️ [Startup] HopKid Employee synchronization active via Real-time Webhooks');
+  // Webhooks keep employee records current after delivery; an initial and periodic
+  // full sync also recovers employees when the database is empty or a webhook was missed.
+  const employeeSyncIntervalMinutes = Math.max(1, Number(process.env.EMPLOYEE_SYNC_INTERVAL_MINUTES) || 60);
+  const runEmployeeSync = async (trigger: string) => {
+    try {
+      const result = await syncHopkidEmployees();
+      console.info(`[Employee Sync] ${trigger} completed`, result);
+    } catch (error) {
+      console.error(`[Employee Sync] ${trigger} failed:`, error instanceof Error ? error.message : error);
+    }
+  };
+  void runEmployeeSync('startup');
+  cron.schedule(`*/${employeeSyncIntervalMinutes} * * * *`, async () => {
+    await runEmployeeSync('scheduled');
+  });
+  console.log(`ℹ️ [Startup] HopKid employee sync enabled (every ${employeeSyncIntervalMinutes} minutes); webhooks remain active`);
 
   // On day start, check holidays
   cron.schedule('0 0 * * *', async () => { // Midnight IST
