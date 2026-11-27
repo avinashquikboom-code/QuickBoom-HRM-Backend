@@ -15,7 +15,8 @@ console.log('[Employee Webhook Controller] ✅ Loaded');
  */
 export function extractEmployeeIdentifier(payload: any): string | null {
   if (!payload) return null;
-  const data = payload.data || payload;
+  let data = payload.data || payload;
+  if (Array.isArray(data)) data = data[0] || {};
   const employee = data.employee || payload.employee || data;
 
   const id =
@@ -42,14 +43,39 @@ export function extractEmployeeIdentifier(payload: any): string | null {
 }
 
 function webhookEmployeeRecord(payload: any): any {
-  const data = payload?.data ?? payload;
+  let data = payload?.data ?? payload;
+  // Some HopKid deliveries wrap the record in a one-element array.
+  if (Array.isArray(data)) data = data[0] ?? {};
   return data?.employee ?? payload?.employee ?? data;
+}
+
+/**
+ * HopKid sends the full name as `employeeName` (same shape as its employee list API,
+ * see utils/employeeSync.ts). Older/test payloads used `name` or first/last name.
+ */
+export function extractEmployeeName(employee: any): string {
+  if (!employee || typeof employee !== 'object') return '';
+  const full =
+    employee.employeeName ||
+    employee.EmployeeName ||
+    employee.fullName ||
+    employee.name ||
+    `${employee.firstName || ''} ${employee.lastName || ''}`;
+  return String(full).replace(/\s+/g, ' ').trim();
+}
+
+/** HopKid `isActive` flag → local status, or null when the payload doesn't say. */
+function extractEmployeeStatus(employee: any): 'active' | 'inactive' | null {
+  const raw = employee?.isActive ?? employee?.IsActive ?? employee?.active;
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'string') return ['false', '0', 'no', 'inactive'].includes(raw.trim().toLowerCase()) ? 'inactive' : 'active';
+  return raw ? 'active' : 'inactive';
 }
 
 function validateEmployeePayload(payload: any): { employee: any; identifier: string; name: string } {
   const employee = webhookEmployeeRecord(payload);
-  const identifier = extractEmployeeIdentifier(payload);
-  const name = String(employee?.name || `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim()).trim();
+  const identifier = extractEmployeeIdentifier({ data: employee });
+  const name = extractEmployeeName(employee);
   if (!identifier) throw new Error('Invalid employee webhook: missing external employee ID/code.');
   if (!name) throw new Error('Invalid employee webhook: missing employee name.');
   return { employee, identifier, name };
@@ -237,20 +263,15 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
     }).catch(() => null);
 
     if (existing) {
-      console.log('[Process] ⚠️ Employee already exists:', existing.id);
-      await createWebhookLog({
-        eventType: 'EMPLOYEE_CREATED',
-        status: 'SUCCESS',
-        payload: payload,
-        employeeId: existing.id,
-        errorMessage: 'Employee already exists'
-      });
+      console.log('[Process] ⚠️ Employee already exists, applying payload as update:', existing.id);
+      await processEmployeeUpdated(payload);
       return;
     }
 
     console.log('[Process] ✅ New employee, creating...');
 
     const nameParts = rawName.split(' ');
+    const status = extractEmployeeStatus(employee) ?? 'active';
     const firstName = nameParts[0] || 'HopKid';
     const lastName = nameParts.slice(1).join(' ') || 'Employee';
 
@@ -277,7 +298,7 @@ export async function processEmployeeCreated(payload: any): Promise<void> {
         joiningDate,
         storeId,
         officeId,
-        status: 'active',
+        status,
         source: 'HOPKID'
       }
     });
@@ -420,7 +441,7 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
     const updateData: any = {};
     const changes: string[] = [];
 
-    if (employee.name || employee.firstName || employee.lastName) {
+    if (name) {
       const nameParts = name.split(' ');
       const newFirst = nameParts[0] || existingEmployee.firstName;
       const newLast = nameParts.slice(1).join(' ') || existingEmployee.lastName;
@@ -458,6 +479,17 @@ export async function processEmployeeUpdated(payload: any): Promise<void> {
         updateData.designation = newDesig;
         changes.push(`Designation: ${existingEmployee.designation || 'N/A'} → ${newDesig}`);
       }
+    }
+
+    const newStatus = extractEmployeeStatus(employee);
+    if (newStatus && newStatus !== existingEmployee.status) {
+      updateData.status = newStatus;
+      changes.push(`Status: ${existingEmployee.status} → ${newStatus}`);
+    }
+
+    if (hopkidEmployeeId && !existingEmployee.employeeID) {
+      updateData.employeeID = hopkidEmployeeId;
+      changes.push(`HopKid ID linked: ${hopkidEmployeeId}`);
     }
 
     const { storeId, officeId } = await resolveStoreAndOffice(employee);
