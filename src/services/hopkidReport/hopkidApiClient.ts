@@ -1,3 +1,5 @@
+import { getIntegrationSettings } from '../../utils/configService';
+
 /**
  * HopKid Report API Client
  * Centralized, secure, read-only HTTP client for HopKid Report & Filter endpoints.
@@ -42,9 +44,15 @@ export class HopKidApiClient {
    * Retrieves the API key from environment variables.
    * Priority: HOPKID_REPORT_API_KEY, fallback to HOPKID_API_KEY.
    */
-  public getApiKey(): string {
-    const key = (process.env.HOPKID_REPORT_API_KEY || process.env.HOPKID_API_KEY || '').trim();
-    return key;
+  public async getApiKey(): Promise<string> {
+    const envKey = (process.env.HOPKID_REPORT_API_KEY || process.env.HOPKID_API_KEY || '').trim();
+    if (envKey) return envKey;
+
+    // The app already supports managing the HopKid credential through its
+    // integration settings. Reuse it for reports when no report-specific env
+    // key is configured, so production does not depend on duplicate secrets.
+    const settings = await getIntegrationSettings();
+    return settings.hopkidApiKey.trim();
   }
 
   /**
@@ -97,7 +105,7 @@ export class HopKidApiClient {
       queryParams?: Record<string, string | number | boolean | undefined | null>;
     } = {}
   ): Promise<HopKidEnvelope<T>> {
-    const apiKey = this.getApiKey();
+    const apiKey = await this.getApiKey();
 
     if (!apiKey) {
       console.error('[HopKidApiClient] Request rejected: report API key is not configured.');
